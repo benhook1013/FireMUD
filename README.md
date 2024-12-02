@@ -22,10 +22,9 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
     - [Microservices](#microservices)
     - [Service Interactions](#service-interactions)
   - [Design Goals](#design-goals)
-  - [Getting Started](#getting-started)
+  - [Getting Started and Contributing](#getting-started-and-contributing)
     - [For Designers and Contributors](#for-designers-and-contributors)
     - [For Developers](#for-developers)
-  - [Contributing](#contributing)
   - [Contact](#contact)
   - [Acknowledgments](#acknowledgments)
 
@@ -101,66 +100,51 @@ Detailed diagrams and descriptions are available in the [architecture overview](
 
 ---
 
-## Getting Started
+## Getting Started and Contributing
+
+We welcome feedback and contributions to improve the platform's design and functionality. Here's how you can get started and contribute:
 
 ### For Designers and Contributors
 
 - **Review the [Architecture Overview](./architecture/overview.md)** to understand the platform's structure.
 - **Explore the [Service Design Documents](./architecture/microservices.md)** for in-depth information on each microservice.
 - **Join Discussions**: Participate in ongoing design topics in the `dev_notes/` section.
+- **Documentation**: Help improve our documentation by:
+  - Updating existing Markdown files for clarity and accuracy.
+  - Adding examples, tutorials, or FAQs.
+  - Translating documentation into other languages.
 
 ### For Developers
 
 - **Code Repositories**: Individual services are maintained in separate repositories. Refer to their READMEs for setup instructions.
 - **Development Notes**: Check the `dev_notes/` directory for guidelines and best practices.
-
----
-
-## Contributing
-
-We welcome feedback and contributions to improve the platform's design and functionality. Here's how you can contribute:
-
-- **Report Issues**: If you find a bug or have a feature request, please open an issue in the relevant repository. Make sure to provide detailed information to help us understand and reproduce the issue.
-
 - **Submit Pull Requests**: To contribute code:
   1. **Fork** the repository you wish to contribute to.
   2. **Create a new branch** for your feature or bug fix: `git checkout -b feature/your-feature-name`.
   3. **Commit your changes** with clear and descriptive messages.
   4. **Push to your fork**: `git push origin feature/your-feature-name`.
   5. **Open a pull request** against the `main` branch of the original repository.
-
-- **Join Discussions**: Engage in design and development discussions:
-  - Participate in ongoing topics in the `dev_notes/` directory.
-  - Join our [Community Forums](https://community.fire-devops.net) to connect with other contributors.
-  - Chat with the team on our [Discord Server](https://discord.gg/your-invite-link).
-
+- **Report Issues**: If you find a bug or have a feature request, please open an issue in the relevant repository with detailed information.
 - **Review Code**: Help us by reviewing open pull requests. Constructive feedback is invaluable.
+- **Security Vulnerabilities**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it directly via email to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net). We take security issues seriously and will respond promptly to address them.
 
-- **Security Vulnerabilities**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it directly via email to [security@fire-devops.net](mailto:security@fire-devops.net). We take security issues seriously and will respond promptly to address them.
-
-- **Documentation**: Improve our documentation by:
-  - Updating existing Markdown files for clarity and accuracy.
-  - Adding examples, tutorials, or FAQs.
-  - Translating documentation into other languages.
-
-Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on our code style, testing practices, and how to set up a development environment.
-
+Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on code style, testing practices, and setting up a development environment.
 
 ---
 
 ## Contact
 
-- **Project Lead**: Ben
-  - **Email**: [ben@fire-devops.net](mailto:ben@fire-devops.net)
-  - **GitHub**: [github.com/ben-firedevops](https://github.com/ben-firedevops)
+- **Project Lead**: Ben Hook
+  - **Email**: [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net)
+  - **GitHub**: [github.com/benhook1013](https://github.com/benhook1013)
 - **Fire-DevOps.net**: [fire-devops.net](https://fire-devops.net)
 
 ---
 
 ## Acknowledgments
 
-- **Contributors**: Thanks to all the contributors who have helped shape this project.
+- **MUD Community**: A heartfelt thank you to the MUD game community and the developers of classic MUD platforms. Your creativity and dedication have inspired us to build upon the rich legacy of text-based gaming.
 - **Open-Source Community**: Inspired by the collaborative spirit of open-source development.
-- **Classic MUD Platforms**: Building upon the legacy of text-based gaming.
 
 ---
+
