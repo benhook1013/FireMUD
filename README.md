@@ -1,10 +1,10 @@
 # FireMUD Game Platform - Documentation and Design
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Under_Development-yellow)]()
-[![Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)]()
-[![React](https://img.shields.io/badge/Frontend-React-blue)]()
-[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue)]()
+[![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)]()
+[![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)]()
+[![Frontend: React](https://img.shields.io/badge/Frontend-React-blue)]()
+[![Database: PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue)]()
 
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
@@ -27,8 +27,10 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
   - [Getting Started and Contributing](#getting-started-and-contributing)
     - [For Designers and Contributors](#for-designers-and-contributors)
     - [For Developers](#for-developers)
+  - [Support Us](#support-us)
   - [Contact](#contact)
   - [Acknowledgments](#acknowledgments)
+    - [Notes and TODOs](#notes-and-todos)
 
 ---
 
@@ -130,6 +132,24 @@ Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on 
 
 ---
 
+## Support Us
+
+Your support can make a significant difference in the development and success of the FireMUD Game Platform. If you're interested in supporting the project, here are some ways you can help:
+
+- **Spread the Word**: Share the project with friends, colleagues, and on social media platforms to help us reach a wider audience.
+- **Contribute**: See the [Getting Started and Contributing](#getting-started-and-contributing) section for ways to contribute code, documentation, or ideas.
+- **Financial Contributions**: *[TODO: Set up financial contribution options]*
+
+  We plan to set up options for financial support in the near future, including:
+
+  - **Donate via PayPal**: *[Coming Soon]* <!-- TODO: Add PayPal donation link -->
+  - **Sponsor on GitHub**: *[Coming Soon]* <!-- TODO: Set up GitHub Sponsors profile -->
+  - **Patreon**: *[Coming Soon]* <!-- TODO: Create Patreon page -->
+
+  *Note: Financial contributions will be used to cover development costs, hosting, and other expenses related to the project.*
+
+---
+
 ## Contact
 
 - **Project Lead**: Ben Hook
@@ -143,5 +163,14 @@ Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on 
 
 - **MUD Community**: A heartfelt thank you to the MUD game community and the developers of classic MUD platforms. Your creativity and dedication have inspired us to build upon the rich legacy of text-based gaming.
 - **Open-Source Community**: Inspired by the collaborative spirit of open-source development.
+
+---
+
+### Notes and TODOs
+
+- **Financial Contribution Links**: The links for PayPal, GitHub Sponsors, and Patreon are placeholders and need to be set up. Once available, replace the *[Coming Soon]* text and placeholder comments with the actual links.
+- **CONTRIBUTING.md**: Ensure the `CONTRIBUTING.md` file is created and contains relevant guidelines.
+- **FAQ.md**: Populate the `FAQ.md` document with common questions and answers.
+- **Architecture Diagrams**: Complete the architecture diagrams and place them in the `architecture/` directory.
 
 ---
