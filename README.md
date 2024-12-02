@@ -8,6 +8,8 @@
 
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
+*This project is licensed under the [MIT License](LICENSE). For common questions, please refer to our [FAQ](FAQ.md).*
+
 ---
 
 ## Table of Contents
@@ -19,9 +21,9 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
     - [Key Features](#key-features)
     - [Tech Stack](#tech-stack)
     - [Design Goals](#design-goals)
-    - [Architecture](#architecture)
-      - [Microservices](#microservices)
-      - [Service Interactions](#service-interactions)
+  - [Architecture](#architecture)
+    - [Microservices](#microservices)
+    - [Service Interactions](#service-interactions)
   - [Getting Started and Contributing](#getting-started-and-contributing)
     - [For Designers and Contributors](#for-designers-and-contributors)
     - [For Developers](#for-developers)
@@ -71,9 +73,11 @@ This repository serves as the central hub for:
 5. **Community Engagement**: Facilitate a vibrant community of players and creators.
 6. **Security**: Ensure data protection and secure interactions across services.
 
-### Architecture
+---
 
-#### Microservices
+## Architecture
+
+### Microservices
 
 1. **Game Server Service**
    - Handles game logic, command parsing, real-time interactions.
@@ -90,7 +94,7 @@ This repository serves as the central hub for:
 7. **Moderation and Administration Service**
    - Tools for admins to enforce rules and monitor activity.
 
-#### Service Interactions
+### Service Interactions
 
 Detailed diagrams and descriptions are available in the [Architecture Overview](./architecture/overview.md).
 
@@ -138,3 +142,5 @@ Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on 
 
 - **MUD Community**: A heartfelt thank you to the MUD game community and the developers of classic MUD platforms. Your creativity and dedication have inspired us to build upon the rich legacy of text-based gaming.
 - **Open-Source Community**: Inspired by the collaborative spirit of open-source development.
+
+---
