@@ -26,7 +26,6 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
     - [For Designers and Contributors](#for-designers-and-contributors)
     - [For Developers](#for-developers)
   - [Contributing](#contributing)
-  - [Community and Support](#community-and-support)
   - [Contact](#contact)
   - [Acknowledgments](#acknowledgments)
 
@@ -121,19 +120,31 @@ Detailed diagrams and descriptions are available in the [architecture overview](
 
 We welcome feedback and contributions to improve the platform's design and functionality. Here's how you can contribute:
 
-- **Report Issues**: Found a bug or have a feature request? Open an issue.
-- **Submit Pull Requests**: Make improvements by submitting pull requests.
-- **Join Discussions**: Engage in design and development discussions.
+- **Report Issues**: If you find a bug or have a feature request, please open an issue in the relevant repository. Make sure to provide detailed information to help us understand and reproduce the issue.
 
-Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details.
+- **Submit Pull Requests**: To contribute code:
+  1. **Fork** the repository you wish to contribute to.
+  2. **Create a new branch** for your feature or bug fix: `git checkout -b feature/your-feature-name`.
+  3. **Commit your changes** with clear and descriptive messages.
+  4. **Push to your fork**: `git push origin feature/your-feature-name`.
+  5. **Open a pull request** against the `main` branch of the original repository.
 
----
+- **Join Discussions**: Engage in design and development discussions:
+  - Participate in ongoing topics in the `dev_notes/` directory.
+  - Join our [Community Forums](https://community.fire-devops.net) to connect with other contributors.
+  - Chat with the team on our [Discord Server](https://discord.gg/your-invite-link).
 
-## Community and Support
+- **Review Code**: Help us by reviewing open pull requests. Constructive feedback is invaluable.
 
-- **Website**: Visit [Fire-DevOps.net](https://fire-devops.net) for news and updates.
-- **Forums**: Join the [Community Forums](https://community.fire-devops.net) to connect with other users.
-- **Chat**: Participate in real-time discussions on our [Discord Server](https://discord.gg/your-invite-link).
+- **Security Vulnerabilities**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it directly via email to [security@fire-devops.net](mailto:security@fire-devops.net). We take security issues seriously and will respond promptly to address them.
+
+- **Documentation**: Improve our documentation by:
+  - Updating existing Markdown files for clarity and accuracy.
+  - Adding examples, tutorials, or FAQs.
+  - Translating documentation into other languages.
+
+Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on our code style, testing practices, and how to set up a development environment.
+
 
 ---
 
