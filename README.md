@@ -92,7 +92,7 @@ This repository serves as the central hub for:
 
 #### Service Interactions
 
-Detailed diagrams and descriptions are available in the [architecture overview](./architecture/overview.md).
+Detailed diagrams and descriptions are available in the [Architecture Overview](./architecture/overview.md).
 
 ---
 
