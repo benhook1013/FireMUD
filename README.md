@@ -72,6 +72,7 @@ This repository serves as the central hub for:
 4. **User-Friendly Creation**: Intuitive tools for game creators.
 5. **Community Engagement**: Facilitate a vibrant community of players and creators.
 6. **Security**: Ensure data protection and secure interactions across services.
+7. **Accessibility**: Provide an inclusive gaming experience by ensuring the platform is accessible to all players, including those who are visually impaired or blind, through compatibility with screen readers and other assistive technologies.
 
 ---
 
