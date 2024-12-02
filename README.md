@@ -1,6 +1,6 @@
-# MUD Game Platform - Documentation and Design
+# FireMUD Game Platform - Documentation and Design
 
-This repository contains the project documentation and design details for the **MUD Game Platform**, a modular and scalable system for creating and running Multi-User Dungeon (MUD) games. 
+This repository contains the project documentation and design details for the **FireMUD Game Platform**, a modular and scalable system for creating and running Multi-User Dungeon (MUD) games. 
 
 The platform is designed with a microservice architecture to support both runtime gameplay and an integrated game editor for creators.
 
@@ -27,7 +27,7 @@ Code for the individual services and components will be maintained in separate r
 
 ---
 
-## Overview of the MUD Game Platform
+## Overview of the FireMUD Game Platform
 
 The platform provides:
 - **Real-Time Game Server**: A backend for managing gameplay mechanics, player actions, and world state.
@@ -84,9 +84,3 @@ To contribute or share feedback, please open a GitHub issue or submit a pull req
 
 ### For Developers
 The codebases for individual services will be located in their respective repositories. Refer to their READMEs for setup instructions.
-
----
-
-## License
-
-This documentation is shared under the MIT License. See the [LICENSE](./LICENSE) file for details.
