@@ -17,7 +17,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 2: User & Game Management**
+## **🛠️ Phase 2: Account & Game Management**
 - [ ] **Develop Account Service**
   - [ ] Implement user registration and authentication (OAuth2, JWT)
   - [ ] Implement session management and persistent logins
@@ -29,15 +29,11 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop Game Management Service**
   - [ ] Implement game creation and configuration
   - [ ] Implement multi-tenancy support for multiple hosted games
-  - [ ] Implement permissions system for game creators and moderators
   - [ ] Implement game templates for hosted game creation
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages
-
-- [ ] **Develop Banning & Restriction System**
-  - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
 
 ---
 
@@ -134,9 +130,15 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement shared guild storage
   - [ ] Implement alliance system between guilds
 
+---
+
+## **🛠️ Phase 7: Moderation & Restrictions**
 - [ ] **Develop Moderation Logging & Player Reporting**
   - [ ] Allow players to report others for abuse/violations
   - [ ] Store logs for admin moderation
+
+- [ ] **Implement Banning & Restriction System**
+  - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
 
 - [ ] **Implement Anti-Spam & Rate Limiting**
   - [ ] Prevent chat flooding, command spamming, and abuse
@@ -146,7 +148,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 7: Monetization & Payment System**
+## **🛠️ Phase 8: Monetization & Payment System**
 - [ ] **Develop Monetization & Payment System**
   - [ ] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
@@ -159,7 +161,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 8: Testing & Pre-Launch Preparations**
+## **🛠️ Phase 9: Testing & Pre-Launch Preparations**
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
   - [ ] Implement integration tests for multi-service interactions
