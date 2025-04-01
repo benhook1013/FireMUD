@@ -49,17 +49,21 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement world event scheduling system (seasonal events, resets)
   - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
+  - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
 
 - [ ] **Develop Entity Management Service**
   - [ ] Implement player character storage
   - [ ] Implement NPC storage and data structures
   - [ ] Implement item and inventory management
   - [ ] Implement entity stats and progression tracking
+  - [ ] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
 
 - [ ] **Implement Persistence Strategy**
   - [ ] Use PostgreSQL for primary storage
   - [ ] Use Redis for session caching, game state, and temporary data lookups
+  - [ ] Implement world saving/loading system
+  - [ ] Implement per-instance state persistence
 
 ---
 
@@ -78,11 +82,17 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement AI memory & dynamic NPC behaviors (NPCs remember past player interactions)
   - [ ] Implement player vs. environment (PvE) mechanics (random encounters, environmental hazards)
   - [ ] Implement faction & reputation system (players gain faction reputation over time)
+  - [ ] Implement NPC aggression states (hostile, neutral, passive)
+  - [ ] Implement NPC fleeing/surrender logic
+  - [ ] Implement NPC formations & squad AI
 
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions
   - [ ] Implement auction house and player-to-player trading
   - [ ] Implement dynamic resource spawning & distribution (controlled item & resource generation)
+  - [ ] Implement tax & fee system for in-game economies
+  - [ ] Implement player-run shops/stalls
+  - [ ] Implement black market & underground economy system
 
 - [ ] **Develop Leveling & Progression System**
   - [ ] Implement experience tracking and level progression
@@ -92,7 +102,21 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 5: Networking & Multiplayer**
+## **🛠️ Phase 5: Game Design & Customization**
+- [ ] **Develop Game Design Service**
+  - [ ] Implement world editing & customization tools
+  - [ ] Implement scripting & event design tools
+  - [ ] Implement ability & action design tools
+  - [ ] Implement item & equipment balancing tools
+
+- [ ] **Expand Scripting & Modding**
+  - [ ] Implement event-driven scripting API for game creators
+  - [ ] Implement in-game modding/plugin framework
+  - [ ] Implement scripted AI behaviors for NPCs
+
+---
+
+## **🛠️ Phase 6: Networking & Multiplayer**
 - [ ] **Develop Networking & Gateway Service**
   - [ ] Implement WebSocket and TCP networking
   - [ ] Handle API routing and request validation
@@ -103,23 +127,17 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [ ] **Develop Guilds & Group System**
   - [ ] Allow players to form and manage guilds
+  - [ ] Implement guild ranking & permissions system
+  - [ ] Implement shared guild storage
+  - [ ] Implement alliance system between guilds
 
-- [ ] **Develop Cross-Game Social Networking**
-  - [ ] Enable players to add friends and communicate across games
-
-- [ ] **Develop Moderation Logging & Player Reporting**
-  - [ ] Allow players to report others for abuse/violations
-  - [ ] Store logs for admin moderation
-
-- [ ] **Implement Anti-Spam & Rate Limiting**
-  - [ ] Prevent chat flooding, command spamming, and abuse
-
-- [ ] **Implement Player-Owned Housing or Personal Areas**
-  - [ ] Allow players to "own" rooms or private spaces in games with permissions
+- [ ] **Develop Player-Owned Content**
+  - [ ] Implement player-created quests & bounty boards
+  - [ ] Implement player-controlled governance for settlements
 
 ---
 
-## **🛠️ Phase 6: Monetization & Payment System**
+## **🛠️ Phase 7: Monetization & Payment System**
 - [ ] **Develop Monetization & Payment System**
   - [ ] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
@@ -127,27 +145,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement refund & chargeback handling
   - [ ] Implement virtual currency system (game-specific currencies)
   - [ ] Implement premium hosting tiers & features for game creators
-
----
-
-## **🛠️ Phase 7: Testing & Pre-Launch Preparations**
-- [ ] **Implement Automated Unit & Integration Tests**
-  - [ ] Develop unit tests for core services (command parsing, actions, world updates)
-  - [ ] Implement integration tests for multi-service interactions
-  - [ ] Perform API testing with Postman, RestAssured
-
-- [ ] **Conduct Load & Security Testing**
-  - [ ] Simulate high-concurrency scenarios to identify bottlenecks
-  - [ ] Run load tests using JMeter, Gatling, or Locust
-  - [ ] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
-
-- [ ] **Deploy Staging Environments for Playtesting**
-  - [ ] Perform multi-user playtests and gather feedback
-
-- [ ] **Write Developer Documentation for Game Creators**
-  - [ ] Provide API references for scripting & integration
-  - [ ] Develop tutorials for designing custom game worlds
-  - [ ] Guide for setting up and configuring hosted games
+  - [ ] Implement platform-controlled ad system (for free-to-play games)
+  - [ ] Implement revenue-sharing system for game creators
 
 ---
 
