@@ -68,6 +68,16 @@ This document outlines the **core functional and non-functional requirements** f
 - **In-game reporting & ban system** for handling violations.
 - **Analytics & logging** for tracking player activity and game performance.
 
+### **2.9 Monetization & Payment System**
+- The platform will use **an integrated payment system (e.g., Stripe) for handling transactions**.
+- Game creators can **monetize their games** using platform-supported methods:
+  - **Subscriptions** (recurring access to premium content).
+  - **One-time purchases** (e.g., unlocking features).
+  - **Donations** (voluntary payments from players).
+- The platform will **take a percentage of all in-game transactions**.
+- **External payment methods will not be allowed**, ensuring compliance and standardization.
+- Certain **high-resource features (e.g., AI, scripting) may be paywalled or included in premium hosting tiers**.
+
 ---
 
 ## **3. Infrastructure & Scalability Considerations**
@@ -93,7 +103,16 @@ This document outlines the **core functional and non-functional requirements** f
 
 ---
 
-## **4. Non-Functional Requirements**
+## **4. NPC AI & Automation**
+- NPCs will be **both event-driven and state-driven** to create a **simulation-like experience**.
+- **Event-driven behaviors**: NPCs react to external triggers (e.g., players entering a room, time-based events).
+- **State-based behaviors**: NPCs maintain memory and react dynamically (e.g., remembering past interactions, adjusting routines).
+- The system should **support world simulation where NPCs and environments operate autonomously**, even without active player input.
+- **Optimizations such as tick-based world updates, deferred computation, or AI culling** may be required to manage computational cost.
+
+---
+
+## **5. Non-Functional Requirements**
 | Category | Requirement |
 |----------|------------|
 | **Performance** | Must support **hundreds to thousands of concurrent players** per game instance. |
@@ -105,25 +124,11 @@ This document outlines the **core functional and non-functional requirements** f
 
 ---
 
-## **5. Assumptions & Constraints**
+## **6. Assumptions & Constraints**
 - The platform will be developed using **Java (Spring Boot) for backend microservices**.
 - **PostgreSQL** will be used for primary storage, with caching layers for efficiency.
 - **WebSockets/TCP** will be used for real-time communication.
 - Deployment will be **containerized using Docker and Kubernetes**.
 - The platform will initially target **web-based and terminal-based MUD clients**.
-
----
-
-## **6. Open Questions**
-- Should game creators be able to **monetize their games** (e.g., premium features, in-game purchases)?
-- Will NPC behaviors be **rule-based or require external AI/machine learning integration**?
-- How much **UI tooling** should be provided for **game creators vs. requiring external integrations**?
-
----
-
-## **7. Conclusion**
-The **MUD Game Platform** is designed to provide a **robust, scalable, and extensible infrastructure** for running multiple MUD games. By leveraging **multi-tenancy, real-time networking, and game customization tools**, the platform ensures **high availability, flexibility for game creators, and a seamless multiplayer experience**.
-
-This PRD serves as the **foundation for design, development, and iteration** as we move toward implementation.
 
 ---
