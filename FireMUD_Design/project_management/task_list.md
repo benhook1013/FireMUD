@@ -11,6 +11,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
 - [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment**
+- [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
 - [ ] **Set up centralized logging & monitoring (ELK Stack, Grafana, Prometheus, Loki)**
 - [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 
