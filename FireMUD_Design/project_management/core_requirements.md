@@ -41,17 +41,29 @@ This document outlines the **core functional and non-functional requirements** f
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
+- **Expanded Account Features**:
+  - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
+  - Profiles should include **game history, achievements, and social features**.
+  - Persistent session tracking to **ensure seamless reconnection across devices**.
 
 ### **2.4 Game World & Entity Management**
 - Support for **multi-room game worlds** with region-based navigation.
 - Dynamic **instance management** for handling separate world instances.
-- **NPC AI & Automation** for scripted behaviors and event-based triggers.
+- **World Persistence & Scheduled Events**:
+  - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
+  - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable.
+  - NPC actions and environmental changes should **continue in a believable way even if no players are online**.
 - Persistent storage for **player, NPC, and item data**.
 
-### **2.5 Command Parsing & Game Logic**
+### **2.5 Game Logic & Automation**
 - Players interact with the game via **text-based command parsing** (e.g., `"move north"`, `"attack goblin"`).
 - The platform must support **custom game logic per hosted game**.
 - **Action processing** for combat, trading, crafting, and roleplay actions.
+- **NPC AI & Automation**:
+  - NPCs will be **both event-driven and state-driven** to create a **simulation-like experience**.
+  - **Event-driven behaviors**: NPCs react to external triggers (e.g., players entering a room, time-based events).
+  - **State-based behaviors**: NPCs maintain memory and react dynamically (e.g., remembering past interactions, adjusting routines).
+  - The system should **support world simulation where NPCs and environments operate autonomously**, even without active player input.
 
 ### **2.6 Real-Time Multiplayer & Communication**
 - **WebSockets/TCP-based real-time networking** for player interactions.
@@ -63,12 +75,17 @@ This document outlines the **core functional and non-functional requirements** f
 - **Scripting API** for game developers to define quests, AI behavior, and in-game mechanics.
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance.
 
-### **2.8 Moderation & Administration**
+### **2.8 Procedural World Generation**
+- Support for **algorithm-driven world creation**, such as procedural room generation.
+- Allow **customized generation rules** per hosted game (e.g., terrain types, NPC density).
+- Game creators should be able to **blend procedural content with hand-crafted design**.
+
+### **2.9 Moderation & Administration**
 - **Admin dashboard** for monitoring and moderating hosted games.
 - **In-game reporting & ban system** for handling violations.
 - **Analytics & logging** for tracking player activity and game performance.
 
-### **2.9 Monetization & Payment System**
+### **2.10 Monetization & Payment System**
 - The platform will use **an integrated payment system (e.g., Stripe) for handling transactions**.
 - Game creators can **monetize their games** using platform-supported methods:
   - **Subscriptions** (recurring access to premium content).
@@ -103,16 +120,7 @@ This document outlines the **core functional and non-functional requirements** f
 
 ---
 
-## **4. NPC AI & Automation**
-- NPCs will be **both event-driven and state-driven** to create a **simulation-like experience**.
-- **Event-driven behaviors**: NPCs react to external triggers (e.g., players entering a room, time-based events).
-- **State-based behaviors**: NPCs maintain memory and react dynamically (e.g., remembering past interactions, adjusting routines).
-- The system should **support world simulation where NPCs and environments operate autonomously**, even without active player input.
-- **Optimizations such as tick-based world updates, deferred computation, or AI culling** may be required to manage computational cost.
-
----
-
-## **5. Non-Functional Requirements**
+## **4. Non-Functional Requirements**
 | Category | Requirement |
 |----------|------------|
 | **Performance** | Must support **hundreds to thousands of concurrent players** per game instance. |
@@ -124,7 +132,7 @@ This document outlines the **core functional and non-functional requirements** f
 
 ---
 
-## **6. Assumptions & Constraints**
+## **5. Assumptions & Constraints**
 - The platform will be developed using **Java (Spring Boot) for backend microservices**.
 - **PostgreSQL** will be used for primary storage, with caching layers for efficiency.
 - **WebSockets/TCP** will be used for real-time communication.
