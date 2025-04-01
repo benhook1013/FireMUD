@@ -28,6 +28,10 @@ This document outlines the **core functional and non-functional requirements** f
 - Each hosted game has **separate world data, player characters, and in-game configurations**.
 - Players have a **single platform-wide account**, which allows them to join multiple games while maintaining separate characters per game.
 - Game creators can **host multiple games** with independent settings.
+- **Game Instances**:
+  - Hosted games can support **persistent shared worlds** as well as **instanced game spaces**.
+  - Instances allow **separate game states** (e.g., private dungeons, event-based scenarios, or personalized player housing).
+  - Game creators can configure **instance rules, expiration, and persistence settings**.
 
 ### **2.2 Game Design & Customization**
 - Provides **game editing tools** for modifying world layouts, NPCs, items, and abilities.
@@ -48,7 +52,7 @@ This document outlines the **core functional and non-functional requirements** f
 
 ### **2.4 Game World & Entity Management**
 - Support for **multi-room game worlds** with region-based navigation.
-- Dynamic **instance management** for handling separate world instances.
+- Dynamic **instance management** for handling separate game states.
 - **World Persistence & Scheduled Events**:
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
   - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable.
@@ -64,6 +68,10 @@ This document outlines the **core functional and non-functional requirements** f
   - **Event-driven behaviors**: NPCs react to external triggers (e.g., players entering a room, time-based events).
   - **State-based behaviors**: NPCs maintain memory and react dynamically (e.g., remembering past interactions, adjusting routines).
   - The system should **support world simulation where NPCs and environments operate autonomously**, even without active player input.
+  - **AI & Scripting as a Key Selling Point**:
+    - The platform offers **advanced AI & scripting tools** for creating deep, dynamic game interactions.
+    - Games can define **unique AI behaviors, quest logic, and in-game events** without requiring custom code deployments.
+    - AI behaviors should be flexible enough to allow **autonomous world simulation**, making the game feel persistent and alive.
 
 ### **2.6 Real-Time Multiplayer & Communication**
 - **WebSockets/TCP-based real-time networking** for player interactions.
@@ -129,14 +137,5 @@ This document outlines the **core functional and non-functional requirements** f
 | **Security** | Enforce **OAuth2/JWT authentication, RBAC, and request validation**. |
 | **Extensibility** | Provide **modular game design tools** for content creators. |
 | **Compliance** | Ensure **GDPR-compliant data handling** for user accounts. |
-
----
-
-## **5. Assumptions & Constraints**
-- The platform will be developed using **Java (Spring Boot) for backend microservices**.
-- **PostgreSQL** will be used for primary storage, with caching layers for efficiency.
-- **WebSockets/TCP** will be used for real-time communication.
-- Deployment will be **containerized using Docker and Kubernetes**.
-- The platform will initially target **web-based and terminal-based MUD clients**.
 
 ---
