@@ -2,7 +2,7 @@
 
 ## **1. Introduction**
 ### **1.1 Purpose**
-The MUD Game Platform is a **multi-tenant system** that enables users to **create, host, and run multiple independent MUD games**. The platform provides a **scalable, modular, and extensible architecture** based on **microservices**, supporting **game world management, player interactions, scripting, automation, and real-time networking**.
+The MUD Game Platform is a **multi-tenant system** that enables users to **create, host, and run multiple independent MUD games**. The platform provides a **scalable, modular, and extensible architecture**, supporting **game world management, player interactions, scripting, automation, and real-time networking**.
 
 ### **1.2 Scope**
 This document outlines the **core functional and non-functional requirements** for the MUD Game Platform, focusing on:
@@ -11,6 +11,7 @@ This document outlines the **core functional and non-functional requirements** f
 - A **customizable game framework** allowing different rulesets.
 - **Real-time networking** and multiplayer interactions.
 - **Administration, moderation, and logging tools** for game operators.
+- **Scalability, persistence, and deployment considerations**.
 
 ### **1.3 Users & Stakeholders**
 - **Game Creators**: Users who create and manage MUD games.
@@ -23,20 +24,17 @@ This document outlines the **core functional and non-functional requirements** f
 ## **2. Key Features & Functional Requirements**
 
 ### **2.1 Multi-Tenancy & Game Hosting**
-- The platform must support **multiple hosted games**, each with its own settings and rules.
-- Each hosted game should have **isolated game worlds, player accounts, and configurations**.
-- Admin users should be able to **create, modify, and manage games** through a **game management interface**.
+- The platform allows **multiple hosted games**, each **isolated at the game level**.
+- Each hosted game has **separate world data, player characters, and in-game configurations**.
+- Players have a **single platform-wide account**, which allows them to join multiple games while maintaining separate characters per game.
+- Game creators can **host multiple games** with independent settings.
 
-### **2.2 Microservices Architecture**
-The platform is built using a **distributed microservices architecture** to ensure **scalability, modularity, and independent service updates**. Key microservices include:
-- **Game Management Service**: Manages game creation, moderation policies, and versioning.
-- **World Management Service**: Stores rooms, maps, pathfinding data, and instance states.
-- **Entity Management Service**: Handles player characters, NPCs, inventory, and stats.
-- **Game Logic Service**: Processes player actions, rule enforcement, and game mechanics.
-- **Automation & Scripting Service**: Provides scripting support for NPC behavior, quests, and automation.
-- **Social & Groups Service**: Manages chat, guilds, and in-game social features.
-- **Logging & Admin Service**: Tracks player actions, logs analytics, and provides moderation tools.
-- **Networking & Gateway Service**: Provides **WebSocket, TCP, and API gateway** support.
+### **2.2 Game Design & Customization**
+- Provides **game editing tools** for modifying world layouts, NPCs, items, and abilities.
+- Allows **game creators to configure rulesets and mechanics** without requiring code changes.
+- Supports **game balancing, including experience curves, combat formulas, and economy adjustments**.
+- Enables **scripted event design for quests, encounters, and world events**.
+- Customization should be **data-driven**, allowing hosted games to define their own content.
 
 ### **2.3 User & Account Management**
 - The platform must provide **secure authentication and user management**.
@@ -70,35 +68,62 @@ The platform is built using a **distributed microservices architecture** to ensu
 - **In-game reporting & ban system** for handling violations.
 - **Analytics & logging** for tracking player activity and game performance.
 
-### **2.9 Infrastructure & Scalability**
-- The platform should be **horizontally scalable** to support multiple games and concurrent players.
-- **Containerized deployment using Docker/Kubernetes**.
-- **CI/CD pipeline** for automated testing, updates, and deployments.
+---
 
-### **2.10 Security & Compliance**
-- Implement **secure authentication (OAuth2, JWT)**.
-- Protect API endpoints with **rate-limiting and request validation**.
-- Enforce **data isolation** between hosted games.
+## **3. Infrastructure & Scalability Considerations**
+
+### **3.1 Networking & API Gateway**
+- **WebSocket/TCP-based real-time networking** for low-latency gameplay.
+- Multi-server support to enable **scaling hosted games separately**.
+- **API Gateway** for managing requests between microservices and handling external integrations.
+
+### **3.2 Persistence & Caching**
+- **PostgreSQL** is used as the primary database for game world, entity, and account storage.
+- **Redis-based caching** will be implemented for performance improvements, including:
+  - Caching frequently accessed player & world data.
+  - Storing temporary state to reduce database queries.
+- Hosted games will have **logically separated databases or schemas** to ensure isolation.
+
+### **3.3 Deployment Model**
+- The platform is designed for **cloud-native deployment**, using:
+  - **Docker & Kubernetes** for containerization and scaling.
+  - **Automated CI/CD pipelines** for service updates and maintenance.
+- Supports **multi-region deployments** to provide better latency for global users.
+- Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
 
 ---
 
-## **3. Non-Functional Requirements**
+## **4. Non-Functional Requirements**
 | Category | Requirement |
 |----------|------------|
 | **Performance** | Must support **hundreds to thousands of concurrent players** per game instance. |
-| **Scalability** | Horizontal scaling for **game instances, networking, and game logic**. |
+| **Scalability** | Must support **horizontal scaling of services independently**. |
 | **Reliability** | **Automated failover and redundancy** for high availability. |
-| **Security** | Must enforce **OAuth2/JWT authentication, RBAC, and data isolation**. |
-| **Extensibility** | Provide **scripting & modding support** for game creators. |
+| **Security** | Enforce **OAuth2/JWT authentication, RBAC, and request validation**. |
+| **Extensibility** | Provide **modular game design tools** for content creators. |
 | **Compliance** | Ensure **GDPR-compliant data handling** for user accounts. |
 
 ---
 
-## **4. Assumptions & Constraints**
+## **5. Assumptions & Constraints**
 - The platform will be developed using **Java (Spring Boot) for backend microservices**.
-- **PostgreSQL** will be used for primary storage, with caching layers as needed.
+- **PostgreSQL** will be used for primary storage, with caching layers for efficiency.
 - **WebSockets/TCP** will be used for real-time communication.
 - Deployment will be **containerized using Docker and Kubernetes**.
 - The platform will initially target **web-based and terminal-based MUD clients**.
+
+---
+
+## **6. Open Questions**
+- Should game creators be able to **monetize their games** (e.g., premium features, in-game purchases)?
+- Will NPC behaviors be **rule-based or require external AI/machine learning integration**?
+- How much **UI tooling** should be provided for **game creators vs. requiring external integrations**?
+
+---
+
+## **7. Conclusion**
+The **MUD Game Platform** is designed to provide a **robust, scalable, and extensible infrastructure** for running multiple MUD games. By leveraging **multi-tenancy, real-time networking, and game customization tools**, the platform ensures **high availability, flexibility for game creators, and a seamless multiplayer experience**.
+
+This PRD serves as the **foundation for design, development, and iteration** as we move toward implementation.
 
 ---
