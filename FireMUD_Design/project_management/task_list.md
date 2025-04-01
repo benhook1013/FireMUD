@@ -146,7 +146,20 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 7: Testing & Pre-Launch Preparations**
+## **🛠️ Phase 7: Monetization & Payment System**
+- [ ] **Develop Monetization & Payment System**
+  - [ ] Integrate Stripe or similar for in-game purchases
+  - [ ] Support subscriptions, one-time purchases, and donations
+  - [ ] Enforce platform fee on transactions
+  - [ ] Implement refund & chargeback handling
+  - [ ] Implement virtual currency system (game-specific currencies)
+  - [ ] Implement premium hosting tiers & features for game creators
+  - [ ] Implement platform-controlled ad system (for free-to-play games)
+  - [ ] Implement revenue-sharing system for game creators
+
+---
+
+## **🛠️ Phase 8: Testing & Pre-Launch Preparations**
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
   - [ ] Implement integration tests for multi-service interactions
