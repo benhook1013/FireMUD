@@ -24,9 +24,9 @@ This document outlines the **core functional and non-functional requirements** f
 ## **2. Key Features & Functional Requirements**
 
 ### **2.1 Multi-Tenancy & Game Hosting**
-- The platform allows **multiple hosted games**, each **isolated at the game level**.
-- Each hosted game has **separate world data, player characters, and in-game configurations**.
-- Players have a **single platform-wide account**, allowing them to join multiple games while maintaining separate characters per game.
+- The platform supports **multiple hosted games**, each **isolated at the game level**.
+- Each hosted game has **separate world data, player characters, and configurations**.
+- Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
 - Game creators can **host multiple games** with independent settings.
 
 ### **2.2 Game Design & Customization**
@@ -34,10 +34,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Allows **game creators to configure rulesets and mechanics** without requiring code changes.
 - Supports **game balancing, including experience curves, combat formulas, and economy adjustments**.
 - Enables **scripted event design for quests, encounters, and world events**.
-- **Procedural World Generation**:
-  - Supports **algorithm-driven world creation**, such as procedural room generation.
-  - Allows **customized generation rules** per hosted game (e.g., terrain types, NPC density).
-  - Game creators should be able to **blend procedural content with hand-crafted design**.
+- **Procedural generation** supports **algorithm-driven world creation** (e.g., procedural room layouts) while allowing **manual overrides**.
 
 ### **2.3 User & Account Management**
 - The platform must provide **secure authentication and user management**.
@@ -64,10 +61,9 @@ This document outlines the **core functional and non-functional requirements** f
 - The platform must support **custom game logic per hosted game**.
 - **Action processing** for combat, trading, crafting, and roleplay actions.
 - **NPC AI Behaviors**:
-  - NPCs will be **both event-driven and state-driven** to create a **simulation-like experience**.
-  - **Event-driven behaviors**: NPCs react to external triggers (e.g., players entering a room, time-based events).
-  - **State-based behaviors**: NPCs maintain memory and react dynamically (e.g., remembering past interactions, adjusting routines).
-  - The system should **support world simulation where NPCs and environments operate autonomously**, even without active player input.
+  - NPCs react dynamically to the world using **event-driven** (trigger-based) and **state-driven** (persistent memory) behaviors.
+  - NPCs maintain **awareness of past interactions**, allowing dynamic responses.
+  - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online.
 
 ### **2.6 Real-Time Multiplayer & Communication**
 - **WebSockets/TCP-based real-time networking** for player interactions.
@@ -87,14 +83,11 @@ This document outlines the **core functional and non-functional requirements** f
 - **In-game reporting & ban system** for handling violations.
 - **Analytics & logging** for tracking player activity and game performance.
 - **Monetization & Payment System**:
-  - The platform will use **an integrated payment system (e.g., Stripe) for handling transactions**.
-  - Game creators can **monetize their games** using platform-supported methods:
-    - **Subscriptions** (recurring access to premium content).
-    - **One-time purchases** (e.g., unlocking features).
-    - **Donations** (voluntary payments from players).
-  - The platform will **take a percentage of all in-game transactions**.
-  - **External payment methods will not be allowed**, ensuring compliance and standardization.
-  - Certain **high-resource features (e.g., AI, scripting) may be paywalled or included in premium hosting tiers**.
+  - The platform integrates **Stripe or similar services** for in-game purchases.
+  - Game creators can offer **subscriptions, one-time purchases, and donations**.
+  - A **platform fee** applies to all transactions.
+  - **External payment methods are not allowed** to ensure security and compliance.
+  - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
 
 ---
 
@@ -106,11 +99,11 @@ This document outlines the **core functional and non-functional requirements** f
 - **API Gateway** for managing requests between microservices and handling external integrations.
 
 ### **3.2 Persistence & Caching**
-- **PostgreSQL** is used as the primary database for game world, entity, and account storage.
-- **Redis-based caching** will be implemented for performance improvements, including:
-  - Caching frequently accessed player & world data.
-  - Storing temporary state to reduce database queries.
-- Hosted games will have **logically separated databases or schemas** to ensure isolation.
+- **PostgreSQL** is the primary database for game world, entity, and account storage.
+- **Redis caching** improves performance by storing:
+  - Frequently accessed **player profiles and inventory**.
+  - **World state snapshots** to reduce database queries.
+  - **Session data** for quick reconnections.
 
 ### **3.3 Deployment Model**
 - The platform is designed for **cloud-native deployment**, using:
