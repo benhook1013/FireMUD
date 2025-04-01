@@ -4,7 +4,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 1: Foundation & Core Infrastructure**
+## **🛠️ Phase 1: Core Infrastructure & Setup**
 - [ ] **Set up Git repository and development workflow**
 - [ ] **Define high-level architecture & microservices boundaries**
 - [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
@@ -29,7 +29,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement game creation and configuration
   - [ ] Implement multi-tenancy support for multiple hosted games
   - [ ] Implement permissions system for game creators and moderators
-  - [ ] Implement **game moderation policies** (banning, game rules enforcement, admin controls)
+  - [ ] Implement game templates for hosted game creation
 
 ---
 
@@ -47,7 +47,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [ ] **Implement Persistence Strategy**
   - [ ] Use PostgreSQL for primary storage
-  - [ ] Use Redis caching for frequently accessed player & world data
+  - [ ] Use Redis for session caching, game state, and temporary data lookups
 
 ---
 
@@ -73,10 +73,6 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop Crafting & Item System**
   - [ ] Support item creation and crafting mechanics
 
-- [ ] **Develop Game Templates & Preconfigured Settings**
-  - [ ] Implement templates for common game modes (e.g., PvE RPG, PvP arena)
-  - [ ] Allow game creators to modify pre-set rules easily
-
 ---
 
 ## **🛠️ Phase 5: Networking & Multiplayer**
@@ -97,7 +93,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ## **🛠️ Phase 6: Moderation, Administration & Monetization**
 - [ ] **Develop Logging & Moderation Tools**
-  - [ ] Track player actions and log analytics
+  - [ ] Start logging errors & admin tracking during earlier phases
   - [ ] Provide in-game reporting and ban system
 
 - [ ] **Develop Monetization & Payment System**
