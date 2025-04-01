@@ -4,13 +4,13 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 1: Core Infrastructure & Setup**
+## **🛠️ Phase 1: Core Infrastructure & Basic Services**
 - [ ] **Set up Git repository and development workflow**
+- [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment**
+- [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
 - [ ] **Define high-level architecture & microservices boundaries**
 - [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
-- [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
-- [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
 - [ ] **Set up centralized logging & monitoring (ELK Stack, Grafana, Prometheus, Loki)**
 - [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
