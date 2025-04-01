@@ -1,20 +1,37 @@
-# Core Requirements for MUD Game Platform
+# **Product Requirements Document (PRD): MUD Game Platform**
 
-## 1️⃣ Overview
-The MUD Game Platform is a **multi-tenant system** designed to allow users to **create, host, and run multiple independent MUD games**. The platform provides a **microservices-based** architecture to handle **game world management, player interactions, scripting, automation, and real-time networking**.
+## **1. Introduction**
+### **1.1 Purpose**
+The MUD Game Platform is a **multi-tenant system** that enables users to **create, host, and run multiple independent MUD games**. The platform provides a **scalable, modular, and extensible architecture** based on **microservices**, supporting **game world management, player interactions, scripting, automation, and real-time networking**.
 
-## 2️⃣ Key Features & Requirements
+### **1.2 Scope**
+This document outlines the **core functional and non-functional requirements** for the MUD Game Platform, focusing on:
+- Multi-tenancy support for **multiple hosted games**.
+- A **microservices architecture** for modularity and scalability.
+- A **customizable game framework** allowing different rulesets.
+- **Real-time networking** and multiplayer interactions.
+- **Administration, moderation, and logging tools** for game operators.
+
+### **1.3 Users & Stakeholders**
+- **Game Creators**: Users who create and manage MUD games.
+- **Players**: End users who join and play games on the platform.
+- **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
+- **Developers**: Those extending and integrating with the platform via APIs and scripting.
+
+---
+
+## **2. Key Features & Functional Requirements**
 
 ### **2.1 Multi-Tenancy & Game Hosting**
-- The platform must support **multiple hosted games**, each with its own game rules, settings, and world data.
+- The platform must support **multiple hosted games**, each with its own settings and rules.
 - Each hosted game should have **isolated game worlds, player accounts, and configurations**.
-- Admin users should be able to **create, modify, and manage games** through a game management interface.
+- Admin users should be able to **create, modify, and manage games** through a **game management interface**.
 
 ### **2.2 Microservices Architecture**
 The platform is built using a **distributed microservices architecture** to ensure **scalability, modularity, and independent service updates**. Key microservices include:
-- **Game Management Service**: Handles game creation, moderation policies, and versioning.
+- **Game Management Service**: Manages game creation, moderation policies, and versioning.
 - **World Management Service**: Stores rooms, maps, pathfinding data, and instance states.
-- **Entity Management Service**: Manages player characters, NPCs, inventory, and stats.
+- **Entity Management Service**: Handles player characters, NPCs, inventory, and stats.
 - **Game Logic Service**: Processes player actions, rule enforcement, and game mechanics.
 - **Automation & Scripting Service**: Provides scripting support for NPC behavior, quests, and automation.
 - **Social & Groups Service**: Manages chat, guilds, and in-game social features.
@@ -22,9 +39,9 @@ The platform is built using a **distributed microservices architecture** to ensu
 - **Networking & Gateway Service**: Provides **WebSocket, TCP, and API gateway** support.
 
 ### **2.3 User & Account Management**
-- The platform must provide **user authentication and account management**.
+- The platform must provide **secure authentication and user management**.
 - Role-based access control (RBAC) for **admins, moderators, and players**.
-- Users should be able to create and manage **multiple characters per game**.
+- Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
 
 ### **2.4 Game World & Entity Management**
@@ -34,7 +51,7 @@ The platform is built using a **distributed microservices architecture** to ensu
 - Persistent storage for **player, NPC, and item data**.
 
 ### **2.5 Command Parsing & Game Logic**
-- Players interact with the game via **text-based command parsing** (e.g., "move north", "attack goblin").
+- Players interact with the game via **text-based command parsing** (e.g., `"move north"`, `"attack goblin"`).
 - The platform must support **custom game logic per hosted game**.
 - **Action processing** for combat, trading, crafting, and roleplay actions.
 
@@ -63,5 +80,25 @@ The platform is built using a **distributed microservices architecture** to ensu
 - Protect API endpoints with **rate-limiting and request validation**.
 - Enforce **data isolation** between hosted games.
 
-## 3️⃣ Conclusion
-The MUD Game Platform is designed to provide **a robust, scalable, and extensible** infrastructure for running multiple MUD games. By leveraging **microservices, multi-tenancy, and real-time networking**, the platform ensures **high availability, flexibility for game creators, and a seamless multiplayer experience**.
+---
+
+## **3. Non-Functional Requirements**
+| Category | Requirement |
+|----------|------------|
+| **Performance** | Must support **hundreds to thousands of concurrent players** per game instance. |
+| **Scalability** | Horizontal scaling for **game instances, networking, and game logic**. |
+| **Reliability** | **Automated failover and redundancy** for high availability. |
+| **Security** | Must enforce **OAuth2/JWT authentication, RBAC, and data isolation**. |
+| **Extensibility** | Provide **scripting & modding support** for game creators. |
+| **Compliance** | Ensure **GDPR-compliant data handling** for user accounts. |
+
+---
+
+## **4. Assumptions & Constraints**
+- The platform will be developed using **Java (Spring Boot) for backend microservices**.
+- **PostgreSQL** will be used for primary storage, with caching layers as needed.
+- **WebSockets/TCP** will be used for real-time communication.
+- Deployment will be **containerized using Docker and Kubernetes**.
+- The platform will initially target **web-based and terminal-based MUD clients**.
+
+---
