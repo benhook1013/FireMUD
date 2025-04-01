@@ -11,7 +11,6 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
 - [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment**
-- [ ] **Implement API Gateway & service discovery (Spring Cloud Gateway, Kong, or Nginx)**
 - [ ] **Set up centralized logging & monitoring (ELK Stack, Grafana, Prometheus, Loki)**
 - [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 
@@ -30,10 +29,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement multi-tenancy support for multiple hosted games
   - [ ] Implement permissions system for game creators and moderators
   - [ ] Implement **game moderation policies** (banning, game rules enforcement, admin controls)
-
-- [ ] **Develop Networking & Gateway Service**
-  - [ ] Implement WebSocket and TCP networking
-  - [ ] Handle API routing and request validation
 
 ---
 
@@ -55,7 +50,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 4: Game Logic Expansion (Combat, Economy, AI)**
+## **🛠️ Phase 4: Game Logic & AI**
 - [ ] **Develop Game Logic Service**
   - [ ] Implement command parsing & validation
   - [ ] Implement action processing (movement, interactions, combat)
@@ -83,7 +78,11 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 5: Multiplayer & Social Features**
+## **🛠️ Phase 5: Networking & Multiplayer**
+- [ ] **Develop Networking & Gateway Service**
+  - [ ] Implement WebSocket and TCP networking
+  - [ ] Handle API routing and request validation
+
 - [ ] **Develop Chat & Messaging System**
   - [ ] Support private messages, global chat, and guild channels
 
