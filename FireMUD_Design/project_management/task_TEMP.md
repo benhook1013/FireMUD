@@ -4,26 +4,23 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 1. Project Setup & Infrastructure**
+## **🛠️ Phase 1: Foundation & Core Infrastructure**
 - [ ] **Set up Git repository and development workflow**
 - [ ] **Define high-level architecture & microservices boundaries**
 - [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
-- [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
-- [ ] **Set up Docker and Kubernetes for containerized deployment**
 - [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment**
+- [ ] **Set up Docker and Kubernetes for containerized deployment**
 - [ ] **Implement API Gateway & service discovery (Spring Cloud Gateway, Kong, or Nginx)**
 - [ ] **Set up centralized logging & monitoring (ELK Stack, Grafana, Prometheus, Loki)**
 - [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 
 ---
 
-## **🛠️ 2. Core Services & Authentication**
+## **🛠️ Phase 2: User & Game Management**
 - [ ] **Develop Account Service**
   - [ ] Implement user registration and authentication (OAuth2, JWT)
   - [ ] Implement session management and persistent logins
   - [ ] Implement role-based access control (RBAC) for admins, moderators, and players
-  - [ ] Enable external account linking (Google, Discord, Steam)
-  - [ ] Implement profile system with achievements, game history, and social features
 
 - [ ] **Develop Game Management Service**
   - [ ] Implement game creation and configuration
@@ -36,7 +33,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 3. Game World & Entity Persistence**
+## **🛠️ Phase 3: World Persistence & Entity Storage**
 - [ ] **Develop World Management Service**
   - [ ] Implement world map storage (rooms, regions)
   - [ ] Implement instance-based game spaces (e.g., dungeons, player housing)
@@ -54,23 +51,20 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 4. Game Logic & Command Processing**
+## **🛠️ Phase 4: Basic Game Interaction & Commands**
 - [ ] **Develop Game Logic Service**
   - [ ] Implement command parsing & validation
-  - [ ] Implement action processing (movement, interactions, combat)
-  - [ ] Implement roleplay actions & emotes
-  - [ ] Implement event-driven logic processing (triggers, world events)
-
-- [ ] **Develop AI & Automation Service**
-  - [ ] Implement state-driven & event-driven NPC behaviors
-  - [ ] Implement procedural world generation
-  - [ ] Implement scripted events for game mechanics and NPC interactions
+  - [ ] Implement movement system (room-to-room navigation)
+  - [ ] Implement basic player interactions (examine, pickup, drop)
+  - [ ] Implement simple NPC interactions (talk, examine)
+  - [ ] Implement basic world events (time-based updates)
 
 ---
 
-## **🛠️ 5. Multiplayer & Social Features**
+## **🛠️ Phase 5: Multiplayer & Communication**
 - [ ] **Develop Chat & Messaging System**
-  - [ ] Support private messages, global chat, and guild channels
+  - [ ] Implement basic in-game chat (global chat, room chat)
+  - [ ] Implement private messages & mail system
 
 - [ ] **Develop Guilds & Group System**
   - [ ] Allow players to form and manage guilds
@@ -80,7 +74,16 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 6. Economy, Crafting & Progression**
+## **🛠️ Phase 6: Game Logic Expansion (Combat, Economy, AI)**
+- [ ] **Enhance Game Logic Service**
+  - [ ] Implement basic combat system (turn-based attacks, HP, death states)
+  - [ ] Implement roleplay actions & emotes
+  - [ ] Implement action validation & event-driven logic processing
+
+- [ ] **Develop AI & Automation Service**
+  - [ ] Implement basic NPC behaviors (patrolling, responding to players)
+  - [ ] Implement simple scripted world events (scheduled resets, time-based triggers)
+
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions
   - [ ] Implement auction house and player-to-player trading
@@ -93,7 +96,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 7. Moderation, Administration & Monetization**
+## **🛠️ Phase 7: Moderation, Administration & Monetization**
 - [ ] **Develop Logging & Moderation Tools**
   - [ ] Track player actions and log analytics
   - [ ] Provide in-game reporting and ban system
@@ -105,7 +108,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 8. Testing & Pre-Launch Preparations**
+## **🛠️ Phase 8: Testing, Optimization & Deployment**
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
   - [ ] Implement integration tests for multi-service interactions
@@ -121,7 +124,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 9. Deployment & Post-Launch Iteration**
+## **🛠️ Phase 9: Post-Launch Scaling & UX Improvements**
 - [ ] **Monitor Logs & Fix Issues in Production**
   - [ ] Track errors, crashes, and performance issues
   - [ ] Implement hotfixes for immediate problems
@@ -141,7 +144,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ 10. Future Enhancements & Expansions**
+## **🛠️ Phase 10: Future Enhancements & Expansions**
 - [ ] **Implement Advanced Scripting Engine for Dynamic Quests and NPC Behavior**
 - [ ] **Add AI-based Procedural World Generation**
 - [ ] **Create a Game Admin Dashboard for Real-Time Player & World Monitoring**
