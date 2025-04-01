@@ -24,12 +24,20 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement role-based access control (RBAC) for admins, moderators, and players
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [ ] Implement profile system with achievements, game history, and social features
+  - [ ] Implement player data export & deletion (GDPR compliance)
 
 - [ ] **Develop Game Management Service**
   - [ ] Implement game creation and configuration
   - [ ] Implement multi-tenancy support for multiple hosted games
   - [ ] Implement permissions system for game creators and moderators
   - [ ] Implement game templates for hosted game creation
+
+- [ ] **Develop Email & Notification System**
+  - [ ] Implement email verification & password resets
+  - [ ] Implement in-game notification system for events & messages
+
+- [ ] **Develop Banning & Restriction System**
+  - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
 
 ---
 
@@ -38,12 +46,16 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement world map storage (rooms, regions)
   - [ ] Implement instance-based game spaces (e.g., dungeons, player housing)
   - [ ] Define instance rules, expiration, and persistence
+  - [ ] Implement world event scheduling system (seasonal events, resets)
+  - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
+  - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
 
 - [ ] **Develop Entity Management Service**
   - [ ] Implement player character storage
   - [ ] Implement NPC storage and data structures
   - [ ] Implement item and inventory management
   - [ ] Implement entity stats and progression tracking
+  - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
 
 - [ ] **Implement Persistence Strategy**
   - [ ] Use PostgreSQL for primary storage
@@ -57,15 +69,20 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement action processing (movement, interactions, combat)
   - [ ] Implement roleplay actions & emotes
   - [ ] Implement event-driven logic processing (triggers, world events)
+  - [ ] Implement action aliases system (custom command mappings)
 
 - [ ] **Develop AI & Automation Service**
   - [ ] Implement state-driven & event-driven NPC behaviors
   - [ ] Implement procedural world generation
   - [ ] Implement scripted events for game mechanics and NPC interactions
+  - [ ] Implement AI memory & dynamic NPC behaviors (NPCs remember past player interactions)
+  - [ ] Implement player vs. environment (PvE) mechanics (random encounters, environmental hazards)
+  - [ ] Implement faction & reputation system (players gain faction reputation over time)
 
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions
   - [ ] Implement auction house and player-to-player trading
+  - [ ] Implement dynamic resource spawning & distribution (controlled item & resource generation)
 
 - [ ] **Develop Leveling & Progression System**
   - [ ] Implement experience tracking and level progression
@@ -82,6 +99,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [ ] **Develop Chat & Messaging System**
   - [ ] Support private messages, global chat, and guild channels
+  - [ ] Implement player-to-player mail system (asynchronous in-game messaging)
 
 - [ ] **Develop Guilds & Group System**
   - [ ] Allow players to form and manage guilds
@@ -89,17 +107,26 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop Cross-Game Social Networking**
   - [ ] Enable players to add friends and communicate across games
 
+- [ ] **Develop Moderation Logging & Player Reporting**
+  - [ ] Allow players to report others for abuse/violations
+  - [ ] Store logs for admin moderation
+
+- [ ] **Implement Anti-Spam & Rate Limiting**
+  - [ ] Prevent chat flooding, command spamming, and abuse
+
+- [ ] **Implement Player-Owned Housing or Personal Areas**
+  - [ ] Allow players to "own" rooms or private spaces in games with permissions
+
 ---
 
-## **🛠️ Phase 6: Moderation, Administration & Monetization**
-- [ ] **Develop Logging & Moderation Tools**
-  - [ ] Start logging errors & admin tracking during earlier phases
-  - [ ] Provide in-game reporting and ban system
-
+## **🛠️ Phase 6: Monetization & Payment System**
 - [ ] **Develop Monetization & Payment System**
   - [ ] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
   - [ ] Enforce platform fee on transactions
+  - [ ] Implement refund & chargeback handling
+  - [ ] Implement virtual currency system (game-specific currencies)
+  - [ ] Implement premium hosting tiers & features for game creators
 
 ---
 
