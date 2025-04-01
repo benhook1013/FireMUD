@@ -5,15 +5,28 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 1: Core Infrastructure & Basic Services**
+- [ ] **Create a Common Package for Shared Microservice Code**
+  - [ ] Implement common request/response DTOs for inter-service communication
+  - [ ] Implement centralized logging utilities
+  - [ ] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
+  - [ ] Implement database connection utilities (PostgreSQL, Redis connectors)
+  - [ ] Implement common exception handling & error response structures
+  - [ ] Implement configuration management (centralized properties, environment handling)
+  - [ ] Publish common package to internal repository (Maven/Gradle)
+
 - [ ] **Set up Git repository and development workflow**
 - [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment**
+  - [ ] Ensure CI/CD includes the common package build process
 - [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
+  - [ ] Ensure API contracts include standard error handling and request validation
 - [ ] **Define high-level architecture & microservices boundaries**
 - [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
+  - [ ] Ensure common package includes service discovery utilities
 - [ ] **Set up centralized logging & monitoring (ELK Stack, Grafana, Prometheus, Loki)**
 - [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
+  - [ ] Ensure authentication utilities from common package integrate seamlessly
 
 ---
 
