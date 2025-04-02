@@ -61,10 +61,32 @@ This repository serves as the central hub for:
 
 ### Tech Stack
 
-- **Backend**: Java Spring Framework
-- **Frontend**: React
+#### Backend
+- **Framework**: Java Spring Framework
 - **Database**: PostgreSQL
-- **Networking**: WebSocket/TCP for real-time communication
+- **Caching**: Redis
+- **Networking**: WebSocket/TCP
+- **API Gateway**: Spring Cloud Gateway
+
+#### Frontend
+- **Framework**: React
+- **Styling**: Tailwind CSS or Material-UI
+
+#### Deployment & Infrastructure
+- **Containerization**: Docker
+- **Orchestration**: Kubernetes
+- **CI/CD**: GitHub Actions or Jenkins
+- **Monitoring**: Prometheus, Grafana, Loki
+- **Logging**: ELK Stack (Elasticsearch, Logstash, Kibana)
+
+#### Monetization
+- **Payment Gateway**: Stripe
+- **Subscription Management**: Custom integration
+
+#### Testing
+- **Unit Testing**: JUnit, Mockito
+- **Integration Testing**: Spring Test, Postman
+- **Load Testing**: JMeter or Gatling
 
 ### Design Goals
 
