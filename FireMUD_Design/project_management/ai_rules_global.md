@@ -1,61 +1,62 @@
 ## 1. General Code Rules
 
-- Always provide complete, functional code blocks unless explicitly asked otherwise
-- Avoid deprecated, obsolete, or unstable features
-- Do not guess unknown APIs or behaviors—explicitly call them out as uncertain
-- Restart the server after making changes. Kill related servers first
+- Provide complete, functional code blocks unless explicitly asked otherwise
+- Avoid deprecated or unstable features
+- Do not guess unknown APIs or behaviors—call them out as uncertain
+- Restart the server after making changes; kill related servers first
 - Reuse existing code and patterns before introducing new ones
-- Prefer simple solutions. Avoid duplication by checking for existing logic
-- Respect existing architecture. Don’t introduce new patterns or tech unless necessary, and clean up old code if you do
+- Prefer simple solutions and avoid duplication by checking for existing logic
+- Respect the existing architecture; don’t introduce new patterns or tech unless necessary, and clean up the old implementation if you do
 - Never mock or stub data in dev or prod—only in tests
 
 ## 2. Style and Formatting
 
-- Follow consistent and idiomatic formatting appropriate to the language (e.g., indentation, casing, etc.)
-- Prefer explicit over implicit behavior
-- Do not omit important boilerplate unless the user requests minimal examples
+- Follow consistent, idiomatic formatting for the language used
+- Prefer explicit behavior over implicit
+- Do not omit boilerplate unless minimal examples are requested
 - Keep code clean, modular, and organized
 - Refactor files that grow over 300 lines
 
 ## 3. Validation and Error Handling
 
 - Ensure valid syntax at all times
-- Include basic error handling where relevant (e.g., try/catch, null checks)
 - Warn if assumptions are made (e.g., if inputs are presumed valid)
+- Include basic error handling where appropriate (e.g., try/catch, null checks)
 - Write code with all environments in mind: dev, test, and prod
-- Log errors with enough context to aid debugging
+- Log errors with enough context for debugging
 
 ## 4. Comments and Explanation
 
-- Always include comments unless code-only output is requested
-- Comments should be verbose and educational, explaining both what the code does and why
-- Focus on clarity and maintainability to help:
+- Include comments unless code-only output is explicitly requested
+- Comments should be verbose and educational, explaining what the code does and why
+- Make the codebase easy to understand for:
   - Future contributors
   - Developers new to the project
-  - Yourself, when revisiting code later
+  - Yourself, when revisiting the code
+- Use a clear, friendly, and technically accurate style
 - Explain design choices and limitations where relevant
 
 ## 5. Performance and Security
 
-- Avoid obviously inefficient or unsafe practices (e.g., unbounded recursion, SQL injection)
-- Prefer safe defaults (e.g., escaping inputs, using prepared statements)
-- Define and follow security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)
+- Avoid inefficient or unsafe practices (e.g., unbounded recursion, SQL injection)
+- Prefer safe defaults such as prepared statements and escaped inputs
+- Follow security best practices (OAuth2, JWT, RBAC, input validation, rate limiting)
 
 ## 6. Refactoring and Review
 
-- When asked to review or refactor code:
-  - Identify bugs, anti-patterns, and potential improvements
+- When reviewing or refactoring code:
+  - Identify bugs, anti-patterns, or areas for improvement
   - Do not change functionality unless requested
-  - Don’t change code unrelated to the task
-  - Update or remove outdated comments when refactoring
+  - Avoid touching unrelated code
+  - Update or remove outdated comments
 
 ## 7. Multi-file Contexts
 
 - When working across multiple files:
   - Reference file names explicitly
-  - Keep inter-file dependencies clear and minimal unless otherwise stated
+  - Keep inter-file dependencies clear and minimal
 
 ## 8. Project Structure
 
-- When generating structure use standard directory layouts for the tech stack involved
-- Avoid writing scripts in files unless they're reused
+- Use standard directory layouts for the chosen tech stack
+- Avoid writing one-off scripts unless they will be reused
