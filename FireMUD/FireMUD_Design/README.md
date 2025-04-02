@@ -82,20 +82,26 @@ This repository serves as the central hub for:
 
 ### Microservices
 
-1. **Game Server Service**
-   - Handles game logic, command parsing, real-time interactions.
-2. **Entity Management Service**
-   - Manages all in-game entities, including players, NPCs, items, and inventory.
-3. **Player Management Service**
-   - Focuses on account creation, authentication, and authorization.
-4. **Game Editor Service**
-   - Backend for the integrated game editor used by creators.
-5. **Event and Logging Service**
-   - Tracks in-game events and logs system metrics.
-6. **Chat and Communication Service**
-   - Manages player communication and chat moderation.
-7. **Moderation and Administration Service**
-   - Tools for admins to enforce rules and monitor activity.
+1. **Game Management Service**
+   - Handles game creation, rules, templates, versioning, and moderation policies.
+2. **World Management Service**
+   - Manages world maps, regions, and procedural generation.
+3. **Account Service**
+   - Handles user accounts, authentication, and profiles.
+4. **Entity Management Service**
+   - Manages in-game entities, including NPCs, items, and inventory.
+5. **Game Logic Service**
+   - Implements core game mechanics and rules.
+6. **Automation & Scripting Service**
+   - Handles AI behaviors, scripted events, and dynamic interactions.
+7. **Social and Groups Service**
+   - Manages player groups, chat, and social features.
+8. **Logging & Admin Service**
+   - Provides centralized logging and administration tools.
+9. **Networking & Gateway Service**
+   - Handles real-time networking and API gateway functionality.
+10. **Game Design Service**
+   - Provides tools for game editing and customization.
 
 ### Service Interactions
 
