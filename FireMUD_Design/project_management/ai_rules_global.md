@@ -1,20 +1,20 @@
 ## 1. General Code Rules
 
-- Provide complete, functional code unless explicitly asked otherwise
+- Provide complete, functional code unless code-only is requested
 - Avoid deprecated or unstable features
-- Do not guess unknown APIs or behavior—mark as uncertain
-- Restart the server after changes; kill related servers first
-- Reuse existing code and patterns before writing new ones
-- Prefer simple solutions; avoid duplication by checking for similar logic
 - Respect existing architecture; avoid new patterns or tech unless necessary, and remove old code if replaced
+- Mark unknown APIs or behavior as uncertain; don’t guess
+- Restart servers after changes; kill related ones first
+- Reuse existing code and patterns before writing new logic
+- Prefer simple solutions; avoid duplication by checking for existing logic
 - Never mock or stub data in dev or prod—only in tests
 
 ## 2. Style and Formatting
 
-- Follow consistent, idiomatic formatting for the language
-- Prefer explicit behavior over implicit
-- Do not omit boilerplate unless minimal examples are requested
-- Keep code clean, modular, and organized
+- Follow consistent, idiomatic formatting for the language (indentation, casing, etc.)
+- Prefer explicit over implicit behavior
+- Include boilerplate unless minimal examples are requested
+- Keep code clean, modular, and well organized
 - Refactor files over 300 lines
 
 ## 3. Validation and Error Handling
@@ -28,16 +28,16 @@
 ## 4. Comments and Explanation
 
 - Include comments unless code-only is requested
-- Comments should explain what the code does and why
+- Explain both what the code does and why
 - Write for future contributors, new developers, and your future self
-- Keep style clear, friendly, and technically accurate
 - Explain design choices and limitations when relevant
+- Use clear, friendly, technically accurate style
 
 ## 5. Performance and Security
 
 - Avoid inefficient or unsafe practices (e.g., unbounded recursion, SQL injection)
 - Use safe defaults (e.g., prepared statements, escaped inputs)
-- Follow security best practices (OAuth2, JWT, RBAC, input validation, rate limiting)
+- Follow best practices for auth and security (OAuth2, JWT, RBAC, validation, rate limiting)
 
 ## 6. Refactoring and Review
 
@@ -51,7 +51,7 @@
 
 - When editing multiple files:
   - Reference filenames explicitly
-  - Keep inter-file dependencies minimal and clear
+  - Keep cross-file dependencies clear and minimal
 
 ## 8. Project Structure
 
