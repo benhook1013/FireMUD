@@ -1,6 +1,6 @@
 # FireMUD Game Platform - Documentation and Design
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Business Source License 1.1](https://img.shields.io/badge/License-Business_Source_License_1.1-blue.svg)](LICENSE)
 [![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)]()
 [![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)]()
 [![Frontend: React](https://img.shields.io/badge/Frontend-React-blue)]()
@@ -8,7 +8,7 @@
 
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
-*This project is licensed under the [MIT License](LICENSE). For common questions, please refer to our [FAQ](FAQ.md).*
+*This project is licensed under the [Business Source License 1.1](LICENSE). For common questions, please refer to our [FAQ](FAQ.md).*
 
 ---
 
@@ -36,13 +36,10 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 ## Purpose
 
-This repository serves as the central hub for:
-
-- Documenting the architecture, features, and design of the platform.
-- Providing detailed explanations of each microservice and its role.
-- Collaborating on design discussions, feature planning, and refinements.
-
-*Note: Code for the individual services and components will be maintained in separate repositories.*
+This repository serves as the **central mono-repo** for the FireMUD Game Platform, containing:
+- All microservices and shared utilities.
+- Documentation of the architecture, features, and design.
+- Collaborative design discussions, feature planning, and refinements.
 
 ---
 
