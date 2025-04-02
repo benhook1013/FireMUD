@@ -124,7 +124,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 ### Service Interactions
 
-Detailed diagrams and descriptions are available in the [Architecture Overview](./architecture/overview.md).
+For detailed architecture diagrams and explanations, refer to the [Architecture Overview](FireMUD_Design/architecture/architecture_overview.md).
 
 ---
 
@@ -134,8 +134,8 @@ We welcome feedback and contributions to improve the platform's design and funct
 
 ### For Designers and Contributors
 
-- **Review the [Architecture Overview](./architecture/overview.md)** to understand the platform's structure.
-- **Explore the [Service Design Documents](./architecture/microservices.md)** for in-depth information on each microservice.
+- **Review the [Architecture Overview](FireMUD_Design/architecture/architecture_overview.md)** to understand the platform's structure.
+- **Explore the [Service Design Documents](FireMUD_Design/architecture/microservices/index.md)** for in-depth information on each microservice.
 - **Documentation**: Help improve our documentation by:
   - Updating existing Markdown files for clarity and accuracy.
   - Adding examples, tutorials, or FAQs.
