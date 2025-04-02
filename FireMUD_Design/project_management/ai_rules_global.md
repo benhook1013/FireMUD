@@ -27,14 +27,13 @@
 
 ## 4. Comments and Explanation
 
-- Always include comments unless the user explicitly asks for code-only output
-- Comments should be verbose and educational, explaining not just what the code does, but why it’s done that way
-- Aim to make the codebase easy to understand for:
+- Always include comments unless code-only output is requested
+- Comments should be verbose and educational, explaining both what the code does and why
+- Focus on clarity and maintainability to help:
   - Future contributors
   - Developers new to the project
-  - Yourself, when returning to code later
-- Style should be clear, friendly, and technically accurate — prioritizing learning and maintainability
-- Explain design choices and limitations where applicable
+  - Yourself, when revisiting code later
+- Explain design choices and limitations where relevant
 
 ## 5. Performance and Security
 
