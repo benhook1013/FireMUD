@@ -23,10 +23,13 @@ This ruleset ensures all AI-generated content meets a high standard of correctne
 
 ## 4. Comments and Explanation
 
-- Only include comments if:
-  - The logic is non-obvious, **and**
-  - The user has not asked for code-only output.
-- Keep comments **brief and technical**, not descriptive or tutorial-style.
+- Always include comments unless the user explicitly asks for code-only output.
+- Comments should be **verbose and educational**, explaining not just what the code does, but why it’s done that way.
+- Aim to make the codebase easy to understand for:
+  - Future contributors
+  - Developers new to the project
+  - Yourself, when returning to code later
+- Style should be clear, friendly, and technically accurate — prioritizing learning and maintainability.
 
 ## 5. Assumptions and Clarifications
 
