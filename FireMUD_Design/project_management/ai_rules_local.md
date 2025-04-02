@@ -59,29 +59,42 @@ RestController:
 6. All class method logic must be implemented in a try..catch block(s).
 7. Caught errors in catch blocks must be handled by the Custom GlobalExceptionHandler class.
 
-ApiResponse Class (/ApiResponse.java):
+// ApiResponse.java
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class ApiResponse<T> {
-  private String result;    // SUCCESS or ERROR
-  private String message;   // success or error message
-  private T data;           // return object from service class, if successful
+  private String result;    // "success" or "error"
+  private String message;   // message string
+  private T data;           // optional return data
+
+  public static <T> ApiResponse<T> success(String message, T data) {
+    return new ApiResponse<>("success", message, data);
+  }
+
+  public static <T> ApiResponse<T> error(String message) {
+    return new ApiResponse<>("error", message, null);
+  }
 }
 
-GlobalExceptionHandler Class (/GlobalExceptionHandler.java)
+
+// GlobalExceptionHandler.java
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    public static ResponseEntity<ApiResponse<?>> errorResponseEntity(String message, HttpStatus status) {
-      ApiResponse<?> response = new ApiResponse<>("error", message, null)
-      return new ResponseEntity<>(response, status);
-    }
+  public static ResponseEntity<ApiResponse<?>> errorResponseEntity(String message, HttpStatus status) {
+    return new ResponseEntity<>(ApiResponse.error(message), status);
+  }
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiResponse<?>> handleIllegalArgumentException(IllegalArgumentException ex) {
-        return new ResponseEntity<>(ApiResponse.error(400, ex.getMessage()), HttpStatus.BAD_REQUEST);
-    }
+  @ExceptionHandler(IllegalArgumentException.class)
+  public ResponseEntity<ApiResponse<?>> handleIllegalArgumentException(IllegalArgumentException ex) {
+    return errorResponseEntity(ex.getMessage(), HttpStatus.BAD_REQUEST);
+  }
+
+  @ExceptionHandler(Exception.class)
+  public ResponseEntity<ApiResponse<?>> handleGenericException(Exception ex) {
+    return errorResponseEntity("Unexpected error occurred", HttpStatus.INTERNAL_SERVER_ERROR);
+  }
 }
