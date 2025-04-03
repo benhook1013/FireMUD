@@ -1,36 +1,42 @@
 # Game Management Service
 
 ## Overview
-[Brief description of the service's purpose, domain boundaries, and primary responsibilities.]
+The Game Management Service is responsible for managing the lifecycle of game instances, including creation, configuration, and termination. It ensures that games are properly initialized, maintained, and cleaned up after completion. This service acts as the central coordinator for game-related operations.
 
 ## Architecture / Design Notes
-[Describe the overall architecture, important design decisions, and rationale. Include diagrams if applicable.]
+- **Monolithic Core**: The service is designed as a monolithic core with modular components for scalability.
+- **Event-Driven**: Utilizes an event-driven architecture to handle game lifecycle events (e.g., game start, pause, end).
+- **State Management**: Maintains the state of each game instance using a distributed cache (Redis) for high availability.
 
 ## Key Features
-- [Feature 1: short name] — [Brief description]
-- [Feature 2]
-- [Feature 3]
+- **Game Creation** — Handles the instantiation of new game instances with customizable settings.
+- **Game Configuration** — Allows dynamic configuration of game parameters such as rules, player limits, and time limits.
+- **Game Termination** — Ensures clean termination of game instances, freeing up resources and logging results.
 
 ## API Endpoints
 | Method | Endpoint         | Description            | Auth Required |
 |--------|------------------|------------------------|---------------|
-| GET    | `/endpoint1`     | [What it does]         | Yes/No        |
-| POST   | `/endpoint2`     | [What it does]         | Yes/No        |
 
 ## Data Models / Entities
-[Outline key entities, data schemas, or DTOs used. You can keep it high-level or link to schema definitions.]
+- **Game**: Represents a game instance with fields like `id`, `status`, `players`, and `config`.
+- **GameConfig**: Stores configuration details such as `rules`, `playerLimit` etc.
 
 ## Dependencies
+> See [**Gateway and Orchestration Overview**](../env/gateway_and_orchestration.md) for details on shared infrastructure, including **Spring Cloud Gateway**, **Kubernetes**, and **Docker Compose**, as well as routing strategy and environment-specific runtime behavior.
+
+
 - Internal:
-  - [Microservice A] — [What it's used for]
+  - **Player Management Service** — For managing player participation in games.
+  - **World Management Service** — For accessing game world data and resources.
 - External:
-  - [Library or external service] — [Why it's needed]
+  - **Redis** — For distributed caching of game states.
 
 ## Future Enhancements
-- [Enhancement 1] — [Why it matters]
-- [Enhancement 2]
+- **Scalability Improvements** — Implement sharding to support a larger number of concurrent games.
+- **Analytics Integration** — Add real-time analytics for monitoring game performance and player behavior.
 
 ## Related Docs / Links
-- [Link to API docs]
-- [Link to database schema or ERD]
-- [Link to ADRs or design discussions]
+*Stubbed out for future additions. Example links to include:*
+- [API Documentation](#)
+- [Database Schema](#)
+- [Architecture Decision Records (ADRs)](#)
