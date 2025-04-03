@@ -4,6 +4,48 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
+## **📋 Phase 0: Project Planning**
+- [ ] **Define Vision & Scope of the Platform**
+  - [ ] Write a high-level product vision and key goals
+  - [ ] Define core features vs. stretch goals (must-have, nice-to-have)
+  - [ ] Identify primary user types: Game Creators, Players, Admins
+
+- [ ] **Create Initial Product Roadmap**
+  - [ ] Break down the roadmap into Phases (0-9)
+  - [ ] Define rough timelines and milestones for each phase
+
+- [ ] **Define Roles & Responsibilities**
+  - [ ] Assign ownership of microservices and core components
+  - [ ] Define code review and approval processes
+
+- [ ] **Set Up Project Management Tools**
+  - [ ] Choose and configure issue tracker (Jira, GitHub Projects, Linear, etc.)
+  - [ ] Define workflow for backlog grooming, sprint planning, and reviews
+
+- [ ] **Conduct Technical Risk Assessment**
+  - [ ] Identify architectural risks (e.g., scaling, real-time performance)
+  - [ ] Evaluate external dependencies (e.g., Redis, WebSocket scalability)
+
+- [ ] **Establish Naming Conventions & Folder Structure**
+  - [ ] Standardize service names, package structure, and code conventions
+  - [ ] Document folder and repo layout for multi-service organization
+
+- [ ] **Design MVP Slice for Early End-to-End Demo**
+  - [ ] Define a basic game loop to validate the core engine
+  - [ ] Choose services needed to support the MVP
+  - [ ] Design a minimal user flow for account creation and world interaction
+
+- [ ] **Define Success Metrics & KPIs**
+  - [ ] Determine how you’ll track early success (e.g., # of hosted games, daily players)
+  - [ ] Identify tools for tracking these metrics post-launch
+
+- [ ] **Draft Technical Architecture Diagrams**
+  - [ ] High-level service map
+  - [ ] Data flow diagrams between client/editor/server
+  - [ ] Deployment architecture (e.g., Kubernetes clusters, CI/CD flow)
+
+---
+
 ## **🛠️ Phase 1: Core Infrastructure & Basic Services**
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [ ] Implement common request/response DTOs for inter-service communication
