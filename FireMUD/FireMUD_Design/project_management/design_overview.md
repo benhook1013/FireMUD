@@ -1,8 +1,10 @@
-FireMUD 
-Design Overview
+# FireMUD Design Overview
 
+Version 0.04
 
-# Contents
+# Document Revision History
+
+# Table of Contents
 
 # Introduction
 
@@ -12,11 +14,15 @@ This Design Overview document will detail the overall design strategy and docume
 
 This document currently includes:
 
-Design investigation to discover documentation types
+- Design investigation to discover documentation types
 
-Discussion of benefits of different types of documentation
+- Discussion of benefits of different types of documentation
 
-Selection choices and reasoning for the various documentation types
+- Selection choices and reasoning for the various documentation types
+
+Content expected to be added in the future:
+
+None planned
 
 # Assumptions
 
@@ -110,7 +116,7 @@ This diagram shows the logical flow of operations in the software system, includ
 
 This documentation describes the design of the user interface, including the layout, navigation, and interaction of the system. It should provide a visual representation of the user interface and describe how it will be implemented.
 
-Wireframes
+#### Wireframes
 
 Wireframes are visual representations of the user interface of the system. They can be used to help the team understand the layout and flow of the user interface, and to get feedback from stakeholders on the design.
 
