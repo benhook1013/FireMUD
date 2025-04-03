@@ -97,6 +97,6 @@ FireMUD supports two protocols to serve both modern and traditional MUD clients:
 
 Rather than repeating infrastructure and environment setup in every service document, services should reference this overview:
 
-> See [**Gateway and Orchestration Overview**](../env/gateway_and_orchestration.md) for shared infrastructure, routing strategy, and runtime environment behavior.
+> See [**Gateway and Orchestration Overview**](../env/gateway_and_orchestration.md) for details on shared infrastructure, including **Spring Cloud Gateway**, **Kubernetes**, and **Docker Compose**, as well as routing strategy and environment-specific runtime behavior.
 
 Each service design file should only document **service-specific dependencies**, such as Redis, PostgreSQL, or Kafka.
