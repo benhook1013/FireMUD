@@ -10,7 +10,7 @@ You will always use **Spring Cloud Gateway** as the single entry point to your s
 
 - Built as a Spring Boot microservice
 - Handles routing, filtering, rate limiting, CORS, authentication, etc.
-- Provides WebSocket support for real-time communication
+- Provides **WebSocket support for real-time communication** with modern clients (e.g., browsers), but is **not used for traditional MUD clients**, which connect over raw TCP (Telnet)
 - Deployed alongside other services in both development and production environments
 
 Each microservice defines route entries within the Gateway's config using either static URIs (in dev) or Kubernetes DNS (in prod).
