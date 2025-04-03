@@ -1,4 +1,4 @@
-# Social and Groups Service
+# Social & Groups Service
 
 ## Overview
 [Brief description of the service's purpose, domain boundaries, and primary responsibilities.]
@@ -31,6 +31,7 @@
 - [Enhancement 2]
 
 ## Related Docs / Links
-- [Link to API docs]
-- [Link to database schema or ERD]
-- [Link to ADRs or design discussions]
+*Stubbed out for future additions. Example links to include:*
+- [API Documentation](#)
+- [Database Schema](#)
+- [Architecture Decision Records (ADRs)](#)

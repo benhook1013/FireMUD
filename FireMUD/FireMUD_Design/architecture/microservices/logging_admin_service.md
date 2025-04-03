@@ -31,6 +31,7 @@
 - [Enhancement 2]
 
 ## Related Docs / Links
-- [Link to API docs]
-- [Link to database schema or ERD]
-- [Link to ADRs or design discussions]
+*Stubbed out for future additions. Example links to include:*
+- [API Documentation](#)
+- [Database Schema](#)
+- [Architecture Decision Records (ADRs)](#)
