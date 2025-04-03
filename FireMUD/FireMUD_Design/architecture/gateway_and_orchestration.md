@@ -59,15 +59,37 @@ These profiles define the correct routing URIs, environment-specific settings, a
 
 ## 🧠 Summary Table of Environment Behavior
 
-| Feature                     | Dev (Docker Compose)         | Prod (Kubernetes)              |
-|----------------------------|------------------------------|-------------------------------|
-| Gateway-based routing      | ✅ Always                    | ✅ Always                     |
-| Discovery mechanism        | Docker DNS                  | K8s Service DNS              |
+| Feature                    | Dev (Docker Compose)          | Prod (Kubernetes)              |
+|----------------------------|-------------------------------|-------------------------------|
+| Gateway-based routing      | ✅ Always                     | ✅ Always                     |
+| Discovery mechanism        | Docker DNS                    | K8s Service DNS              |
 | Health checks              | `/actuator/health` via Docker | `/actuator/health` via probes |
 | Auto service restarts      | ❌ Manual unless scripted     | ✅ Handled by K8s             |
-| Load balancing             | Basic DNS                   | Handled by K8s Services       |
-| Build strategy             | Local Dockerfiles            | CI/CD or K8s-native images    |
-| Route configuration        | Static hostnames             | DNS-based service names       |
+| Load balancing             | Basic DNS                     | Handled by K8s Services       |
+| Build strategy             | Local Dockerfiles             | CI/CD or K8s-native images    |
+| Route configuration        | Static hostnames              | DNS-based service names       |
+
+---
+
+## 🔌 Protocol Support: WebSocket vs. Telnet (TCP)
+
+FireMUD supports two distinct client protocols, enabling both modern web clients and traditional MUD clients to interact with the platform:
+
+### 🔷 WebSocket (via Gateway)
+
+- Modern clients (e.g., browser-based UI) connect via **WebSocket**.
+- Spring Cloud Gateway supports **WebSocket proxying**, allowing real-time connections to route through it just like HTTP.
+- These connections are forwarded to backend services like `game-session-service`, which handle game logic over WebSocket.
+- This allows WebSocket connections to benefit from **centralized auth, logging, and routing** provided by Gateway.
+
+### 🔶 Telnet / Raw TCP
+
+- Legacy MUD clients (e.g., MUDlet, TinTin++) connect using **raw TCP (typically Telnet protocol)**.
+- These connections are accepted by a dedicated **TCP gateway service**, which acts as a translation layer.
+- The TCP service **establishes a WebSocket connection** to the internal backend (e.g., via Spring Cloud Gateway), allowing Telnet clients to be normalized into the same architecture as WebSocket clients.
+- This approach allows traditional clients to be supported **without duplicating backend logic**.
+
+> ✅ With this hybrid design, FireMUD supports both modern and legacy clients through a unified backend session service, maintaining clean separation of protocols while maximizing code reuse.
 
 ---
 
@@ -78,4 +100,3 @@ Rather than duplicating environment details in every service’s design file, re
 > See [**Gateway and Orchestration Overview**](../env/gateway_and_orchestration.md) for shared infrastructure, routing, and runtime behavior across environments.
 
 Each service should only document its **specific external dependencies** (e.g., Redis, a DB, Kafka, etc.), not shared environment details.
-
