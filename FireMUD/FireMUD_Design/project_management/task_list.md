@@ -20,6 +20,8 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [ ] **Miscellaneous**
   - [ ] Investigate transaction support for microservices
+  - [ ] Investigate where TCP/Telnet interface will sit, or new service required
+  - [ ] Create design updates for Spring Cloud Gateway service
 
 ---
 
