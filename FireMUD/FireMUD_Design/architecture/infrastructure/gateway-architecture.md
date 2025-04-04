@@ -6,14 +6,18 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 ## 🚪 Gateway Pattern
 
-**Spring Cloud Gateway** serves as the **single entry point** into the FireMUD system:
+**Spring Cloud Gateway** serves as the **single entry point** into the FireMUD system for all **external client traffic**:
 
 - Built as a Spring Boot microservice
-- Handles routing, filtering, CORS, authentication, rate limiting, retries, and monitoring
+- Handles **client** request routing, filtering, CORS, authentication, rate limiting, retries, and monitoring
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 
-Each backend microservice is registered as a route, either using:
+> **Important:**  
+> Spring Cloud Gateway is responsible for routing **only external client requests**.  
+> **Internal microservice-to-microservice communication does not pass through the Gateway**.  
+> Microservices use Kubernetes native service discovery and DNS for direct communication.
+
 - Static URIs in `application-dev.yml` (for Docker Compose)
 - Kubernetes DNS-based service names in `application-prod.yml` (for production)
 
@@ -47,7 +51,7 @@ spring:
 
 - Traditional MUD clients connect via **raw TCP** (Telnet protocol)
 - These are handled by a **dedicated TCP gateway service** (outside of Spring Cloud Gateway)
-- That service acts as a **bridge**, creating a WebSocket connection through the Gateway to normalize legacy TCP traffic
+- The TCP service acts as a **bridge**, creating a WebSocket connection through the Gateway to normalize legacy TCP traffic
 
 This pattern ensures all real-time gameplay is unified through WebSocket on the backend, regardless of client type.
 
@@ -55,7 +59,7 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 ## 🔐 Centralized Gateway Benefits
 
-Spring Cloud Gateway allows:
+Spring Cloud Gateway provides centralized management of client traffic, offering:
 - Centralized authentication (e.g., OAuth2, JWT)
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - Service isolation through route-based access control
@@ -66,8 +70,8 @@ Spring Cloud Gateway allows:
 ## 🔧 Dev vs. Prod Configuration
 
 | Environment | Route Target Format      | Discovery Mechanism        |
-|-------------|--------------------------|-----------------------------|
-| Dev         | `http://service:8080`    | Docker Compose DNS         |
+|-------------|---------------------------|-----------------------------|
+| Dev         | `http://service:8080`     | Docker Compose DNS          |
 | Prod        | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
 Spring profiles (`application-dev.yml`, `application-prod.yml`) are used to configure routing targets based on environment.
@@ -79,3 +83,5 @@ Spring profiles (`application-dev.yml`, `application-prod.yml`) are used to conf
 - [Infrastructure Overview](./infrastructure-overview.md)
 - [Deployment Environments](./deployment-environments.md)
 - [Protocol Bridging](./protocol-bridging.md)
+
+---
