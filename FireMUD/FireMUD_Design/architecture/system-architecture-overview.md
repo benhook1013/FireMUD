@@ -13,7 +13,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Distributed service responsibilities** (game logic, world data, player accounts, etc.)
 
 **Important:**  
-Traditional Telnet clients connect first to the **TCP Proxy Service**, which **forwards traffic to Spring Cloud Gateway** using WebSocket. This allows all security, authentication, logging, and monitoring to consistently pass through the Gateway layer, regardless of client type.
+Traditional Telnet clients connect first to the **TCP Proxy Service**, which **forwards traffic to Spring Cloud Gateway** using WebSocket.  
+This **ensures all client traffic is consistently secured, authenticated, monitored, and routed through the Gateway**.
 
 ---
 
@@ -23,7 +24,7 @@ Traditional Telnet clients connect first to the **TCP Proxy Service**, which **f
 |--------------------------------|----------------------------------------------------------------------|
 | **Web Clients**                | Browser-based modern clients connecting via WebSocket               |
 | **MUD Clients**                | Traditional Telnet clients connecting via TCP (Telnet protocol)     |
-| **TCP Proxy Service**          | Accepts Telnet TCP connections and forwards them as WebSocket to Spring Cloud Gateway |
+| **TCP Proxy Service**          | Accepts Telnet TCP connections, translates to WebSocket for Gateway |
 | **Spring Cloud Gateway**       | HTTP/WebSocket API routing, filtering, security, and monitoring     |
 | **Game Session Service**       | Manages active player sessions and gameplay over WebSocket          |
 | **Account Service**            | Handles player accounts, authentication, session data              |
@@ -45,7 +46,7 @@ Traditional Telnet clients connect first to the **TCP Proxy Service**, which **f
 | MUD Clients → TCP Proxy Service       | Raw TCP (Telnet)           |
 | TCP Proxy Service → Spring Cloud Gateway | WebSocket (wss)         |
 | Spring Cloud Gateway → Game Session Service | WebSocket (internal)  |
-| Game Session Service → Other Microservices | gRPC / REST (internal)   |
+| Game Session Service → Other Microservices | gRPC / HTTP (internal)   |
 
 ---
 
@@ -75,10 +76,14 @@ Account Service   Entity Management Service   World Management Service   Game Lo
     (Auth)              (Players/NPCs)              (Rooms/Maps)          (Gameplay Rules)
 ```
 
-**Explanation:**
-- **Web Clients** connect directly to **Spring Cloud Gateway**.
-- **MUD Clients** (Telnet) connect first to the **TCP Proxy Service**, which **then** forwards traffic into **Spring Cloud Gateway**.
-- All traffic, whether from web or TCP clients, passes through the **Gateway** before reaching gameplay services.
+---
+
+## 📝 Notes
+
+- **Web Clients** connect directly to **Spring Cloud Gateway** via WebSocket/HTTP.
+- **MUD Clients** (Telnet) connect first to the **TCP Proxy Service**, which forwards traffic to **Spring Cloud Gateway** via WebSocket.
+- All client traffic passes through **Spring Cloud Gateway** before reaching internal gameplay services.
+- **This design ensures centralized control and observability across all client types.**
 
 ---
 
@@ -101,3 +106,5 @@ Account Service   Entity Management Service   World Management Service   Game Lo
 - [Gateway Architecture](../infrastructure/gateway-architecture.md)
 - [Deployment Environments](../infrastructure/deployment-environments.md)
 - [Protocol Bridging](../infrastructure/protocol-bridging.md)
+
+---
