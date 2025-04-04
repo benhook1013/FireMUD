@@ -23,7 +23,7 @@ Traditional Telnet clients connect first to the **TCP Proxy Service**, which **f
 |--------------------------------|----------------------------------------------------------------------|
 | **Web Clients**                | Browser-based modern clients connecting via WebSocket               |
 | **MUD Clients**                | Traditional Telnet clients connecting via TCP (Telnet protocol)     |
-| **TCP Proxy Service**          | Accepts Telnet TCP connections, translates to WebSocket for Gateway |
+| **TCP Proxy Service**          | Accepts Telnet TCP connections and forwards them as WebSocket to Spring Cloud Gateway |
 | **Spring Cloud Gateway**       | HTTP/WebSocket API routing, filtering, security, and monitoring     |
 | **Game Session Service**       | Manages active player sessions and gameplay over WebSocket          |
 | **Account Service**            | Handles player accounts, authentication, session data              |
