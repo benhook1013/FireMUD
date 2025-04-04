@@ -9,7 +9,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Microservices-based** platform design
 - **Spring Cloud Gateway** as the API and WebSocket entry point for all clients
 - **TCP Proxy Service** for Telnet (TCP) support, acting as a bridge to the Gateway
-- **Unified backend session management** for all clients
+- **WebSocket sessions are terminated at the Gateway**; internal communication uses HTTP/gRPC
+- **Unified backend session management** with stateless services and externalized session storage
 - **Distributed service responsibilities** (game logic, world data, player accounts, etc.)
 
 **Important:**  
@@ -22,11 +23,11 @@ This **ensures all client traffic is consistently secured, authenticated, monito
 
 | Component                     | Purpose                                                              |
 |--------------------------------|----------------------------------------------------------------------|
-| **Web Clients**                | Browser-based modern clients connecting via WebSocket               |
+| **Web Clients**                | Browser-based modern clients connecting via WebSocket or HTTP       |
 | **MUD Clients**                | Traditional Telnet clients connecting via TCP (Telnet protocol)     |
 | **TCP Proxy Service**          | Accepts Telnet TCP connections, translates to WebSocket for Gateway |
-| **Spring Cloud Gateway**       | HTTP/WebSocket API routing, filtering, security, and monitoring     |
-| **Game Session Service**       | Manages active player sessions and gameplay over WebSocket          |
+| **Spring Cloud Gateway**       | Terminates WebSocket sessions; routes internal HTTP/gRPC calls      |
+| **Game Session Service**       | Stateless management of active player sessions and gameplay        |
 | **Account Service**            | Handles player accounts, authentication, session data              |
 | **Entity Management Service**  | Manages player characters, NPCs, items, and inventory               |
 | **World Management Service**   | Manages world data such as rooms, locations, and maps               |
@@ -45,8 +46,8 @@ This **ensures all client traffic is consistently secured, authenticated, monito
 | Web Clients → Spring Cloud Gateway    | WebSocket (wss) / HTTP (https) |
 | MUD Clients → TCP Proxy Service       | Raw TCP (Telnet)           |
 | TCP Proxy Service → Spring Cloud Gateway | WebSocket (wss)         |
-| Spring Cloud Gateway → Game Session Service | WebSocket (internal)  |
-| Game Session Service → Other Microservices | gRPC / HTTP (internal)   |
+| Spring Cloud Gateway → Game Session Service | HTTP/gRPC (internal)  |
+| Game Session Service → Other Microservices | gRPC (internal)         |
 
 ---
 
@@ -80,10 +81,11 @@ Account Service   Entity Management Service   World Management Service   Game Lo
 
 ## 📝 Notes
 
-- **Web Clients** connect directly to **Spring Cloud Gateway** via WebSocket/HTTP.
+- **Web Clients** connect to **Spring Cloud Gateway** via WebSocket/HTTP.
 - **MUD Clients** (Telnet) connect first to the **TCP Proxy Service**, which forwards traffic to **Spring Cloud Gateway** via WebSocket.
-- All client traffic passes through **Spring Cloud Gateway** before reaching internal gameplay services.
-- **This design ensures centralized control and observability across all client types.**
+- **Spring Cloud Gateway terminates WebSocket sessions** and forwards gameplay traffic internally using **HTTP/gRPC**.
+- **All backend services are stateless**; session state is stored externally (e.g., in Redis).
+- **This design ensures centralized control, observability, scalability, and failure recovery across all client types.**
 
 ---
 
