@@ -19,6 +19,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Deployment architecture (e.g., Kubernetes clusters, CI/CD flow)
 
 - [ ] **Miscellaneous**
+  - [ ] Write initial design for each microservice
   - [ ] Investigate transaction support for microservices
   - [ ] Investigate where TCP/Telnet interface will sit, or new service required
   - [ ] Create design updates for Spring Cloud Gateway service
