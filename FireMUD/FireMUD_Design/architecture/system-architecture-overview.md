@@ -8,9 +8,12 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 - **Microservices-based** platform design
 - **Spring Cloud Gateway** as the API and WebSocket entry point for all clients
-- **TCP Proxy Service** for Telnet (TCP) support, acting as a protocol bridge and client proxy
+- **TCP Proxy Service** for Telnet (TCP) support, acting as a bridge to the Gateway
 - **Unified backend session management** for all clients
 - **Distributed service responsibilities** (game logic, world data, player accounts, etc.)
+
+**Important:**  
+Traditional Telnet clients connect first to the **TCP Proxy Service**, which **forwards traffic to Spring Cloud Gateway** using WebSocket. This allows all security, authentication, logging, and monitoring to consistently pass through the Gateway layer, regardless of client type.
 
 ---
 
@@ -19,8 +22,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 | Component                     | Purpose                                                              |
 |--------------------------------|----------------------------------------------------------------------|
 | **Web Clients**                | Browser-based modern clients connecting via WebSocket               |
-| **MUD Clients**                | Traditional Telnet clients connecting via TCP                       |
-| **TCP Proxy Service**          | Accepts raw Telnet TCP connections, translates them to WebSocket    |
+| **MUD Clients**                | Traditional Telnet clients connecting via TCP (Telnet protocol)     |
+| **TCP Proxy Service**          | Accepts Telnet TCP connections, translates to WebSocket for Gateway |
 | **Spring Cloud Gateway**       | HTTP/WebSocket API routing, filtering, security, and monitoring     |
 | **Game Session Service**       | Manages active player sessions and gameplay over WebSocket          |
 | **Account Service**            | Handles player accounts, authentication, session data              |
@@ -46,43 +49,40 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ---
 
-## 📈 System Architecture Diagram (Updated)
+## 📈 System Architecture Diagram
 
 ```plaintext
-+-----------------+            WebSocket/HTTP             +------------------------+
-| Web Client (WS) | <------------------------------------> | Spring Cloud Gateway    |
-+-----------------+                                        +-----------+------------+
-                                                                      |
-                                                                      | WebSocket
-                                                                      v
-+-----------------+            TCP (Telnet)                +------------------------+
-| MUD Client (TCP) | <------------------------------------> | TCP Proxy Service       |
-+-----------------+                                        +-----------+------------+
-                                                                      |
-                                                                      | WebSocket
-                                                                      v
-                                                        +------------------------+
-                                                        | Spring Cloud Gateway    |
-                                                        +-----------+------------+
-                                                                      |
-                                                                      | WebSocket
-                                                                      v
-                                                        +----------------------------+
-                                                        | Game Session Service        |
-                                                        +-----------+----------------+
-                                                                    |
-  +------------------------------+----------------+----------------+----------------+
-  |                              |                |                                |
-  v                              v                v                                v
+                +-----------------+            WebSocket/HTTP             +------------------------+
+                | Web Client (WS)  | <------------------------------------> | Spring Cloud Gateway    |
+                +-----------------+                                        +-----------+------------+
+                                                                                |
+                                                                                | WebSocket
+                                                                                v
+                                                                        +----------------------------+
+                                                                        | Game Session Service        |
+                                                                        +-----------+----------------+
+                                                                                    |
+      +------------------------------+----------------+----------------+----------------+
+      |                              |                |                                |
+      v                              v                v                                v
 Account Service   Entity Management Service   World Management Service   Game Logic Service
     (Auth)                 (Players/NPCs)           (Rooms/Maps)               (Gameplay Rules)
+
+                +-----------------+            TCP (Telnet)                +------------------------+
+                | MUD Client (TCP) | <------------------------------------> | TCP Proxy Service       |
+                +-----------------+                                        +-----------+------------+
+                                                                                |
+                                                                                | WebSocket
+                                                                                v
+                                                                        +------------------------+
+                                                                        | Spring Cloud Gateway    |
+                                                                        +------------------------+
 ```
 
-✅ **Notice:**  
-- **TCP clients** now go → **TCP Proxy Service** → **Spring Cloud Gateway** → **Game Session Service**.
-- **Web clients** directly connect to **Spring Cloud Gateway**.
-
-Everything hits Spring Cloud Gateway before reaching internal services!
+**Explanation:**
+- **Web Clients** connect directly to **Spring Cloud Gateway**.
+- **MUD Clients** (Telnet) connect first to the **TCP Proxy Service**, which **then** forwards traffic into **Spring Cloud Gateway**.
+- All traffic, whether from web or TCP clients, passes through the **Gateway** before reaching gameplay services.
 
 ---
 
@@ -105,7 +105,3 @@ Everything hits Spring Cloud Gateway before reaching internal services!
 - [Gateway Architecture](../infrastructure/gateway-architecture.md)
 - [Deployment Environments](../infrastructure/deployment-environments.md)
 - [Protocol Bridging](../infrastructure/protocol-bridging.md)
-
----
-
-> ✅ This System Architecture Overview provides a conceptual map for understanding how clients interact with the FireMUD platform, how services are structured, and how data and communication flows are handled internally.
