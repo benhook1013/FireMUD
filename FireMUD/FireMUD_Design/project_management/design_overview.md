@@ -1,9 +1,5 @@
 # FireMUD Design Overview
 
-Version 0.04
-
-# Document Revision History
-
 # Table of Contents
 
 # Introduction
@@ -19,10 +15,6 @@ This document currently includes:
 - Discussion of benefits of different types of documentation
 
 - Selection choices and reasoning for the various documentation types
-
-Content expected to be added in the future:
-
-None planned
 
 # Assumptions
 
