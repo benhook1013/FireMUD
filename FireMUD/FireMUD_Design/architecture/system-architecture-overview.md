@@ -52,31 +52,27 @@ Traditional Telnet clients connect first to the **TCP Proxy Service**, which **f
 ## 📈 System Architecture Diagram
 
 ```plaintext
-                +-----------------+            WebSocket/HTTP             +------------------------+
-                | Web Client (WS)  | <------------------------------------> | Spring Cloud Gateway    |
-                +-----------------+                                        +-----------+------------+
-                                                                                |
-                                                                                | WebSocket
-                                                                                v
-                                                                        +----------------------------+
-                                                                        | Game Session Service        |
-                                                                        +-----------+----------------+
-                                                                                    |
-      +------------------------------+----------------+----------------+----------------+
-      |                              |                |                                |
-      v                              v                v                                v
++-----------------+            TCP (Telnet)               +-------------------+
+| MUD Client (TCP) | <----------------------------------> | TCP Proxy Service |
++-----------------+                                       +---------+---------+
+                                                                    |
+                                                                    | WebSocket
+                                                                    v
++-----------------+            WebSocket/HTTP            +----------------------+
+| Web Client (WS) | <----------------------------------> | Spring Cloud Gateway |
++-----------------+                                      +----------+-----------+
+                                                                    |
+                                                                    | WebSocket
+                                                                    v
+                                                     +----------------------------+
+                                                     | Game Session Service       |
+                                                     +--------------+-------------+
+                                                                    |
+       +---------------------+---------------------------+----------+-----------+
+       |                     |                           |                      |
+       v                     v                           v                      v
 Account Service   Entity Management Service   World Management Service   Game Logic Service
-    (Auth)                 (Players/NPCs)           (Rooms/Maps)               (Gameplay Rules)
-
-                +-----------------+            TCP (Telnet)                +------------------------+
-                | MUD Client (TCP) | <------------------------------------> | TCP Proxy Service       |
-                +-----------------+                                        +-----------+------------+
-                                                                                |
-                                                                                | WebSocket
-                                                                                v
-                                                                        +------------------------+
-                                                                        | Spring Cloud Gateway    |
-                                                                        +------------------------+
+    (Auth)              (Players/NPCs)              (Rooms/Maps)          (Gameplay Rules)
 ```
 
 **Explanation:**
