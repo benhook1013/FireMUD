@@ -134,7 +134,8 @@ We welcome feedback and contributions to improve the platform's design and funct
 
 ### For Designers and Contributors
 
-- **Review the [Architecture Overview](FireMUD_Design/architecture/architecture_overview.md)** to understand the platform's structure.
+- **Review the [System Architecture Overview](FireMUD_Design/architecture/system-architecture-overview.md)** to understand the platform's service layout, communication flows, and overall client-to-backend structure.
+- **Review the [Infrastructure Overview](FireMUD_Design/infrastructure/_index.md)** to understand the platform's shared systems, deployment environments, and networking architecture.
 - **Explore the [Service Design Documents](FireMUD_Design/architecture/microservices/index.md)** for in-depth information on each microservice.
 - **Documentation**: Help improve our documentation by:
   - Updating existing Markdown files for clarity and accuracy.
