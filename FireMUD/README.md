@@ -99,12 +99,12 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Design Goals
 
 1. **Modularity**: Independently scalable and maintainable services.
-2. **Flexibility**: Extensible features for diverse gameplay and customization.
-3. **Performance**: Optimized for real-time interactions and low latency.
-4. **User-Friendly Creation**: Intuitive tools for game creators.
-5. **Community Engagement**: Facilitate a vibrant community of players and creators.
-6. **Security**: Ensure data protection and secure interactions across services.
-7. **Accessibility**: Provide an inclusive gaming experience by ensuring the platform is accessible to all players, including those who are visually impaired or blind, through compatibility with screen readers and other assistive technologies.
+1. **Flexibility**: Extensible features for diverse gameplay and customization.
+1. **Performance**: Optimized for real-time interactions and low latency.
+1. **User-Friendly Creation**: Intuitive tools for game creators.
+1. **Community Engagement**: Facilitate a vibrant community of players and creators.
+1. **Security**: Ensure data protection and secure interactions across services.
+1. **Accessibility**: Provide an inclusive gaming experience by ensuring the platform is accessible to all players, including those who are visually impaired or blind, through compatibility with screen readers and other assistive technologies.
 
 ---
 
@@ -157,10 +157,10 @@ We welcome feedback and contributions to improve the platform's design and funct
 - **Code Repositories**: Individual services are maintained in separate repositories. Refer to their READMEs for setup instructions.
 - **Submit Pull Requests**: To contribute code:
   1. **Fork** the repository you wish to contribute to.
-  2. **Create a new branch** for your feature or bug fix: `git checkout -b feature/your-feature-name`.
-  3. **Commit your changes** with clear and descriptive messages.
-  4. **Push to your fork**: `git push origin feature/your-feature-name`.
-  5. **Open a pull request** against the `main` branch of the original repository.
+  1. **Create a new branch** for your feature or bug fix: `git checkout -b feature/your-feature-name`.
+  1. **Commit your changes** with clear and descriptive messages.
+  1. **Push to your fork**: `git push origin feature/your-feature-name`.
+  1. **Open a pull request** against the `main` branch of the original repository.
 - **Report Issues**: If you find a bug or have a feature request, please open an issue in the relevant repository with detailed information.
 - **Review Code**: Help us by reviewing open pull requests. Constructive feedback is invaluable.
 - **Security Vulnerabilities**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it directly via email to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net). We take security issues seriously and will respond promptly to address them.
