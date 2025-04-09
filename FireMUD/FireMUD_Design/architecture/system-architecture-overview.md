@@ -93,9 +93,14 @@ Account Service   Entity Management Service   World Management Service   Game Lo
 
 - **Web Clients** connect to **Spring Cloud Gateway** via WebSocket/HTTP.
 - **MUD Clients** (Telnet) connect first to the **TCP Proxy Service**, which forwards traffic to **Spring Cloud Gateway** via WebSocket.
-- **Spring Cloud Gateway terminates WebSocket sessions** and forwards gameplay traffic internally using **HTTP/gRPC**.
+- **Spring Cloud Gateway** forwards gameplay traffic to the **Game Session Service** over WebSocket (wss).
+- **All internal microservice-to-microservice communication uses gRPC** for efficiency.
+- **Kubernetes IPVS load balancing** dynamically distributes connections across pods, including long-lived WebSocket sessions.
+- **TCP Proxy and Gateway must implement reconnection logic** to handle dropped WebSocket connections transparently.
 - **All backend services are stateless**; session state is stored externally (e.g., in Redis).
-- **This design ensures centralized control, observability, scalability, and failure recovery across all client types.**
+- **Persistent data (e.g., player accounts, entities, world data) is stored in dedicated databases**.
+- **Volatile player session state is externalized to Redis** by the Game Session Service to support reconnections and high availability.
+- **This design ensures centralized control, observability, scalability, low-latency gameplay, and failure recovery across all client types.**
 
 ---
 
@@ -104,19 +109,19 @@ Account Service   Entity Management Service   World Management Service   Game Lo
 | Layer                   | Technology                         |
 |--------------------------|------------------------------------|
 | Client Layer             | Browser, Telnet MUD Clients        |
-| Proxy Layer              | TCP Proxy Service                 |
-| API Gateway Layer        | Spring Cloud Gateway              |
+| Proxy Layer              | TCP Proxy Service (LoadBalancer Service) |
+| API Gateway Layer        | Spring Cloud Gateway (LoadBalancer Service) |
 | Gameplay Session Layer   | Game Session Service              |
 | Service Layer            | Microservices (Account, Entity, World, etc.) |
-| Infrastructure Layer     | Kubernetes, Docker Compose        |
+| Infrastructure Layer     | Kubernetes with IPVS, Docker Compose (for local development) |
 
 ---
 
 ## 📚 Related Documentation
 
-- [Infrastructure Overview](../infrastructure/_index.md)
-- [Gateway Architecture](../infrastructure/gateway-architecture.md)
-- [Deployment Environments](../infrastructure/deployment-environments.md)
-- [Protocol Bridging](../infrastructure/protocol-bridging.md)
+- [Infrastructure Overview](../architecture/infrastructure/_index.md)
+- [Gateway Architecture](../architecture/infrastructure/gateway-architecture.md)
+- [Deployment Environments](../architecture/infrastructure/deployment-environments.md)
+- [Protocol Bridging](../architecture/infrastructure/protocol-bridging.md)
 
 ---
