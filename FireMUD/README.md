@@ -11,7 +11,6 @@
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
-
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
 *This project is licensed under the [Business Source License 1.1](LICENSE). For common questions, please refer to our [FAQ](FAQ.md).*
@@ -45,7 +44,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 This repository serves as the **central mono-repo** for the FireMUD Game Platform, containing:
 
 - All microservices and shared utilities.
-- Documentation of the architecture, features, and design.
+- Documentation of the requirements, features, architecture, and design.
 - Collaborative design discussions, feature planning, and refinements.
 
 ---
