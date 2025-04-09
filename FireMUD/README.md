@@ -1,10 +1,16 @@
 # FireMUD Game Platform - Documentation and Design
 
+[![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./FireMUD_Design/project_management/task_list.md)
 [![License: Business Source License 1.1](https://img.shields.io/badge/License-Business_Source_License_1.1-blue.svg)](LICENSE)
-[![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)]()
-[![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)]()
-[![Frontend: React](https://img.shields.io/badge/Frontend-React-blue)]()
-[![Database: PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue)]()
+
+[![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)](https://spring.io/)
+[![Frontend: React](https://img.shields.io/badge/Frontend-React-blue)](https://react.dev/)
+[![Database: PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue)](https://www.postgresql.org/)
+[![Database: Redis](https://img.shields.io/badge/Database-Redis-blue)](https://redis.io/)
+
+[![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
+[![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
+
 
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
@@ -37,6 +43,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 ## Purpose
 
 This repository serves as the **central mono-repo** for the FireMUD Game Platform, containing:
+
 - All microservices and shared utilities.
 - Documentation of the architecture, features, and design.
 - Collaborative design discussions, feature planning, and refinements.
@@ -59,6 +66,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Tech Stack
 
 #### Backend
+
 - **Framework**: Java Spring Framework
 - **Database**: PostgreSQL
 - **Caching**: Redis
@@ -66,10 +74,12 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **API Gateway**: Spring Cloud Gateway
 
 #### Frontend
+
 - **Framework**: React
 - **Styling**: Tailwind CSS or Material-UI
 
 #### Deployment & Infrastructure
+
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
 - **CI/CD**: GitHub Actions or Jenkins
@@ -77,10 +87,12 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Logging**: ELK Stack (Elasticsearch, Logstash, Kibana)
 
 #### Monetization
+
 - **Payment Gateway**: Stripe
 - **Subscription Management**: Custom integration
 
 #### Testing
+
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test, Postman
 - **Load Testing**: JMeter or Gatling
@@ -103,23 +115,23 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 1. **Game Management Service**
    - Handles game creation, rules, templates, versioning, and moderation policies.
-2. **World Management Service**
+1. **World Management Service**
    - Manages world maps, regions, and procedural generation.
-3. **Account Service**
+1. **Account Service**
    - Handles user accounts, authentication, and profiles.
-4. **Entity Management Service**
+1. **Entity Management Service**
    - Manages in-game entities, including NPCs, items, and inventory.
-5. **Game Logic Service**
+1. **Game Logic Service**
    - Implements core game mechanics and rules.
-6. **Automation & Scripting Service**
+1. **Automation & Scripting Service**
    - Handles AI behaviors, scripted events, and dynamic interactions.
-7. **Social and Groups Service**
+1. **Social and Groups Service**
    - Manages player groups, chat, and social features.
-8. **Logging & Admin Service**
+1. **Logging & Admin Service**
    - Provides centralized logging and administration tools.
-9. **Networking & Gateway Service**
+1. **Networking & Gateway Service**
    - Handles real-time networking and API gateway functionality.
-10. **Game Design Service**
+1. **Game Design Service**
    - Provides tools for game editing and customization.
 
 ### Service Interactions
