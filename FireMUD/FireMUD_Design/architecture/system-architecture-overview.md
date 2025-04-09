@@ -9,13 +9,19 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Microservices-based** platform design
 - **Spring Cloud Gateway** as the API and WebSocket entry point for all clients
 - **TCP Proxy Service** for Telnet (TCP) support, acting as a bridge to the Gateway
-- **WebSocket sessions are terminated at the Gateway**; internal communication uses HTTP/gRPC
+- **WebSocket is used end-to-end for client traffic** (TCP Proxy → Gateway → Game Session Service)
+- **Internal communication between microservices uses gRPC**
 - **Unified backend session management** with stateless services and externalized session storage
-- **Distributed service responsibilities** (game logic, world data, player accounts, etc.)
+- **Internal microservices communicate directly over Kubernetes DNS without using the Gateway**
+- **IPVS-based Kubernetes load balancing** for all service discovery and communication
+- **Resilient reconnection handling** for WebSocket links across TCP Proxy and Gateway
 
 **Important:**  
-Traditional Telnet clients connect first to the **TCP Proxy Service**, which **forwards traffic to Spring Cloud Gateway** using WebSocket.  
+Traditional Telnet clients connect first to the **TCP Proxy Service**, which **forwards traffic to Spring Cloud Gateway** using **WebSocket (wss)**.  
 This **ensures all client traffic is consistently secured, authenticated, monitored, and routed through the Gateway**.
+
+TCP Proxy includes **buffering** and **automatic reconnection logic** to handle unexpected disconnects from the Gateway.  
+Similarly, the Gateway maintains **WebSocket connections** to the Game Session Service and must handle reconnections if needed.
 
 ---
 
@@ -25,9 +31,9 @@ This **ensures all client traffic is consistently secured, authenticated, monito
 |--------------------------------|----------------------------------------------------------------------|
 | **Web Clients**                | Browser-based modern clients connecting via WebSocket or HTTP       |
 | **MUD Clients**                | Traditional Telnet clients connecting via TCP (Telnet protocol)     |
-| **TCP Proxy Service**          | Accepts Telnet TCP connections, translates to WebSocket for Gateway |
-| **Spring Cloud Gateway**       | Terminates WebSocket sessions; routes internal HTTP/gRPC calls      |
-| **Game Session Service**       | Stateless management of active player sessions and gameplay        |
+| **TCP Proxy Service**          | Accepts Telnet TCP connections, buffers, translates to WebSocket for Gateway |
+| **Spring Cloud Gateway**       | WebSocket termination, routing, security, and monitoring            |
+| **Game Session Service**       | Stateless management of active player sessions and gameplay over WebSocket |
 | **Account Service**            | Handles player accounts, authentication, session data              |
 | **Entity Management Service**  | Manages player characters, NPCs, items, and inventory               |
 | **World Management Service**   | Manages world data such as rooms, locations, and maps               |
@@ -46,31 +52,35 @@ This **ensures all client traffic is consistently secured, authenticated, monito
 | Web Clients → Spring Cloud Gateway    | WebSocket (wss) / HTTP (https) |
 | MUD Clients → TCP Proxy Service       | Raw TCP (Telnet)           |
 | TCP Proxy Service → Spring Cloud Gateway | WebSocket (wss)         |
-| Spring Cloud Gateway → Game Session Service | HTTP/gRPC (internal)  |
+| Spring Cloud Gateway → Game Session Service | WebSocket (wss)         |
 | Game Session Service → Other Microservices | gRPC (internal)         |
+
+✅ All internal API calls use **gRPC** for high performance, typed schemas, and low overhead.
 
 ---
 
 ## 📈 System Architecture Diagram
 
 ```plaintext
-+-----------------+            TCP (Telnet)               +-------------------+
-| MUD Client (TCP) | <----------------------------------> | TCP Proxy Service |
-+-----------------+                                       +---------+---------+
-                                                                    |
-                                                                    | WebSocket
-                                                                    v
-+-----------------+            WebSocket/HTTP            +----------------------+
-| Web Client (WS) | <----------------------------------> | Spring Cloud Gateway |
-+-----------------+                                      +----------+-----------+
-                                                                    |
-                                                                    | WebSocket
-                                                                    v
-                                                     +----------------------------+
-                                                     | Game Session Service       |
-                                                     +--------------+-------------+
-                                                                    |
-       +---------------------+---------------------------+----------+-----------+
+      +------------+      TCP (Telnet)         +-------------------+
+      | MUD Client | <-----------------------> | TCP Proxy Service |
+      +------------+                           +---------+---------+
+                                                         |
+                                                         | WebSocket (wss)
+                                                         |
+                                                         v
+      +------------+      WebSocket/HTTP     +----------------------+
+      | Web Client | <----------------------> | Spring Cloud Gateway |
+      +------------+                          +----------+-----------+
+                                                         |
+                                                         | WebSocket (wss)
+                                                         |
+                                                         v
+                                          +----------------------------+
+                                          | Game Session Service       |
+                                          +--------------+-------------+
+                                                         |
+       +---------------------+---------------------------+----------------------+
        |                     |                           |                      |
        v                     v                           v                      v
 Account Service   Entity Management Service   World Management Service   Game Logic Service
