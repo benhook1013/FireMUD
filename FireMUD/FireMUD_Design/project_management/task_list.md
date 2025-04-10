@@ -5,6 +5,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **📋 Phase 0: Project Planning**
+
 - [ ] **Define Vision & Scope of the Platform**
   - [ ] Write a high-level product vision and key goals
   - [ ] Create phased development plan
@@ -28,6 +29,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 1: Core Infrastructure & Basic Services**
+
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [ ] Implement common request/response DTOs for inter-service communication
   - [ ] Implement centralized logging utilities
@@ -54,6 +56,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 2: Account & Game Management**
+
 - [ ] **Develop Account Service**
   - [ ] Implement user registration and authentication (OAuth2, JWT)
   - [ ] Implement session management and persistent logins
@@ -74,6 +77,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 3: Game World & Entity Persistence**
+
 - [ ] **Develop World Management Service**
   - [ ] Implement world map storage (rooms, regions)
   - [ ] Implement instance-based game spaces (e.g., dungeons, player housing)
@@ -100,6 +104,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 4: Game Logic & AI**
+
 - [ ] **Develop Game Logic Service**
   - [ ] Implement command parsing & validation
   - [ ] Implement action processing (movement, interactions, combat)
@@ -135,6 +140,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 5: Game Design & Customization**
+
 - [ ] **Develop Game Design Service**
   - [ ] Implement world editing & customization tools
   - [ ] Implement scripting & event design tools
@@ -149,6 +155,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 6: Multiplayer & Social Features**
+
 - [ ] **Develop Networking & Gateway Service**
   - [ ] Implement WebSocket and TCP networking
   - [ ] Handle API routing and request validation
@@ -169,6 +176,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 7: Moderation & Restrictions**
+
 - [ ] **Develop Moderation Logging & Player Reporting**
   - [ ] Allow players to report others for abuse/violations
   - [ ] Store logs for admin moderation
@@ -185,6 +193,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 8: Monetization & Payment System**
+
 - [ ] **Develop Monetization & Payment System**
   - [ ] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
@@ -198,6 +207,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 9: Testing & Pre-Launch Preparations**
+
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
   - [ ] Implement integration tests for multi-service interactions
@@ -219,6 +229,7 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## **🛠️ Phase 8: Deployment & Post-Launch Iteration**
+
 - [ ] **Monitor Logs & Fix Issues in Production**
   - [ ] Track errors, crashes, and performance issues
   - [ ] Implement hotfixes for immediate problems

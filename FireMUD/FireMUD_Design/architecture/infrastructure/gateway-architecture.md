@@ -34,6 +34,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   - Consistent handling across all clients
 
 Example WebSocket route config:
+
 ```yaml
 spring:
   cloud:
@@ -60,6 +61,7 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 ## 🔐 Centralized Gateway Benefits
 
 Spring Cloud Gateway provides centralized management of client traffic, offering:
+
 - Centralized authentication (e.g., OAuth2, JWT)
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - Service isolation through route-based access control

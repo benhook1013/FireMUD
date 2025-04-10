@@ -1,11 +1,15 @@
 # **Product Requirements Document (PRD): MUD Game Platform**
 
 ## **1. Introduction**
+
 ### **1.1 Purpose**
+
 The MUD Game Platform is a **multi-tenant system** that enables users to **create, host, and run multiple independent MUD games**. The platform provides a **scalable, modular, and extensible architecture**, supporting **game world management, player interactions, scripting, automation, and real-time networking**.
 
 ### **1.2 Scope**
+
 This document outlines the **core functional and non-functional requirements** for the MUD Game Platform, focusing on:
+
 - Multi-tenancy support for **multiple hosted games**.
 - A **microservices architecture** for modularity and scalability.
 - A **customizable game framework** allowing different rulesets.
@@ -14,6 +18,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **Scalability, persistence, and deployment considerations**.
 
 ### **1.3 Users & Stakeholders**
+
 - **Game Creators**: Users who create and manage MUD games.
 - **Players**: End users who join and play games on the platform.
 - **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
@@ -24,12 +29,14 @@ This document outlines the **core functional and non-functional requirements** f
 ## **2. Key Features & Functional Requirements**
 
 ### **2.1 Multi-Tenancy & Game Hosting**
+
 - The platform supports **multiple hosted games**, each **isolated at the game level**.
 - Each hosted game has **separate world data, player characters, and configurations**.
 - Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
 - Game creators can **host multiple games** with independent settings.
 
 ### **2.2 Game Design & Customization**
+
 - Provides **game editing tools** for modifying world layouts, NPCs, items, and abilities.
 - Allows **game creators to configure rulesets and mechanics** without requiring code changes.
 - Supports **game balancing, including experience curves, combat formulas, and economy adjustments**.
@@ -37,6 +44,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **Procedural generation** supports **algorithm-driven world creation** (e.g., procedural room layouts) while allowing **manual overrides**.
 
 ### **2.3 User & Account Management**
+
 - The platform must provide **secure authentication and user management**.
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
@@ -47,6 +55,7 @@ This document outlines the **core functional and non-functional requirements** f
   - Persistent session tracking to **ensure seamless reconnection across devices**.
 
 ### **2.4 Game World & Entity Management**
+
 - Support for **multi-room game worlds** with region-based navigation.
 - **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing).
 - Game creators can configure **instance rules, expiration, and persistence settings**.
@@ -57,6 +66,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Persistent storage for **player, NPC, and item data**.
 
 ### **2.5 Game Logic & Automation**
+
 - Players interact with the game via **text-based command parsing** (e.g., `"move north"`, `"attack goblin"`).
 - The platform must support **custom game logic per hosted game**.
 - **Action processing** for combat, trading, crafting, and roleplay actions.
@@ -66,11 +76,13 @@ This document outlines the **core functional and non-functional requirements** f
   - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online.
 
 ### **2.6 Real-Time Multiplayer & Communication**
+
 - **WebSockets/TCP-based real-time networking** for player interactions.
 - In-game **chat system, mail messaging, and guild/group communications**.
 - **PvP & cooperative multiplayer support**.
 
 ### **2.7 Extensibility & Game Customization**
+
 - Games should support **custom game rules, abilities, and world data**.
 - **Scripting API & Advanced AI Customization**:
   - The platform offers **AI & scripting tools** for creating deep, dynamic game interactions.
@@ -79,6 +91,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance.
 
 ### **2.8 Moderation, Administration & Monetization**
+
 - **Admin dashboard** for monitoring and moderating hosted games.
 - **In-game reporting & ban system** for handling violations.
 - **Analytics & logging** for tracking player activity and game performance.
@@ -94,11 +107,13 @@ This document outlines the **core functional and non-functional requirements** f
 ## **3. Infrastructure & Scalability Considerations**
 
 ### **3.1 Networking & API Gateway**
+
 - **WebSocket/TCP-based real-time networking** for low-latency gameplay.
 - Multi-server support to enable **scaling hosted games separately**.
 - **API Gateway** for managing requests between microservices and handling external integrations.
 
 ### **3.2 Persistence & Caching**
+
 - **PostgreSQL** is the primary database for game world, entity, and account storage.
 - **Redis caching** improves performance by storing:
   - Frequently accessed **player profiles and inventory**.
@@ -106,6 +121,7 @@ This document outlines the **core functional and non-functional requirements** f
   - **Session data** for quick reconnections.
 
 ### **3.3 Deployment Model**
+
 - The platform is designed for **cloud-native deployment**, using:
   - **Docker & Kubernetes** for containerization and scaling.
   - **Automated CI/CD pipelines** for service updates and maintenance.
@@ -115,6 +131,7 @@ This document outlines the **core functional and non-functional requirements** f
 ---
 
 ## **4. Non-Functional Requirements**
+
 | **Category** | **Requirement** |
 |-------------|----------------|
 | **Performance** | Must support **hundreds to thousands of concurrent players** per game instance. |

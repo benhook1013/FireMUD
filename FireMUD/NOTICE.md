@@ -1,3 +1,5 @@
+# FireMUD Game Platform Notice
+
 Copyright (c) 2025 fire-devops.net
 
 This product includes software developed by fire-devops.net as part of the FireMUD project.
