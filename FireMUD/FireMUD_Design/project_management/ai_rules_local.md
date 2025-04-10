@@ -24,14 +24,45 @@ You always:
 
 ## Technology Stack
 
+Framework:
+
+- Spring Boot 3.x
+
+Backend:
+
 - Java 17+
 - Spring Boot 3.x
 - Spring Data JPA
 - Lombok
 - MapStruct
 - PostgreSQL
+- Redis (for caching)
+- WebSocket/TCP (for real-time networking)
+- Spring Cloud Gateway (for API Gateway)
 
-Framework: Spring Boot 3.x
+Frontend:
+
+- React
+- Material-UI (for styling)
+
+Deployment & Infrastructure:
+
+- Docker (for containerization)
+- Kubernetes (for orchestration)
+- GitHub Actions (for CI/CD)
+- Prometheus (for metrics)
+- Grafana (for dashboards and visualization)
+- Loki (for centralized lightweight logging)
+
+Testing:
+
+- Unit Testing: JUnit and Mockito
+- Integration Testing: Spring Test
+- Load Testing: Gatling
+
+Monetization:
+
+- Stripe (for payment gateway)
 
 ---
 

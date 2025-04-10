@@ -73,15 +73,14 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 #### Frontend
 
 - **Framework**: React
-- **Styling**: Tailwind CSS or Material-UI
+- **Styling**: Material-UI
 
 #### Deployment & Infrastructure
 
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
-- **CI/CD**: GitHub Actions or Jenkins
-- **Monitoring**: Prometheus, Grafana, Loki
-- **Logging**: ELK Stack (Elasticsearch, Logstash, Kibana)
+- **CI/CD**: GitHub Actions
+- **Monitoring and Logging**: Prometheus, Grafana, Loki
 
 #### Monetization
 
@@ -91,8 +90,8 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 #### Testing
 
 - **Unit Testing**: JUnit, Mockito
-- **Integration Testing**: Spring Test, Postman
-- **Load Testing**: JMeter or Gatling
+- **Integration Testing**: Spring Test
+- **Load Testing**: Gatling
 
 ### Design Goals
 
