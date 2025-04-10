@@ -8,14 +8,14 @@ This document outlines how FireMUD is deployed across different environments, fo
 
 FireMUD uses Docker Compose for local development and testing:
 
-### 🔧 Key Characteristics
+### 🔧 Docker Compose Characteristics
 
 - All services, including the gateway, are built locally via `Dockerfile`s.
 - Service discovery is handled by Docker's internal DNS (e.g., `game-server:8080`).
 - Route URIs in Spring Cloud Gateway use static hostnames defined in `application-dev.yml`.
 - Docker Compose orchestrates container startup, but not readiness.
 
-### 🩺 Health Checks
+### 🩺 Docker Health Checks
 
 - Services expose Spring Boot’s `/actuator/health` for basic health status.
 - Docker Compose can monitor health using `healthcheck` blocks in `docker-compose.yml`.
@@ -31,20 +31,20 @@ FireMUD uses Docker Compose for local development and testing:
 
 In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, or self-managed clusters).
 
-### 🔧 Key Characteristics
+### 🔧 Kubernetes Characteristics
 
 - Services are deployed as Pods and exposed via Kubernetes Services.
 - DNS-based discovery is built into Kubernetes (e.g., `game-server.default.svc.cluster.local`).
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 
-### 🩺 Health Monitoring
+### 🩺 Kubernetes Health Monitoring
 
 - Kubernetes uses Spring Boot’s `/actuator/health` for both:
   - **Readiness probes** — to determine if a service is ready to handle requests.
   - **Liveness probes** — to detect and restart stuck or unresponsive containers.
 
-### 🔄 Auto Recovery
+### 🔄 Kubernetes Auto Recovery
 
 - Kubernetes automatically:
   - Removes unready pods from Services

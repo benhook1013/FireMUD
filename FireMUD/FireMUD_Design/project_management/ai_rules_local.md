@@ -1,3 +1,5 @@
+# Java Project AI Rules
+
 ## Instruction to developer: save this file as .cursorrules and place it on the root project directory
 
 AI Persona：
@@ -59,6 +61,7 @@ RestController:
 6. All class method logic must be implemented in a try..catch block(s).
 7. Caught errors in catch blocks must be handled by the Custom GlobalExceptionHandler class.
 
+```java
 // ApiResponse.java
 
 @Data
@@ -98,3 +101,4 @@ public class GlobalExceptionHandler {
     return errorResponseEntity("Unexpected error occurred", HttpStatus.INTERNAL_SERVER_ERROR);
   }
 }
+```

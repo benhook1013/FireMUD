@@ -1,3 +1,5 @@
+# All-Project AI Rules
+
 ## 1. General Code Rules
 
 - Provide complete, functional code unless code-only is requested
