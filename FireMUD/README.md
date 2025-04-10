@@ -7,7 +7,6 @@
 [![Frontend: React](https://img.shields.io/badge/Frontend-React-blue)](https://react.dev/)
 [![Database: PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue)](https://www.postgresql.org/)
 [![Database: Redis](https://img.shields.io/badge/Database-Redis-blue)](https://redis.io/)
-
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
@@ -17,25 +16,24 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 ---
 
-## Table of Contents
+## 📚 Table of Contents
 
-- [FireMUD Game Platform - Documentation and Design](#firemud-game-platform---documentation-and-design)
-  - [Table of Contents](#table-of-contents)
-  - [Purpose](#purpose)
-  - [Project Overview](#project-overview)
-    - [Key Features](#key-features)
-    - [Tech Stack](#tech-stack)
-    - [Design Goals](#design-goals)
-  - [Architecture](#architecture)
-    - [Microservices](#microservices)
-    - [Service Interactions](#service-interactions)
-  - [Getting Started and Contributing](#getting-started-and-contributing)
-    - [For Designers and Contributors](#for-designers-and-contributors)
-    - [For Developers](#for-developers)
-  - [Support Us](#support-us)
-  - [Contact](#contact)
-  - [Acknowledgments](#acknowledgments)
-    - [Notes and TODOs](#notes-and-todos)
+- [Purpose](#purpose)
+- [Project Overview](#project-overview)
+  - [Key Features](#key-features)
+  - [Tech Stack](#tech-stack)
+  - [Design Goals](#design-goals)
+- [Architecture](#architecture)
+  - [Microservices](#microservices)
+  - [Service Interactions](#service-interactions)
+- [Getting Started and Contributing](#getting-started-and-contributing)
+  - [Learn About the Platform](#learn-about-the-platform)
+  - [Ways to Contribute](#ways-to-contribute)
+  - [Additional Guidelines](#additional-guidelines)
+- [Support Us](#support-us)
+- [Contact](#contact)
+- [Acknowledgments](#acknowledgments)
+- [Notes and TODOs](#notes-and-todos)
 
 ---
 
@@ -145,7 +143,7 @@ We welcome feedback, ideas, and contributions to improve the FireMUD platform. H
 
 ---
 
-### 📖 Learn About the Platform
+### Learn About the Platform
 
 Before contributing, we recommend reviewing the following key documents:
 
@@ -156,7 +154,7 @@ Before contributing, we recommend reviewing the following key documents:
 
 ---
 
-### 🛠️ Ways to Contribute
+### Ways to Contribute
 
 - **Improve Documentation**:  
   Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
@@ -184,7 +182,7 @@ Before contributing, we recommend reviewing the following key documents:
 
 ---
 
-### ⚙️ Additional Guidelines
+### Additional Guidelines
 
 Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on:
 
