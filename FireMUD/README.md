@@ -135,37 +135,63 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 ### Service Interactions
 
-For detailed architecture diagrams and explanations, refer to the [Architecture Overview](FireMUD_Design/architecture/architecture_overview.md).
+For detailed architecture diagrams and explanations, refer to the [SystemArchitecture Overview](FireMUD_Design/architecture/system-architecture-overview.md).
 
 ---
 
 ## Getting Started and Contributing
 
-We welcome feedback and contributions to improve the platform's design and functionality. Here's how you can get started and contribute:
+We welcome feedback, ideas, and contributions to improve the FireMUD platform. Here's how you can get involved:
 
-### For Designers and Contributors
+---
 
-- **Review the [System Architecture Overview](FireMUD_Design/architecture/system-architecture-overview.md)** to understand the platform's service layout, communication flows, and overall client-to-backend structure.
-- **Review the [Infrastructure Overview](FireMUD_Design/infrastructure/_index.md)** to understand the platform's shared systems, deployment environments, and networking architecture.
-- **Explore the [Service Design Documents](FireMUD_Design/architecture/microservices/index.md)** for in-depth information on each microservice.
-- **Documentation**: Help improve our documentation by:
-  - Updating existing Markdown files for clarity and accuracy.
-  - Adding examples, tutorials, or FAQs.
+### 📖 Learn About the Platform
 
-### For Developers
+Before contributing, we recommend reviewing the following key documents:
 
-- **Code Repositories**: Individual services are maintained in separate repositories. Refer to their READMEs for setup instructions.
-- **Submit Pull Requests**: To contribute code:
-  1. **Fork** the repository you wish to contribute to.
-  1. **Create a new branch** for your feature or bug fix: `git checkout -b feature/your-feature-name`.
-  1. **Commit your changes** with clear and descriptive messages.
-  1. **Push to your fork**: `git push origin feature/your-feature-name`.
-  1. **Open a pull request** against the `main` branch of the original repository.
-- **Report Issues**: If you find a bug or have a feature request, please open an issue in the relevant repository with detailed information.
-- **Review Code**: Help us by reviewing open pull requests. Constructive feedback is invaluable.
-- **Security Vulnerabilities**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it directly via email to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net). We take security issues seriously and will respond promptly to address them.
+- **[System Architecture Overview](FireMUD_Design/architecture/system-architecture-overview.md)**: Understand the overall platform design, service layout, and communication flows.
+- **[Infrastructure Overview](FireMUD_Design/architecture/infrastructure/_index.md)**: Learn about our deployment environments, shared systems, and networking architecture.
+- **[Service Design Documents](FireMUD_Design/architecture/microservices/_index.md)**: Explore detailed designs for each microservice.
+- **[FAQ](FAQ.md)**: Browse frequently asked questions to get quick context.
 
-Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on code style, testing practices, and setting up a development environment.
+---
+
+### 🛠️ Ways to Contribute
+
+- **Improve Documentation**:  
+  Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
+
+- **Report Bugs or Suggest Features**:  
+  Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
+
+- **Contribute Code**:
+  1. **Fork** the repository you want to contribute to.
+  2. **Create a new branch**:  
+     `git checkout -b feature/your-feature-name`
+  3. **Make your changes**, following our coding standards.
+  4. **Commit with clear messages**.
+  5. **Push to your fork**:  
+     `git push origin feature/your-feature-name`
+  6. **Open a pull request** against the `main` branch.
+
+- **Review Pull Requests**:  
+  Provide thoughtful, constructive feedback on open pull requests.
+
+- **Report Security Issues**:  
+  If you discover a security vulnerability, please **do not** file a public issue.  
+  Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net).  
+  We take security seriously and will respond promptly.
+
+---
+
+### ⚙️ Additional Guidelines
+
+Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on:
+
+- Code style
+- Testing practices
+- Setting up a development environment
+- PR review process
 
 ---
 

@@ -42,6 +42,7 @@ Despite their differences, both protocols are normalized into the same internal 
   - Proxies I/O between the TCP client and the backend game session
 
 ### ✅ Benefits:
+
 - Maintains full compatibility with legacy tools and the wider MUD ecosystem
 - Allows reuse of the same backend infrastructure and logic
 - Makes legacy clients first-class citizens in the platform
@@ -73,6 +74,6 @@ Both connection types interface with:
 
 ## 📚 Related Docs
 
-- [Infrastructure Overview](./infrastructure-overview.md)
+- [Infrastructure Overview](./_index.md)
 - [Gateway Architecture](./gateway-architecture.md)
 - [Deployment Environments](./deployment-environments.md)

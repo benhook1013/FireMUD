@@ -71,6 +71,6 @@ Spring Boot services use environment-specific profiles:
 
 ## 📚 Related Docs
 
-- [Infrastructure Overview](./infrastructure-overview.md)
+- [Infrastructure Overview](./_index.md)
 - [Gateway Architecture](./gateway-architecture.md)
 - [Protocol Bridging](./protocol-bridging.md)
