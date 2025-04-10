@@ -71,63 +71,63 @@ Monetization:
 2. All database operation logic must be done only in ServiceImpl classes, using methods provided by Repository interfaces.
 3. RestController classes must not autowire Repositories directly, unless absolutely beneficial for performance reasons (e.g., simple read-only queries).
 4. ServiceImpl classes must not query the database directly; they must use Repository methods unless absolutely necessary.
-5. Data carrying between RestController and ServiceImpl classes, and vice versa, must be done only using DTOs.
-6. Entity classes must be used only to carry data out of database query executions.
+5. Data exchange between RestController and ServiceImpl classes must be done only using DTOs.
+6. Entity classes must be used only for persistence operations (i.e., reading/writing database data) and not for external API exposure.
 
 ---
 
 ## Entities
 
-1. Annotate entity classes with @Entity.
-2. Annotate entity classes with @Data (Lombok), unless specified otherwise.
-3. Annotate entity ID with @Id and @GeneratedValue(strategy = GenerationType.IDENTITY).
-4. Use FetchType.LAZY for relationships, unless specified otherwise.
-5. Annotate entity properties properly according to best practices, e.g., @Size, @NotEmpty, @Email, etc.
+1. Annotate entity classes with `@Entity`.
+2. Annotate entity classes with `@Data` (Lombok), unless specified otherwise.
+3. Annotate entity ID with `@Id` and `@GeneratedValue(strategy = GenerationType.IDENTITY)`.
+4. Use `FetchType.LAZY` for relationships, unless specified otherwise.
+5. Annotate entity properties properly according to best practices, e.g., `@Size`, `@NotEmpty`, `@Email`, etc.
 
 ---
 
 ## Repository (DAO)
 
-1. Annotate repository classes with @Repository.
-2. Repository classes must be of type interface.
-3. Extend JpaRepository with entity and ID as parameters unless specified otherwise.
-4. Use JPQL for all @Query methods unless specified otherwise.
-5. Use @EntityGraph(attributePaths = {"relatedEntity"}) for relationship queries to avoid the N+1 problem.
-6. Use a DTO as the data container for multi-join queries with @Query.
-7. When retrieving lists of entities, prefer returning Page< DTO > using Pageable instead of List< DTO > where applicable.
+1. Annotate repository interfaces with `@Repository`.
+2. Repository classes must be interfaces.
+3. Extend `JpaRepository` with entity and ID as parameters unless specified otherwise.
+4. Use JPQL for all `@Query` methods unless specified otherwise.
+5. Use `@EntityGraph(attributePaths = {"relatedEntity"})` for relationship queries to avoid the N+1 problem.
+6. Use a DTO as the data container for multi-join queries with `@Query`.
+7. When retrieving lists of entities, prefer returning `Page<DTO>` using `Pageable` instead of `List<DTO>` where applicable.
 
 ---
 
 ## Service
 
-1. Service classes must be of type interface.
-2. Implementations must be in ServiceImpl classes that implement the Service interface.
-3. ServiceImpl classes must be annotated with @Service.
-4. All dependencies in ServiceImpl classes must be injected using constructor injection (@RequiredArgsConstructor).
+1. Service classes must be interfaces.
+2. Implementations must be in `ServiceImpl` classes that implement the service interface.
+3. ServiceImpl classes must be annotated with `@Service`.
+4. All dependencies in ServiceImpl classes must be injected using constructor injection (`@RequiredArgsConstructor`).
 5. Methods must return DTOs, not Entity classes, unless absolutely necessary.
-6. For record existence checks, use repository methods with .orElseThrow lambda.
-7. For multiple sequential database executions, use method-level @Transactional. Prefer declarative over programmatic transaction management unless special handling is needed.
+6. For record existence checks, use repository methods with `.orElseThrow` lambda.
+7. For multiple sequential database executions, use method-level `@Transactional`. Prefer declarative over programmatic transaction management unless special handling is needed.
 
 ---
 
 ## Data Transfer Object (DTO)
 
-1. DTOs must be of type record, unless specified otherwise.
+1. DTOs must be `record` types, unless specified otherwise.
 2. Specify a compact canonical constructor to validate input parameters:
-   - Validate at minimum non-null and non-blank fields.
-   - Consider using javax.validation.constraints annotations like @NotNull, @NotBlank and throw IllegalArgumentException for invalid parameters.
+   - Use `javax.validation.constraints` annotations like `@NotNull`, `@NotBlank` for simple validations.
+   - Throw `IllegalArgumentException` in the constructor for complex validations.
 
 ---
 
 ## RestController
 
-1. Annotate controller classes with @RestController.
-2. Specify class-level API routes with @RequestMapping, e.g., @RequestMapping("/api/user").
-3. Class methods must use appropriate HTTP method annotations (@PostMapping, @GetMapping, etc.).
-4. Dependencies must be injected via constructor injection (@RequiredArgsConstructor).
-5. Methods must return ResponseEntity<ApiResponse<>>.
-6. All controller method logic must be wrapped in try-catch blocks to ensure exceptions are captured and handled by GlobalExceptionHandler.
-7. Caught errors must be handled by the Custom GlobalExceptionHandler class.
+1. Annotate controller classes with `@RestController`.
+2. Specify class-level API routes with `@RequestMapping`, e.g., `@RequestMapping("/api/user")`.
+3. Class methods must use appropriate HTTP method annotations (`@PostMapping`, `@GetMapping`, etc.).
+4. Dependencies must be injected via constructor injection (`@RequiredArgsConstructor`).
+5. Methods must return `ResponseEntity<ApiResponse<>>`.
+6. Let exceptions propagate naturally; they will be handled by `GlobalExceptionHandler`.
+7. Caught errors must be handled by the custom `GlobalExceptionHandler` class.
 
 ---
 
@@ -156,7 +156,7 @@ public class ApiResponse<T> {
 ```java
 // GlobalExceptionHandler.java
 @RestControllerAdvice
-@Slf4j // Optional: if using Lombok's logging
+@Slf4j
 public class GlobalExceptionHandler {
 
     public static ResponseEntity<ApiResponse<?>> errorResponseEntity(String message, HttpStatus status) {
@@ -184,3 +184,5 @@ public class GlobalExceptionHandler {
 - Prefer immutability where practical (e.g., use final fields).
 - Always think about security, validation, and scalability.
 - Maintain a clean and understandable project structure.
+- When integrating with Prometheus, consider using @Timed annotations (Micrometer) for automatic metrics collection.
+- Avoid returning null data fields unless no meaningful object can be returned.
