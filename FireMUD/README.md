@@ -229,7 +229,7 @@ Your support can make a significant difference in the development and success of
 ### Notes and TODOs
 
 - **Financial Contribution Links**: The links for PayPal, GitHub Sponsors, and Patreon are placeholders and need to be set up. Once available, replace the *[Coming Soon]* text and placeholder comments with the actual links.
-- **CONTRIBUTING.md**: The `CONTRIBUTING.md` file now provides detailed contribution guidelines. Keep it up to date as processes evolve.
+- **CONTRIBUTING.md**: Keep the contribution guidelines up to date with current processes.
 - **FAQ.md**: Populate the `FAQ.md` document with common questions and answers.
 - **Architecture Diagrams**: Complete the architecture diagrams and place them in the `architecture/` directory.
 
