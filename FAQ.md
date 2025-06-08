@@ -30,7 +30,7 @@ This document collects common questions and answers about the FireMUD Game Platf
   Fork this repository, create a feature branch, make your changes, and open a pull request against `main`. Follow the coding standards described in the README and design documents.
 
 - **Where do I find design resources?**  
-  The `FireMUD_Design/` directory contains architecture diagrams, service descriptions, and planning documents that explain how the system fits together.
+  The `design/` directory contains architecture diagrams, service descriptions, and planning documents that explain how the system fits together.
 
 ---
 
