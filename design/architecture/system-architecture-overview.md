@@ -119,7 +119,7 @@ Account Service   Entity Management Service   World Management Service   Game Lo
 
 ## 📚 Related Documentation
 
-- [Infrastructure Overview](./infrastructure/_index.md)
+- [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Protocol Bridging](./infrastructure/protocol-bridging.md)

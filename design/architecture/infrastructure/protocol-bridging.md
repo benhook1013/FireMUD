@@ -75,6 +75,6 @@ Both connection types interface with:
 
 ## 📚 Related Documentation
 
-- [Infrastructure Overview](./_index.md)
+- [Infrastructure Overview](./README.md)
 - [Gateway Architecture](./gateway-architecture.md)
 - [Deployment Environments](./deployment-environments.md)

@@ -33,4 +33,4 @@ Each microservice document follows a consistent structure, covering:
 
 For cross-service systems (e.g., networking, infrastructure), refer to:
 
-> See [**Infrastructure Overview**](../infrastructure/_index.md) for shared architecture, deployment environments, and networking patterns.
+> See [**Infrastructure Overview**](../infrastructure/README.md) for shared architecture, deployment environments, and networking patterns.
