@@ -1,6 +1,6 @@
 # FireMUD Game Platform - Documentation and Design
 
-[![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./FireMUD_Design/project-management/task-list.md)
+[![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./FireMUD-Design/project-management/task-list.md)
 [![License: Business Source License 1.1](https://img.shields.io/badge/License-Business_Source_License_1.1-blue.svg)](LICENSE)
 
 [![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)](https://spring.io/)
@@ -132,7 +132,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 ### Service Interactions
 
-For detailed architecture diagrams and explanations, refer to the [System Architecture Overview](FireMUD_Design/architecture/system-architecture-overview.md).
+For detailed architecture diagrams and explanations, refer to the [System Architecture Overview](FireMUD-Design/architecture/system-architecture-overview.md).
 
 ---
 
@@ -146,9 +146,9 @@ We welcome feedback, ideas, and contributions to improve the FireMUD platform. H
 
 Before contributing, we recommend reviewing the following key documents:
 
-- **[System Architecture Overview](FireMUD_Design/architecture/system-architecture-overview.md)**: Understand the overall platform design, service layout, and communication flows.
-- **[Infrastructure Overview](FireMUD_Design/architecture/infrastructure/_index.md)**: Learn about our deployment environments, shared systems, and networking architecture.
-- **[Service Design Documents](FireMUD_Design/architecture/microservices/_index.md)**: Explore detailed designs for each microservice.
+- **[System Architecture Overview](FireMUD-Design/architecture/system-architecture-overview.md)**: Understand the overall platform design, service layout, and communication flows.
+- **[Infrastructure Overview](FireMUD-Design/architecture/infrastructure/_index.md)**: Learn about our deployment environments, shared systems, and networking architecture.
+- **[Service Design Documents](FireMUD-Design/architecture/microservices/_index.md)**: Explore detailed designs for each microservice.
 - **[FAQ](FAQ.md)**: Browse frequently asked questions to get quick context.
 
 ---
