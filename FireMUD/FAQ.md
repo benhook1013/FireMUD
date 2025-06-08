@@ -48,5 +48,3 @@ This document collects common questions and answers about the FireMUD Game Platf
 
 - **Who maintains FireMUD?**  
   The project is led by Ben Hook under the Fire‑DevOps.net umbrella. Contact details are listed in the README.
-
-
