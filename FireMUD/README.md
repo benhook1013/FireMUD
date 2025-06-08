@@ -185,10 +185,10 @@ Before contributing, we recommend reviewing the following key documents:
 
 Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on:
 
+- Branching strategy
 - Code style
-- Testing practices
-- Setting up a development environment
-- PR review process
+- Testing requirements
+- How to submit a PR
 
 ---
 
@@ -229,6 +229,6 @@ Your support can make a significant difference in the development and success of
 ### Notes and TODOs
 
 - **Financial Contribution Links**: The links for PayPal, GitHub Sponsors, and Patreon are placeholders and need to be set up. Once available, replace the *[Coming Soon]* text and placeholder comments with the actual links.
-- **CONTRIBUTING.md**: Ensure the `CONTRIBUTING.md` file is created and contains relevant guidelines.
+- **CONTRIBUTING.md**: Keep the contribution guidelines up to date with current processes.
 - **FAQ.md**: Populate the `FAQ.md` document with common questions and answers.
 - **Architecture Diagrams**: Complete the architecture diagrams and place them in the `architecture/` directory.
