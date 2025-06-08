@@ -1,1 +1,14 @@
+# Environment configuration
 .env
+
+# Java build artifacts
+/target/
+/.gradle/
+/build/
+
+# Node.js dependencies
+/node_modules/
+
+# Logs and temporary files
+*.log
+.DS_Store

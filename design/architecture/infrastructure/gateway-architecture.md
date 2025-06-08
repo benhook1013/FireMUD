@@ -82,7 +82,7 @@ Spring profiles (`application-dev.yml`, `application-prod.yml`) are used to conf
 
 ## 📚 Related Docs
 
-- [Infrastructure Overview](./_index.md)
+- [Infrastructure Overview](./README.md)
 - [Deployment Environments](./deployment-environments.md)
 - [Protocol Bridging](./protocol-bridging.md)
 
