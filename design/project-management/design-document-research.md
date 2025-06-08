@@ -1,5 +1,7 @@
 # FireMUD Design Overview
 
+NOTE WELL: This document is historical and is largely unused, but kept around for possible design document inspiration.
+
 ## Table of Contents
 
 ## Introduction
