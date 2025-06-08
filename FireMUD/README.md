@@ -132,7 +132,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 ### Service Interactions
 
-For detailed architecture diagrams and explanations, refer to the [SystemArchitecture Overview](FireMUD_Design/architecture/system-architecture-overview.md).
+For detailed architecture diagrams and explanations, refer to the [System Architecture Overview](FireMUD_Design/architecture/system-architecture-overview.md).
 
 ---
 
@@ -232,5 +232,3 @@ Your support can make a significant difference in the development and success of
 - **CONTRIBUTING.md**: Ensure the `CONTRIBUTING.md` file is created and contains relevant guidelines.
 - **FAQ.md**: Populate the `FAQ.md` document with common questions and answers.
 - **Architecture Diagrams**: Complete the architecture diagrams and place them in the `architecture/` directory.
-
----
