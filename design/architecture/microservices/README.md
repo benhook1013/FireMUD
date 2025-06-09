@@ -8,16 +8,16 @@ This directory contains detailed design documents for each core microservice in 
 
 | Microservice                    | Purpose                                                    |
 |----------------------------------|------------------------------------------------------------|
-| [Game Management Service](./game-management-service.md)    | Manages game creation, rules, templates, and moderation policies. |
-| [World Management Service](./world-management-service.md)  | Handles world maps, regions, procedural generation, and locations. |
-| [Account Service](./account-service.md)                    | Manages user accounts, authentication, profiles, and sessions. |
-| [Entity Management Service](./entity-management-service.md) | Controls player characters, NPCs, items, and inventory management. |
-| [Game Logic Service](./game-logic-service.md)              | Implements core gameplay mechanics, command parsing, and actions. |
-| [Automation & Scripting Service](./automation-scripting-service.md) | Handles AI behaviors, event scripting, and dynamic interactions. |
-| [Social and Groups Service](./social-groups-service.md)    | Manages chat, guilds, and cross-game social networking features. |
-| [Logging & Admin Service](./logging-admin-service.md)      | Provides centralized logging, analytics, and administration tools. |
-| [Networking & Gateway Service](./networking-gateway-service.md) | Manages real-time networking, TCP bridging, and API gateway access. |
-| [Game Design Service](./game-design-service.md)            | Provides tools for designing worlds, actions, items, and game events. |
+| [Game Management Service](./game-management-service/)    | Manages game creation, rules, templates, and moderation policies. |
+| [World Management Service](./world-management-service/)  | Handles world maps, regions, procedural generation, and locations. |
+| [Account Service](./account-service/)                    | Manages user accounts, authentication, profiles, and sessions. |
+| [Entity Management Service](./entity-management-service/) | Controls player characters, NPCs, items, and inventory management. |
+| [Game Logic Service](./game-logic-service/)              | Implements core gameplay mechanics, command parsing, and actions. |
+| [Automation & Scripting Service](./automation-scripting-service/) | Handles AI behaviors, event scripting, and dynamic interactions. |
+| [Social and Groups Service](./social-groups-service/)    | Manages chat, guilds, and cross-game social networking features. |
+| [Logging & Admin Service](./logging-admin-service/)      | Provides centralized logging, analytics, and administration tools. |
+| [Networking & Gateway Service](./networking-gateway-service/) | Manages real-time networking, TCP bridging, and API gateway access. |
+| [Game Design Service](./game-design-service/)            | Provides tools for designing worlds, actions, items, and game events. |
 
 ---
 
