@@ -10,12 +10,42 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
 - **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway
 - **Consistent end-to-end WebSocket flow**: TCP Proxy → Gateway → Game Session Service
-- **All client traffic is routed through the Gateway**, ensuring consistent authentication, monitoring, and routing
-- **Buffered reconnection logic** exists in both the TCP Proxy and the Gateway to handle dropped WebSocket connections gracefully
-- **Internal microservice communication uses gRPC**, bypassing the Gateway for efficient backend-to-backend calls
+- **All client traffic is routed through the Gateway**, ensuring centralized authentication, monitoring, and routing
+- **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:
+  - The **TCP Proxy** buffers Telnet input and reconnects to the Gateway when needed
+  - The **Gateway** re-establishes downstream WebSocket connections to backend services
+  - The **Game Session Service** restores gameplay context using external Redis state
+- **Internal microservice communication uses gRPC**, bypassing the Gateway for backend-to-backend calls
 - **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing
-- **Session state is externalized (e.g., Redis)** to keep services stateless and support reconnections
+- **Session state is externalized (e.g., Redis)** to keep services stateless and allow for graceful reconnection
 - **Game treated as data**, with the Game Design Service enabling live editing without code deployment
+
+---
+
+## 🔁 Reconnection Strategy by Layer
+
+Robust reconnection support is critical for maintaining seamless player experiences across various clients and network conditions. Reconnection responsibilities are intentionally distributed across system layers:
+
+### 🛰️ TCP Proxy Service
+
+- **Manages Telnet TCP connections**
+- Buffers player input to avoid loss during short disconnects
+- Attempts to reconnect to the Spring Cloud Gateway automatically
+
+### 🌐 Spring Cloud Gateway
+
+- **Maintains persistent WebSocket connections** to the Game Session Service
+- Reconnects to backend session layer transparently if underlying service restarts or connection drops
+- Ensures authenticated context and routing is preserved across reconnects
+
+### 🎮 Game Session Service
+
+- **Owns gameplay session continuity**
+- Retrieves player session data from Redis upon reconnect
+- Rebinds player socket connection to restored session state
+- Avoids gameplay resets or inconsistencies even if upstream connections fail temporarily
+
+Each layer handles the reconnection logic appropriate to its scope, ensuring fault tolerance and a smooth player experience.
 
 ---
 
