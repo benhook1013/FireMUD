@@ -6,22 +6,16 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ## 🧩 Core Architecture Principles
 
-- **Microservices-based** platform design
-- **Spring Cloud Gateway** as the API and WebSocket entry point for all clients
-- **TCP Proxy Service** for Telnet (TCP) support, acting as a bridge to the Gateway
-- **WebSocket is used end-to-end for client traffic** (TCP Proxy → Gateway → Game Session Service)
-- **Internal communication between microservices uses gRPC**
-- **Unified backend session management** with stateless services and externalized session storage
-- **Internal microservices communicate directly over Kubernetes DNS without using the Gateway**
-- **IPVS-based Kubernetes load balancing** for all service discovery and communication
-- **Resilient reconnection handling** for WebSocket links across TCP Proxy and Gateway
-
-**Important:**  
-Traditional Telnet clients connect first to the **TCP Proxy Service**, which **forwards traffic to Spring Cloud Gateway** using **WebSocket (wss)**.  
-This **ensures all client traffic is consistently secured, authenticated, monitored, and routed through the Gateway**.
-
-TCP Proxy includes **buffering** and **automatic reconnection logic** to handle unexpected disconnects from the Gateway.  
-Similarly, the Gateway maintains **WebSocket connections** to the Game Session Service and must handle reconnections if needed.
+- **Microservices-based** domain-driven architecture with clearly separated responsibilities
+- **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
+- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway
+- **Consistent end-to-end WebSocket flow**: TCP Proxy → Gateway → Game Session Service
+- **All client traffic is routed through the Gateway**, ensuring consistent authentication, monitoring, and routing
+- **Buffered reconnection logic** exists in both the TCP Proxy and the Gateway to handle dropped WebSocket connections gracefully
+- **Internal microservice communication uses gRPC**, bypassing the Gateway for efficient backend-to-backend calls
+- **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing
+- **Session state is externalized (e.g., Redis)** to keep services stateless and support reconnections
+- **Game treated as data**, with the Game Design Service enabling live editing without code deployment
 
 ---
 
