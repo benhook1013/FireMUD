@@ -133,22 +133,15 @@ Game Management      Account Service              Entity Management     World Ma
 
 ---
 
-## 📝 Notes
+## 📦 Data and State Management
 
-- **Web Clients** connect to **Spring Cloud Gateway** via WebSocket/HTTP.
-- **MUD Clients** (Telnet) connect first to the **TCP Proxy Service**, which forwards traffic to **Spring Cloud Gateway** via WebSocket.
-- **Spring Cloud Gateway** forwards gameplay traffic to the **Game Session Service** over WebSocket (wss).
-- **All internal microservice-to-microservice communication uses gRPC** for efficiency.
-- **Kubernetes IPVS load balancing** dynamically distributes connections across pods, including long-lived WebSocket sessions.
-- **TCP Proxy and Gateway must implement reconnection logic** to handle dropped WebSocket connections transparently.
-- **All backend services are stateless**; session state is stored externally (e.g., in Redis).
-- **Persistent data** (e.g., player accounts, entities, world data) is stored in dedicated databases.
-- **Volatile player session state** is externalized to Redis by the Game Session Service to support reconnections and high availability.
-- This design ensures centralized control, observability, scalability, low-latency gameplay, and failure recovery across all client types.
+- **Persistent data** (accounts, entities, world data) is owned by domain-aligned services with dedicated PostgreSQL databases.
+- **Volatile state** (player sessions, transient room state) is stored in Redis by the Game Session Service.
+- Services remain **stateless**, promoting scalability and resilience in failover scenarios.
 
 ---
 
-## ⚙️ Deployment Layers
+## 🗂️ Deployment Layers
 
 | Layer                  | Technology                                                   |
 |------------------------|--------------------------------------------------------------|
@@ -156,14 +149,22 @@ Game Management      Account Service              Entity Management     World Ma
 | Proxy Layer            | TCP Proxy Service (LoadBalancer Service)                     |
 | API Gateway Layer      | Spring Cloud Gateway (LoadBalancer Service)                  |
 | Gameplay Session Layer | Game Session Service                                         |
-| Service Layer          | Microservices (Account, Entity, World, etc.)                 |
+| Service Layer          | Microservices (Account, Entity, World, Logic, etc.)          |
 | Infrastructure Layer   | Kubernetes with IPVS, Docker Compose (for local development) |
 
 ---
 
 ## 📚 Related Documentation
 
+- [Microservices Responsibility Matrix](./responsibility-matrix.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Protocol Bridging](./infrastructure/protocol-bridging.md)
+
+---
+
+## 🔎 Notes on Responsibility Alignment
+
+- Functional responsibilities for each service are centralized in the [Responsibility Matrix](./responsibility-matrix.md) and referenced implicitly here.
+- This architecture overview focuses on runtime behavior and structural composition. Refer to the matrix for a granular breakdown of what each service handles.
