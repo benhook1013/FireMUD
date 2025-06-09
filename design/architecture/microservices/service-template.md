@@ -2,13 +2,12 @@
 
 ## Overview
 
-The **{{ Service Name }}** is responsible for {{ brief one-sentence summary }}. It handles {{ key responsibilities }} and acts as {{ role in the broader system }}.
+{{ Briefly describe the service's main purpose and responsibilities. }}
 
 ## Architecture / Design Notes
 
-- **Monolithic / Modular / Microservice**: {{ Note whether this is a monolith or a modular component within a larger system. }}
-- **Architecture Style**: {{ Event-driven? RESTful? Message queue-based? }}
-- **State Management**: {{ Local database? Redis? Stateless? Briefly describe how state is handled if applicable. }}
+- {{ Key architecture choice or pattern (e.g., event-driven, REST). }}
+- {{ State management approach or other design considerations. }}
 
 ## Key Features
 
@@ -16,42 +15,14 @@ The **{{ Service Name }}** is responsible for {{ brief one-sentence summary }}. 
 - **{{ Feature 2 }}** — {{ One-liner description of the feature. }}
 - **{{ Feature 3 }}** — {{ One-liner description of the feature. }}
 
-## API Endpoints
-
-| Method | Endpoint         | Description            | Auth Required |
-|--------|------------------|------------------------|---------------|
-| `GET`  | `/games`         | Fetch all games        | Yes           |
-|        | *(Add more as needed)* |                        |               |
-
-## Data Models / Entities
-
-- **{{ Entity 1 }}**: {{ Brief description and key fields }}
-- **{{ Entity 2 }}**: {{ Brief description and key fields }}
-
 ## Dependencies
 
-> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.  
->
-> These documents cover service routing (Spring Cloud Gateway), environment setups (Docker Compose, Kubernetes), and protocol handling (WebSocket/Telnet support) across the FireMUD platform.
+- **Internal:** {{ Other FireMUD services this one relies on. }}
+- **External:** {{ Databases, caches, or third-party systems. }}
 
-### Internal
-
-- **{{ Internal Service 1 }}** — {{ What this dependency is used for. }}
-- **{{ Internal Service 2 }}** — {{ Usage explanation. }}
-
-### External
-
-- **{{ External System 1 }}** — {{ Caching? Messaging? External API? }}
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.
 
 ## Future Enhancements
 
-- **{{ Planned Feature 1 }}** — {{ Why it’s needed or what it will solve. }}
-- **{{ Planned Feature 2 }}** — {{ Same idea here. }}
-
-## Related Docs / Links
-
-*Stubbed out for future additions. Example links to include:*
-
-- [API Documentation](#)
-- [Database Schema](#)
-- [Architecture Decision Records (ADRs)](#)
+- {{ Planned Feature 1 }}
+- {{ Planned Feature 2 }}
