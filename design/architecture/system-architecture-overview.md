@@ -51,22 +51,22 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 
 ## 🔗 Major Components and Their Roles
 
-| Component                          | Purpose                                                                      |
-|------------------------------------|------------------------------------------------------------------------------|
-| **Web Clients**                    | Browser-based modern clients connecting via WebSocket or HTTP                |
-| **MUD Clients**                    | Traditional Telnet clients connecting via TCP (Telnet protocol)              |
-| **TCP Proxy Service**              | Accepts Telnet TCP connections, buffers, translates to WebSocket for Gateway |
-| **Spring Cloud Gateway**           | WebSocket termination, routing, security, and monitoring                     |
-| **Game Session Service**           | Manages active player sessions, gameplay relay, and reconnection logic       |
-| **Game Management Service**        | Orchestrates game instance lifecycles, backups, moderation policies          |
-| **Account Service**                | Handles player accounts, authentication, session data                        |
-| **Entity Management Service**      | Manages player characters, NPCs, items, and inventory                        |
-| **World Management Service**       | Manages world data such as rooms, locations, and maps                        |
-| **Game Logic Service**             | Centralized game rules, command parsing, and action handling                 |
-| **Automation & Scripting Service** | Manages AI behavior and custom server scripting                              |
-| **Social and Groups Service**      | Chat, guilds, and cross-game social systems                                  |
-| **Logging & Admin Service**        | Centralized logging, analytics, and admin moderation tools                   |
-| **Game Design Service**            | Provides tooling for designing worlds, abilities, and items                  |
+| Component                          | Purpose                                                                 |
+|-----------------------------------|-------------------------------------------------------------------------|
+| **Web Clients**                   | Modern browser clients using WebSocket or HTTP to access the platform  |
+| **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
+| **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
+| **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
+| **Game Session Service**          | Core gameplay relay and session management layer                       |
+| **Game Management Service**       | Orchestrates game templates, rules, instances, and moderation policies |
+| **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
+| **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
+| **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding           |
+| **Game Logic Service**            | Central engine for command parsing and rule-based mechanics            |
+| **Automation & Scripting Service**| AI behavior and runtime scripting engine for custom server logic       |
+| **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
+| **Logging & Admin Service**       | Central logging, metrics, moderation dashboards, and admin tooling     |
+| **Game Design Service**           | Enables world/ability/item creation and balancing through the editor   |
 
 ---
 
@@ -80,7 +80,7 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 | Spring Cloud Gateway → Game Session Service | WebSocket (wss)                |
 | Game Session Service → Other Microservices  | gRPC (internal)                |
 
-✅ All internal API calls use **gRPC** for high performance, typed schemas, and low overhead.
+✅ All internal communication uses **gRPC** with strict schema enforcement and minimal latency overhead.
 
 ---
 
