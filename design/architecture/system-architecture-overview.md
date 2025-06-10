@@ -18,7 +18,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Internal microservice communication uses gRPC**, bypassing the Gateway for backend-to-backend calls
 - **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing
 - **Session state is externalized (e.g., Redis)** to keep services stateless and allow for graceful reconnection
-- **Game treated as data**, with the Game Design Service enabling live editing without code deployment
+- **Game treated as data**, with the Game Design Service enabling live editing and versioning without code deployment
+- **Game Session Service orchestrates live game instances**, including runtime configuration and published version tracking
 
 ---
 
@@ -57,16 +58,15 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **Game Session Service**          | Core gameplay relay and session management layer                       |
-| **Game Management Service**       | Orchestrates game templates, rules, instances, and moderation policies |
+| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime config, and published version state |
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
 | **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding           |
-| **Game Logic Service**            | Central engine for command parsing and rule-based mechanics            |
-| **Automation & Scripting Service**| AI behavior and runtime scripting engine for custom server logic       |
+| **Game Logic Service**            | Executes command parsing, mechanics, and rule-based gameplay logic     |
+| **Automation & Scripting Service**| Runs custom game scripts and AI behaviors based on authored data       |
 | **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
-| **Logging & Admin Service**       | Central logging, metrics, moderation dashboards, and admin tooling     |
-| **Game Design Service**           | Enables world/ability/item creation and balancing through the editor   |
+| **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, and enforcement interfaces |
+| **Game Design Service**           | Passive authoring tool for creating and publishing game data and configurations |
 
 ---
 
@@ -84,60 +84,13 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 
 ---
 
-## 📈 System Architecture Diagram
-
-```plaintext
-      +------------+      TCP (Telnet)         +-------------------+
-      | MUD Client | <-----------------------> | TCP Proxy Service |
-      +------------+                           +---------+---------+
-                                                         |
-                                                         | WebSocket (wss)
-                                                         |
-                                                         v
-      +------------+      WebSocket/HTTP     +----------------------+
-      | Web Client | <----------------------> | Spring Cloud Gateway |
-      +------------+                          +----------+-----------+
-                                                         |
-                                                         | WebSocket (wss)
-                                                         |
-                                                         v
-                                          +----------------------------+
-                                          | Game Session Service       |
-                                          +--------------+-------------+
-                                                         |
-       +--------------------+----------------------------+--------------------+
-       |                    |                            |                    |
-       v                    v                            v                    v
-Game Management      Account Service              Entity Management     World Management
-    Service              (Auth)                    Service (Players,        Service
- (Backups, Rules)                                  NPCs, Items)          (Maps/Rooms)
-
-                              +-----------+-------------+
-                              | Game Logic Service      |
-                              | (Rules, Commands, etc.) |
-                              +-----------+-------------+
-                                          |
-                                          v
-                             +--------------------------------+
-                             | Automation & Scripting Service |
-                             +--------------------------------+
-
-             +-------------------------+      +-------------------------+
-             | Social & Groups Service |      | Logging & Admin Service |
-             +-------------------------+      +-------------------------+
-
-                       +--------------------------------------+
-                       | Game Design Service (Passive Editor) |
-                       +--------------------------------------+
-```
-
----
-
 ## 📦 Data and State Management
 
 - **Persistent data** (accounts, entities, world data) is owned by domain-aligned services with dedicated PostgreSQL databases.
 - **Volatile state** (player sessions, transient room state) is stored in Redis by the Game Session Service.
-- Services remain **stateless**, promoting scalability and resilience in failover scenarios.
+- **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.
+- **Live runtime flags and feature switches** are stored in the Game Session Service.
+- All services remain **stateless**, promoting scalability and resilience in failover scenarios.
 
 ---
 
@@ -168,3 +121,4 @@ Game Management      Account Service              Entity Management     World Ma
 
 - Functional responsibilities for each service are centralized in the [Responsibility Matrix](./responsibility-matrix.md) and referenced implicitly here.
 - This architecture overview focuses on runtime behavior and structural composition. Refer to the matrix for a granular breakdown of what each service handles.
+- Game instance control and runtime state (version, flags) are owned by the Game Session Service, while design and configuration versioning is authored and published via the Game Design Service.
