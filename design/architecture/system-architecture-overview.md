@@ -60,7 +60,7 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, and published version state |
+| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, published version state, and action queues |
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
 | **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding; also responsible for persistent room state |
