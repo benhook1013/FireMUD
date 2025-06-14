@@ -6,21 +6,21 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ## 🧩 Core Architecture Principles
 
-- **Microservices-based** domain-driven architecture with clearly separated responsibilities
-- **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
-- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway
-- **Consistent end-to-end WebSocket flow**: TCP Proxy → Gateway → Game Session Service
-- **All client traffic is routed through the Gateway**, ensuring centralized authentication, monitoring, and routing
-- **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:
-  - The **TCP Proxy** buffers Telnet input and reconnects to the Gateway when needed
-  - The **Gateway** re-establishes downstream WebSocket connections to backend services
-  - The **Game Session Service** restores gameplay context using external Redis state
-- **Internal microservice communication uses gRPC**, bypassing the Gateway for backend-to-backend calls
-- **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing
-- **Session state is externalized (e.g., Redis)** to keep services stateless and allow for graceful reconnection
-- **Game treated as data**, with the Game Design Service enabling live editing and versioning without code deployment
-- **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, and published version tracking
-- **Feature flags are defined at design-time but toggled at runtime**, enabling temporary or contextual behavior changes without altering the underlying game definition
+- **Microservices-based** domain-driven architecture with clearly separated responsibilities  
+- **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients  
+- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway  
+- **Consistent end-to-end WebSocket flow**: TCP Proxy → Gateway → Game Session Service  
+- **All client traffic is routed through the Gateway**, ensuring centralized authentication, monitoring, and routing  
+- **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:  
+  - The **TCP Proxy** buffers Telnet input and reconnects to the Gateway when needed  
+  - The **Gateway** re-establishes downstream WebSocket connections to backend services  
+  - The **Game Session Service** restores gameplay context using external Redis state  
+- **Internal microservice communication uses gRPC**, bypassing the Gateway for backend-to-backend calls  
+- **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing  
+- **Session state is externalized (e.g., Redis)** to keep services stateless and allow for graceful reconnection  
+- **Game treated as data**, with the Game Design Service enabling live editing and versioning without code deployment  
+- **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, and published version tracking  
+- **Feature flags are defined at design-time but toggled at runtime**, enabling temporary or contextual behavior changes without altering the underlying game definition  
 
 ---
 
@@ -30,23 +30,23 @@ Robust reconnection support is critical for maintaining seamless player experien
 
 ### 🛰️ TCP Proxy Service
 
-- **Manages Telnet TCP connections**
-- Buffers player input to avoid loss during short disconnects
-- Attempts to reconnect to the Spring Cloud Gateway automatically
+- **Manages Telnet TCP connections**  
+- Buffers player input to avoid loss during short disconnects  
+- Attempts to reconnect to the Spring Cloud Gateway automatically  
 
 ### 🌐 Spring Cloud Gateway
 
-- **Maintains persistent WebSocket connections** to the Game Session Service
-- Reconnects to backend session layer transparently if underlying service restarts or connection drops
-- Ensures authenticated context and routing is preserved across reconnects
+- **Maintains persistent WebSocket connections** to the Game Session Service  
+- Reconnects to backend session layer transparently if underlying service restarts or connection drops  
+- Ensures authenticated context and routing is preserved across reconnects  
 
 ### 🎮 Game Session Service
 
-- **Owns gameplay session continuity**
-- Retrieves player session data from Redis upon reconnect
-- Rebinds player socket connection to restored session state
-- Tracks and applies the active published version ID for each running game instance
-- Stores and manages runtime feature flags (e.g., double XP, test mode) which may temporarily override design-time defaults
+- **Owns gameplay session continuity**  
+- Retrieves player session data from Redis upon reconnect  
+- Rebinds player socket connection to restored session state  
+- Tracks and applies the active published version ID for each running game instance  
+- Stores and manages runtime feature flags (e.g., double XP, test mode) which may temporarily override design-time defaults  
 
 Each layer handles the reconnection logic appropriate to its scope, ensuring fault tolerance and a smooth player experience.
 
@@ -63,9 +63,9 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 | **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, and published version state |
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
-| **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding           |
-| **Game Logic Service**            | Executes command parsing, mechanics, and rule-based gameplay logic     |
-| **Automation & Scripting Service**| Runs custom game scripts and AI behaviors based on authored data       |
+| **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding; also responsible for persistent room state |
+| **Game Logic Service**            | Executes command parsing and gameplay mechanics; processes all entity-driven actions including combat, trading, movement, and skill usage |
+| **Automation & Scripting Service**| Executes custom scripts and AI that actively trigger functionality in the Game Logic Service or cause entities to take autonomous actions |
 | **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
 | **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, and feature flag toggling interfaces |
 | **Game Design Service**           | Passive authoring tool for creating and publishing game data, configurations, and default flag definitions |
@@ -88,13 +88,18 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 
 ## 📦 Data and State Management
 
-- **Persistent data** (accounts, entities, world data) is owned by domain-aligned services with dedicated PostgreSQL databases.
-- **Volatile state** (player sessions, transient room state) is stored in Redis by the Game Session Service.
-- **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.
-- All services remain **stateless**, promoting scalability and resilience in failover scenarios.
-- **Design-time feature flags** are defined and versioned within the Game Design Service.
-- **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.
-- **Logging & Admin Service** provides UI/API tools to view and toggle active flags during gameplay.
+- **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
+- **Volatile state** (player sessions, transient gameplay state) is stored in Redis by the Game Session Service.  
+- **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
+- All services remain **stateless**, promoting scalability and resilience in failover scenarios.  
+- **Design-time feature flags** are defined and versioned within the Game Design Service.  
+- **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.  
+- **Logging & Admin Service** provides UI/API tools to view and toggle active flags during gameplay.  
+
+### 🧠 Redis Scalability
+
+- Redis is used for volatile state across sessions and runtime data, including player session context and ephemeral gameplay state.  
+- Redis clustering, partitioning, and key namespacing should be employed to handle high cardinality and throughput.  
 
 ---
 
@@ -123,6 +128,8 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 
 ## 🔎 Notes on Responsibility Alignment
 
-- Functional responsibilities for each service are centralized in the [Responsibility Matrix](./responsibility-matrix.md) and referenced implicitly here.
-- This architecture overview focuses on runtime behavior and structural composition. Refer to the matrix for a granular breakdown of what each service handles.
-- Game instance control and runtime state (version, flags) are owned by the Game Session Service, while design and configuration versioning is authored and published via the Game Design Service.
+- Functional responsibilities for each service are centralized in the [Responsibility Matrix](./responsibility-matrix.md) and referenced implicitly here.  
+- This architecture overview focuses on runtime behavior and structural composition. Refer to the matrix for a granular breakdown of what each service handles.  
+- Game instance control and runtime state (version, flags) are owned by the Game Session Service, while design and configuration versioning is authored and published via the Game Design Service.  
+- Combat, trading, and all other player or NPC-initiated actions are handled via the **Game Logic Service**, based on data retrieved from the Entity and World services and commands triggered by users or scripts.  
+- Scripts and AI behaviors are executed via the **Automation & Scripting Service**, which may drive entities or initiate actions in the game world through the Game Logic Service.
