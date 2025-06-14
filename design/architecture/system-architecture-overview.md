@@ -19,7 +19,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing
 - **Session state is externalized (e.g., Redis)** to keep services stateless and allow for graceful reconnection
 - **Game treated as data**, with the Game Design Service enabling live editing and versioning without code deployment
-- **Game Session Service orchestrates live game instances**, including runtime configuration and published version tracking
+- **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, and published version tracking
+- **Feature flags are defined at design-time but toggled at runtime**, enabling temporary or contextual behavior changes without altering the underlying game definition
 
 ---
 
@@ -44,7 +45,8 @@ Robust reconnection support is critical for maintaining seamless player experien
 - **Owns gameplay session continuity**
 - Retrieves player session data from Redis upon reconnect
 - Rebinds player socket connection to restored session state
-- Avoids gameplay resets or inconsistencies even if upstream connections fail temporarily
+- Tracks and applies the active published version ID for each running game instance
+- Stores and manages runtime feature flags (e.g., double XP, test mode) which may temporarily override design-time defaults
 
 Each layer handles the reconnection logic appropriate to its scope, ensuring fault tolerance and a smooth player experience.
 
@@ -58,15 +60,15 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime config, and published version state |
+| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, and published version state |
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
 | **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding           |
 | **Game Logic Service**            | Executes command parsing, mechanics, and rule-based gameplay logic     |
 | **Automation & Scripting Service**| Runs custom game scripts and AI behaviors based on authored data       |
 | **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
-| **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, and enforcement interfaces |
-| **Game Design Service**           | Passive authoring tool for creating and publishing game data and configurations |
+| **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, and feature flag toggling interfaces |
+| **Game Design Service**           | Passive authoring tool for creating and publishing game data, configurations, and default flag definitions |
 
 ---
 
@@ -89,8 +91,10 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 - **Persistent data** (accounts, entities, world data) is owned by domain-aligned services with dedicated PostgreSQL databases.
 - **Volatile state** (player sessions, transient room state) is stored in Redis by the Game Session Service.
 - **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.
-- **Live runtime flags and feature switches** are stored in the Game Session Service.
 - All services remain **stateless**, promoting scalability and resilience in failover scenarios.
+- **Design-time feature flags** are defined and versioned within the Game Design Service.
+- **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.
+- **Logging & Admin Service** provides UI/API tools to view and toggle active flags during gameplay.
 
 ---
 
