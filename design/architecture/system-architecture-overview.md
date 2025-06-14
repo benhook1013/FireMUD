@@ -60,14 +60,14 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, published version state, and action queues |
+| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, published version state, input command validation, rate limiting, and action queues |
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
 | **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding; also responsible for persistent room state |
 | **Game Logic Service**            | Executes command parsing and gameplay mechanics; processes all entity-driven actions including combat, trading, movement, and skill usage |
 | **Automation & Scripting Service**| Executes custom scripts and AI that actively trigger functionality in the Game Logic Service or cause entities to take autonomous actions |
-| **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
-| **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, and feature flag toggling interfaces |
+| **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems. Also includes player presence, friend/block lists, and social graphs, enabling dynamic player interactions, group discovery, and social filtering mechanisms |
+| **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, audit logging, and feature flag toggling interfaces |
 | **Game Design Service**           | Passive authoring tool for creating and publishing game data, configurations, and default flag definitions |
 
 ---
@@ -94,12 +94,17 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 - All services remain **stateless**, promoting scalability and resilience in failover scenarios.  
 - **Design-time feature flags** are defined and versioned within the Game Design Service.  
 - **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.  
-- **Logging & Admin Service** provides UI/API tools to view and toggle active flags during gameplay.  
+- **Logging & Admin Service** provides UI/API tools to view and toggle active flags during gameplay and audit historical changes.  
 
 ### 🧠 Redis Scalability
 
 - Redis is used for volatile state across sessions and runtime data, including player session context and ephemeral gameplay state.  
 - Redis clustering, partitioning, and key namespacing should be employed to handle high cardinality and throughput.  
+- ❗**Key Design Note**: Avoid Redis key bloat by using **structured and namespaced keys** (e.g., `session:{playerId}`, `room:{roomId}:occupants`) instead of dynamically generated long keys.  
+  This approach:
+  - Keeps memory usage predictable
+  - Makes it easier to scan/query related keys
+  - Prevents clutter and performance issues from overly dynamic or nested keys  
 
 ---
 
@@ -132,4 +137,10 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 - This architecture overview focuses on runtime behavior and structural composition. Refer to the matrix for a granular breakdown of what each service handles.  
 - Game instance control and runtime state (version, flags) are owned by the Game Session Service, while design and configuration versioning is authored and published via the Game Design Service.  
 - Combat, trading, and all other player or NPC-initiated actions are handled via the **Game Logic Service**, based on data retrieved from the Entity and World services and commands triggered by users or scripts.  
-- Scripts and AI behaviors are executed via the **Automation & Scripting Service**, which may drive entities or initiate actions in the game world through the Game Logic Service.
+- Scripts and AI behaviors are executed via the **Automation & Scripting Service**, which may drive entities or initiate actions in the game world through the Game Logic Service.  
+- **Input Command Execution Flow**:  
+  1. Player input is received by the Game Session Service.  
+  2. Basic rate limiting and format validation occurs.  
+  3. Valid commands are forwarded to the Game Logic Service.  
+  4. Game Logic resolves mechanics, using Entity/World services for state.  
+  5. Effects and results are applied and optionally persisted.  
