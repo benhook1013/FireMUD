@@ -1,184 +1,162 @@
 # ⏱️ Tick System and Runtime Flow
 
-FireMUD employs a **Hybrid Tick Model (Model C)** to balance real-time responsiveness with deterministic, fair action resolution. In this model:
+FireMUD uses a **Hybrid Tick Model (Model C)** to balance real-time responsiveness with deterministic action resolution:
 
-- **Player inputs are accepted in real-time**, rate-limited, and queued in per-session command buffers
-- At regular **tick intervals** (e.g., 1s), the system:
-  - Pulls one action (if any) from each entity's queue
-  - Resolves them in a consistent, fair order
-  - Applies all resulting state changes in a single, coordinated pass
+- **Player inputs arrive in real-time**, rate-limited and queued in per-session command buffers
+- At regular **tick intervals** (e.g., 1s):
+  - One action (if any) is pulled from each entity
+  - Actions are resolved in fair order
+  - State changes are applied in a single coordinated pass
 
-This approach provides:
+This model ensures:
 
-- A **responsive feel** to players
-- Deterministic conflict resolution (e.g., who picks up an item, interrupting spells)
-- Equal opportunity for AI and player-controlled entities
-- Tick-driven scheduling for cooldowns, buffs, environment updates, patrols, and status effects
+- A responsive feel to players  
+- Deterministic resolution of conflicts (e.g., item pickups, spell interrupts)  
+- Equal participation for AI and players  
+- Consistent scheduling for effects like cooldowns, buffs, patrols, and regen
 
 ---
 
-## 🌍 Room-Based Ticked Regions
+## 🌍 Room-Based Tick Regions
 
-Ticks are **not globally synchronized across the entire game world**. Instead, FireMUD uses **region- or room-scoped tick zones**. Each room or small area operates on its own tick cycle, enabling:
+Ticks are **region- or room-scoped**, not globally synchronized. Each area runs its own tick cycle, enabling:
 
-- **Scalability**: multiple regions tick independently across threads or servers
-- **Fault isolation**: expensive operations (e.g., large-scale combat) in one room do not block others
-- **Flexibility**: regions can tick at different frequencies based on design needs (e.g., slow-paced puzzles vs fast combat)
+- **Scalability**: ticks run in parallel across threads or servers  
+- **Fault isolation**: slow rooms (e.g., large combats) don’t block others  
+- **Flexible pacing**: different tick rates for different gameplay styles  
 
-This model supports concurrent and isolated execution across game regions, promoting efficient resource usage.
+This promotes sharded execution and efficient resource use.
 
 ---
 
 ## 🔄 Tick Execution Model
 
-Each tick (per region/room):
+Each tick executes the following steps:
 
 1. **Collect Actions**  
-   From the command queues of all active entities in the region (players, NPCs, AI scripts)
+   From queued commands of active entities in the region
 
 2. **Resolve Fairly**  
-   - Ordering may use stats (initiative, speed), timestamps, or priority flags
-   - By default, only one action per entity is processed per tick (configurable)
+   - Ordered by stats, timestamps, or priority  
+   - Typically one action per entity (configurable)
 
 3. **Apply Effects**  
-   - Updates to entity state (HP, status, cooldowns)
-   - Position, inventory, and skill effects
+   - Modify entity state (HP, status, position, inventory, etc.)
 
 4. **Trigger Events**  
-   - Environmental effects, regeneration, scripted room events
-   - AI decisions or reactions, which may enqueue new actions
+   - Regeneration, room scripts, NPC decisions
 
 ---
 
-## 🔐 Cross-Tick Entity Ownership and Locking
+## 🔐 Distributed Entity Locking
 
-Tick regions operate in parallel, so **multiple ticks may attempt to affect the same entity** (e.g., a shared NPC or pet). To avoid conflicting updates, FireMUD uses a **distributed entity locking model**:
+Parallel ticks may target the same entity (e.g., shared pet). To prevent conflicts, FireMUD uses **distributed locks**:
 
-- Domain services **must acquire a lock** before applying tick effects to an entity
-- Lock acquisition happens **during tick execution**, enabling asynchronous batch submission
-- Locks are stored in Redis using namespaced keys like `tick:lock:{entityId}`
-- Locks use `SET NX PX` to ensure:
-  - **Exclusive ownership per tick region**
-  - Automatic expiry (e.g., 1s) to prevent deadlocks
+- Each service must **acquire a lock** before mutating entity state  
+- Locks are stored in Redis as `tick:lock:{entityId}`  
+- Acquired with `SET NX PX` for exclusive ownership and expiry safety  
 
-If a lock cannot be acquired:
+If a lock isn’t acquired:
 
-- The affected action is **skipped and marked as timed out**
-- These actions are **guaranteed exclusive retry** in the following tick
+- The action is **timed out and skipped**  
+- It is **guaranteed retry** in the next tick, run in isolation  
 
-This strategy ensures that all ticked state updates are **serialized and safe**, enabling **true parallelism** without sacrificing consistency.
+This ensures **safe parallelism** and protects shared state integrity.
 
 ---
 
-## 🧮 Tick Commitment Model
+## 🧮 Tick Commitment and Timeout
 
-To ensure **consistency and rollback safety**, domain services **do not apply changes directly** during action resolution. Instead:
+Tick results are **staged** during execution and only **committed** once successful actions complete:
 
-- Each domain service **stages its intended changes** in temporary Redis structures (e.g., `tick:pending:{entityId}`)
-- Once all non-timed-out actions complete, the **Game Session Service finalizes the tick** by applying all staged updates to live state
-- Actions that failed or timed out are **excluded** from commitment but **re-queued** for exclusive retry in the next tick
+- Changes are stored temporarily in Redis (e.g., `tick:pending:{entityId}`)  
+- The Game Session Service finalizes the tick by applying successful updates  
+- Timed-out actions are **excluded** from commitment and **re-queued for retry**
 
-This guarantees:
+This allows partial success and keeps the game progressing:
 
-- ✅ Safe partial success without discarding good work
-- ✅ Isolation of problematic actions
-- ✅ Deterministic and fair progression across ticks
+- ✅ Good actions are not discarded  
+- ✅ Problematic actions are retried fairly  
+- ✅ No risk of partial application corrupting state
 
 ---
 
-## ⏳ Tick Timeout and Deferred Retry Model
+## ⏳ Timeout and Retry Model
 
-To preserve responsiveness while avoiding starvation:
+Each tick has a **soft execution limit** (e.g., 100ms). Actions exceeding it (due to computation or locking) are:
 
-- Each tick has a **soft execution deadline** (e.g., 100ms)
-- If an action takes too long (due to processing time or lock contention), it is **timed out**
-- Timed-out actions are **skipped during the current tick** and:
-  - **Re-queued for guaranteed execution** in the next tick
-  - **Run in isolation** to avoid further contention or cascading delay
+- **Timed out**  
+- **Re-queued for the next tick**, where they’re given **exclusive execution**
 
-This ensures:
-
-- ✅ Long or resource-heavy actions do not delay others
-- ✅ Problematic actions are retried without risk of starvation
-- ✅ Ticks can complete even with a few slow components
+This keeps ticks responsive while guaranteeing eventual progress for slow actions.
 
 Optional enhancements:
 
-- Retry backoff strategies and max retry limits
-- Metrics for diagnosing recurring timeouts
-- Batching non-conflicting timeouts for follow-up ticks
+- Retry backoff and limits  
+- Logging or metrics on frequent timeouts  
+- Batching safe-to-run-together deferred actions
 
 ---
 
-## ⏱️ Timers, Countdown Logic, and Time Scaling
+## ⏱️ Timers and Time Scaling
 
-While ticks determine **when** updates are evaluated, the **actual duration of effects** is tracked in real-world time:
+Effect durations use **real-time tracking**, not tick counts:
 
-- Cooldowns, durations, and countdowns are measured in milliseconds (e.g., `5000ms`)
-- Ticks **check timers** each cycle and process effects whose expiration has elapsed
-- If time gaps occur (e.g., due to lag or pause), **multiple effects may be processed together** in the next tick
+- E.g., cooldown = `5000ms`, not "5 ticks"  
+- Ticks check timers and trigger effects whose time has elapsed  
 
-This model provides:
-
-- Smooth time-accurate behavior even under low tick frequencies
-- Reduced CPU cost by avoiding ultra-high-frequency ticking
-- Graceful recovery when ticks fall behind
+If time has passed since the last tick (due to lag), **multiple effects may process together**.
 
 ### 🕒 Time Scaling
 
-Rather than scaling tick frequency (which affects the entire system), FireMUD supports **per-effect time scaling**:
+Time-based effects are adjusted via **scale factors**, not tick frequency:
 
-- Each timer is multiplied by a **time scale factor**
-  - Example: A `5000ms` timer with a scale of `0.9` becomes `4500ms`
-- Time scaling can apply at various scopes:
-  - **Global** (e.g., “double speed weekend”)
-  - **Per-region** (e.g., “time-dilated dungeon”)
-  - **Per-entity** (e.g., speed buff or slow debuff)
+- Example: `5000ms` cooldown × `0.9` scale → `4500ms`  
+- Applies globally, per-room, or per-entity (e.g., haste/slow)
 
-This provides **fine-grained control** over pacing without risking system-wide instability or timer misalignment.
+This keeps tick timing stable while supporting nuanced pacing.
 
 ---
 
-## 🧾 Tick Atomicity and Microservice Resilience
+## 🧾 Atomicity and Resilience
 
-Ticks form a **transactional unit of execution** across distributed services. They act as **atomic checkpoints** rather than full rollback boundaries:
+Ticks act as **atomic units** for safe and isolated progress:
 
-- Tick logic is staged and committed only once all successful actions complete
-- Timed-out actions are deferred, not committed
-- Faults in one part of the system do not affect unrelated ticks
+- Tick actions are committed together only when complete  
+- Timed-out actions are deferred cleanly  
+- Failures in one region don’t affect others  
 
-This provides:
+This ensures:
 
-- ✅ Guaranteed consistency without needing to roll back entire game state
-- ✅ Resilient game loop progression even during partial outages
-- ✅ Modular error handling and tick-level isolation
+- ✅ Consistent progression  
+- ✅ Resilience during partial failures  
+- ✅ Easy debugging and modular recovery
 
 ---
 
 ## 🧠 Responsibilities by Service
 
-| Service                   | Tick Role                                                                 |
-|---------------------------|---------------------------------------------------------------------------|
-| **Game Session Service**  | Orchestrates ticks, tracks execution time, handles timeouts, finalizes commitment |
-| **Game Logic Service**    | Executes per-entity actions in tick order and resolves effects            |
-| **Automation & Scripting**| Triggers NPC behaviors and scripted logic based on tick events            |
-| **World Management**      | Defines tick regions and manages tick distribution and ownership          |
-| **Redis**                 | Stores locks, timers, and staged results for pending ticks                |
+| Service                   | Role                                                                 |
+|---------------------------|----------------------------------------------------------------------|
+| **Game Session**          | Owns and executes all tick cycles; handles scheduling, timeout enforcement, and committing state |
+| **Game Logic**            | Executes ordered actions and computes state changes                 |
+| **Automation & Scripting**| Drives NPC behaviors and scripted logic triggered by ticks          |
+| **World Management**      | Maintains tick region boundaries and metadata; informs Game Session which regions exist but does not execute ticks |
+| **Redis**                 | Stores locks, timers, and staged results for tick processing        |
 
 ---
 
-## 🛡️ Benefits of This Model
+## 🛡️ Model Benefits
 
-- ✅ Prevents race conditions with distributed locking
-- ✅ Shards logic via region-based ticks for better scalability
-- ✅ Balances fairness, responsiveness, and determinism
-- ✅ Cleanly isolates tick faults from wider system impact
-- ✅ Uses real-time precision for accurate mechanics
-- ✅ Supports time manipulation via scaling instead of frequency
-- ✅ Promotes parallelization while keeping logic testable
-- ✅ Ensures atomicity without discarding all work due to one slow action
-- ✅ Guarantees retry for deferred actions without starvation
+- ✅ No race conditions via distributed locking  
+- ✅ Region-based ticks support horizontal scaling  
+- ✅ Deterministic action resolution with real-time feel  
+- ✅ Clean fallback for slow or blocked actions  
+- ✅ Supports time dilation and pacing variation  
+- ✅ Robust to partial failure or retry  
+- ✅ Minimal tick overhead with high accuracy  
+- ✅ Clear state management and testability
 
 ---
 
-> FireMUD treats time not as a single global clock, but as **parallel pulses** across localized gameplay regions. Each tick is a synchronized beat that ensures fair, flexible, and fault-tolerant gameplay — no matter how chaotic the world becomes.
+> FireMUD treats time as **localized pulses**, not a single clock. Each tick is a reliable beat in a chaotic world—resolving actions fairly, scaling cleanly, and keeping gameplay smooth across shards.
