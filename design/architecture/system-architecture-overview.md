@@ -190,6 +190,26 @@ This method keeps the **tick system stable and predictable**, while allowing **p
 
 ---
 
+### 🧾 Tick Atomicity and Microservice Resilience
+
+Each tick also functions as an **atomic boundary for execution and error handling**. Ticks are **not used as full state rollback points**, but rather as **safe units of progress**: if a tick fails to complete due to a transient microservice issue (e.g. Entity Service outage), the tick may be retried without committing partial results.
+
+This model ensures:
+
+- No half-applied game logic corrupts live state
+- Game Session or Game Logic services can pause/resume/resync with Redis and downstream services
+- Tick actions can be re-fetched or deferred until all dependencies are reachable
+
+Possible future enhancements:
+
+- Record tick input logs (player commands, AI outputs) for replay or debugging
+- Support diff-based snapshots for optional rollback on critical faults
+- Isolate room ticks to avoid cascading failure across unrelated gameplay areas
+
+This design provides a **clear, deterministic boundary for consistency**, while preserving service-level resilience in a distributed system.
+
+---
+
 ### 🧠 Responsibilities by Service
 
 | Service                   | Tick Role                                                                 |
@@ -211,10 +231,11 @@ This method keeps the **tick system stable and predictable**, while allowing **p
 - ✅ Uses real-time precision for accurate timers and cooldowns
 - ✅ Allows speed-altering mechanics without touching tick frequency
 - ✅ Keeps game logic consistent and testable even under load
+- ✅ Treats ticks as atomic, retry-safe checkpoints for system resilience
 
 ---
 
-> FireMUD treats time not as a global clock, but as **parallel pulses across regions**, ensuring that gameplay remains fair, scalable, and immersive — with real-time accuracy and dynamic speed control baked into every tick.
+> FireMUD treats time not as a global clock, but as **parallel pulses across regions**, ensuring that gameplay remains fair, scalable, and immersive — with real-time accuracy, dynamic speed control, and fault isolation built into every tick.
 
 ---
 
