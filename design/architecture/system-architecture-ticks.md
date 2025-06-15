@@ -63,8 +63,8 @@ Tick regions operate in parallel, so **multiple ticks may attempt to affect the 
 
 If a lock cannot be acquired:
 
-- The affected action is **skipped or deferred**
-- The Game Session Service may reprioritize deferred actions in future ticks
+- The affected action is **skipped and marked as timed out**
+- These actions are **guaranteed exclusive retry** in the following tick
 
 This strategy ensures that all ticked state updates are **serialized and safe**, enabling **true parallelism** without sacrificing consistency.
 
@@ -75,12 +75,38 @@ This strategy ensures that all ticked state updates are **serialized and safe**,
 To ensure **consistency and rollback safety**, domain services **do not apply changes directly** during action resolution. Instead:
 
 - Each domain service **stages its intended changes** in temporary Redis structures (e.g., `tick:pending:{entityId}`)
-- Once all actions in a tick batch complete (or timeout), the **Game Session Service finalizes the tick** by applying all staged updates to live state
-- If any action fails or is unreachable:
-  - The tick is **aborted and retried** later
-  - No partial updates are committed
+- Once all non-timed-out actions complete, the **Game Session Service finalizes the tick** by applying all staged updates to live state
+- Actions that failed or timed out are **excluded** from commitment but **re-queued** for exclusive retry in the next tick
 
-This guarantees **atomicity and isolation** for each tick, while supporting safe retries and fault recovery.
+This guarantees:
+
+- ✅ Safe partial success without discarding good work
+- ✅ Isolation of problematic actions
+- ✅ Deterministic and fair progression across ticks
+
+---
+
+## ⏳ Tick Timeout and Deferred Retry Model
+
+To preserve responsiveness while avoiding starvation:
+
+- Each tick has a **soft execution deadline** (e.g., 100ms)
+- If an action takes too long (due to processing time or lock contention), it is **timed out**
+- Timed-out actions are **skipped during the current tick** and:
+  - **Re-queued for guaranteed execution** in the next tick
+  - **Run in isolation** to avoid further contention or cascading delay
+
+This ensures:
+
+- ✅ Long or resource-heavy actions do not delay others
+- ✅ Problematic actions are retried without risk of starvation
+- ✅ Ticks can complete even with a few slow components
+
+Optional enhancements:
+
+- Retry backoff strategies and max retry limits
+- Metrics for diagnosing recurring timeouts
+- Batching non-conflicting timeouts for follow-up ticks
 
 ---
 
@@ -117,20 +143,15 @@ This provides **fine-grained control** over pacing without risking system-wide i
 
 Ticks form a **transactional unit of execution** across distributed services. They act as **atomic checkpoints** rather than full rollback boundaries:
 
-- Tick logic is staged and committed only once all steps succeed
-- If a tick cannot be finalized (e.g., due to a failing service), it is **retried without corrupting state**
+- Tick logic is staged and committed only once all successful actions complete
+- Timed-out actions are deferred, not committed
+- Faults in one part of the system do not affect unrelated ticks
 
 This provides:
 
-- Guaranteed **consistency** even under partial failure
-- Clear **error isolation** (only the current tick is affected)
-- The ability to **resync, resubmit, or delay** ticks until dependencies are healthy
-
-### Future Considerations
-
-- Action replay logs for debugging or deterministic simulation
-- Optional diff-based snapshots for rollback on severe faults
-- Tick "quarantine" to prevent a faulty region from affecting global systems
+- ✅ Guaranteed consistency without needing to roll back entire game state
+- ✅ Resilient game loop progression even during partial outages
+- ✅ Modular error handling and tick-level isolation
 
 ---
 
@@ -138,7 +159,7 @@ This provides:
 
 | Service                   | Tick Role                                                                 |
 |---------------------------|---------------------------------------------------------------------------|
-| **Game Session Service**  | Orchestrates ticks, buffers input, and finalizes tick commitment          |
+| **Game Session Service**  | Orchestrates ticks, tracks execution time, handles timeouts, finalizes commitment |
 | **Game Logic Service**    | Executes per-entity actions in tick order and resolves effects            |
 | **Automation & Scripting**| Triggers NPC behaviors and scripted logic based on tick events            |
 | **World Management**      | Defines tick regions and manages tick distribution and ownership          |
@@ -155,7 +176,8 @@ This provides:
 - ✅ Uses real-time precision for accurate mechanics
 - ✅ Supports time manipulation via scaling instead of frequency
 - ✅ Promotes parallelization while keeping logic testable
-- ✅ Ensures atomicity and resilience without needing full rollbacks
+- ✅ Ensures atomicity without discarding all work due to one slow action
+- ✅ Guarantees retry for deferred actions without starvation
 
 ---
 
