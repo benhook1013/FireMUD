@@ -160,28 +160,33 @@ Each tick (per region/room):
 
 ---
 
-### ⏱️ Timers and Countdown Logic
+### ⏱️ Timers, Countdown Logic, and Time Scaling
 
 While the **tick cycle determines when updates are processed**, **actual durations are tracked using real-world time** rather than tick counts.
 
-For example:
+- A cooldown might last `5000ms`, not “5 ticks”
+- Each tick checks real time against stored timers to decide what to expire or apply
 
-- A cooldown may last 5000ms, not “5 ticks”
-- A status effect may expire after 13.2 seconds
-
-Each tick compares the **current time** against the relevant expiry timestamps. If multiple timer intervals have passed (e.g. due to a delayed or slow tick), **multiple units of time-based updates are applied in a single tick**. This ensures game state progresses correctly even under load.
-
-Examples:
-
-- Regeneration ticks 3 times if 3 seconds passed since last update
-- Cooldowns expire if their end time has passed
-- Damage-over-time applies correct number of ticks
+If multiple time intervals have passed since the last tick (e.g. due to a pause, lag, or slow region), **multiple time-based effects are processed together in the next tick**, ensuring consistent game state even when ticks fall behind.
 
 This approach:
 
 - Avoids the need for very high-frequency ticks (e.g., 10ms ticks)
 - Enables smooth interaction between low-frequency ticks and high-resolution timing
 - Allows consistent game logic even if ticks fluctuate under load
+
+#### 🕒 Time Scaling
+
+In many MUDs, **tick speed itself is scaled** to simulate effects like haste, slow, or global world acceleration (e.g. 100 tick cooldown becomes 90 ticks with a 10% speedup). FireMUD instead uses a **time scale factor** applied to all **timer-based mechanics**.
+
+- Each timer (cooldowns, status durations, regen intervals, etc.) is **multiplied by a time scale factor**
+- For example, a `5000ms` cooldown with a `0.9` time scale becomes `4500ms`
+- This allows speed-ups or slow-downs to be applied:
+  - Globally (e.g. “double speed weekend”)
+  - Per room (e.g. “time-dilated dungeon”)
+  - Per entity (e.g. a haste buff on one player)
+
+This method keeps the **tick system stable and predictable**, while allowing **precise control over gameplay tempo** via timer scaling.
 
 ---
 
@@ -204,11 +209,12 @@ This approach:
 - ✅ Balances fairness with real-time input flow
 - ✅ Supports scaling up (more tick workers), or sharding across rooms/zones
 - ✅ Uses real-time precision for accurate timers and cooldowns
+- ✅ Allows speed-altering mechanics without touching tick frequency
 - ✅ Keeps game logic consistent and testable even under load
 
 ---
 
-> FireMUD treats time not as a global clock, but as **parallel pulses across regions**, ensuring that gameplay remains fair, scalable, and immersive — with real-time accuracy baked into every tick.
+> FireMUD treats time not as a global clock, but as **parallel pulses across regions**, ensuring that gameplay remains fair, scalable, and immersive — with real-time accuracy and dynamic speed control baked into every tick.
 
 ---
 
