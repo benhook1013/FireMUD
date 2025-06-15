@@ -46,7 +46,7 @@ Robust reconnection support is critical for maintaining seamless player experien
 - Retrieves player session data from Redis upon reconnect  
 - Rebinds player socket connection to restored session state  
 - Tracks and applies the active published version ID for each running game instance  
-- Stores and manages runtime feature flags (e.g., double XP, test mode) which may temporarily override design-time defaults  
+- Stores and manages runtime feature flags (e.g. double XP, test mode) which may temporarily override design-time defaults  
 
 Each layer handles the reconnection logic appropriate to its scope, ensuring fault tolerance and a smooth player experience.
 
@@ -119,7 +119,7 @@ FireMUD uses a **Hybrid Tick Model** that combines real-time responsiveness with
 - **Distributed locking** to prevent cross-room race conditions when multiple regions act on the same entity
 - **Atomic tick execution** with resilience against microservice failures and partial failures
 
-📄 A separate document titled **[Tick System and Runtime Design](./tick-system-design.md)** provides full details on tick cycle orchestration, inter-region locking, timer scaling, and tick safety mechanisms.
+📄 A separate document titled **[Tick System and Runtime Design](./system-architecture-ticks.md)** provides full details on tick cycle orchestration, inter-region locking, timer scaling, and tick safety mechanisms.
 
 ---
 
@@ -143,7 +143,7 @@ FireMUD uses a **Hybrid Tick Model** that combines real-time responsiveness with
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Protocol Bridging](./infrastructure/protocol-bridging.md)
-- [Tick System and Runtime Design](./tick-system-design.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
 
 ---
 
