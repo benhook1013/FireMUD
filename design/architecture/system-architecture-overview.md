@@ -108,6 +108,83 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 
 ---
 
+## ⏱️ Tick System and Runtime Flow
+
+FireMUD employs a **Hybrid Tick Model (Model C)** to balance real-time responsiveness with deterministic, fair action resolution. In this model:
+
+- **Player inputs are received immediately**, rate-limited, and added to per-session command queues
+- At regular **tick intervals** (e.g., 1s), the system:
+  - Pulls one action (if any) from each entity's queue
+  - Resolves them in a consistent, fair order
+  - Applies all resulting state changes simultaneously
+
+This approach provides:
+- A **responsive feel** to players
+- Deterministic conflict resolution (e.g. who picks up an item, interrupting spells)
+- Equal opportunity for AI and player-controlled entities
+- Tick-driven scheduling for cooldowns, buffs, environment updates, patrols, and status effects
+
+---
+
+### 🌍 Room-Based Ticked Regions
+
+Ticks are **not globally synchronized across the entire game world**. Instead, FireMUD uses **region- or room-scoped tick zones**. Each room or small area operates on its own tick cycle, enabling:
+
+- **Scalability**: multiple regions tick independently across threads or servers
+- **Fault isolation**: computationally expensive actions (e.g. large combat) in one room do not block or delay updates in another
+- **Flexibility**: different regions can operate at different tick rates depending on content (e.g., slow-paced puzzle room vs fast-paced combat arena)
+
+This model encourages sharded game loop execution and avoids global locks or cascading lag.
+
+---
+
+### 🔄 Tick Execution Model
+
+Each tick (per region/room):
+
+1. **Collect Actions**  
+   From the command queues of all active entities in the region (players, NPCs, AI scripts)
+
+2. **Resolve Fairly**  
+   - Order may be based on stats (initiative, speed), timestamps, or priority flags
+   - Only one action per entity is processed per tick by default (configurable)
+
+3. **Apply Effects**  
+   - Entity stats updated (HP, status effects)
+   - Position changes, inventory changes, skill effects
+
+4. **Trigger Events**  
+   - Regeneration, environmental effects, room-wide events, scripts
+   - AI decisions and queued behaviors may generate new actions
+
+---
+
+### 🧠 Responsibilities by Service
+
+| Service                   | Tick Role                                                                 |
+|---------------------------|---------------------------------------------------------------------------|
+| **Game Session Service**  | Schedules ticks for connected players; buffers inputs; calls other services |
+| **Game Logic Service**    | Executes actions for all entities in tick order; core rules and resolution |
+| **Automation & Scripting**| Responds to tick events for active NPCs and scripts; submits actions to be executed |
+| **World Management**      | Manages room tick partitioning and dynamic tick region ownership           |
+| **Redis**                 | Provides ephemeral runtime state for queued actions, statuses, cooldowns   |
+
+---
+
+### 🛡️ Benefits of This Model
+
+- ✅ Prevents race conditions by synchronizing action resolution
+- ✅ Avoids over-centralization via region-based tick isolation
+- ✅ Balances fairness with real-time input flow
+- ✅ Supports scaling up (more tick workers), or sharding across rooms/zones
+- ✅ Keeps game logic consistent and testable
+
+---
+
+> FireMUD treats time not as a global clock, but as **parallel pulses across regions**, ensuring that gameplay remains fair, scalable, and immersive.
+
+---
+
 ## 🗂️ Deployment Layers
 
 | Layer                  | Technology                                                   |
