@@ -160,6 +160,26 @@ Each tick (per region/room):
 
 ---
 
+### 🔐 Cross-Tick Entity Ownership and Locking
+
+Since tick regions operate independently, it is possible for multiple ticks to target the same entity (e.g., a player in one room and their pet in another). To prevent concurrent updates to shared entities, FireMUD uses a **distributed lock-based ownership model**.
+
+Before a domain service processes an action affecting an entity, it must **acquire a lock** on that entity:
+
+- Locks are stored in Redis using namespaced keys like `tick:lock:{entityId}`.
+- Acquired using `SET NX PX` semantics to ensure:
+  - **Only one tick region owns an entity at a time**
+  - Locks automatically expire (e.g. after 1 second) to prevent deadlock
+
+If a lock cannot be acquired:
+
+- The domain service **skips or defers** the action until a future tick
+- Game Session may optionally be notified to prioritize deferred actions
+
+This ensures entity updates are **serialized across tick regions**, enabling **safe asynchronous execution** of tick batches while preventing race conditions across the distributed system.
+
+---
+
 ### ⏱️ Timers, Countdown Logic, and Time Scaling
 
 While the **tick cycle determines when updates are processed**, **actual durations are tracked using real-world time** rather than tick counts.
@@ -214,11 +234,11 @@ This design provides a **clear, deterministic boundary for consistency**, while 
 
 | Service                   | Tick Role                                                                 |
 |---------------------------|---------------------------------------------------------------------------|
-| **Game Session Service**  | Schedules ticks for connected players; buffers inputs; calls other services |
+| **Game Session Service**  | Schedules ticks for connected players; buffers inputs; coordinates finalization |
 | **Game Logic Service**    | Executes actions for all entities in tick order; core rules and resolution |
 | **Automation & Scripting**| Responds to tick events for active NPCs and scripts; submits actions to be executed |
 | **World Management**      | Manages room tick partitioning and dynamic tick region ownership           |
-| **Redis**                 | Provides ephemeral runtime state for queued actions, statuses, cooldowns   |
+| **Redis**                 | Stores ephemeral runtime state, tick locks, and staged tick state for processing |
 
 ---
 
@@ -232,6 +252,7 @@ This design provides a **clear, deterministic boundary for consistency**, while 
 - ✅ Allows speed-altering mechanics without touching tick frequency
 - ✅ Keeps game logic consistent and testable even under load
 - ✅ Treats ticks as atomic, retry-safe checkpoints for system resilience
+- ✅ Supports safe concurrent tick execution through distributed entity locking
 
 ---
 
