@@ -1,8 +1,8 @@
-## ⏱️ Tick System and Runtime Flow
+# ⏱️ Tick System and Runtime Flow
 
 FireMUD employs a **Hybrid Tick Model (Model C)** to balance real-time responsiveness with deterministic, fair action resolution. In this model:
 
-- **Player inputs are received immediately**, rate-limited, and added to per-session command queues
+- **Player inputs are accepted in real-time**, rate-limited, and queued in per-session command buffers
 - At regular **tick intervals** (e.g., 1s), the system:
   - Pulls one action (if any) from each entity's queue
   - Resolves them in a consistent, fair order
@@ -17,7 +17,7 @@ This approach provides:
 
 ---
 
-### 🌍 Room-Based Ticked Regions
+## 🌍 Room-Based Ticked Regions
 
 Ticks are **not globally synchronized across the entire game world**. Instead, FireMUD uses **region- or room-scoped tick zones**. Each room or small area operates on its own tick cycle, enabling:
 
@@ -29,7 +29,7 @@ This model encourages sharded game loop execution and avoids global locks or cas
 
 ---
 
-### 🔄 Tick Execution Model
+## 🔄 Tick Execution Model
 
 Each tick (per region/room):
 
@@ -45,18 +45,18 @@ Each tick (per region/room):
    - Position changes, inventory changes, skill effects
 
 4. **Trigger Events**  
-   - Regeneration, environmental effects, room-wide events, scripts
+   - Environmental effects, regeneration, scripted events, and room-wide triggers
    - AI decisions and queued behaviors may generate new actions
 
 ---
 
-### 🔐 Cross-Tick Entity Ownership and Locking
+## 🔐 Cross-Tick Entity Ownership and Locking
 
 Since tick regions operate independently, it is possible for multiple ticks to target the same entity (e.g., a player in one room and their pet in another). To prevent concurrent updates to shared entities, FireMUD uses a **distributed lock-based ownership model**.
 
-Before a domain service processes an action affecting an entity, it must **acquire a lock** on that entity:
+During tick execution, each domain service must **acquire a lock** before applying changes to an entity. This is done **at the point of action processing**, allowing tick batches to be submitted asynchronously and resolved dynamically as locks become available.
 
-- Locks are stored in Redis using namespaced keys like `tick:lock:{entityId}`.
+- Locks are stored in Redis using namespaced keys like `tick:lock:{entityId}`
 - Acquired using `SET NX PX` semantics to ensure:
   - **Only one tick region owns an entity at a time**
   - Locks automatically expire (e.g. after 1 second) to prevent deadlock
@@ -70,7 +70,19 @@ This ensures entity updates are **serialized across tick regions**, enabling **s
 
 ---
 
-### ⏱️ Timers, Countdown Logic, and Time Scaling
+## 🧮 Tick Commitment Model
+
+To prevent mid-tick inconsistencies, **actions do not apply changes directly to live game state**. Instead:
+
+- **Each domain service stages the results** of its actions into temporary Redis structures (e.g., `tick:pending:{entityId}`)
+- Once all actions in a tick batch have completed (or reached timeout), the **Game Session Service finalizes the tick**, applying all staged updates in a single pass
+- If any action in the batch fails or times out, the entire staged tick is **discarded or retried**, ensuring consistency
+
+This model allows ticks to execute in parallel across services while preserving **atomicity and deterministic resolution**.
+
+---
+
+## ⏱️ Timers, Countdown Logic, and Time Scaling
 
 While the **tick cycle determines when updates are processed**, **actual durations are tracked using real-world time** rather than tick counts.
 
@@ -85,7 +97,7 @@ This approach:
 - Enables smooth interaction between low-frequency ticks and high-resolution timing
 - Allows consistent game logic even if ticks fluctuate under load
 
-#### 🕒 Time Scaling
+### 🕒 Time Scaling
 
 In many MUDs, **tick speed itself is scaled** to simulate effects like haste, slow, or global world acceleration (e.g. 100 tick cooldown becomes 90 ticks with a 10% speedup). FireMUD instead uses a **time scale factor** applied to all **timer-based mechanics**.
 
@@ -100,11 +112,15 @@ This method keeps the **tick system stable and predictable**, while allowing **p
 
 ---
 
-### 🧾 Tick Atomicity and Microservice Resilience
+## 🧾 Tick Atomicity and Microservice Resilience
 
-Each tick also functions as an **atomic boundary for execution and error handling**. Ticks are **not used as full state rollback points**, but rather as **safe units of progress**: if a tick fails to complete due to a transient microservice issue (e.g. Entity Service outage), the tick may be retried without committing partial results.
+Each tick functions as an **atomic boundary for execution and error handling**. Ticks are **not used as full state rollback points**, but rather as **safe units of progress**:
 
-This model ensures:
+- Services **stage tick results in temporary Redis state**
+- Only once all required work is done does the **Game Session Service finalize the tick**
+- If a tick fails to complete due to a transient microservice issue (e.g. Entity Service outage), the tick is **retried without committing partial results**
+
+This ensures:
 
 - No half-applied game logic corrupts live state
 - Game Session or Game Logic services can pause/resume/resync with Redis and downstream services
@@ -116,11 +132,9 @@ Possible future enhancements:
 - Support diff-based snapshots for optional rollback on critical faults
 - Isolate room ticks to avoid cascading failure across unrelated gameplay areas
 
-This design provides a **clear, deterministic boundary for consistency**, while preserving service-level resilience in a distributed system.
-
 ---
 
-### 🧠 Responsibilities by Service
+## 🧠 Responsibilities by Service
 
 | Service                   | Tick Role                                                                 |
 |---------------------------|---------------------------------------------------------------------------|
@@ -132,7 +146,7 @@ This design provides a **clear, deterministic boundary for consistency**, while 
 
 ---
 
-### 🛡️ Benefits of This Model
+## 🛡️ Benefits of This Model
 
 - ✅ Prevents race conditions by synchronizing action resolution
 - ✅ Avoids over-centralization via region-based tick isolation
