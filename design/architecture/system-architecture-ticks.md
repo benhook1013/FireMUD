@@ -58,32 +58,40 @@ Parallel ticks may target the same entity (e.g., shared pet). To prevent conflic
 
 If a lock isn’t acquired:
 
-- The action is **timed out and skipped**  
-- It is **guaranteed retry** in the next tick, run in isolation  
-
-This ensures **safe parallelism** and protects shared state integrity.
+- The action is **timed out and skipped**
+- A **structured conflict report** is returned, including:
+  - `conflictedEntityId`
+  - `holdingRegionId`
+  - `tickId` or `batchId`
+- The Game Session uses this information to **coordinate conflict-aware retries**
 
 ---
 
-## 🧮 Tick Staging, Timeout, and Retry
+## 🧮 Tick Staging, Timeout, and Smart Retry
 
 Tick results are **staged** during execution and only **committed** once successful actions complete:
 
 - Changes are stored temporarily in Redis (e.g., `tick:pending:{entityId}`)  
 - The Game Session Service finalizes the tick by applying only the **successful staged updates**  
-- **Timed-out or failed actions are excluded** from commitment and **re-queued for retry** in the next tick  
+- **Timed-out or failed actions** are excluded from commitment and **re-queued for retry**  
 
-Each tick has a **soft execution limit** (e.g., 100ms). Actions exceeding it (due to computation or lock contention) are:
+### Retry Strategy
 
-- **Timed out**  
-- **Deferred** for the next tick, where they are executed **exclusively** to ensure isolation and progress  
+The Game Session analyzes conflict reports from failed actions and schedules retries intelligently:
 
-This approach provides:
+- Conflicting actions are grouped based on entity or tick region conflicts
+- **Only one side of a conflict group** is re-attempted immediately
+- The other conflicting action(s) are **delayed until the retry batch completes successfully**
 
-- ✅ Forward progress even when some actions fail  
-- ✅ Safe partial commitment without corrupting state  
-- ✅ Fair retry handling without starvation  
-- ✅ Minimal disruption to timely ticks  
+This prevents **ping-pong contention** and ensures **eventual success** for all deferred actions.
+
+> ✅ Retries are always isolated and never interfere with ongoing ticks  
+> ✅ Retry grouping ensures liveness without thrashing  
+
+Each tick also enforces a **soft execution limit** (e.g., 100ms). Actions exceeding it (due to computation or locking) are:
+
+- Timed out  
+- Deferred for retry in the next tick, with exclusive execution
 
 Optional enhancements:
 
@@ -135,11 +143,11 @@ This ensures:
 
 | Service                   | Role                                                                 |
 |---------------------------|----------------------------------------------------------------------|
-| **Game Session**          | Owns and executes all tick cycles; handles scheduling, timeout enforcement, and committing state |
+| **Game Session**          | Owns and executes all tick cycles; handles scheduling, timeout enforcement, conflict-aware retry logic, and committing state |
 | **Game Logic**            | Executes ordered actions and computes state changes                 |
 | **Automation & Scripting**| Drives NPC behaviors and scripted logic triggered by ticks          |
 | **World Management**      | Maintains tick region boundaries and metadata; informs Game Session which regions exist but does not execute ticks |
-| **Redis**                 | Stores locks, timers, and staged results for tick processing        |
+| **Redis**                 | Stores locks, timers, staged results, and conflict metadata         |
 
 ---
 
@@ -149,6 +157,7 @@ This ensures:
 - ✅ Region-based ticks support horizontal scaling  
 - ✅ Deterministic action resolution with real-time feel  
 - ✅ Clean fallback for slow or blocked actions  
+- ✅ Conflict metadata enables smart retry scheduling  
 - ✅ Supports time dilation and pacing variation  
 - ✅ Robust to partial failure or retry  
 - ✅ Minimal tick overhead with high accuracy  
