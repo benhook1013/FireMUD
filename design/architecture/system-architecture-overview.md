@@ -119,6 +119,7 @@ FireMUD employs a **Hybrid Tick Model (Model C)** to balance real-time responsiv
   - Applies all resulting state changes simultaneously
 
 This approach provides:
+
 - A **responsive feel** to players
 - Deterministic conflict resolution (e.g. who picks up an item, interrupting spells)
 - Equal opportunity for AI and player-controlled entities
@@ -159,6 +160,31 @@ Each tick (per region/room):
 
 ---
 
+### ⏱️ Timers and Countdown Logic
+
+While the **tick cycle determines when updates are processed**, **actual durations are tracked using real-world time** rather than tick counts.
+
+For example:
+
+- A cooldown may last 5000ms, not “5 ticks”
+- A status effect may expire after 13.2 seconds
+
+Each tick compares the **current time** against the relevant expiry timestamps. If multiple timer intervals have passed (e.g. due to a delayed or slow tick), **multiple units of time-based updates are applied in a single tick**. This ensures game state progresses correctly even under load.
+
+Examples:
+
+- Regeneration ticks 3 times if 3 seconds passed since last update
+- Cooldowns expire if their end time has passed
+- Damage-over-time applies correct number of ticks
+
+This approach:
+
+- Avoids the need for very high-frequency ticks (e.g., 10ms ticks)
+- Enables smooth interaction between low-frequency ticks and high-resolution timing
+- Allows consistent game logic even if ticks fluctuate under load
+
+---
+
 ### 🧠 Responsibilities by Service
 
 | Service                   | Tick Role                                                                 |
@@ -177,11 +203,12 @@ Each tick (per region/room):
 - ✅ Avoids over-centralization via region-based tick isolation
 - ✅ Balances fairness with real-time input flow
 - ✅ Supports scaling up (more tick workers), or sharding across rooms/zones
-- ✅ Keeps game logic consistent and testable
+- ✅ Uses real-time precision for accurate timers and cooldowns
+- ✅ Keeps game logic consistent and testable even under load
 
 ---
 
-> FireMUD treats time not as a global clock, but as **parallel pulses across regions**, ensuring that gameplay remains fair, scalable, and immersive.
+> FireMUD treats time not as a global clock, but as **parallel pulses across regions**, ensuring that gameplay remains fair, scalable, and immersive — with real-time accuracy baked into every tick.
 
 ---
 
