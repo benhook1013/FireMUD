@@ -119,6 +119,48 @@ FireMUD uses a **Hybrid Tick Model** that combines real-time responsiveness with
 - **Distributed locking** to prevent cross-room race conditions when multiple regions act on the same entity  
 - **Atomic tick execution** with resilience against microservice failures and partial failures  
 
+### ⚙️ Stateless Tick Execution Model
+
+FireMUD's tick system is built around a **stateless execution model**, where all volatile game state (rooms, entities, cooldowns, effects, etc.) resides in **Redis**, allowing any service instance to execute a tick for any room or area without needing persistent ownership.
+
+Each tick cycle:
+
+- Retrieves relevant state from Redis
+- Executes game logic to process actions
+- Writes updated state back to Redis atomically
+
+This design enables:
+
+- **Elastic scalability**, with no need for pre-assigned tick workers
+- **Robust fault tolerance**, since no state is lost on failure or reassignment
+- **Simplicity in orchestration**, as ticks are not bound to specific service instances
+
+To avoid race conditions or double-processing:
+
+- **Concurrency control is enforced directly inside Redis** using **Lua scripts** that execute atomically.
+- These scripts are used to:
+  - Acquire short-lived tick locks per room
+  - Ensure only one worker can begin execution at a time
+  - Safely release locks or validate ownership before unlocking
+
+Because Redis guarantees that Lua scripts run as **single, uninterruptible operations**, this approach provides strong protection against concurrent execution issues across multiple distributed workers.
+
+This stateless design is well-suited for early and medium-scale workloads where central state access is performant and room activity is evenly distributed.
+
+---
+
+### 📈 Future: Room Sharding and Ownership
+
+As concurrency demands increase, FireMUD’s tick system may evolve to include **runtime sharding and region ownership**, where services take exclusive responsibility for a subset of rooms or zones for the duration of their activity.
+
+Potential benefits include:
+
+- **Local in-memory caching** of hot state to reduce Redis overhead
+- **Predictable locality and affinity**, improving scheduling efficiency
+- **Scalable throughput** in dense or high-interaction areas
+
+Such a model would use Redis-backed leases or lightweight elections to coordinate shard ownership, with automatic failover and rebalancing as needed. This path remains fully compatible with the stateless foundation, enabling phased adoption without architectural overhaul.
+
 📄 A separate document titled **[Tick System and Runtime Design](./system-architecture-ticks.md)** provides full details on tick cycle orchestration, inter-region locking, timer scaling, and tick safety mechanisms.
 
 ---
