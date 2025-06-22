@@ -159,6 +159,8 @@ To avoid race conditions or double-processing:
   - Ensure only one worker can begin execution at a time  
   - Safely release locks or validate ownership before unlocking  
 
+Although any instance of the Game Session Service can process any tick, **sticky routing is not used**. Instead, **Redis-based locking coordinates execution**, ensuring only one instance processes a tick per room at a time. This approach makes the system resilient to failover, rebalancing, and elastic scaling without introducing contention.
+
 ⚠️ **Redis provides single-threaded, atomic Lua execution**, which guarantees safety for distributed tick workers.
 
 This design enables:
@@ -250,6 +252,8 @@ FireMUD adopts a unified observability strategy built on **centralized logging t
 
 - Application metrics are exported via **Prometheus-compatible `/metrics` endpoints** and scraped centrally.
 - **Grafana** dashboards visualize gameplay performance (tick latency, player load, Redis ops, etc.).
+- Prometheus also scrapes **service-level metrics** such as request rate, error rate, and JVM health.
+- Game-specific gauges (e.g., **active sessions**, **queued actions per room**, **tick execution duration**) are exposed via custom metrics in the **Game Session Service** and **Game Logic Service**, enabling deep visibility into runtime dynamics.
 - Distributed tracing (via **OpenTelemetry**) allows end-to-end command lifecycle tracking, with optional integration into **Jaeger** or **Tempo**.
 
 ---
@@ -269,15 +273,21 @@ FireMUD adopts a unified observability strategy built on **centralized logging t
 
 ## 🔎 Notes on Responsibility Alignment
 
-- Functional responsibilities for each service are centralized in the [Responsibility Matrix](./responsibility-matrix.md) and referenced implicitly here.  
+- Functional responsibilities for each service are centralized in the [Responsibility Matrix](./system-architecture/responsibility-matrix.md) and referenced implicitly here.  
 - This architecture overview focuses on runtime behavior and structural composition. Refer to the matrix for a granular breakdown of what each service handles.  
 - Game instance control and runtime state (version, flags) are owned by the Game Session Service, while design and configuration versioning is authored and published via the Game Design Service.  
-- Combat, trading, and all other player or NPC-initiated actions are handled via the **Game Logic Service**, based on data retrieved from the Entity and World services and commands triggered by users or scripts.  
-- Scripts and AI behaviors are executed via the **Automation & Scripting Service**, which may drive entities or initiate actions in the game world through the Game Logic Service.  
+- Combat, trading, and all other player or NPC-initiated actions are handled via the **Game Logic Service**, based on state and data retrieved from the Entity and World services. During each tick, the **Game Session Service dequeues actions** from session command queues and invokes the **Game Logic Service** to process them.  
+  The Game Logic Service:
+  - Retrieves required state from the Entity and World services (e.g., room layout, entity stats)
+  - Applies deterministic gameplay rules to resolve the action
+  - Returns updated game state transitions  
+  These state transitions are **held transiently within the tick scope**. Only after the tick completes successfully are updates **committed to Redis** by the Game Session Service.  
+- Scripts and AI behaviors are executed via the **Automation & Scripting Service**, which may inject commands into queues or trigger autonomous behavior through the Game Logic Service.
 
 🧠 **Why Game Session vs Game Logic?**  
 The Game Logic Service acts as a deterministic engine — it processes commands based on inputs and state but doesn’t manage session-specific concerns.  
 The Game Session Service, in contrast, owns the player’s session context, command queue, and tick execution. It’s the appropriate layer for input validation, rate limiting, and controlling command submission to the logic layer.
+
 > The Game Session Service handles the lifecycle and timing of command execution (validation, queuing, rate limiting), while the Game Logic Service deterministically processes commands and state transitions.
 
 ---
