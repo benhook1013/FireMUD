@@ -160,6 +160,75 @@ Such a model would use Redis-backed leases or lightweight elections to coordinat
 
 ---
 
+## 🔐 Authentication and Authorization Flow
+
+FireMUD supports multiple client types (Telnet, WebSocket, HTTP) and provides a consistent authentication model using the **Spring Cloud Gateway** as the single point of entry and verification.
+
+### 🧭 Authentication Entry Points
+
+- **Web Clients (WebSocket or HTTP)** connect directly to the **Spring Cloud Gateway**, which authenticates the user and establishes a persistent session context.
+- **Traditional MUD Clients (Telnet)** connect via the **TCP Proxy Service**, which upgrades the raw TCP stream to WebSocket and forwards it to the Gateway. The Gateway authenticates this stream identically to Web clients.
+
+> ✅ All client traffic flows through the Spring Cloud Gateway, which acts as a secure funnel to downstream services.
+
+### 🔑 Token Format
+
+- FireMUD uses **JWTs (JSON Web Tokens)** to represent authenticated *accounts*, not individual characters.
+- JWTs are issued by the **Account Service** upon successful login and contain signed claims identifying the account and its access rights.
+- Typical claims include:
+  - `accountId` – Unique identity for the user account
+  - `roles` – Account-level roles (e.g., `user`, `admin`, `moderator`)
+  - `tenants[]` – List of game worlds the account can access
+  - `features[]` – Optional account-level feature flags
+- Player and world context are **not embedded** in the JWT; they are selected post-login during game session setup.
+
+### 🧠 Session Handling
+
+- After authentication, the **Spring Cloud Gateway** passes the validated JWT to the **Game Session Service**.
+- The **Game Session Service stores the JWT** as part of the account session context.
+- When a player selects a character within a world, this state is tracked independently of the JWT.
+- On each command or action:
+  - The session-scope `playerId` and `worldId` are resolved
+  - The stored JWT is used to validate the originating account and check applicable permissions
+  - The combined context is passed downstream (e.g., to Game Logic Service)
+
+> 🛑 Backend services trust the Game Session Service to represent authenticated users and their selected in-game identity. They do not revalidate JWTs.
+
+### 🛂 Authorization and Roles
+
+- The `roles` claim determines whether an account has elevated access to admin tools, game management APIs, or moderator commands.
+- Services like the Game Session Service and Admin & Logging Service use roles to control feature exposure.
+- Enforcement is performed **locally per service**, based on the decoded claims in the JWT.
+
+---
+
+## 📊 Observability and Monitoring
+
+FireMUD adopts a unified observability strategy built on **centralized logging to the ELK stack**. All logs — including debug output, error reports, gameplay events, and auditable admin actions — are emitted by services and routed to Elasticsearch via standard log collection agents.
+
+### 🔍 Logging
+
+- **All services log directly to stdout/stderr**, emitting structured JSON logs enriched with metadata such as `traceId`, `playerId`, `sessionId`, and `serviceName`.
+- Host-level agents (e.g., **Fluent Bit**, **Filebeat**, or similar) collect and forward these logs to a centralized **Elasticsearch** cluster.
+- **No logs are stored in service-local databases.** All logging is out-of-band, and services are not aware of or coupled to any logging consumers.
+- Once logs are forwarded and indexed by ELK, they are considered persistently recorded and queryable.
+
+> 🛑 No services call the Admin & Logging Service to log. Logging is asynchronous and decoupled from core business logic.
+
+### 🧾 Admin & Logging Service
+
+- Provides UI/API access to search, filter, and review logs via the ELK backend (e.g., using Kibana or OpenSearch Dashboards).
+- Supports advanced filtering (e.g., by player, session, room, command) and moderation workflows using centralized log data.
+- Does **not persist or modify logs** — it only queries what’s already stored in ELK.
+
+### 📈 Metrics and Tracing
+
+- Application metrics are exported via **Prometheus-compatible `/metrics` endpoints** and scraped centrally.
+- **Grafana** dashboards visualize gameplay performance (tick latency, player load, Redis ops, etc.).
+- Distributed tracing (via **OpenTelemetry**) allows end-to-end command lifecycle tracking, with optional integration into **Jaeger** or **Tempo**.
+
+---
+
 ## 🗂️ Deployment Layers
 
 | Layer                  | Technology                                                   |
