@@ -9,20 +9,20 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities  
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients  
 - **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway  
-- **Consistent end-to-end WebSocket flow**: TCP Proxy → Gateway → Game Session Service  
-- **All client traffic is routed through the Gateway**, ensuring centralized authentication, monitoring, and routing  
+- **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service  
+- **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized authentication, monitoring, and routing  
 - **Spring Cloud Gateway is fully horizontally scalable and stateless**, with no sticky session requirements. Game sessions are stored externally, allowing any Gateway instance to serve any authenticated client.  
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers input and handles reconnects. Once upgraded to WebSocket, traffic flows through stateless layers — allowing transparent failover and reconnection.  
 - **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:  
   - The **TCP Proxy** buffers Telnet input and reconnects to the Gateway when needed  
-  - The **Gateway** re-establishes downstream WebSocket connections to backend services  
+  - The **Spring Cloud Gateway** re-establishes downstream WebSocket connections to backend services  
   - The **Game Session Service** restores gameplay context using external Redis state  
 - **Internal microservice communication uses direct backend-to-backend gRPC communication (excluding the Gateway for internal traffic)**  
 - **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing  
-- **Session state is externalized (e.g., Redis)** to keep services stateless and allow for graceful reconnection  
+- **Session state is externalized (e.g., Redis Cluster)** to keep services stateless and allow for graceful reconnection  
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**, with the Game Design Service enabling live editing and versioning  
 - **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, and published version tracking  
-- **Feature flags are defined at design-time but toggled at runtime**, enabling temporary or contextual behavior changes without altering the underlying game definition  
+- **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**, enabling temporary or contextual behavior changes without altering the underlying game definition  
 
 🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) for a visual representation of these components and flows.
 
@@ -64,7 +64,7 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, published version state, input command validation, rate limiting, and action queues |
+| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, published version state, input command validation, rate limiting, tick execution, and action queues |
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
 | **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding; also responsible for persistent room state |
@@ -93,24 +93,45 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 ## 📦 Data and State Management
 
 - **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
-- **Volatile state** (player sessions, transient gameplay state) is stored in Redis by the Game Session Service.  
+- **Volatile state** (player sessions, transient gameplay state) is stored in Redis Cluster by the Game Session Service.  
 - **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
 - **Design-time feature flags** are defined and versioned within the Game Design Service.  
 - **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.  
 - **Logging & Admin Service** provides UI/API tools to view and toggle active flags during gameplay and audit historical changes.  
 
 📤 **Game Configuration Rollout:**  
-When a new game version is published by the Game Design Service, the relevant domain services update their internal PostgreSQL data for that version (e.g. updated world, entities, commands). The Game Session Service tracks and assigns version IDs to active game instances and notifies participating services of version changes at runtime when needed — avoiding complex pub-sub requirements for now.
+When a new game version is published by the Game Design Service, the relevant domain services (e.g., Entity, World, Logic) update their internal PostgreSQL data for that version. The Game Session Service tracks and assigns version IDs to active game instances and notifies participating services of version changes at runtime when needed — avoiding complex pub-sub requirements for now.
 
 ⚠️ **Redis Volatility Note:**  
 Redis is only used for **transient, non-authoritative data** (e.g., session context, in-flight actions, volatile effects).  
 All canonical player data, stats, inventories, and world definitions are stored in PostgreSQL within the appropriate domain services.
 
-### 🧠 Redis Scalability
+### 🛡️ Redis Availability, Consistency, and Safety Guarantees
 
-- Redis is used for volatile state across sessions and runtime data, including player session context and ephemeral gameplay state.  
-- Redis clustering, partitioning, and key namespacing should be employed to handle high cardinality and throughput.  
-- ❗**Key Design Note**: Avoid Redis key bloat by using **structured and namespaced keys** (e.g., `session:{playerId}`, `room:{roomId}:occupants`) instead of dynamically generated long keys.  
+Redis is treated as a **critical volatile state layer** for gameplay sessions, in-flight commands, ephemeral effects, and reconnect continuity. While not a source of truth, its **availability and consistency are vital** to player experience and gameplay correctness.
+
+FireMUD uses a **Redis Cluster** deployment with multiple masters and replicas, enabling:
+
+- **Horizontal partitioning** for scalable throughput across game sessions, rooms, and players  
+- **High availability and automatic failover**, ensuring continued service in the event of node loss  
+- **Asynchronous replication** of writes from primary nodes to replicas for each shard  
+- **Append-Only File (AOF) persistence** enabled for crash recovery and log-based replay
+
+To protect against loss of critical state during failover:
+
+- **Lua scripts are used for all tick and session-critical operations**, guaranteeing atomic execution on the primary node for that shard  
+- After each critical Lua write, FireMUD uses the Redis `WAIT` command to block until the write has been **replicated to at least one replica**, e.g., `WAIT 1 100`  
+- This ensures gameplay continuity even in the event of mid-operation failover or primary loss
+
+> ⚠️ Redis consistency is **eventually consistent** across shards and replicas. FireMUD avoids cross-shard dependencies and designs tick/state operations to tolerate short replication delays, while ensuring **deterministic correctness** at the shard level using Redis-native concurrency controls.
+
+Operational guarantees:
+
+- Services include **retry and backoff logic** to tolerate temporary Redis unavailability  
+- Redis cluster health, replication lag, and script contention are **monitored via Prometheus and surfaced in Grafana**  
+- All game-critical logic remains **resilient to soft Redis restarts**, with no risk of data loss from service-local memory
+
+❗**Key Design Note**: Redis keys are structured and namespaced (e.g., `session:{playerId}`, `room:{roomId}:occupants`) to support sharding, avoid bloat, and simplify debugging.
 
 ---
 
@@ -120,7 +141,9 @@ FireMUD uses a **Hybrid Tick Model** that combines real-time responsiveness with
 
 ### ⚙️ Stateless Tick Execution Model
 
-FireMUD's tick system is built around a **stateless execution model**, where all volatile game state (rooms, entities, cooldowns, effects, etc.) resides in **Redis**, allowing any service instance to execute a tick for any room or area without needing persistent ownership.
+FireMUD's tick system is built around a **stateless execution model**, where all volatile game state (rooms, entities, cooldowns, effects, etc.) resides in **Redis Cluster**, allowing any service instance to execute a tick for any room or area without needing persistent ownership.
+
+Tick cycles are **owned and executed by the Game Session Service**, which coordinates reads/writes from Redis and uses the Game Logic Service to process each action.
 
 Each tick cycle:
 
@@ -254,7 +277,7 @@ FireMUD adopts a unified observability strategy built on **centralized logging t
 
 🧠 **Why Game Session vs Game Logic?**  
 The Game Logic Service acts as a deterministic engine — it processes commands based on inputs and state but doesn’t manage session-specific concerns.  
-The Game Session Service, in contrast, owns the player’s session context and command queue. It’s the appropriate layer for input validation, rate limiting, and controlling command submission to the logic layer.
+The Game Session Service, in contrast, owns the player’s session context, command queue, and tick execution. It’s the appropriate layer for input validation, rate limiting, and controlling command submission to the logic layer.
 
 ---
 
