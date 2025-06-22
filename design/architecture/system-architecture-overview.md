@@ -11,6 +11,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway  
 - **Consistent end-to-end WebSocket flow**: TCP Proxy → Gateway → Game Session Service  
 - **All client traffic is routed through the Gateway**, ensuring centralized authentication, monitoring, and routing  
+- **Spring Cloud Gateway is fully horizontally scalable and stateless**, with no sticky session requirements. Game sessions are stored externally, allowing any Gateway instance to serve any authenticated client.  
+- **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers input and handles reconnects. Once upgraded to WebSocket, traffic flows through stateless layers — allowing transparent failover and reconnection.  
 - **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:  
   - The **TCP Proxy** buffers Telnet input and reconnects to the Gateway when needed  
   - The **Gateway** re-establishes downstream WebSocket connections to backend services  
