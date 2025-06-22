@@ -15,10 +15,10 @@ This document provides a high-level view of FireMUD’s system architecture, sho
   - The **TCP Proxy** buffers Telnet input and reconnects to the Gateway when needed  
   - The **Gateway** re-establishes downstream WebSocket connections to backend services  
   - The **Game Session Service** restores gameplay context using external Redis state  
-- **Internal microservice communication uses gRPC**, bypassing the Gateway for backend-to-backend calls  
+- **Internal microservice communication uses direct backend-to-backend gRPC communication (excluding the Gateway for internal traffic)**  
 - **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing  
 - **Session state is externalized (e.g., Redis)** to keep services stateless and allow for graceful reconnection  
-- **Game treated as data**, with the Game Design Service enabling live editing and versioning without code deployment  
+- **Game definitions and rules are data-driven and editable via tooling without redeploying code**, with the Game Design Service enabling live editing and versioning  
 - **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, and published version tracking  
 - **Feature flags are defined at design-time but toggled at runtime**, enabling temporary or contextual behavior changes without altering the underlying game definition  
 
@@ -44,7 +44,7 @@ Robust reconnection support is critical for maintaining seamless player experien
 
 - **Owns gameplay session continuity**  
 - Retrieves player session data from Redis upon reconnect  
-- Rebinds player socket connection to restored session state  
+- Binds newly reconnected socket to a recovered gameplay context  
 - Tracks and applies the active published version ID for each running game instance  
 - Stores and manages runtime feature flags (e.g. double XP, test mode) which may temporarily override design-time defaults  
 
@@ -101,23 +101,23 @@ Each layer handles the reconnection logic appropriate to its scope, ensuring fau
 - Redis is used for volatile state across sessions and runtime data, including player session context and ephemeral gameplay state.  
 - Redis clustering, partitioning, and key namespacing should be employed to handle high cardinality and throughput.  
 - ❗**Key Design Note**: Avoid Redis key bloat by using **structured and namespaced keys** (e.g., `session:{playerId}`, `room:{roomId}:occupants`) instead of dynamically generated long keys.  
-  This approach:
-  - Keeps memory usage predictable
-  - Makes it easier to scan/query related keys
+  This approach:  
+  - Keeps memory usage predictable  
+  - Makes it easier to scan/query related keys  
   - Prevents clutter and performance issues from overly dynamic or nested keys  
 
 ---
 
-## ⏱️ Tick System Summary
+## ⏱️ Game Loop / Tick Model
 
 FireMUD uses a **Hybrid Tick Model** that combines real-time responsiveness with fair, deterministic processing of entity actions. Player inputs are queued immediately, and each tick interval selects and resolves one action per entity in a consistent order. This model supports:
 
-- **Responsive gameplay** with immediate input handling
-- **Fair resolution of simultaneous actions** across players, NPCs, and scripts
-- **Timer-driven effects** like cooldowns and buffs using real-world time rather than tick counts
-- **Room-scoped tick zones** that operate independently to enable scaling and fault isolation
-- **Distributed locking** to prevent cross-room race conditions when multiple regions act on the same entity
-- **Atomic tick execution** with resilience against microservice failures and partial failures
+- **Responsive gameplay** with immediate input handling  
+- **Fair resolution of simultaneous actions** across players, NPCs, and scripts  
+- **Timer-driven effects** like cooldowns and buffs using real-world time rather than tick counts  
+- **Room-scoped tick zones** that operate independently to enable scaling and fault isolation  
+- **Distributed locking** to prevent cross-room race conditions when multiple regions act on the same entity  
+- **Atomic tick execution** with resilience against microservice failures and partial failures  
 
 📄 A separate document titled **[Tick System and Runtime Design](./system-architecture-ticks.md)** provides full details on tick cycle orchestration, inter-region locking, timer scaling, and tick safety mechanisms.
 
