@@ -35,8 +35,11 @@ Robust reconnection support is critical for maintaining seamless player experien
 ### 🛰️ TCP Proxy Service
 
 - **Manages Telnet TCP connections**  
-- Buffers player input to avoid loss during short disconnects  
-- Attempts to reconnect to the Spring Cloud Gateway automatically  
+- Buffers **in-progress input** per connection as Telnet input arrives one character at a time  
+- Assembles characters into full commands, delimited by newline  
+- **Immediately forwards complete commands** to the Spring Cloud Gateway  
+- **Does not retain input across disconnects** — partial commands are discarded if the connection drops  
+- Attempts to reconnect to the Spring Cloud Gateway automatically
 
 ### 🌐 Spring Cloud Gateway
 
