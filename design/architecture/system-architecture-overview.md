@@ -69,7 +69,7 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
 | **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding; also responsible for persistent room state |
-| **Game Logic Service**            | Executes command parsing and gameplay mechanics; processes all entity-driven actions including combat, trading, movement, and skill usage |
+| **Game Logic Service**            | Executes command parsing and gameplay mechanics; resolves queued actions deterministically |
 | **Automation & Scripting Service**| Executes custom scripts and AI that actively trigger functionality in the Game Logic Service or cause entities to take autonomous actions |
 | **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
 | **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, audit logging query UI |
@@ -95,6 +95,7 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 
 - **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
 - **Volatile state** (player sessions, transient gameplay state, ticks) is stored in Redis Cluster by the Game Session Service.  
+- Redis also records **inter-tick conflict metadata and retry queues** to optimize pacing and fairness across ticks.  
 - **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
 - **Design-time feature flags** are defined and versioned within the Game Design Service.  
 - **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.  
@@ -118,7 +119,7 @@ Key design aspects:
 - Each **tick region** (e.g., room or map segment) executes its own tick independently.
 - **Player and NPC actions are pulled from per-entity command queues** and resolved once per tick.
 - **Redis-based coordination and locking** ensure safe concurrent execution across distributed workers.
-- Tick execution is **fully orchestrated by the Game Session Service**, using the Game Logic Service to resolve gameplay effects.
+- Tick execution is **orchestrated by the Game Session Service**, which invokes the **Game Logic Service** to resolve queued actions deterministically.
 - Ticks are **fault-tolerant**, **crash-resilient**, and support **smart retries** and **timer scaling** for real-world pacing effects.
 - **Redis Lua scripts** guarantee atomic state transitions and lock safety.
 - Tick state is **durably staged and committed**, with partial success handling and conflict reporting.
@@ -192,6 +193,7 @@ FireMUD adopts a unified observability strategy built on **centralized logging t
 
 - Metrics are exported via **Prometheus-compatible `/metrics` endpoints**.
 - **Grafana dashboards** provide visibility into tick latency, action queue depth, Redis contention, etc.
+- **Redis metrics** (e.g., lock contention, Lua latency) are exported via Prometheus and visualized in Grafana for hotspot detection and tick health.
 - Tracing via **OpenTelemetry** enables end-to-end action flow debugging across ticks and services.
 
 ---
