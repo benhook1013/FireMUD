@@ -2,7 +2,7 @@
 
 This document outlines FireMUD’s usage of Redis as a **transient, high-performance, distributed coordination layer**. It focuses on Redis's responsibilities, safety guarantees, key patterns, and operational practices.
 
-> 🔗 For full tick execution, retries, and lock behavior, see [Tick System and Runtime Flow](./system-architecture-ticks.md).
+> 🔗 For full tick execution, retries, and lock behavior, see [Tick System and Runtime Design](./system-architecture-ticks.md).
 
 ---
 
@@ -13,7 +13,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - WebSocket session bindings and live gameplay context
 - In-flight command queues
 - Tick locks and staged results
-- Cooldowns and timer expirations
+- Cooldowns and timer expirations (stored in milliseconds)
 - Retry metadata and **inter-tick conflict tracking**
 - AI/scripted action injection
 
@@ -41,7 +41,7 @@ Redis is a **non-persistent** layer — but FireMUD treats it as **critical to g
 FireMUD runs Redis as a **clustered, replicated setup**:
 
 - Multiple **shards and replicas** for horizontal partitioning
-- Partitioning aligned to tick regions and sessions
+- Partitioning aligned to tick regions and sessions (tick regions are per-room or per-segment)
 - Redis Sentinel or **Kubernetes-native failover**
 - **Automatic failover** behavior tested under load
 
@@ -71,7 +71,7 @@ Redis keys follow a strict naming convention to support:
 | `tick:pending:{regionId}`        | Staged results for a tick region         |
 | `room:{roomId}:occupants`        | Room occupancy snapshot                  |
 | `retry:{regionId}`               | Retry queue for failed actions           |
-| `timer:{entityId}:{effectId}`    | Cooldown/effect timer metadata           |
+| `timer:{entityId}:{effectId}`    | Cooldown/effect timer metadata (in ms)   |
 
 > ⚠️ **FireMUD avoids cross-shard operations.** Tick regions and player sessions are scoped to a **single Redis shard** to maintain atomicity and simplify logic.
 
@@ -93,7 +93,7 @@ All scripts are:
 - **Shard-isolated** to avoid **cross-node inconsistencies**
 - Protected against cross-tick contamination
 
-> 🔗 See [Tick Locking](./system-architecture-ticks.md#🔐-distributed-entity-locking) for usage during ticks.
+> 🔗 See [Tick Locking](./system-architecture-ticks.md#distributed-locking) for usage during ticks.
 
 ---
 
@@ -106,9 +106,9 @@ It provides:
 - Centralized **command queues**
 - Distributed **lock and retry control**
 - Durable **tick staging** with rollback and partial commit support
-- **Cooldowns and timers** tied to real-world time
+- **Cooldowns and timers** tied to real-world time (stored in milliseconds)
 
-> 🔗 Tick execution logic is fully defined in [Tick System and Runtime Flow](./system-architecture-ticks.md#🔄-tick-execution-model).
+> 🔗 Tick execution logic is fully defined in [Tick System and Runtime Design](./system-architecture-ticks.md#tick-execution-flow).
 > 🔁 Redis enables replayable, deterministic ticks even after crashes — with recovery powered by Lua, AOF, and `WAIT`.
 
 ### 💥 In Case of Interruption or Crash
@@ -144,11 +144,11 @@ Redis in FireMUD is:
 - Backed by **AOF and `WAIT` guarantees** for resilience
 - Scripted via **Lua** for atomicity and correctness
 - **Shard-isolated** to prevent cross-node inconsistencies
-- Tightly integrated with [Tick System and Runtime Flow](./system-architecture-ticks.md) for deterministic multiplayer execution
+- Tightly integrated with [Tick System and Runtime Design](./system-architecture-ticks.md) for deterministic multiplayer execution
 
 ---
 
 📚 **Related Documentation**
 
-- [Tick System and Runtime Flow](./system-architecture-ticks.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [System Architecture Overview](./system-architecture-overview.md)

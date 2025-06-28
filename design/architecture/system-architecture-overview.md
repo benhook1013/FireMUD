@@ -96,8 +96,8 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 - **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
 - **Volatile state** (player sessions, transient gameplay state, ticks) is externalized to Redis Cluster and managed by the Game Session Service.  
 - Redis is treated as a **transient coordination layer**, enabling scalable reconnection, concurrent tick execution, and in-flight action tracking.  
-- **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.
-- **Design-time feature flags** are defined in the Game Design Service; **runtime flags** are managed in the Game Session Service for temporary overrides.
+- **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
+- **Design-time feature flags** are defined in the Game Design Service; **runtime flags** are managed in the Game Session Service for temporary overrides.  
 - **Logging & Admin Service** provides UI/API tools to view and toggle active flags and audit historical changes.
 
 📤 **Game Configuration Rollout:**  
@@ -225,10 +225,11 @@ The Game Session Service owns the player’s session context, tick execution, co
 
 ## 📚 Related Documentation
 
+- [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md)
+- [Redis Architecture](./system-architecture/system-architecture-redis.md)
 - [Microservices Responsibility Matrix](./system-architecture/responsibility-matrix.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Protocol Bridging](./infrastructure/protocol-bridging.md)
 - [System Architecture Diagram](./system-architecture/system-architecture-diagram.md)
-- [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md)

@@ -1,4 +1,4 @@
-# ⏱️ FireMUD System Architecture: Tick System and Runtime Flow
+# ⏱️ FireMUD System Architecture: Tick System and Runtime Design
 
 📄 This document expands on the [Game Loop / Tick Model](./system-architecture-overview.md#⏱️-game-loop--tick-model) section of the FireMUD System Architecture Overview. It defines how ticks execute, resolve concurrency, handle crashes, and preserve deterministic, fair game logic under load.
 
@@ -45,7 +45,7 @@ If a required lock is unavailable:
 
 Conflict metadata is recorded and **reported to the Game Session Service**, which uses it to **reorder future submissions intelligently**.
 
-> 🔗 See [Redis Lock Behavior](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control-with-lua) for script structure.
+> 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control) for Lua behavior.
 
 ### 🧠 Retry Scheduling
 
@@ -147,9 +147,8 @@ This composability model ensures tick transactions are **self-contained, determi
 
 ## ⏱️ Timers and Time Scaling
 
-Time-based effects (e.g. cooldowns, regeneration) use **real-world durations**:
+Time-based effects (e.g. cooldowns, regeneration) use **real-world durations in milliseconds**:
 
-- Stored as millisecond values (e.g. `5000ms`)
 - Keys follow the format `timer:{entityId}:{effectId}`
 - Each tick checks for timer expirations and triggers any that have elapsed
 
@@ -173,7 +172,7 @@ If the **Game Session Service** crashes mid-tick:
 
 - Redis retains:
   - Active locks (`tick:lock:*`)
-  - Staged deltas (`tick:pending:*`)
+  - Staged changes (`tick:pending:*`)
   - Timer state (`timer:*`)
 
 Redis provides durability through:
