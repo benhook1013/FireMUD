@@ -113,31 +113,34 @@ Key design aspects:
 
 ## 🔐 Authentication and Authorization Flow
 
-FireMUD provides a consistent authentication model across all client types (Telnet, WebSocket, HTTP), using **plaintext `LOGIN` commands** handled by the **Game Session Service**. Clients never see or handle authentication tokens directly.
+FireMUD uses a unified authentication model across all client types (Telnet, WebSocket, HTTP), relying on plaintext `LOGIN` commands. All authentication is handled server-side by the **Game Session Service**, and clients never receive or transmit tokens.
 
-### 🧭 Entry Points and Flow
+### 🧭 Flow Summary
 
-- **Telnet clients** connect via the **TCP Proxy Service**, which upgrades TCP to WebSocket and forwards it to the **Spring Cloud Gateway**.
-- **Web clients** connect directly to the **Spring Cloud Gateway** over WebSocket or HTTP.
-- The **Gateway is stateless** — it forwards traffic but does **not perform authentication**.
-- After the `LOGIN` command, the **Game Session Service** verifies credentials via the **Account Service** and obtains a **backend-only JWT**.
+- **Telnet clients** connect via the **TCP Proxy Service**, which upgrades TCP to WebSocket and forwards it to the **Spring Cloud Gateway**
+- **Web clients** connect directly to the **Gateway** via WebSocket or HTTP
+- The **Spring Cloud Gateway is stateless** and does **not perform authentication** — it simply routes messages
+- On receiving `LOGIN`, the **Game Session Service** validates credentials via the **Account Service** and obtains a **backend-only JWT**
 
-### 🔑 Token and Session Handling
+### 🔑 Internal Token Handling
 
-- JWTs represent authenticated **accounts**, not specific characters.
-- These tokens are **never sent to clients** and are used only for **internal service-to-service authentication**.
+- The **initial JWT** represents the **authenticated account** only
 - Claims include:
   - `accountId`
-  - `roles[]` (e.g., `admin`, `moderator`, `player`)
-- After login, the **selected character and world** are added to session state tracked by Game Session.
+  - `roles[]` (e.g. `admin`, `moderator`, `player`)
+- Once the player selects a character and world, a new **augmented JWT** is issued including:
+  - `playerId`
+  - `worldId`
+- The updated token allows downstream services to enforce **character-level and world-specific access control**
 
-### ✅ Key Design Notes
+### ✅ Design Notes
 
-- All services **enforce access based on roles** locally using the injected JWT.
-- Clients must **re-authenticate** with `LOGIN` if disconnected — reconnection is not automatic at the gameplay level.
-- Game Session is the **trusted authority** for session validity and access context across services.
+- All services enforce authorization based on claims in the current JWT
+- Clients must **explicitly re-authenticate** using `LOGIN` if disconnected
+- Game Session is the **trusted authority** on identity, character selection, and access rights
+- JWTs are used only within the backend and are **never sent to clients**
 
-> 🔗 For full authentication details and multi-client behavior, see [Authentication & Authorization](./system-architecture-authentication.md)
+> 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) for full login flow, token claims, and session propagation.
 
 ---
 

@@ -6,20 +6,31 @@ This document details the authentication and authorization mechanisms in FireMUD
 
 ## 🧾 Token Issuance and Format
 
-FireMUD uses **JWTs (JSON Web Tokens)** as *internal authentication tokens* to represent authenticated **accounts**. These are used solely within the backend system — clients never see or transmit them.
+FireMUD uses **JWTs (JSON Web Tokens)** as *internal authentication tokens* to represent authenticated **accounts** and, once selected, their **active character and world**. These tokens are used **solely within the backend system** — clients never see or transmit them.
 
-### 🏷️ Claims Included in JWT
+### 🏷️ Claims in JWT
 
-JWTs are issued by the **Account Service** and contain signed claims such as:
+JWTs are issued by the **Account Service** and signed for internal use only.
+
+#### 🔹 Initial Claims (after LOGIN)
 
 | Claim        | Description                                               |
 |--------------|-----------------------------------------------------------|
 | `accountId`  | Unique ID of the authenticated player account             |
 | `roles[]`    | Array of roles like `admin`, `moderator`, `player`        |
 
-> JWTs do not include runtime context like `playerId` or `worldId` — that is resolved post-login and stored in session state.
+#### 🔸 Augmented Claims (after character and world selection)
 
-After a player logs into a specific game world, the session is augmented with the active `playerId`. This allows downstream services to authorize actions based on **character-level ownership**, not just account identity.
+Once the player selects a character and enters a game world, the session is updated and a new JWT is issued with additional claims:
+
+| Claim        | Description                                               |
+|--------------|-----------------------------------------------------------|
+| `playerId`   | ID of the selected character, bound to the current session|
+| `worldId`    | ID of the selected world the player has entered           |
+
+This updated JWT is used for all gameplay commands and validated by downstream services to ensure **character-level and world-specific access control**.
+
+> Clients never transmit or see this JWT. It is entirely internal and used only for service-to-service gRPC communication.
 
 ---
 
@@ -33,15 +44,14 @@ After a player logs into a specific game world, the session is augmented with th
 
 ### Unified Login Across Clients
 
-While modern Web clients could support more advanced OAuth-style flows, FireMUD uses a **single unified login model**. All clients — whether MUD or WebSocket — issue a plaintext `LOGIN` command, which is processed by the **Game Session Service**. This ensures consistent behavior across platforms.
+All clients — whether Web or Telnet — use a unified plaintext `LOGIN` command. This provides consistency across platforms while centralizing access control logic in Game Session.
 
 ### Internal JWT Handling
 
-1. **Account Service** verifies credentials and returns a **signed JWT**
-2. **Game Session Service** stores the JWT internally (e.g. in Redis and memory)
-3. JWT is used on all **gRPC calls to downstream services**, encoding verified access rights
-
-Clients **do not receive or resend the JWT**. It is **bound to the socket session** inside Game Session.
+1. **Account Service** verifies credentials and issues an initial **account-only JWT**
+2. **Game Session Service** stores the JWT internally and binds it to the session
+3. Once the player selects a character and world, Game Session updates the session and **injects `playerId` and `worldId` into a new JWT**
+4. All gRPC calls use the **latest JWT**, including `accountId`, `roles`, `playerId`, and `worldId`
 
 ---
 
@@ -49,69 +59,60 @@ Clients **do not receive or resend the JWT**. It is **bound to the socket sessio
 
 ### Role Enforcement
 
-The `roles[]` claim in the JWT governs access to privileged features such as:
+The `roles[]` claim governs access to privileged features such as:
 
 - Admin dashboards and tools
-- Moderation commands (e.g., bans, mutes)
-- World and game instance management APIs
+- Moderation commands
+- World and game management APIs
 
 ### Decentralized Checks
 
-Each service (e.g. Game Session, Admin Service) performs **local authorization**:
+Each service performs **local authorization**:
 
-- Game Session injects the JWT into internal RPC calls
-- Target services decode and check required roles
-- Unauthorized requests are rejected at the point of use
-
-> This distributed model avoids any single centralized auth enforcement bottleneck.
+- Game Session injects the current JWT into all internal gRPC calls
+- Services decode and validate claims (`accountId`, `roles`, `playerId`, `worldId`)
+- Invalid or unauthorized requests are rejected locally
 
 ---
 
 ## 🧠 Session Context in Game Session
 
-### State Binding
+### Session Binding and Character Context
 
-When a player logs in:
+- When a player logs in, Game Session binds the JWT to the socket and session
+- After character/world selection, the session is upgraded to include:
+  - `playerId`
+  - `worldId`
+- A new JWT including `playerId` and `worldId` is created and used for subsequent internal calls
 
-- The Game Session Service:
-  - Associates the returned JWT with the active socket
-  - Tracks the selected `playerId` and `worldId` (once chosen)
-  - Stores all of this in Redis under the session record
+### Command Execution Context
 
-### Command Execution
+All commands go through Game Session, which:
 
-All commands go through the Game Session, which:
+- Validates account and character ownership
+- Uses the updated JWT to enforce identity and authorization
+- Includes it in gRPC calls to other services
 
-- Uses the stored JWT to check access and identity
-- Validates that the selected character belongs to the account
-- Includes the JWT in gRPC calls to downstream services
-
-> ⚠️ Backend services **trust Game Session** as the authority on session validity and access rights.
+> ⚠️ Backend services trust Game Session to issue and forward valid JWTs.
 
 ---
 
 ## 🔄 Reconnection and Multi-Client Behavior
 
-### Reconnection Requirements
+### Reconnection
 
-FireMUD supports reconnection of disconnected clients, but **authentication must be repeated by the client**.
+- Clients must **re-authenticate** after a disconnect using `LOGIN`
+- No client-side token storage or reuse is allowed
+- Game Session restores session state from Redis if the same character reconnects
 
-- Clients **must reauthenticate** via a `LOGIN` command after reconnecting
-- Game Session does **not retain client credentials**, only server-side session state
-- TCP Proxy and Gateway handle transport-level reconnection but do **not restore gameplay state** without re-login
+### Multi-Client Support
 
-> Internal reconnection between backend services (e.g. Gateway → Game Session) may occur transparently — but any reconnection at the client boundary requires reauthentication.
-
-### Multi-Client Login Behavior
-
-- A single **account** can be logged in from **multiple clients**, as long as each login targets a different **game world or character**.
-- Each connection is associated with a separate session context in the Game Session Service.
-- However, **only one active session is allowed per character**. Logging in again as the **same character** (from another client or location) will:
-  - Terminate the previous session
-  - Take over control of that character from the new connection
-  - Rebind Redis state to the new socket, as with a reconnection
-
-> This enables players to play different characters in parallel across clients, while preventing character duplication or conflict.
+- Accounts can be logged in from **multiple clients** at once
+- Each session must target a **different character or world**
+- Logging into the **same character again**:
+  - Terminates the old session
+  - Transfers control to the new connection
+  - Updates the socket binding in Redis
 
 ---
 
@@ -119,15 +120,14 @@ FireMUD supports reconnection of disconnected clients, but **authentication must
 
 | Topic                         | Description                                                               |
 |------------------------------|---------------------------------------------------------------------------|
-| Token Type                   | JWT (account-level, backend-only)                                         |
+| Token Type                   | JWT (backend-only, internal use)                                          |
 | Token Issuer                 | Account Service                                                           |
-| Claims Used                  | `accountId`, `roles`                                                      |
-| Auth Enforcement             | Enforced per service using injected JWT                                   |
-| Session Binding              | Game Session manages and stores session + JWT                             |
-| Character Binding            | Added to session after player selects world and character                 |
-| Reconnect Handling           | Requires client to reauthenticate (e.g., via `LOGIN`)                     |
-| Client Awareness             | Clients are unaware of JWTs; login is via plaintext command               |
-| Trust Model                  | Backend services trust Game Session for auth context                      |
-| Multi-Client Logins          | Multiple worlds/chars allowed; logging in as same char takes over session |
+| Initial Claims               | `accountId`, `roles[]`                                                    |
+| Post-Login Claims            | `accountId`, `roles[]`, `playerId`, `worldId`                             |
+| Token Usage                  | Injected into gRPC calls; never seen by client                            |
+| Session Storage              | Redis (bound to socket + updated after character selection)               |
+| Auth Enforcement             | Local per-service, based on injected JWT claims                           |
+| Reconnect Behavior           | Requires fresh `LOGIN`; previous session may be resumed if same character |
+| Multi-Client Sessions        | Allowed per-account, limited to one session per character                 |
 
-> FireMUD separates client simplicity from backend security — centralizing login but decentralizing role-based access control and session continuity.
+> FireMUD separates authentication (account-level) from gameplay execution (character-level), using staged JWT augmentation to securely propagate player identity and access context across microservices.
