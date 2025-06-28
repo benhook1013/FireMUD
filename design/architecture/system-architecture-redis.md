@@ -44,6 +44,7 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 - Partitioning aligns with tick region boundaries (typically per-room or per-segment)
 - Redis Sentinel or **Kubernetes-native failover**
 - **Failover behavior is tested under live tick loads**
+- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff.
 
 ### Replication and Durability
 
@@ -95,7 +96,7 @@ All Lua scripts are:
 - **Retry-safe**
 - Designed to avoid cross-tick contamination
 
-> 🔗 For use during tick execution, see [Tick Locking](./system-architecture-ticks.md#🔐-distributed-locking)
+> 🔗 For use during tick execution, see [Distributed Locking](./system-architecture-ticks.md#🔐-distributed-locking)
 
 ---
 

@@ -146,9 +146,9 @@ FireMUD supports multiple client types (Telnet, WebSocket, HTTP) and provides a 
 
 > Player and world context are **not embedded** in the JWT; they are resolved during session setup.
 
-- The `roles` claim determines whether an account has elevated access to admin tools, game management APIs, or moderator commands.
-- Services like the Game Session Service and Admin & Logging Service use roles to control feature exposure.
-- Enforcement is performed **locally per service**, based on the decoded claims in the JWT.
+-- The `roles` claim determines whether an account has elevated access to admin tools, game management APIs, or moderator commands.  
+-- Services like the Game Session Service and Admin & Logging Service use roles to control feature exposure.  
+-- Enforcement is performed **locally per service**, based on the decoded claims in the JWT.
 
 ### 🧠 Session Handling
 

@@ -28,11 +28,7 @@ This model ensures:
 
 ---
 
-## 🔁 Smart Retry and Conflict Resolution
-
-FireMUD includes a robust system for **lock contention**, **timeouts**, and **retries**, coordinated by the Game Session Service and powered by Redis.
-
-### 🔐 Distributed Locking
+## 🔐 Distributed Locking
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
@@ -49,6 +45,12 @@ If a required lock is unavailable:
 Conflict metadata is recorded and reported to the Game Session Service, which **reorders future submissions** intelligently.
 
 > 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control)
+
+---
+
+## 🔁 Smart Retry and Conflict Resolution
+
+FireMUD includes a robust system for **lock contention**, **timeouts**, and **retries**, coordinated by the Game Session Service and powered by Redis.
 
 ### 🧠 Retry Scheduling
 
@@ -97,6 +99,8 @@ Each tick proceeds as follows:
 
 4. **Trigger Events**  
    Run regeneration, room scripts, NPC behaviors, AI-driven commands — all use the same command queue model
+
+> Note: Game Logic Service resolves each action statelessly and does not participate in commit or rollback phases — those are fully managed by the Game Session Service via Redis.
 
 The **Game Session Service** manages orchestration, while gameplay rules are resolved via the **Game Logic Service**, and **final commit flow is also handled by Game Session**.
 
