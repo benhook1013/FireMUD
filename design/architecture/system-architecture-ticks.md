@@ -1,4 +1,4 @@
-# ⏱️ Tick System and Runtime Flow
+# ⏱️ FireMUD System Architecture: Tick System and Runtime Flow
 
 📄 This document expands on the [Game Loop / Tick Model](./system-architecture-overview.md#⏱️-game-loop--tick-model) section of the FireMUD System Architecture Overview. It provides a complete view of how ticks execute, manage concurrency, handle crashes, and preserve deterministic, fair game logic under real-time load.
 
