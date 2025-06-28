@@ -16,7 +16,6 @@ JWTs are issued by the **Account Service** and contain signed claims such as:
 |--------------|-----------------------------------------------------------|
 | `accountId`  | Unique ID of the authenticated player account             |
 | `roles[]`    | Array of roles like `admin`, `moderator`, `player`        |
-| `features[]` | Feature flag tokens granted at login (e.g. for beta tests)|
 
 > JWTs do not include runtime context like `playerId` or `worldId` — that is resolved post-login and stored in session state.
 
@@ -31,6 +30,10 @@ After a player logs into a specific game world, the session is augmented with th
 - Telnet and MUD clients are **unaware of authentication tokens**
 - They issue a `LOGIN` command over raw TCP or WebSocket after connecting
 - The **Game Session Service** processes the login by calling the **Account Service**
+
+### Unified Login Across Clients
+
+While modern Web clients could support more advanced OAuth-style flows, FireMUD uses a **single unified login model**. All clients — whether MUD or WebSocket — issue a plaintext `LOGIN` command, which is processed by the **Game Session Service**. This ensures consistent behavior across platforms.
 
 ### Internal JWT Handling
 
@@ -87,17 +90,28 @@ All commands go through the Game Session, which:
 
 ---
 
-## 🔄 Reconnection Strategy
+## 🔄 Reconnection and Multi-Client Behavior
+
+### Reconnection Requirements
 
 FireMUD supports reconnection of disconnected clients, but **authentication must be repeated by the client**.
-
-### Reconnect Expectations
 
 - Clients **must reauthenticate** via a `LOGIN` command after reconnecting
 - Game Session does **not retain client credentials**, only server-side session state
 - TCP Proxy and Gateway handle transport-level reconnection but do **not restore gameplay state** without re-login
 
 > Internal reconnection between backend services (e.g. Gateway → Game Session) may occur transparently — but any reconnection at the client boundary requires reauthentication.
+
+### Multi-Client Login Behavior
+
+- A single **account** can be logged in from **multiple clients**, as long as each login targets a different **game world or character**.
+- Each connection is associated with a separate session context in the Game Session Service.
+- However, **only one active session is allowed per character**. Logging in again as the **same character** (from another client or location) will:
+  - Terminate the previous session
+  - Take over control of that character from the new connection
+  - Rebind Redis state to the new socket, as with a reconnection
+
+> This enables players to play different characters in parallel across clients, while preventing character duplication or conflict.
 
 ---
 
@@ -107,12 +121,13 @@ FireMUD supports reconnection of disconnected clients, but **authentication must
 |------------------------------|---------------------------------------------------------------------------|
 | Token Type                   | JWT (account-level, backend-only)                                         |
 | Token Issuer                 | Account Service                                                           |
-| Claims Used                  | `accountId`, `roles`, `features`                                          |
+| Claims Used                  | `accountId`, `roles`                                                      |
 | Auth Enforcement             | Enforced per service using injected JWT                                   |
 | Session Binding              | Game Session manages and stores session + JWT                             |
 | Character Binding            | Added to session after player selects world and character                 |
 | Reconnect Handling           | Requires client to reauthenticate (e.g., via `LOGIN`)                     |
 | Client Awareness             | Clients are unaware of JWTs; login is via plaintext command               |
 | Trust Model                  | Backend services trust Game Session for auth context                      |
+| Multi-Client Logins          | Multiple worlds/chars allowed; logging in as same char takes over session |
 
 > FireMUD separates client simplicity from backend security — centralizing login but decentralizing role-based access control and session continuity.

@@ -6,9 +6,9 @@ This document outlines the **multi-layer reconnection strategy** used in FireMUD
 
 ## 🧩 Overview of Layered Strategy
 
-| Layer                  | Reconnection Role                                                          |
-|------------------------|----------------------------------------------------------------------------|
-| **TCP Proxy Service**  | Manages raw Telnet input and socket reconnection                           |
+| Layer                    | Reconnection Role                                                             |
+|--------------------------|-------------------------------------------------------------------------------|
+| **TCP Proxy Service**    | Manages raw Telnet input and socket reconnection                             |
 | **Spring Cloud Gateway** | Reconnects WebSocket to backend Game Session Service, maintains auth context |
 | **Game Session Service** | Restores gameplay session, player state, active world and tick participation |
 
@@ -39,16 +39,18 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
 
 ### Gateway Behavior
 
-- Acts as a **stateless WebSocket passthrough** between clients and the backend Game Session Service
-- Automatically reconnects to backend services if the WebSocket is re-established
-- Maintains **no gameplay or authentication state**
-- Simply forwards traffic once a connection is re-established
+- Acts as a **stateless WebSocket passthrough** between clients and the backend Game Session Service.
+- Automatically reconnects to backend services if the WebSocket is re-established.
+- Maintains **no gameplay or authentication state**.
+- Simply forwards traffic once a connection is re-established.
 
 ### Gateway Edge Cases
 
-- **Pod restart**: Clients re-establish WebSocket with no user-visible effect
-- **Gateway has no JWT role**: All authentication and session restoration is handled by the Game Session Service after reconnect
-- **Invalid login attempts** (e.g., malformed or unauthorized `LOGIN` command) are rejected by the Game Session Service, not the Gateway
+- **Pod restart**: Clients re-establish WebSocket with no user-visible effect.
+- **Gateway has no JWT role**: All authentication and session restoration is handled by the Game Session Service after reconnect.
+- **Invalid login attempts** (e.g., malformed or unauthorized `LOGIN` command) are rejected by the Game Session Service, not the Gateway.
+
+> 🔐 All clients — including Telnet and WebSocket — issue the same plaintext `LOGIN` command. This is processed by the Game Session Service regardless of how the connection was established.
 
 ---
 
@@ -58,8 +60,8 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
 
 - Reconstructs session context from Redis:
   - `session:{playerId}` stores socket binding, selected character, current world
-  - Tick region state, timers, and in-flight actions preserved
-- Re-binds the WebSocket to the recovered session
+  - Tick region state, timers, and in-flight actions are preserved
+- Re-binds the connection to the recovered session if reconnecting to the same character
 - Resumes participation in tick execution and queued command flow
 
 ### Game Session Edge Cases
@@ -70,15 +72,32 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
 
 ---
 
+## 👥 Multi-Client Session Semantics
+
+FireMUD supports multiple concurrent connections for the same account — provided each controls a different character.
+
+- An account can be **simultaneously logged into multiple worlds**, each with a distinct character and client session.
+- However, each **character session is exclusive**:
+  - Logging into the same character from a second client will:
+    - **Terminate the previous connection**
+    - **Transfer control** to the new session
+    - **Rebind Redis state** to the new socket as if reconnecting
+- This login-over-login behavior ensures consistent character state and prevents duplication.
+
+> This mirrors reconnection logic — logging in again from a different location is treated as a takeover of that session.
+
+---
+
 ## 🔄 Resume vs Reload Behavior
 
-| Condition                        | Outcome                       |
-|----------------------------------|-------------------------------|
-| Brief client disconnect          | **Resume**: Session recovered via Redis |
-| Gateway or Proxy restart         | **Resume**: Transparent reconnection |
-| Game Session crash or restart    | **Resume**: Tick and session recovery from Redis |
-| Redis unavailable/corrupted      | **Full Reload**: Player must log in again |
-| Player device/browser switch     | **Full Reload**: New socket/session required |
+| Condition                        | Outcome                                            |
+|----------------------------------|----------------------------------------------------|
+| Brief client disconnect          | **Resume**: Session recovered via Redis            |
+| Gateway or Proxy restart         | **Resume**: Transparent reconnection               |
+| Game Session crash or restart    | **Resume**: Tick and session recovery from Redis   |
+| Redis unavailable/corrupted      | **Full Reload**: Player must log in again          |
+| Player device/browser switch     | **Full Reload**: New socket/session required       |
+| Character re-login from another client | **Takeover**: Old session terminated, new one becomes authoritative |
 
 ---
 
@@ -97,6 +116,7 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
 
 - Ensure minimal disruption from network instability
 - Prevent duplicate execution during reconnection
+- Allow multiple characters per account across sessions
 - Decouple infrastructure from gameplay state (stateless layers)
 - Prioritize fast, resilient reconnection over preserving input from disconnected sessions
 
