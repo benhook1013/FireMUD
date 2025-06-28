@@ -1,134 +1,132 @@
 # 🧠 FireMUD System Architecture: Redis
 
-This document outlines FireMUD’s usage of Redis as a transient, high-performance, distributed state layer. It focuses on responsibilities, safety guarantees, usage patterns, and operational practices.
+This document outlines FireMUD’s usage of Redis as a **transient, high-performance, distributed coordination layer**. It focuses on Redis's responsibilities, safety guarantees, key patterns, and operational practices.
 
-> 🔗 For game logic, tick execution, retries, and lock behavior, see [Tick System and Runtime Flow](./system-architecture-ticks.md).
+> 🔗 For full tick execution, retries, and lock behavior, see [Tick System and Runtime Flow](./system-architecture-ticks.md).
 
 ---
 
 ## ⚠️ Redis as a Volatile State Layer
 
-Redis is used **exclusively for transient, non-authoritative data**, such as:
+Redis is used **exclusively for non-authoritative, transient data**, including:
 
-- Player session context and WebSocket bindings
+- WebSocket session bindings and live gameplay context
 - In-flight command queues
-- Tick region locks and state staging
-- Cooldowns, timers, and volatile effects
-- Retry metadata and inter-tick conflict tracking
-- Automation triggers and AI behavior injection
-
-All **canonical game data** (accounts, entities, world, items) resides in **PostgreSQL**, owned by domain-specific services. Redis acts as a real-time coordination layer, not a source of truth.
-
-**Benefits:**
-
-- High-throughput, low-latency state access
-- Stateless and horizontally scalable services
-- Safe concurrency for tick cycles and player sessions
-- Seamless reconnection and crash recovery
-
----
-
-## 🛡️ Redis Availability, Consistency, and Safety Guarantees
-
-Redis is treated as a **critical gameplay layer**, where availability and consistency are essential despite being non-persistent.
-
-### Cluster Deployment
-
-FireMUD uses a **Redis Cluster** setup with:
-
-- Multiple masters (shards) and replicas
-- **Horizontal partitioning** across rooms and sessions
-- **Automatic failover** via Redis Sentinel or Kubernetes-native tooling
-
-### Replication and Persistence
-
-- All writes are **asynchronously replicated** to replicas
-- **Append-Only File (AOF)** persistence is enabled
-- After critical operations (e.g., staging or lock writes), FireMUD executes:
-
-  WAIT 1 100
-
-  This blocks until at least one replica acknowledges the write, reducing the risk of mid-tick data loss during failover
-
----
-
-## 🔒 Atomicity and Concurrency Control with Lua
-
-Redis’s single-threaded model is leveraged using **Lua scripts** for atomic operations such as:
-
-- Lock acquisition and validation (`tick:lock:{entityId}`)
-- Tick state staging and rollback (`tick:pending:{regionId}`)
-- Session management (`session:{playerId}`)
-- Retry queue manipulation (`retry:{regionId}`)
-- AI or scripted action injection
-
-All Lua operations are:
-
-- **Idempotent**
-- **Retry-safe**
-- **Shard-isolated** to avoid cross-node inconsistencies
-
-For behavior under contention and failure, see [Tick System and Runtime Flow](./system-architecture-ticks.md#🔐-distributed-entity-locking).
-
----
-
-## ⏱️ Tick Execution Resilience
-
-The **Game Session Service** depends on Redis to coordinate safe, concurrent tick execution across multiple instances.
-
-Redis stores:
-
-- Command queues per entity
 - Tick locks and staged results
-- Timer expirations and cooldown durations
-- Smart retry metadata and conflict tracking
+- Cooldowns and timer expirations
+- Retry metadata and conflict tracking
+- AI/scripted action injection
 
-In case of interruption or crash:
+All **canonical game data** — accounts, entities, items, rooms — resides in **PostgreSQL**, owned by domain-specific services.
 
-- Redis retains all necessary transient state
-- The tick can be retried, resumed, or skipped deterministically
-- Double-processing is avoided using Lua and lock validation
+Redis acts as a **coordinated real-time buffer**, not a source of truth.
 
-> 🔗 See [Tick System and Runtime Flow](./system-architecture-ticks.md#💥-crash-safety-and-recovery) for gameplay-side crash recovery.
+> The **Game Session Service depends on Redis** to coordinate safe, concurrent tick execution across multiple instances.
+
+### ✅ Benefits
+
+- Low-latency access for gameplay-critical state
+- Enables stateless, horizontally scalable services
+- Supports safe concurrent ticks and session handling
+- Facilitates reconnection, failover, and replay
 
 ---
 
-## 📈 Operational Guarantees and Monitoring
+## 🏗️ Redis Deployment Model
 
-Redis health and tick performance are actively monitored through:
+FireMUD runs Redis as a **clustered, replicated setup**:
 
-- **Prometheus metrics**:
-  - Script execution time
-  - Lock contention duration
-  - Memory and keyspace usage
-- **Grafana dashboards** for real-time observability
-- **Service-level retry and backoff logic** in case of Redis delays
-- **Graceful degradation** strategies if Redis becomes temporarily unavailable
+- Multiple **shards and replicas** for horizontal partitioning
+- Partitioning aligned to tick regions and sessions
+- Redis Sentinel or **Kubernetes-native failover**
+- Critical writes use `WAIT 1 100` to ensure **replica acknowledgment**
 
-All volatile state is stored in Redis — FireMUD avoids reliance on in-memory caching inside services.
+### Persistence
+
+- **AOF (Append-Only File)** enabled for crash recovery
+- Writes are **asynchronously replicated** to reduce latency
+- Game Session uses `WAIT` to block until at least one replica confirms key operations
 
 ---
 
 ## 🗂️ Key Naming and Shard Discipline
 
-Redis keys follow a **strict namespace convention** to support:
+Redis keys follow a strict naming convention to support:
 
-- Efficient querying and debugging
-- Conflict isolation
-- Shard-friendly distribution
+- Efficient debugging and monitoring
+- Shard-aware distribution (avoiding cross-shard ops)
+- Conflict isolation and atomicity
 
-### Example Key Formats
+### Key Format Examples
 
 | Redis Key                         | Description                              |
 |----------------------------------|------------------------------------------|
-| `session:{playerId}`             | Active session context and bindings      |
-| `tick:lock:{entityId}`           | Lock for tick execution involving entity |
-| `tick:pending:{regionId}`        | Staged tick results for a region         |
-| `room:{roomId}:occupants`        | Entities currently in the room           |
-| `retry:{regionId}`               | Retry queue for failed or deferred actions |
-| `timer:{entityId}:{effectId}`    | Cooldown or effect timer state           |
+| `session:{playerId}`             | Active session context and socket binding |
+| `tick:lock:{entityId}`           | Lock for entity during tick execution    |
+| `tick:pending:{regionId}`        | Staged results for a tick region         |
+| `room:{roomId}:occupants`        | Room occupancy snapshot                  |
+| `retry:{regionId}`               | Retry queue for failed actions           |
+| `timer:{entityId}:{effectId}`    | Cooldown/effect timer metadata           |
 
-> ⚠️ FireMUD avoids cross-shard operations. Tick regions and player sessions are scoped to a single Redis shard to maintain atomicity and simplify logic.
+> ⚠️ **FireMUD avoids cross-shard operations.** Tick regions and player sessions are scoped to a **single Redis shard** to maintain atomicity and simplify logic.
+
+---
+
+## 🔒 Atomicity and Concurrency Control
+
+Redis’s single-threaded model is extended via **Lua scripts** to enable atomic operations such as:
+
+- Lock acquisition and validation (`tick:lock:*`)
+- Tick staging and commit coordination (`tick:pending:*`)
+- Session and timer lifecycle management
+- Retry queue manipulation (`retry:*`)
+- AI/scripting action injection
+
+All scripts are:
+
+- **Idempotent** and **retry-safe**
+- Designed to work **per-shard**
+- Protected against cross-tick contamination
+
+> 🔗 See [Tick Locking](./system-architecture-ticks.md#🔐-distributed-entity-locking) for usage during ticks.
+
+---
+
+## ⏱️ Tick Integration (Resilience, Locking, Staging)
+
+Redis is essential for **coordinating safe tick execution** across distributed workers.
+
+It provides:
+
+- Centralized **command queues**
+- Distributed **lock and retry control**
+- Durable **tick staging** with partial commit support
+- **Cooldowns and timers** tied to real-world time
+
+> 🔗 Tick execution logic is fully defined in [Tick System and Runtime Flow](./system-architecture-ticks.md#🔄-tick-execution-model).
+> 🔁 Redis enables replayable, deterministic ticks even after crashes — with recovery powered by Lua, AOF, and `WAIT`.
+
+### 💥 In Case of Interruption or Crash
+
+- Redis retains all necessary transient state
+- The tick can be retried, resumed, or skipped deterministically
+- Double-processing is avoided using Lua and lock validation
+
+---
+
+## 📈 Observability and Reliability
+
+FireMUD actively monitors Redis health and tick performance via:
+
+- **Prometheus metrics**:
+  - Script execution latency
+  - Lock contention and retry counts
+  - Memory and keyspace usage
+- **Grafana dashboards** for real-time trends
+- **Backoff and retry logic** at service level
+- **Graceful degradation** if Redis becomes briefly unavailable
+
+FireMUD does **not use in-memory service caches** — all volatile state is centralized in Redis to support reconnection and failover.
 
 ---
 
@@ -136,12 +134,12 @@ Redis keys follow a **strict namespace convention** to support:
 
 Redis in FireMUD is:
 
-- A **volatile coordination layer**, not a persistent datastore
-- Essential for **ticks, timers, locks, and session tracking**
-- **Backed by AOF and replica sync** (`WAIT`) for resilience
-- Driven by **Lua scripting** for atomicity and concurrency control
-- **Horizontally scalable**, shard-aware, and fault-tolerant
-- Closely integrated with [Tick System and Runtime Flow](./system-architecture-ticks.md) for deterministic gameplay
+- A **volatile gameplay layer**, not a persistent datastore
+- Essential for **ticks, timers, sessions, and conflict coordination**
+- Backed by **AOF and `WAIT` guarantees** for resilience
+- Scripted via **Lua** for atomicity and correctness
+- Shard-aware and horizontally scalable
+- Tightly integrated with [Tick System and Runtime Flow](./system-architecture-ticks.md) for deterministic multiplayer execution
 
 ---
 
