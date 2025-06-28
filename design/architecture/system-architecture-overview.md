@@ -94,37 +94,31 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 ## 📦 Data and State Management
 
 - **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
-- **Volatile state** (player sessions, transient gameplay state, ticks) is stored in Redis Cluster by the Game Session Service.  
-- Redis also records **inter-tick conflict metadata and retry queues** to optimize pacing and fairness across ticks.  
-- **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
-- **Design-time feature flags** are defined and versioned within the Game Design Service.  
-- **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.  
-- **Logging & Admin Service** provides UI/API tools to view and toggle active flags during gameplay and audit historical changes.  
+- **Volatile state** (player sessions, transient gameplay state, ticks) is externalized to Redis Cluster and managed by the Game Session Service.  
+- Redis is treated as a **transient coordination layer**, enabling scalable reconnection, concurrent tick execution, and in-flight action tracking.  
+- **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.
+- **Design-time feature flags** are defined in the Game Design Service; **runtime flags** are managed in the Game Session Service for temporary overrides.
+- **Logging & Admin Service** provides UI/API tools to view and toggle active flags and audit historical changes.
 
 📤 **Game Configuration Rollout:**  
-When a new game version is published by the Game Design Service, the relevant domain services (e.g., Entity, World, Logic) update their internal PostgreSQL data for that version. The Game Session Service tracks and assigns version IDs to active game instances and notifies participating services of version changes at runtime when needed — avoiding complex pub-sub requirements for now.
+When a new game version is published by the Game Design Service, the relevant domain services (e.g., Entity, World, Logic) update their PostgreSQL data accordingly. The Game Session Service assigns version IDs to active game instances and notifies participating services when needed — avoiding complex pub-sub for now.
 
-⚠️ **Redis Volatility Note:**  
-Redis is used exclusively for **transient, non-authoritative data** (e.g., session context, in-flight actions, volatile effects, tick staging).  
-While Redis supports **AOF crash recovery** and **Lua-based atomicity**, all canonical data remains in PostgreSQL.
+> 🔗 For Redis durability, Lua atomicity, and key discipline, see [Redis Architecture](./system-architecture-redis.md).
 
 ---
 
 ## ⏱️ Game Loop / Tick Model
 
-FireMUD uses a **Hybrid Tick Model** that blends real-time input responsiveness with deterministic and fair action processing.
+FireMUD uses a **Hybrid Tick Model** that balances real-time responsiveness with deterministic and fair processing of queued actions.
 
 Key design aspects:
 
-- Each **tick region** (e.g., room or map segment) executes its own tick independently.
-- **Player and NPC actions are pulled from per-entity command queues** and resolved once per tick.
-- **Redis-based coordination and locking** ensure safe concurrent execution across distributed workers.
-- Tick execution is **orchestrated by the Game Session Service**, which invokes the **Game Logic Service** to resolve queued actions deterministically.
-- Ticks are **fault-tolerant**, **crash-resilient**, and support **smart retries** and **timer scaling** for real-world pacing effects.
-- **Redis Lua scripts** guarantee atomic state transitions and lock safety.
-- Tick state is **durably staged and committed**, with partial success handling and conflict reporting.
+- Each **tick region** (e.g., room or map segment) runs independently to maximize parallelism.
+- **Player and NPC actions are pulled from per-entity queues** and resolved at a consistent interval.
+- **Game Session Service** coordinates the tick lifecycle and delegates logic resolution to the **Game Logic Service**.
+- Tick safety is enforced via **Redis-based locking and state staging**, allowing resilient recovery and retry logic.
 
-📄 See: [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md) for full technical details.
+> 🔗 For full execution semantics, isolation guarantees, and rollback strategy, see [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md).
 
 ---
 
