@@ -10,7 +10,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients  
 - **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway  
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service  
-- **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized authentication, monitoring, and routing  
+- **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**.  
+  > 🛑 **Authentication is not performed at the Gateway** — all `LOGIN` handling and session validation occurs in the **Game Session Service**.
 - **Spring Cloud Gateway is fully horizontally scalable and stateless**, with no sticky session requirements. Game sessions are stored externally, allowing any Gateway instance to serve any authenticated client.  
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers input and handles reconnects. Once upgraded to WebSocket, traffic flows through stateless layers — allowing transparent failover and reconnection.  
 - **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:  
@@ -41,6 +42,9 @@ FireMUD supports multi-layer reconnection handling to ensure gameplay continuity
 - **Game Session Service**  
   Restores gameplay context using Redis-stored session data, rebinds player socket, and resumes participation in ticks and action queues. Supports deterministic recovery of ticks and timers.
 
+> 🔑 Clients must **always re-authenticate** using a `LOGIN` command after disconnect.  
+> If the account and character match a previous session, **Game Session may restore** the prior session state from Redis and resume gameplay automatically.  
+> Clients do **not** store or reuse tokens — session restoration is purely server-side.
 > 🔗 For full reconnection flows, recovery edge cases, and resume vs reload behavior, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
 ---

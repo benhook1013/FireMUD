@@ -9,10 +9,12 @@ This document outlines the **multi-layer reconnection strategy** used in FireMUD
 | Layer                    | Reconnection Role                                                             |
 |--------------------------|-------------------------------------------------------------------------------|
 | **TCP Proxy Service**    | Manages raw Telnet input and socket reconnection                             |
-| **Spring Cloud Gateway** | Reconnects WebSocket to backend Game Session Service, maintains auth context |
+| **Spring Cloud Gateway** | Reconnects WebSocket to backend Game Session Service, maintains routing only |
 | **Game Session Service** | Restores gameplay session, player state, active world and tick participation |
 
 Each layer provides scoped fault tolerance. Combined, they ensure players can recover seamlessly across brief disconnects or server restarts.
+
+> 🔐 Clients must always issue a new plaintext `LOGIN` after reconnecting. Session continuity is determined by the Game Session Service based on Redis state — clients do not retain or resend tokens.
 
 ---
 
@@ -63,6 +65,8 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
   - Tick region state, timers, and in-flight actions are preserved
 - Re-binds the connection to the recovered session if reconnecting to the same character
 - Resumes participation in tick execution and queued command flow
+
+> 🔐 Clients never transmit or reuse authentication tokens. The Game Session Service evaluates whether the reissued `LOGIN` matches an active character session and performs recovery server-side.
 
 ### Game Session Edge Cases
 
@@ -116,9 +120,11 @@ FireMUD supports multiple concurrent connections for the same account — provid
 
 - Ensure minimal disruption from network instability
 - Prevent duplicate execution during reconnection
+- Require explicit re-authentication using `LOGIN`
 - Allow multiple characters per account across sessions
 - Decouple infrastructure from gameplay state (stateless layers)
 - Prioritize fast, resilient reconnection over preserving input from disconnected sessions
+- **All session continuity decisions are server-driven using Redis and Game Session logic — not based on client-side token reuse**
 
 > 🔗 See also:  
 > [Tick System and Runtime Design](./system-architecture-ticks.md)  

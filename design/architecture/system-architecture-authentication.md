@@ -53,6 +53,8 @@ All clients — whether Web or Telnet — use a unified plaintext `LOGIN` comman
 3. Once the player selects a character and world, Game Session updates the session and **injects `playerId` and `worldId` into a new JWT**
 4. All gRPC calls use the **latest JWT**, including `accountId`, `roles`, `playerId`, and `worldId`
 
+> Clients always send `LOGIN` again after a disconnect. If the same account and character are reused, Game Session may resume the previous session from Redis automatically.
+
 ---
 
 ## 👮 Role-Based Access Control
@@ -93,7 +95,8 @@ All commands go through Game Session, which:
 - Uses the updated JWT to enforce identity and authorization
 - Includes it in gRPC calls to other services
 
-> ⚠️ Backend services trust Game Session to issue and forward valid JWTs.
+> ⚠️ Backend services trust Game Session to issue and forward valid JWTs.  
+> 🧠 JWTs are never client-visible, and clients do not store or reuse them — reconnection always requires a fresh `LOGIN`.
 
 ---
 
@@ -102,8 +105,8 @@ All commands go through Game Session, which:
 ### Reconnection
 
 - Clients must **re-authenticate** after a disconnect using `LOGIN`
+- Game Session determines whether to **resume an existing session** using Redis or create a fresh one
 - No client-side token storage or reuse is allowed
-- Game Session restores session state from Redis if the same character reconnects
 
 ### Multi-Client Support
 
@@ -127,7 +130,7 @@ All commands go through Game Session, which:
 | Token Usage                  | Injected into gRPC calls; never seen by client                            |
 | Session Storage              | Redis (bound to socket + updated after character selection)               |
 | Auth Enforcement             | Local per-service, based on injected JWT claims                           |
-| Reconnect Behavior           | Requires fresh `LOGIN`; previous session may be resumed if same character |
+| Reconnect Behavior           | Requires fresh `LOGIN`; Game Session may resume session via Redis         |
 | Multi-Client Sessions        | Allowed per-account, limited to one session per character                 |
 
 > FireMUD separates authentication (account-level) from gameplay execution (character-level), using staged JWT augmentation to securely propagate player identity and access context across microservices.
