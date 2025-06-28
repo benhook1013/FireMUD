@@ -21,7 +21,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing  
 - **Session state is externalized (e.g., Redis Cluster)** to keep services stateless and allow for graceful reconnection  
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**, with the Game Design Service enabling live editing and versioning  
-- **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, and published version tracking  
+- **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, published version tracking, and tick execution  
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**, enabling temporary or contextual behavior changes without altering the underlying game definition  
 
 🖼️ See also: [System Architecture Diagram](./system-architecture/system-architecture-diagram.md) for a visual representation of these components and flows.
@@ -51,6 +51,7 @@ Robust reconnection support is critical for maintaining seamless player experien
 - Binds newly reconnected socket to a recovered gameplay context  
 - Tracks and applies the active published version ID for each running game instance  
 - Stores and manages runtime feature flags (e.g. double XP, test mode) which may temporarily override design-time defaults  
+- **Resumes or replays in-progress tick cycles** after restart or crash, using Redis-backed durability guarantees  
 
 Each layer handles reconnection logic appropriate to its scope, ensuring fault tolerance and a smooth player experience.
 
@@ -70,9 +71,9 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 | **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding; also responsible for persistent room state |
 | **Game Logic Service**            | Executes command parsing and gameplay mechanics; processes all entity-driven actions including combat, trading, movement, and skill usage |
 | **Automation & Scripting Service**| Executes custom scripts and AI that actively trigger functionality in the Game Logic Service or cause entities to take autonomous actions |
-| **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems. Also includes player presence, friend/block lists, and social graphs, enabling dynamic player interactions, group discovery, and social filtering mechanisms |
-| **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, audit logging query UI, and feature flag toggling interfaces |
-| **Game Design Service**           | Passive authoring tool for creating and publishing game data, configurations, and default flag definitions |
+| **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
+| **Logging & Admin Service**       | Hosts admin tools, metrics, moderation policies, audit logging query UI |
+| **Game Design Service**           | Passive authoring tool for creating and publishing game data           |
 
 ---
 
@@ -93,7 +94,7 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 ## 📦 Data and State Management
 
 - **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
-- **Volatile state** (player sessions, transient gameplay state) is stored in Redis Cluster by the Game Session Service.  
+- **Volatile state** (player sessions, transient gameplay state, ticks) is stored in Redis Cluster by the Game Session Service.  
 - **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
 - **Design-time feature flags** are defined and versioned within the Game Design Service.  
 - **Live runtime flags** are managed in the Game Session Service, enabling temporary overrides of published defaults without requiring a new design publish.  
@@ -103,87 +104,26 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 When a new game version is published by the Game Design Service, the relevant domain services (e.g., Entity, World, Logic) update their internal PostgreSQL data for that version. The Game Session Service tracks and assigns version IDs to active game instances and notifies participating services of version changes at runtime when needed — avoiding complex pub-sub requirements for now.
 
 ⚠️ **Redis Volatility Note:**  
-Redis is used exclusively for **transient, non-authoritative data** (e.g., session context, in-flight actions, volatile effects).  
-Although Redis uses **Append-Only File (AOF)** persistence for crash recovery, **all canonical player data** resides in PostgreSQL within appropriate domain services.
-
-### 🛡️ Redis Availability, Consistency, and Safety Guarantees
-
-Redis is treated as a **critical volatile state layer** for gameplay sessions, in-flight commands, ephemeral effects, and reconnect continuity. While not a source of truth, its **availability and consistency are vital** to player experience and gameplay correctness.
-
-FireMUD uses a **Redis Cluster** deployment with multiple masters and replicas, enabling:
-
-- **Horizontal partitioning** for scalable throughput across game sessions, rooms, and players  
-- **High availability and automatic failover**, ensuring continued service in the event of node loss  
-- **Asynchronous replication** of writes from primary nodes to replicas for each shard  
-- **Append-Only File (AOF) persistence** enabled for crash recovery and log-based replay
-
-To protect against loss of critical state during failover:
-
-- **Lua scripts are used for all tick and session-critical operations**, guaranteeing atomic execution on the primary node for that shard  
-- After each critical Lua write, FireMUD uses the Redis `WAIT` command to block until the write has been **replicated to at least one replica**, e.g., `WAIT 1 100`  
-- This ensures gameplay continuity even in the event of mid-operation failover or primary loss
-
-> ⚠️ Redis consistency is **eventually consistent** across shards and replicas. FireMUD avoids cross-shard dependencies and designs tick/state operations to tolerate short replication delays, while ensuring **deterministic correctness** at the shard level using Redis-native concurrency controls.
-
-Operational guarantees:
-
-- Services include **retry and backoff logic** to tolerate temporary Redis unavailability  
-- Redis cluster health, replication lag, and script contention are **monitored via Prometheus and surfaced in Grafana**  
-- All game-critical logic remains **resilient to soft Redis restarts**, with no risk of data loss from service-local memory
-
-❗**Key Design Note**: Redis keys are structured and namespaced (e.g., `session:{playerId}`, `room:{roomId}:occupants`) to support sharding, avoid bloat, and simplify debugging.
+Redis is used exclusively for **transient, non-authoritative data** (e.g., session context, in-flight actions, volatile effects, tick staging).  
+While Redis supports **AOF crash recovery** and **Lua-based atomicity**, all canonical data remains in PostgreSQL.
 
 ---
 
 ## ⏱️ Game Loop / Tick Model
 
-FireMUD uses a **Hybrid Tick Model** that combines real-time responsiveness with fair, deterministic processing of entity actions. Player inputs are queued immediately, and each tick interval selects and resolves one action per entity in a consistent order.
+FireMUD uses a **Hybrid Tick Model** that blends real-time input responsiveness with deterministic and fair action processing.
 
-### ⚙️ Stateless Tick Execution Model
+Key design aspects:
 
-FireMUD's tick system is built around a **stateless execution model**, where all volatile game state (rooms, entities, cooldowns, effects, etc.) resides in **Redis Cluster**, allowing any service instance to execute a tick for any room or area without needing persistent ownership.
+- Each **tick region** (e.g., room or map segment) executes its own tick independently.
+- **Player and NPC actions are pulled from per-entity command queues** and resolved once per tick.
+- **Redis-based coordination and locking** ensure safe concurrent execution across distributed workers.
+- Tick execution is **fully orchestrated by the Game Session Service**, using the Game Logic Service to resolve gameplay effects.
+- Ticks are **fault-tolerant**, **crash-resilient**, and support **smart retries** and **timer scaling** for real-world pacing effects.
+- **Redis Lua scripts** guarantee atomic state transitions and lock safety.
+- Tick state is **durably staged and committed**, with partial success handling and conflict reporting.
 
-Tick cycles are **owned and executed by the Game Session Service**, which coordinates reads/writes from Redis and uses the Game Logic Service to process each action.
-
-Each tick cycle:
-
-- Retrieves relevant state from Redis  
-- Executes game logic to process actions  
-- Writes updated state back to Redis atomically  
-
-To avoid race conditions or double-processing:
-
-- **Concurrency control is enforced directly inside Redis** using **Lua scripts** that execute atomically.  
-- These scripts:
-  - Acquire short-lived tick locks per room  
-  - Ensure only one worker can begin execution at a time  
-  - Safely release locks or validate ownership before unlocking  
-
-Although any instance of the Game Session Service can process any tick, **sticky routing is not used**. Instead, **Redis-based locking coordinates execution**, ensuring only one instance processes a tick per room at a time. This approach makes the system resilient to failover, rebalancing, and elastic scaling without introducing contention.
-
-⚠️ **Redis provides single-threaded, atomic Lua execution**, which guarantees safety for distributed tick workers.
-
-This design enables:
-
-- **Elastic scalability** with no fixed ownership  
-- **Robust fault tolerance** with no risk of state loss  
-- **Simplified orchestration** with no sticky routing or sharded tick managers
-
----
-
-### 📈 Future: Room Sharding and Ownership
-
-As concurrency demands increase, FireMUD’s tick system may evolve to include **runtime sharding and region ownership**, where services take exclusive responsibility for a subset of rooms or zones for the duration of their activity.
-
-Potential benefits include:
-
-- **Local in-memory caching** of hot state to reduce Redis overhead  
-- **Predictable locality and affinity**, improving scheduling efficiency  
-- **Scalable throughput** in dense or high-interaction areas  
-
-Such a model would use Redis-backed leases or lightweight elections to coordinate shard ownership, with automatic failover and rebalancing as needed. This path remains fully compatible with the stateless foundation, enabling phased adoption without architectural overhaul.
-
-📄 A separate document titled [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md) provides full details on tick cycle orchestration, inter-region locking, timer scaling, and tick safety mechanisms.
+📄 See: [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md) for full technical details.
 
 ---
 
@@ -250,11 +190,9 @@ FireMUD adopts a unified observability strategy built on **centralized logging t
 
 ### 📈 Metrics and Tracing
 
-- Application metrics are exported via **Prometheus-compatible `/metrics` endpoints** and scraped centrally.
-- **Grafana** dashboards visualize gameplay performance (tick latency, player load, Redis ops, etc.).
-- Prometheus also scrapes **service-level metrics** such as request rate, error rate, and JVM health.
-- Game-specific gauges (e.g., **active sessions**, **queued actions per room**, **tick execution duration**) are exposed via custom metrics in the **Game Session Service** and **Game Logic Service**, enabling deep visibility into runtime dynamics.
-- Distributed tracing (via **OpenTelemetry**) allows end-to-end command lifecycle tracking, with optional integration into **Jaeger** or **Tempo**.
+- Metrics are exported via **Prometheus-compatible `/metrics` endpoints**.
+- **Grafana dashboards** provide visibility into tick latency, action queue depth, Redis contention, etc.
+- Tracing via **OpenTelemetry** enables end-to-end action flow debugging across ticks and services.
 
 ---
 
@@ -281,14 +219,11 @@ FireMUD adopts a unified observability strategy built on **centralized logging t
   - Retrieves required state from the Entity and World services (e.g., room layout, entity stats)
   - Applies deterministic gameplay rules to resolve the action
   - Returns updated game state transitions  
-  These state transitions are **held transiently within the tick scope**. Only after the tick completes successfully are updates **committed to Redis** by the Game Session Service.  
 - Scripts and AI behaviors are executed via the **Automation & Scripting Service**, which may inject commands into queues or trigger autonomous behavior through the Game Logic Service.
 
 🧠 **Why Game Session vs Game Logic?**  
 The Game Logic Service acts as a deterministic engine — it processes commands based on inputs and state but doesn’t manage session-specific concerns.  
-The Game Session Service, in contrast, owns the player’s session context, command queue, and tick execution. It’s the appropriate layer for input validation, rate limiting, and controlling command submission to the logic layer.
-
-> The Game Session Service handles the lifecycle and timing of command execution (validation, queuing, rate limiting), while the Game Logic Service deterministically processes commands and state transitions.
+The Game Session Service owns the player’s session context, tick execution, command queuing, and lock coordination.
 
 ---
 
