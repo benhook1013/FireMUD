@@ -1,93 +1,62 @@
 # 🔁 FireMUD System Architecture: Reconnection Strategy
 
-This document outlines the **multi-layer reconnection strategy** used in FireMUD to preserve gameplay continuity across network interruptions, client restarts, or backend service failures. Each layer has distinct responsibilities and fallback behavior to ensure minimal player disruption.
+This document outlines FireMUD’s **layered reconnection strategy**, enabling seamless recovery from network interruptions, client restarts, or backend service failures.
 
 ---
 
-## 🧩 Overview of Layered Strategy
+## 🧩 Reconnection Layers
 
-| Layer                    | Reconnection Role                                                             |
-|--------------------------|-------------------------------------------------------------------------------|
-| **TCP Proxy Service**    | Manages raw Telnet input and socket reconnection                             |
-| **Spring Cloud Gateway** | Reconnects WebSocket to backend Game Session Service, maintains routing only |
-| **Game Session Service** | Restores gameplay session, player state, active world and tick participation |
+| Layer                    | Role                                                                 |
+|--------------------------|----------------------------------------------------------------------|
+| **TCP Proxy**            | Manages raw Telnet input; clears buffer on disconnect                |
+| **Spring Cloud Gateway** | Stateless WebSocket passthrough to Game Session                      |
+| **Game Session**         | Restores gameplay session, character state, and tick participation   |
 
-Each layer provides scoped fault tolerance. Combined, they ensure players can recover seamlessly across brief disconnects or server restarts.
+Each layer provides scoped fault tolerance. **Internal service restarts (e.g., Proxy, Gateway, Game Session)** can often be recovered from seamlessly.  
+However, **clients must always re-authenticate with a `LOGIN` command** after disconnecting.
 
-> 🔐 Clients must always issue a new plaintext `LOGIN` after reconnecting. Session continuity is determined by the Game Session Service based on Redis state — clients do not retain or resend tokens.
-
----
-
-## 🛰️ TCP Proxy Service Reconnection
-
-### Proxy Behavior
-
-- Handles raw Telnet input, which arrives one character at a time.
-- Maintains a **temporary input buffer** per active socket to assemble characters into full commands (delimited by `\n` or `\r\n`).
-- Once a **full command is received**, it is **immediately forwarded** to the Spring Cloud Gateway over WebSocket.
-- The proxy buffers active input, but **discards it across reconnects** — no complete commands are retained after disconnection.
-
-### Proxy Edge Cases
-
-- **Short input interruptions** may be tolerated if the socket remains open.
-- **Any disconnection clears the input buffer**, as the user will need to reconnect and reauthenticate, making old input irrelevant.
-- **Restart or crash** of the proxy results in loss of all in-progress input — no attempt is made to restore partially typed commands.
-
-> 🔎 The TCP Proxy intentionally avoids buffering across sessions. Once a Telnet client disconnects, their input buffer is cleared, as the gameplay session requires re-login anyway.
+> 🔐 Session continuity is always evaluated by the Game Session Service using Redis — clients never retain or resend tokens.
 
 ---
 
-## 🌐 Spring Cloud Gateway Recovery
+## 🛰️ TCP Proxy Behavior
 
-### Gateway Behavior
+- Assembles raw Telnet input into commands; forwards complete commands over WebSocket.
+- Input buffer is **cleared on disconnect or crash** — partial input is discarded.
+- **No gameplay state** is maintained here.  
+  A reconnect **requires a fresh connection and re-authentication by the client.**
 
-- Acts as a **stateless WebSocket passthrough** between clients and the backend Game Session Service.
-- Automatically reconnects to backend services if the WebSocket is re-established.
+---
+
+## 🌐 Gateway Behavior
+
+- Fully **stateless WebSocket router**; re-establishes backend connections automatically.
 - Maintains **no gameplay or authentication state**.
-- Simply forwards traffic once a connection is re-established.
-
-### Gateway Edge Cases
-
-- **Pod restart**: Clients re-establish WebSocket with no user-visible effect.
-- **Gateway has no JWT role**: All authentication and session restoration is handled by the Game Session Service after reconnect.
-- **Invalid login attempts** (e.g., malformed or unauthorized `LOGIN` command) are rejected by the Game Session Service, not the Gateway.
-
-> 🔐 All clients — including Telnet and WebSocket — issue the same plaintext `LOGIN` command. This is processed by the Game Session Service regardless of how the connection was established.
+- **Transparent failover** on restart — has no impact on gameplay if the client remains connected.
 
 ---
 
-## 🎮 Game Session Recovery Logic
+## 🎮 Game Session Recovery
 
-### Game Session Behavior
+- Uses Redis to restore:
+  - `session:{playerId}` socket binding
+  - Tick region participation and timers
+  - Queued actions and cooldowns
+- If a reconnecting client sends a valid `LOGIN` for an active character, the session may be resumed automatically.
+- Redis locks deduplicate overlapping reconnect attempts.
 
-- Reconstructs session context from Redis:
-  - `session:{playerId}` stores socket binding, selected character, current world
-  - Tick region state, timers, and in-flight actions are preserved
-- Re-binds the connection to the recovered session if reconnecting to the same character
-- Resumes participation in tick execution and queued command flow
-
-> 🔐 Clients never transmit or reuse authentication tokens. The Game Session Service evaluates whether the reissued `LOGIN` matches an active character session and performs recovery server-side.
-
-### Game Session Edge Cases
-
-- **Crash mid-tick**: Recovery uses Redis-staged data for replay/resume
-- **Simultaneous reconnects**: Deduplicated and conflict-resolved via Redis lock state
-- **Manual client reconnect**: Treated identically to network interruption
-- **Manual LOGIN with same account and character**: Session may be resumed if Redis state is intact and no conflicting session exists
+> 🔐 Clients never transmit or store JWTs. Session reconstruction is fully server-driven.
 
 ---
 
-## 👥 Multi-Client Session Semantics
+## 👥 Multi-Client and Takeover Semantics
 
-FireMUD supports multiple concurrent connections for the same account — provided each controls a different character.
-
-- An account can be **simultaneously logged into multiple worlds**, each with a distinct character and client session.
-- However, each **character session is exclusive**:
-  - Logging into the same character from a second client will:
-    - **Terminate the previous connection**
-    - **Transfer control** to the new session
-    - **Rebind Redis state** to the new socket as if reconnecting
-- This login-over-login behavior mirrors reconnection logic — logging in again from a different location is treated as a takeover of that session.
+- An account can be logged in from multiple clients, each controlling a **different character**.
+- Logging into the same character from another client will:
+  - **Terminate** the old session
+  - **Transfer control** to the new connection
+  - **Rebind** Redis session state
+- This takeover behaves identically to a reconnect — no gameplay data is lost.
 
 ---
 
@@ -95,7 +64,7 @@ FireMUD supports multiple concurrent connections for the same account — provid
 
 | Condition                                | Outcome                                            |
 |------------------------------------------|----------------------------------------------------|
-| Brief client disconnect                  | **Resume**: Session recovered via Redis            |
+| Brief client disconnect                  | **Resume**: If same account+character logs in, session can be recovered via Redis |
 | Gateway or Proxy restart                 | **Resume**: Transparent reconnection               |
 | Game Session crash or restart            | **Resume**: Tick and session recovery from Redis   |
 | Manual LOGIN with same account + character | **Resume**: Session may be resumed if Redis state is available |
@@ -103,28 +72,17 @@ FireMUD supports multiple concurrent connections for the same account — provid
 | Player device/browser switch             | **Full Reload**: New socket/session required       |
 | Character re-login from another client   | **Takeover**: Old session terminated, new one becomes authoritative |
 
----
-
-## 💾 How State Is Preserved Across Layers
-
-| State Type                  | Storage Layer | Purpose                                               |
-|-----------------------------|----------------|-------------------------------------------------------|
-| Socket/session bindings     | Redis          | Rebinds clients to live game context                  |
-| In-progress Telnet input    | None (cleared) | Not preserved across reconnects; command must be retyped |
-| Tick region participation   | Redis          | Ensures proper action scheduling after resume         |
-| Cooldowns and timers        | Redis          | Maintains consistent temporal effects across downtime |
+> 🧠 Even brief client disconnects **require explicit re-authentication** — only infrastructure restarts are fully transparent.
 
 ---
 
-## ✅ Design Considerations and Goals
+## 🧠 Design Goals
 
-- Ensure minimal disruption from network instability
-- Prevent duplicate execution during reconnection
-- Require explicit re-authentication using `LOGIN`
-- Allow multiple characters per account across sessions
-- Decouple infrastructure from gameplay state (stateless layers)
-- Prioritize fast, resilient reconnection over preserving input from disconnected sessions
-- **All session continuity decisions are server-driven using Redis and Game Session logic — not based on client-side token reuse**
+- **All client reconnects require a new `LOGIN`**
+- Transparent recovery from **stateless service restarts**
+- All session state externalized to **Redis**
+- Gameplay continuity preserved wherever possible — but input buffers are not
+- Tick state, timers, and action queues are resilient and recoverable
 
 > 🔗 See also:  
 > [Tick System and Runtime Design](./system-architecture-ticks.md)  
