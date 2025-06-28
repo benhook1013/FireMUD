@@ -43,7 +43,7 @@ If a required lock is unavailable:
 - All staged changes are rolled back
 - The action is **rescheduled for retry**
 
-Conflict metadata is logged and used to intelligently reorder future submissions.
+Conflict metadata is recorded and **reported to the Game Session Service**, which uses it to **reorder future submissions intelligently**.
 
 > 🔗 See [Redis Lock Behavior](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control-with-lua) for script structure.
 
@@ -51,11 +51,12 @@ Conflict metadata is logged and used to intelligently reorder future submissions
 
 When an action fails due to contention:
 
-- The system records the **blocking lock** and region
+- The system logs the **blocking lock** and responsible tick region
 - The Game Session Service:
-  - Reschedules the action where the conflict originated
+  - Reschedules the action within the blocking region
   - Staggers or delays conflicting ticks
-  - Prevents retry storms and CPU waste
+  - Prevents retry storms and wasted CPU
+  - **Prioritizes rescheduled retries** to minimize action delay
 
 Future enhancements may include:
 
@@ -80,21 +81,19 @@ Ticks are **region-scoped**, not globally synchronized. Each room or segment run
 
 Each tick follows this process:
 
-1. **Collect Actions**
-   - From command queues of active entities in the region
+1. **Collect Actions**  
+   From the command queues of active entities in the region.
 
-2. **Resolve Fairly**
-   - Sort by timestamp, stat priority, or game-defined rule
-   - One action per entity (default behavior)
+2. **Resolve Fairly**  
+   Sort actions by timestamps, stat priority, or custom logic. Typically, only one action per entity is resolved per tick for fairness.
 
-3. **Apply Effects**
-   - Update HP, inventory, position, status, etc.
+3. **Apply Effects**  
+   Modify entity state such as HP, position, inventory, buffs, or other gameplay attributes.
 
-4. **Trigger Events**
-   - Fire regeneration, AI moves, scripted logic
-   - Injected actions are treated equally and staged for future ticks
+4. **Trigger Events**  
+   Fire regeneration, room scripts, NPC behavior, or automated actions. Scripted and AI-injected actions use the same queue system and are treated equally.
 
-Orchestration is owned by the **Game Session Service**, while gameplay rules are enforced by the **Game Logic Service**.
+The **Game Session Service** manages orchestration, while gameplay rules are resolved via the **Game Logic Service**, and **final commit flow is also handled by Game Session**.
 
 ---
 
@@ -103,13 +102,15 @@ Orchestration is owned by the **Game Session Service**, while gameplay rules are
 All state changes are staged in Redis:
 
 - Stored under keys like `tick:pending:{regionId}`
-- Only committed when the entire tick succeeds
-- Partial failures are excluded from commit
+- Only committed when **all successful actions** have completed
+- Timed-out or failed actions are **excluded from commit** and **rescheduled with priority**
+
+This guarantees atomicity and ensures that **partial tick progress does not corrupt shared state**.
 
 If the tick times out:
 
 - Only successful actions are finalized
-- Others are retried later
+- Deferred actions are retried in follow-up ticks
 
 > 🔗 See [Redis Key Naming](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline) for full structure.
 
@@ -119,25 +120,28 @@ If the tick times out:
 
 Each tick operates under a **soft time budget** (e.g., 100ms):
 
-- Slow actions are deferred to **exclusive follow-up ticks**
-- These retries will **not execute in parallel** with the original action
+- Slow actions are deferred to **dedicated, exclusive follow-up ticks**
+- These retries **do not execute in parallel** with the same conflicting action
 - **Oldest actions win** in conflict scenarios
 - **Newer conflicting actions** are delayed to maintain fairness
-- **Conflict metadata is tracked** to detect **hotspots** and potential **livelocks**
+- **Conflict metadata is tracked** to detect **hotspots** and prevent **livelocks**
 
-This avoids starvation, ensures responsiveness under load, and prevents runaway retries.
+This avoids starvation, ensures responsiveness under load, and guarantees tick-level determinism.
 
 ---
 
 ## 🔍 Isolation and Visibility Rules
 
-To prevent cross-tick contamination:
+To prevent cross-tick contamination, FireMUD enforces strict tick isolation:
 
-- Actions only access staged state from the **current tick**
-- **Other regions’ in-progress data is invisible**
-- If partial state is detected, the action **fails and retries**
+- Actions only access **staged state from the current tick**
+- **Staged changes from other tick regions are invisible**
+- Changes staged earlier in the same tick **are visible** and composable
+- If an action depends on a value not yet staged or committed:
+  - It must **retry**
+  - This prevents race conditions and ensures clean replays
 
-This ensures composable, race-free logic across distributed tick regions.
+This composability model ensures tick transactions are **self-contained, deterministic, and rollback-safe**.
 
 ---
 
@@ -177,11 +181,11 @@ Redis provides durability through:
 - **Append-Only File (AOF) persistence**
 - `WAIT 1 100` after writes for replica acknowledgment
 
-Replay is deterministic:
+All staged updates are stored via **Lua-executed, atomic scripts**, enabling:
 
-- Staged updates are idempotent
-- Locks are validated before resuming
-- Lua scripts ensure atomicity
+- **Replay or roll-forward** of incomplete ticks
+- **Safe retries** with no double-processing
+- **Deterministic recovery**
 
 > 🔗 See [Redis Safety Guarantees](./system-architecture-redis.md#🛡️-redis-availability-consistency-and-safety-guarantees) for details.
 
@@ -191,11 +195,11 @@ Replay is deterministic:
 
 | Service                   | Role                                                                 |
 |---------------------------|----------------------------------------------------------------------|
-| **Game Session**          | Orchestrates tick cycles, retries, locks, pacing, and tick state     |
+| **Game Session**          | Orchestrates tick cycles, retries, lock coordination, pacing, and commit flow |
 | **Game Logic**            | Processes each queued action deterministically                       |
 | **Automation & Scripting**| Injects NPC or scripted actions into queues                          |
 | **World Management**      | Defines room layout and tick regions; does not execute ticks         |
-| **Redis**                 | Stores locks, staged results, timers, conflict data, retry queues    |
+| **Redis**                 | Stores locks, timers, pending results, conflict metadata, and retry queues |
 
 ---
 

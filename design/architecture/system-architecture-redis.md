@@ -14,12 +14,12 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - In-flight command queues
 - Tick locks and staged results
 - Cooldowns and timer expirations
-- Retry metadata and conflict tracking
+- Retry metadata and **inter-tick conflict tracking**
 - AI/scripted action injection
 
 All **canonical game data** — accounts, entities, items, rooms — resides in **PostgreSQL**, owned by domain-specific services.
 
-Redis acts as a **coordinated real-time buffer**, not a source of truth.
+Redis acts as a **coordinated real-time buffer**, not a source of truth — but is still treated as **critical** for game availability and consistency.
 
 > The **Game Session Service depends on Redis** to coordinate safe, concurrent tick execution across multiple instances.
 
@@ -32,20 +32,24 @@ Redis acts as a **coordinated real-time buffer**, not a source of truth.
 
 ---
 
-## 🏗️ Redis Deployment Model
+## 🛡️ Redis Availability, Consistency, and Safety Guarantees
+
+Redis is a **non-persistent** layer — but FireMUD treats it as **critical to gameplay correctness**. Availability and consistency are essential despite its transient nature.
+
+### Cluster Deployment
 
 FireMUD runs Redis as a **clustered, replicated setup**:
 
 - Multiple **shards and replicas** for horizontal partitioning
 - Partitioning aligned to tick regions and sessions
 - Redis Sentinel or **Kubernetes-native failover**
-- Critical writes use `WAIT 1 100` to ensure **replica acknowledgment**
+- **Automatic failover** behavior tested under load
 
-### Persistence
+### Replication and Durability
 
-- **AOF (Append-Only File)** enabled for crash recovery
 - Writes are **asynchronously replicated** to reduce latency
-- Game Session uses `WAIT` to block until at least one replica confirms key operations
+- **AOF (Append-Only File)** enabled for crash recovery
+- Critical writes use `WAIT 1 100` to ensure **replica acknowledgment**
 
 ---
 
@@ -56,6 +60,7 @@ Redis keys follow a strict naming convention to support:
 - Efficient debugging and monitoring
 - Shard-aware distribution (avoiding cross-shard ops)
 - Conflict isolation and atomicity
+- Avoiding **cross-node inconsistencies**
 
 ### Key Format Examples
 
@@ -77,7 +82,7 @@ Redis keys follow a strict naming convention to support:
 Redis’s single-threaded model is extended via **Lua scripts** to enable atomic operations such as:
 
 - Lock acquisition and validation (`tick:lock:*`)
-- Tick staging and commit coordination (`tick:pending:*`)
+- Tick staging, **rollback**, and commit coordination (`tick:pending:*`)
 - Session and timer lifecycle management
 - Retry queue manipulation (`retry:*`)
 - AI/scripting action injection
@@ -85,7 +90,7 @@ Redis’s single-threaded model is extended via **Lua scripts** to enable atomic
 All scripts are:
 
 - **Idempotent** and **retry-safe**
-- Designed to work **per-shard**
+- **Shard-isolated** to avoid **cross-node inconsistencies**
 - Protected against cross-tick contamination
 
 > 🔗 See [Tick Locking](./system-architecture-ticks.md#🔐-distributed-entity-locking) for usage during ticks.
@@ -100,7 +105,7 @@ It provides:
 
 - Centralized **command queues**
 - Distributed **lock and retry control**
-- Durable **tick staging** with partial commit support
+- Durable **tick staging** with rollback and partial commit support
 - **Cooldowns and timers** tied to real-world time
 
 > 🔗 Tick execution logic is fully defined in [Tick System and Runtime Flow](./system-architecture-ticks.md#🔄-tick-execution-model).
@@ -135,10 +140,10 @@ FireMUD does **not use in-memory service caches** — all volatile state is cent
 Redis in FireMUD is:
 
 - A **volatile gameplay layer**, not a persistent datastore
-- Essential for **ticks, timers, sessions, and conflict coordination**
+- Essential for **ticks, timers, sessions, rollback, and conflict coordination**
 - Backed by **AOF and `WAIT` guarantees** for resilience
 - Scripted via **Lua** for atomicity and correctness
-- Shard-aware and horizontally scalable
+- **Shard-isolated** to prevent cross-node inconsistencies
 - Tightly integrated with [Tick System and Runtime Flow](./system-architecture-ticks.md) for deterministic multiplayer execution
 
 ---
