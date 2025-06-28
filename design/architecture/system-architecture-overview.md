@@ -28,35 +28,20 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ---
 
-## 🔁 Reconnection Strategy by Layer
+## 🔁 Reconnection Strategy
 
-Robust reconnection support is critical for maintaining seamless player experiences across various clients and network conditions. Reconnection responsibilities are intentionally distributed across system layers:
+FireMUD supports multi-layer reconnection handling to ensure gameplay continuity across network interruptions, client restarts, or backend service failures. Each layer contributes to a robust recovery experience:
 
-### 🛰️ TCP Proxy Service
+- **TCP Proxy Service**  
+  Manages Telnet input at the raw TCP layer. Input is assembled per character and forwarded as full commands. Input buffers are cleared on disconnect and not retained across sessions.
 
-- **Manages Telnet TCP connections**  
-- Buffers **in-progress input** per connection as Telnet input arrives one character at a time  
-- Assembles characters into full commands, delimited by newline  
-- **Immediately forwards complete commands** to the Spring Cloud Gateway  
-- **Does not retain input across disconnects** — partial commands are discarded if the connection drops  
-- Attempts to reconnect to the Spring Cloud Gateway automatically
+- **Spring Cloud Gateway**  
+  Acts as a stateless WebSocket entry point. Automatically reconnects clients to backend services. Maintains no gameplay or authentication state; simply routes traffic.
 
-### 🌐 Spring Cloud Gateway
+- **Game Session Service**  
+  Restores gameplay context using Redis-stored session data, rebinds player socket, and resumes participation in ticks and action queues. Supports deterministic recovery of ticks and timers.
 
-- **Maintains persistent WebSocket connections** to the Game Session Service  
-- Reconnects to backend session layer transparently if the underlying service restarts or a connection drops  
-- Ensures authenticated context and routing are preserved across reconnects  
-
-### 🎮 Game Session Service
-
-- **Owns gameplay session continuity**  
-- Retrieves player session data from Redis upon reconnect  
-- Binds newly reconnected socket to a recovered gameplay context  
-- Tracks and applies the active published version ID for each running game instance  
-- Stores and manages runtime feature flags (e.g. double XP, test mode) which may temporarily override design-time defaults  
-- **Resumes or replays in-progress tick cycles** after restart or crash, using Redis-backed durability guarantees  
-
-Each layer handles reconnection logic appropriate to its scope, ensuring fault tolerance and a smooth player experience.
+> 🔗 For full reconnection flows, recovery edge cases, and resume vs reload behavior, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
 ---
 

@@ -39,14 +39,16 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
 
 ### Gateway Behavior
 
-- Stateless WebSocket endpoint that auto-reconnects on client retry
-- Re-authenticates JWT on reconnect and routes to the correct backend
-- Maintains no gameplay context; simply passes traffic
+- Acts as a **stateless WebSocket passthrough** between clients and the backend Game Session Service
+- Automatically reconnects to backend services if the WebSocket is re-established
+- Maintains **no gameplay or authentication state**
+- Simply forwards traffic once a connection is re-established
 
 ### Gateway Edge Cases
 
 - **Pod restart**: Clients re-establish WebSocket with no user-visible effect
-- **Invalid or expired token**: Auth flow is re-triggered on reconnect
+- **Gateway has no JWT role**: All authentication and session restoration is handled by the Game Session Service after reconnect
+- **Invalid login attempts** (e.g., malformed or unauthorized `LOGIN` command) are rejected by the Game Session Service, not the Gateway
 
 ---
 
