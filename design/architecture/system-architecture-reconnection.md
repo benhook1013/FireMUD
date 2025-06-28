@@ -25,7 +25,7 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
 - Handles raw Telnet input, which arrives one character at a time.
 - Maintains a **temporary input buffer** per active socket to assemble characters into full commands (delimited by `\n` or `\r\n`).
 - Once a **full command is received**, it is **immediately forwarded** to the Spring Cloud Gateway over WebSocket.
-- The proxy does **not retain complete commands**, and **buffered partial input is discarded** if the connection drops.
+- The proxy buffers active input, but **discards it across reconnects** — no complete commands are retained after disconnection.
 
 ### Proxy Edge Cases
 
@@ -73,6 +73,7 @@ Each layer provides scoped fault tolerance. Combined, they ensure players can re
 - **Crash mid-tick**: Recovery uses Redis-staged data for replay/resume
 - **Simultaneous reconnects**: Deduplicated and conflict-resolved via Redis lock state
 - **Manual client reconnect**: Treated identically to network interruption
+- **Manual LOGIN with same account and character**: Session may be resumed if Redis state is intact and no conflicting session exists
 
 ---
 
@@ -86,22 +87,21 @@ FireMUD supports multiple concurrent connections for the same account — provid
     - **Terminate the previous connection**
     - **Transfer control** to the new session
     - **Rebind Redis state** to the new socket as if reconnecting
-- This login-over-login behavior ensures consistent character state and prevents duplication.
-
-> This mirrors reconnection logic — logging in again from a different location is treated as a takeover of that session.
+- This login-over-login behavior mirrors reconnection logic — logging in again from a different location is treated as a takeover of that session.
 
 ---
 
 ## 🔄 Resume vs Reload Behavior
 
-| Condition                        | Outcome                                            |
-|----------------------------------|----------------------------------------------------|
-| Brief client disconnect          | **Resume**: Session recovered via Redis            |
-| Gateway or Proxy restart         | **Resume**: Transparent reconnection               |
-| Game Session crash or restart    | **Resume**: Tick and session recovery from Redis   |
-| Redis unavailable/corrupted      | **Full Reload**: Player must log in again          |
-| Player device/browser switch     | **Full Reload**: New socket/session required       |
-| Character re-login from another client | **Takeover**: Old session terminated, new one becomes authoritative |
+| Condition                                | Outcome                                            |
+|------------------------------------------|----------------------------------------------------|
+| Brief client disconnect                  | **Resume**: Session recovered via Redis            |
+| Gateway or Proxy restart                 | **Resume**: Transparent reconnection               |
+| Game Session crash or restart            | **Resume**: Tick and session recovery from Redis   |
+| Manual LOGIN with same account + character | **Resume**: Session may be resumed if Redis state is available |
+| Redis unavailable/corrupted              | **Full Reload**: Player must log in again          |
+| Player device/browser switch             | **Full Reload**: New socket/session required       |
+| Character re-login from another client   | **Takeover**: Old session terminated, new one becomes authoritative |
 
 ---
 

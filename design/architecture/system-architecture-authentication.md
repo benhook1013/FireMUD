@@ -49,7 +49,7 @@ All clients — whether Web or Telnet — use a unified plaintext `LOGIN` comman
 ### Internal JWT Handling
 
 1. **Account Service** verifies credentials and issues an initial **account-only JWT**
-2. **Game Session Service** stores the JWT internally and binds it to the session
+2. **Game Session Service** binds the JWT to the session context in Redis
 3. Once the player selects a character and world, Game Session updates the session and **injects `playerId` and `worldId` into a new JWT**
 4. All gRPC calls use the **latest JWT**, including `accountId`, `roles`, `playerId`, and `worldId`
 
@@ -81,7 +81,7 @@ Each service performs **local authorization**:
 
 ### Session Binding and Character Context
 
-- When a player logs in, Game Session binds the JWT to the socket and session
+- When a player logs in, Game Session binds the JWT to the socket and session context in Redis
 - After character/world selection, the session is upgraded to include:
   - `playerId`
   - `worldId`
@@ -116,6 +116,8 @@ All commands go through Game Session, which:
   - Terminates the old session
   - Transfers control to the new connection
   - Updates the socket binding in Redis
+
+> This mirrors reconnection logic — logging in again from a different location is treated as a takeover of that session.
 
 ---
 

@@ -13,9 +13,9 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**.  
   > 🛑 **Authentication is not performed at the Gateway** — all `LOGIN` handling and session validation occurs in the **Game Session Service**.
 - **Spring Cloud Gateway is fully horizontally scalable and stateless**, with no sticky session requirements. Game sessions are stored externally, allowing any Gateway instance to serve any authenticated client.  
-- **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers input and handles reconnects. Once upgraded to WebSocket, traffic flows through stateless layers — allowing transparent failover and reconnection.  
+- **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers **active input**, but **discards it across reconnects**. Once upgraded to WebSocket, traffic flows through stateless layers — allowing transparent failover and reconnection.  
 - **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:  
-  - The **TCP Proxy** buffers Telnet input and reconnects to the Gateway when needed  
+  - The **TCP Proxy** buffers Telnet input during a session but clears it on disconnect  
   - The **Spring Cloud Gateway** re-establishes downstream WebSocket connections to backend services  
   - The **Game Session Service** restores gameplay context using external Redis state  
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency  
@@ -24,6 +24,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**, with the Game Design Service enabling live editing and versioning  
 - **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, published version tracking, and tick execution  
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**, enabling temporary or contextual behavior changes without altering the underlying game definition  
+- 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one.
 
 🖼️ See also: [System Architecture Diagram](./system-architecture/system-architecture-diagram.md)
 
@@ -40,7 +41,7 @@ FireMUD supports multi-layer reconnection handling to ensure gameplay continuity
   Acts as a stateless WebSocket entry point. Automatically reconnects clients to backend services. Maintains no gameplay or authentication state; simply routes traffic.
 
 - **Game Session Service**  
-  Restores gameplay context using Redis-stored session data, rebinds player socket, and resumes participation in ticks and action queues. Supports deterministic recovery of ticks and timers.
+  Uses Redis to recover session bindings, tick participation, and queued actions. Resumes the player’s active session and gameplay state.
 
 > 🔑 Clients must **always re-authenticate** using a `LOGIN` command after disconnect.  
 > If the account and character match a previous session, **Game Session may restore** the prior session state from Redis and resume gameplay automatically.  
@@ -135,7 +136,7 @@ FireMUD uses a unified authentication model across all client types (Telnet, Web
 - Once the player selects a character and world, a new **augmented JWT** is issued including:
   - `playerId`
   - `worldId`
-- The updated token allows downstream services to enforce **character-level and world-specific access control**
+- This updated token is used internally for all gRPC calls and ensures **character-level and world-specific access control**
 
 ### ✅ Design Notes
 
