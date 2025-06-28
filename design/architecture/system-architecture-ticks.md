@@ -13,7 +13,8 @@ FireMUD uses a **Hybrid Tick Model (Model C)** to balance real-time responsivene
 - **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues**
 - At regular **tick intervals** (e.g., 1s):
   - One action (if any) is pulled from each entity’s command queue
-  - Actions are resolved in a fair, ordered cycle
+  - Actions are resolved in a fair, ordered cycle (e.g. by timestamps or stat priority)
+  - Only **one action per entity per tick** is executed for fairness
   - State changes are applied in a single coordinated pass
 
 This model ensures:
@@ -23,11 +24,13 @@ This model ensures:
 - Equal treatment of AI and player actions
 - Scheduled updates for effects like cooldowns, patrols, regeneration
 
+> 🔗 Overview of this model appears in [System Architecture Overview](./system-architecture-overview.md#⏱️-game-loop--tick-model)
+
 ---
 
 ## 🔁 Smart Retry and Conflict Resolution
 
-FireMUD includes a robust system for **lock contention**, **timeouts**, and **retries**, coordinated through Redis.
+FireMUD includes a robust system for **lock contention**, **timeouts**, and **retries**, coordinated by the Game Session Service and powered by Redis.
 
 ### 🔐 Distributed Locking
 
@@ -40,153 +43,142 @@ To prevent concurrent entity updates, ticks acquire **distributed locks** in Red
 If a required lock is unavailable:
 
 - The action **fails immediately**
-- All staged changes are rolled back
-- The action is **rescheduled for retry**
+- All staged changes are rolled back via Lua script
+- The action is **rescheduled for retry** by the Game Session Service
 
-Conflict metadata is recorded and **reported to the Game Session Service**, which uses it to **reorder future submissions intelligently**.
+Conflict metadata is recorded and reported to the Game Session Service, which **reorders future submissions** intelligently.
 
-> 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control) for Lua behavior.
+> 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control)
 
 ### 🧠 Retry Scheduling
 
 When an action fails due to contention:
 
-- The system logs the **blocking lock** and responsible tick region
+- Redis logs the **blocking lock** and conflicting region
 - The Game Session Service:
-  - Reschedules the action within the blocking region
-  - Staggers or delays conflicting ticks
+  - Reschedules the action within the blocked region
+  - Staggers or delays conflicting ticks to avoid churn
   - Prevents retry storms and wasted CPU
-  - **Prioritizes rescheduled retries** to minimize action delay
+  - **Prioritizes retries** to minimize player-visible delays
 
 Future enhancements may include:
 
 - Backoff windows and retry caps
-- Graph-based conflict detection
-- Surface metrics and alerts for hotspots
+- Graph-based conflict resolution
+- Hotspot surface metrics and adaptive throttling
 
 ---
 
-## 🌍 Room-Based Tick Regions
+## 🌍 Tick Regions and Parallel Execution
 
-Ticks are **region-scoped**, not globally synchronized. Each room or segment runs its own independent tick cycle, enabling:
+Ticks are **region-scoped**, not globally synchronized. Each **tick region** (typically a room or room cluster) runs its own independent cycle, enabling:
 
 - **Parallelism** across threads and servers
-- **Fault isolation** from slow or complex rooms
-- **Pacing control** (different tick rates per region)
+- **Fault isolation** from slow or overloaded regions
+- **Configurable pacing** per region (tick rate or delay)
 - **Elastic execution** across worker instances
+
+> 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
 
 ---
 
 ## 🔄 Tick Execution Flow
 
-Each tick follows this process:
+Each tick proceeds as follows:
 
 1. **Collect Actions**  
-   From the command queues of active entities in the region.
+   From the command queues of active entities in the tick region
 
 2. **Resolve Fairly**  
-   Sort actions by timestamps, stat priority, or custom logic. Typically, only one action per entity is resolved per tick for fairness.
+   Sort by timestamp, stat priority, or custom policy; only one action per entity is executed per tick
 
 3. **Apply Effects**  
-   Modify entity state such as HP, position, inventory, buffs, or other gameplay attributes.
+   Mutate entity state (e.g., HP, inventory, buffs, position)
 
 4. **Trigger Events**  
-   Fire regeneration, room scripts, NPC behavior, or automated actions. Scripted and AI-injected actions use the same queue system and are treated equally.
+   Run regeneration, room scripts, NPC behaviors, AI-driven commands — all use the same command queue model
 
 The **Game Session Service** manages orchestration, while gameplay rules are resolved via the **Game Logic Service**, and **final commit flow is also handled by Game Session**.
 
 ---
 
-## 🧮 Tick Staging and Commit Model
+## 🧮 Tick Staging and Commit Flow
 
-All state changes are staged in Redis:
+State changes are first **staged in Redis** under keys like `tick:pending:{regionId}`:
 
-- Stored under keys like `tick:pending:{regionId}`
-- Only committed when **all successful actions** have completed
-- Timed-out or failed actions are **excluded from commit** and **rescheduled with priority**
+- Only committed if **all actions succeed**
+- Timeout or failed actions are **excluded** and **rescheduled with priority**
+- Commit and rollback are coordinated by Game Session using Lua scripts in Redis
 
-This guarantees atomicity and ensures that **partial tick progress does not corrupt shared state**.
+This ensures:
 
-If the tick times out:
-
-- Only successful actions are finalized
-- Deferred actions are retried in follow-up ticks
-
-> 🔗 See [Redis Key Naming](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline) for full structure.
+- Atomic per-tick updates
+- Partial failure recovery
+- Conflict-free shared state across retries
 
 ---
 
 ## ⏳ Timeout and Fairness Policy
 
-Each tick operates under a **soft time budget** (e.g., 100ms):
+Each tick enforces a **soft execution budget** (e.g., 100ms):
 
-- Slow actions are deferred to **dedicated, exclusive follow-up ticks**
-- These retries **do not execute in parallel** with the same conflicting action
+- Slow actions are **deferred** to retry in exclusive follow-up ticks
+- These retries are **not executed in parallel**
 - **Oldest actions win** in conflict scenarios
-- **Newer conflicting actions** are delayed to maintain fairness
-- **Conflict metadata is tracked** to detect **hotspots** and prevent **livelocks**
-
-This avoids starvation, ensures responsiveness under load, and guarantees tick-level determinism.
+- Newer submissions are backlogged until resolved
+- Conflict metadata enables **hotspot detection** and livelock prevention
 
 ---
 
-## 🔍 Isolation and Visibility Rules
+## 🔍 Isolation and Replay Safety
 
-To prevent cross-tick contamination, FireMUD enforces strict tick isolation:
+To prevent cross-tick contamination and support deterministic replay:
 
-- Actions only access **staged state from the current tick**
-- **Staged changes from other tick regions are invisible**
-- Changes staged earlier in the same tick **are visible** and composable
-- If an action depends on a value not yet staged or committed:
-  - It must **retry**
-  - This prevents race conditions and ensures clean replays
+- Actions may **only see staged state from the current tick**
+- Changes from other tick regions or future ticks are **invisible**
+- Changes staged earlier in the same tick **are composable**
+- Missing dependencies cause the action to **fail and retry**
 
-This composability model ensures tick transactions are **self-contained, deterministic, and rollback-safe**.
+This guarantees **clean, deterministic ticks** and safe replays after crash or restart.
 
 ---
 
 ## ⏱️ Timers and Time Scaling
 
-Time-based effects (e.g. cooldowns, regeneration) use **real-world durations in milliseconds**:
+Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time timers in milliseconds**, stored as:
 
-- Keys follow the format `timer:{entityId}:{effectId}`
-- Each tick checks for timer expirations and triggers any that have elapsed
+- `timer:{entityId}:{effectId}`
 
-If a tick is delayed (e.g., CPU load), multiple timers may fire together.
+Each tick scans timers for expirations and triggers corresponding events. If delayed, multiple may fire at once.
 
-> 🔗 See [Redis Keyspace](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline) for structure.
+### 🕒 Dynamic Time Scaling
 
-### 🕒 Time Scaling
-
-Durations can be modified dynamically:
+Durations can be modified on the fly:
 
 - `scaled = base * multiplier`
-- Used for global effects (e.g., slow motion), spells, or status conditions
-- Scaling affects only **effect timing**, not **tick rate**
+- Used for spell effects, world modifiers (e.g., slow motion), or status changes
+- Time scaling affects **durations**, not tick rate
+
+> Runtime feature flags controlling global pace or status effects are applied by the Game Session Service before tick execution.
 
 ---
 
 ## 💥 Crash Recovery and Replay
 
-If the **Game Session Service** crashes mid-tick:
+If a tick crashes mid-flight (e.g., Game Session restart), Redis preserves:
 
-- Redis retains:
-  - Active locks (`tick:lock:*`)
-  - Staged changes (`tick:pending:*`)
-  - Timer state (`timer:*`)
+- Tick locks (`tick:lock:*`)
+- Staged effects (`tick:pending:*`)
+- Timers (`timer:*`)
+- Retry and conflict state
 
-Redis provides durability through:
+Recovery is coordinated by Game Session and backed by:
 
-- **Append-Only File (AOF) persistence**
-- `WAIT 1 100` after writes for replica acknowledgment
+- **Lua-based atomic updates**
+- **AOF (Append-Only File)** persistence
+- `WAIT 1 100` for durable replication
 
-All staged updates are stored via **Lua-executed, atomic scripts**, enabling:
-
-- **Replay or roll-forward** of incomplete ticks
-- **Safe retries** with no double-processing
-- **Deterministic recovery**
-
-> 🔗 See [Redis Safety Guarantees](./system-architecture-redis.md#🛡️-redis-availability-consistency-and-safety-guarantees) for details.
+This supports **idempotent, replayable** ticks — without risk of duplicate effects or inconsistent state.
 
 ---
 
@@ -194,23 +186,24 @@ All staged updates are stored via **Lua-executed, atomic scripts**, enabling:
 
 | Service                   | Role                                                                 |
 |---------------------------|----------------------------------------------------------------------|
-| **Game Session**          | Orchestrates tick cycles, retries, lock coordination, pacing, and commit flow |
-| **Game Logic**            | Processes each queued action deterministically                       |
-| **Automation & Scripting**| Injects NPC or scripted actions into queues                          |
-| **World Management**      | Defines room layout and tick regions; does not execute ticks         |
-| **Redis**                 | Stores locks, timers, pending results, conflict metadata, and retry queues |
+| **Game Session**          | Orchestrates tick regions, lock acquisition, retries, commit flow    |
+| **Game Logic**            | Resolves each queued action deterministically                        |
+| **Automation & Scripting**| Injects AI or scripted commands into queues                          |
+| **World Management**      | Defines tick region layout and room segmentation                     |
+| **Redis**                 | Stores locks, timers, staged changes, retry metadata; executes Lua   |
+
+> Game Session manages all tick lifecycle logic and delegates atomic operations to Redis via Lua.
 
 ---
 
 ## ✅ Model Benefits
 
-- ✅ True parallel tick execution with safe entity isolation
-- ✅ Lock-on-demand prevents race conditions without fixed ownership
-- ✅ Partial success and retry-safe rollback behavior
-- ✅ Resilient crash recovery using AOF and `WAIT`
-- ✅ Scalable tick orchestration without sticky routing
-- ✅ Flexible time scaling for effects and pacing
-- ✅ Redis-powered durability with atomic Lua execution
-- ✅ Hotspot tracking and livelock avoidance using conflict metadata
+- ✅ Parallel, fault-isolated tick execution with room-level isolation
+- ✅ Lock-on-demand using Redis avoids fixed thread ownership
+- ✅ Atomic staging and safe rollback via Lua
+- ✅ Deterministic recovery using AOF + `WAIT`
+- ✅ Conflict metadata avoids livelocks and enables adaptive pacing
+- ✅ Flexible time scaling without affecting system cadence
+- ✅ No in-service volatile state — everything recoverable via Redis
 
 > FireMUD treats time as **localized pulses**, not a global clock. Each tick is a self-contained transaction — safely composing gameplay logic in a world that never stops evolving.

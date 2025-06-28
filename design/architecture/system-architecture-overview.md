@@ -24,7 +24,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, published version tracking, and tick execution  
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**, enabling temporary or contextual behavior changes without altering the underlying game definition  
 
-🖼️ See also: [System Architecture Diagram](./system-architecture/system-architecture-diagram.md) for a visual representation of these components and flows.
+🖼️ See also: [System Architecture Diagram](./system-architecture/system-architecture-diagram.md)
 
 ---
 
@@ -65,10 +65,10 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, published version state, input command validation, rate limiting, tick execution, and action queues |
+| **Game Session Service**          | Manages player sessions, game instance lifecycle, runtime flags, published version state, input command validation, rate limiting, tick region orchestration, and action queue execution |
 | **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
-| **World Management Service**      | Owns the structure and logic of maps, rooms, and pathfinding; also responsible for persistent room state |
+| **World Management Service**      | Owns the structure and logic of maps, rooms, and tick regions; manages persistent room state |
 | **Game Logic Service**            | Executes command parsing and gameplay mechanics; resolves queued actions deterministically |
 | **Automation & Scripting Service**| Executes custom scripts and AI that actively trigger functionality in the Game Logic Service or cause entities to take autonomous actions |
 | **Social and Groups Service**     | Manages chat, mail, guilds, and player-driven social systems           |
@@ -95,7 +95,7 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 
 - **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
 - **Volatile state** (player sessions, transient gameplay state, ticks) is externalized to Redis Cluster and managed by the Game Session Service.  
-- Redis is treated as a **transient coordination layer**, enabling scalable reconnection, concurrent tick execution, and in-flight action tracking.  
+- Redis acts as a **real-time coordination buffer**, not a source of truth — yet it is **critical** for gameplay execution and recovery.  
 - **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
 - **Design-time feature flags** are defined in the Game Design Service; **runtime flags** are managed in the Game Session Service for temporary overrides.  
 - **Logging & Admin Service** provides UI/API tools to view and toggle active flags and audit historical changes.
@@ -103,7 +103,7 @@ Each layer handles reconnection logic appropriate to its scope, ensuring fault t
 📤 **Game Configuration Rollout:**  
 When a new game version is published by the Game Design Service, the relevant domain services (e.g., Entity, World, Logic) update their PostgreSQL data accordingly. The Game Session Service assigns version IDs to active game instances and notifies participating services when needed — avoiding complex pub-sub for now.
 
-> 🔗 For Redis durability, Lua atomicity, and key discipline, see [Redis Architecture](./system-architecture-redis.md).
+> 🔗 For Redis durability, Lua atomicity, and tick-level logic, see [Redis Architecture](./system-architecture-redis.md) and [Tick System](./system-architecture-ticks.md).
 
 ---
 
@@ -113,12 +113,13 @@ FireMUD uses a **Hybrid Tick Model** that balances real-time responsiveness with
 
 Key design aspects:
 
-- Each **tick region** (e.g., room or map segment) runs independently to maximize parallelism.
-- **Player and NPC actions are pulled from per-entity queues** and resolved at a consistent interval.
-- **Game Session Service** coordinates the tick lifecycle and delegates logic resolution to the **Game Logic Service**.
-- Tick safety is enforced via **Redis-based locking and state staging**, allowing resilient recovery and retry logic.
+- Each **tick region** (typically a room or map segment) runs independently to maximize parallelism and fault isolation
+- **One action per entity** is pulled from per-entity queues and resolved in a fair, deterministic order
+- **Game Session Service** coordinates the tick lifecycle, lock acquisition, retries, and commit flow
+- **Game Logic Service** processes actions using deterministic rules and state from Entity/World services
+- Redis is used for **lock acquisition**, **tick staging**, **timer tracking**, and **conflict-safe retries**
 
-> 🔗 For full execution semantics, isolation guarantees, and rollback strategy, see [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md).
+> 🔗 For complete execution flow and isolation model, see [Tick System and Runtime Design](./system-architecture-ticks.md)
 
 ---
 
@@ -138,57 +139,47 @@ FireMUD supports multiple client types (Telnet, WebSocket, HTTP) and provides a 
 - FireMUD uses **JWTs (JSON Web Tokens)** to represent authenticated *accounts*, not individual characters.
 - JWTs are issued by the **Account Service** upon successful login and contain signed claims identifying the account and its access rights.
 - Typical claims include:
-  - `accountId` – Unique identity for the user account
-  - `roles` – Account-level roles (e.g., `user`, `admin`, `moderator`)
-  - `tenants[]` – List of game worlds the account can access
-  - `features[]` – Optional account-level feature flags
-- Player and world context are **not embedded** in the JWT; they are selected post-login during game session setup.
+  - `accountId`
+  - `roles`
+  - `tenants[]`
+  - `features[]`
 
-### 🧠 Session Handling
-
-- After authentication, the **Spring Cloud Gateway** passes the validated JWT to the **Game Session Service**.
-- The **Game Session Service stores the JWT** as part of the account session context.
-- When a player selects a character within a world, this state is tracked independently of the JWT.
-- On each command or action:
-  - The session-scope `playerId` and `worldId` are resolved
-  - The stored JWT is used to validate the originating account and check applicable permissions
-  - The combined context is passed downstream (e.g., to Game Logic Service)
-
-> 🛑 Backend services trust the Game Session Service to represent authenticated users and their selected in-game identity. They do not revalidate JWTs.
-
-### 🛂 Authorization and Roles
+> Player and world context are **not embedded** in the JWT; they are resolved during session setup.
 
 - The `roles` claim determines whether an account has elevated access to admin tools, game management APIs, or moderator commands.
 - Services like the Game Session Service and Admin & Logging Service use roles to control feature exposure.
 - Enforcement is performed **locally per service**, based on the decoded claims in the JWT.
 
+### 🧠 Session Handling
+
+- The **Game Session Service** stores the JWT and tracks the selected character and world per session.
+- Commands resolve the correct `playerId` and `worldId`, validate access via JWT claims, and pass this to downstream services.
+
+> 🛑 Backend services trust the Game Session Service as the source of truth for authentication and session context.
+
 ---
 
 ## 📊 Observability and Monitoring
 
-FireMUD adopts a unified observability strategy built on **centralized logging to the ELK stack**. All logs — including debug output, error reports, gameplay events, and auditable admin actions — are emitted by services and routed to Elasticsearch via standard log collection agents.
+FireMUD uses a unified observability pipeline:
 
 ### 🔍 Logging
 
-- **All services log directly to stdout/stderr**, emitting structured JSON logs enriched with metadata such as `traceId`, `playerId`, `sessionId`, and `serviceName`.
-- Host-level agents (e.g., **Fluent Bit**, **Filebeat**, or similar) collect and forward these logs to a centralized **Elasticsearch** cluster.
-- **No logs are stored in service-local databases.** All logging is out-of-band, and services are not aware of or coupled to any logging consumers.
-- Once logs are forwarded and indexed by ELK, they are considered persistently recorded and queryable.
-
-> 🛑 No services call the Admin & Logging Service to log. Logging is asynchronous and decoupled from core business logic.
+- All services log structured JSON to stdout/stderr with metadata like `traceId`, `playerId`, `sessionId`
+- Logs are collected via **Fluent Bit** or similar and indexed into **Elasticsearch**
+- No logs are written to databases; logging is decoupled and async
 
 ### 🧾 Admin & Logging Service
 
-- Provides UI/API access to search, filter, and review logs via the ELK backend (e.g., using Kibana or OpenSearch Dashboards).
-- Supports advanced filtering (e.g., by player, session, room, command) and moderation workflows using centralized log data.
-- Does **not persist or modify logs** — it only queries what’s already stored in ELK.
+- Provides dashboards and moderation tools using ELK backend
+- Does not persist logs; queries indexed data only
 
 ### 📈 Metrics and Tracing
 
-- Metrics are exported via **Prometheus-compatible `/metrics` endpoints**.
-- **Grafana dashboards** provide visibility into tick latency, action queue depth, Redis contention, etc.
-- **Redis metrics** (e.g., lock contention, Lua latency) are exported via Prometheus and visualized in Grafana for hotspot detection and tick health.
-- Tracing via **OpenTelemetry** enables end-to-end action flow debugging across ticks and services.
+- All services export **Prometheus metrics**
+- Dashboards track tick latency, retry storms, Redis contention
+- **Redis-specific metrics** (e.g., Lua latency, lock failure) are described in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability)
+- **OpenTelemetry** spans trace actions end-to-end across tick regions
 
 ---
 
@@ -207,26 +198,21 @@ FireMUD adopts a unified observability strategy built on **centralized logging t
 
 ## 🔎 Notes on Responsibility Alignment
 
-- Functional responsibilities for each service are centralized in the [Responsibility Matrix](./system-architecture/responsibility-matrix.md) and referenced implicitly here.  
-- This architecture overview focuses on runtime behavior and structural composition. Refer to the matrix for a granular breakdown of what each service handles.  
-- Game instance control and runtime state (version, flags) are owned by the Game Session Service, while design and configuration versioning is authored and published via the Game Design Service.  
-- Combat, trading, and all other player or NPC-initiated actions are handled via the **Game Logic Service**, based on state and data retrieved from the Entity and World services. During each tick, the **Game Session Service dequeues actions** from session command queues and invokes the **Game Logic Service** to process them.  
-  The Game Logic Service:
-  - Retrieves required state from the Entity and World services (e.g., room layout, entity stats)
-  - Applies deterministic gameplay rules to resolve the action
-  - Returns updated game state transitions  
-- Scripts and AI behaviors are executed via the **Automation & Scripting Service**, which may inject commands into queues or trigger autonomous behavior through the Game Logic Service.
+- Functional responsibilities are detailed in the [Responsibility Matrix](./system-architecture/responsibility-matrix.md)  
+- Game Session controls runtime instance logic and tick orchestration  
+- Game Logic resolves deterministic actions  
+- Redis acts as the coordination and execution substrate for ticks and timers
 
 🧠 **Why Game Session vs Game Logic?**  
-The Game Logic Service acts as a deterministic engine — it processes commands based on inputs and state but doesn’t manage session-specific concerns.  
-The Game Session Service owns the player’s session context, tick execution, command queuing, and lock coordination.
+Game Logic is stateless and deterministic — it resolves a single action given state.  
+Game Session manages context, pacing, retries, and tick lifecycle orchestration across distributed regions.
 
 ---
 
 ## 📚 Related Documentation
 
 - [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md)
-- [Redis Architecture](./system-architecture/system-architecture-redis.md)
+- [Redis Architecture](./system-architecture-redis.md)
 - [Microservices Responsibility Matrix](./system-architecture/responsibility-matrix.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
