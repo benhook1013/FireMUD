@@ -1,90 +1,112 @@
 # 🔁 FireMUD System Architecture: Reconnection Strategy
 
-This document outlines FireMUD’s **layered reconnection strategy**, enabling seamless recovery from network interruptions, client restarts, or backend service failures.
+FireMUD enables seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts — using a layered reconnection strategy and Redis-backed session state.
 
 ---
 
 ## 🧩 Reconnection Layers
 
-| Layer                    | Role                                                                 |
-|--------------------------|----------------------------------------------------------------------|
-| **TCP Proxy**            | Manages raw Telnet input; clears buffer on disconnect                |
-| **Spring Cloud Gateway** | Stateless WebSocket passthrough to Game Session                      |
-| **Game Session**         | Restores gameplay session, character state, and tick participation   |
+| Layer              | Responsibility                                               |
+|-------------------|---------------------------------------------------------------|
+| **TCP Proxy**      | Parses Telnet input; clears buffer on disconnect              |
+| **Spring Gateway** | Stateless WebSocket router; auto-reconnects downstream        |
+| **Game Session**   | Restores gameplay session from Redis; manages resume behavior |
 
-Each layer provides scoped fault tolerance. **Internal service restarts (e.g., Proxy, Gateway, Game Session)** can often be recovered from seamlessly.  
-However, **clients must always re-authenticate with a `LOGIN` command** after disconnecting.
-
-> 🔐 Session continuity is always evaluated by the Game Session Service using Redis — clients never retain or resend tokens.
+Each layer handles fault tolerance independently. **Only client connection loss requires reauthentication**.  
+Internal service restarts (Proxy, Gateway, Game Session) are transparent.
 
 ---
 
-## 🛰️ TCP Proxy Behavior
+## 🔐 When Clients Must Reauthenticate
 
-- Assembles raw Telnet input into commands; forwards complete commands over WebSocket.
-- Input buffer is **cleared on disconnect or crash** — partial input is discarded.
-- **No gameplay state** is maintained here.  
-  A reconnect **requires a fresh connection and re-authentication by the client.**
+A `LOGIN` command is required **only** when the client itself disconnects:
 
----
+- **Telnet clients**: if TCP connection to the Proxy is lost
+- **Web clients**: if WebSocket connection to the Gateway drops
 
-## 🌐 Gateway Behavior
+In these cases:
 
-- Fully **stateless WebSocket router**; re-establishes backend connections automatically.
-- Maintains **no gameplay or authentication state**.
-- **Transparent failover** on restart — has no impact on gameplay if the client remains connected.
+- The client re-establishes a connection
+- Issues a `LOGIN` command
+- Game Session uses Redis to detect if a prior session exists (same account + character)  
+  → If so, gameplay can **resume automatically**
 
----
-
-## 🎮 Game Session Recovery
-
-- Uses Redis to restore:
-  - `session:{playerId}` socket binding
-  - Tick region participation and timers
-  - Queued actions and cooldowns
-- If a reconnecting client sends a valid `LOGIN` for an active character, the session may be resumed automatically.
-- Redis locks deduplicate overlapping reconnect attempts.
-
-> 🔐 Clients never transmit or store JWTs. Session reconstruction is fully server-driven.
+> Clients **never see or store tokens** — session restoration is entirely server-driven.
 
 ---
 
-## 👥 Multi-Client and Takeover Semantics
+## 🎮 Game Session Recovery Logic
 
-- An account can be logged in from multiple clients, each controlling a **different character**.
-- Logging into the same character from another client will:
-  - **Terminate** the old session
-  - **Transfer control** to the new connection
-  - **Rebind** Redis session state
-- This takeover behaves identically to a reconnect — no gameplay data is lost.
+On valid `LOGIN`, Game Session:
 
----
+- Looks for Redis session data (`session:{playerId}`)
+- If found:
+  - Rebinds the socket
+  - Restores tick region participation
+  - Recovers queued actions, timers, and cooldowns
+- Deduplicates concurrent reconnects using Redis locks
 
-## 🔄 Resume vs Reload Behavior
-
-| Condition                                | Outcome                                            |
-|------------------------------------------|----------------------------------------------------|
-| Brief client disconnect                  | **Resume**: If same account+character logs in, session can be recovered via Redis |
-| Gateway or Proxy restart                 | **Resume**: Transparent reconnection               |
-| Game Session crash or restart            | **Resume**: Tick and session recovery from Redis   |
-| Manual LOGIN with same account + character | **Resume**: Session may be resumed if Redis state is available |
-| Redis unavailable/corrupted              | **Full Reload**: Player must log in again          |
-| Player device/browser switch             | **Full Reload**: New socket/session required       |
-| Character re-login from another client   | **Takeover**: Old session terminated, new one becomes authoritative |
-
-> 🧠 Even brief client disconnects **require explicit re-authentication** — only infrastructure restarts are fully transparent.
+If Redis data is unavailable or expired, the login is treated as a **fresh session**.
 
 ---
 
-## 🧠 Design Goals
+## 🛰️ TCP Proxy and Gateway Behavior
 
-- **All client reconnects require a new `LOGIN`**
-- Transparent recovery from **stateless service restarts**
-- All session state externalized to **Redis**
-- Gameplay continuity preserved wherever possible — but input buffers are not
-- Tick state, timers, and action queues are resilient and recoverable
+**TCP Proxy (Telnet clients):**
 
-> 🔗 See also:  
-> [Tick System and Runtime Design](./system-architecture-ticks.md)  
-> [Redis Architecture](./system-architecture-redis.md)  
-> [System Architecture Overview](./system-architecture-overview.md)
+- Parses raw TCP input into commands
+- Clears input buffer on disconnect
+- No state is retained across reconnects
+
+**Spring Cloud Gateway (Web clients):**
+
+- Stateless WebSocket passthrough
+- Automatically re-establishes backend connections
+- Transparent to gameplay — no state loss if the client remains connected
+
+> Infrastructure restarts do **not** require client re-login if the connection remains alive.
+
+---
+
+## 👥 Multi-Client Sessions & Takeover
+
+- An account may be logged in from multiple clients using **different characters**
+- Logging in to the *same character* from another client:
+  - Terminates the old session
+  - Transfers control to the new client
+  - Rebinds Redis session state
+
+This behaves identically to a reconnect — gameplay continues with no loss.
+
+---
+
+## 🔄 Resume vs Reload Scenarios
+
+| Trigger                                  | Result                                  |
+|------------------------------------------|------------------------------------------|
+| TCP/WebSocket disconnect (client-side)   | Requires new connection + `LOGIN`; may resume |
+| Proxy / Gateway restart (infra only)     | Transparent — no client action needed   |
+| Game Session restart                     | Transparent if Redis state is available |
+| Manual `LOGIN` from same character       | Treated as reconnect; session resumes if possible |
+| Redis state expired/unavailable          | Full reload — fresh session required     |
+| New client takes over same character     | Old session terminated, new one resumes control |
+
+> 🔑 Only disconnection of the **client’s connection** triggers a new `LOGIN`.  
+> Service restarts **do not** interrupt gameplay unless the connection itself is dropped.
+
+---
+
+## 🧠 Design Principles
+
+- Redis stores all gameplay session data: timers, queues, socket bindings, locks
+- Clients are stateless: no tokens or session memory
+- Game Session governs all reconnection and session rebinding logic
+- Transparent failover is supported at the infrastructure level (Proxy, Gateway, Game Session)
+
+---
+
+📚 Related:
+
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Authentication & Authorization](./system-architecture-authentication.md)
