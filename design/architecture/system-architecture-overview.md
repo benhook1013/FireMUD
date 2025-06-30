@@ -14,13 +14,10 @@ This document provides a high-level view of FireMUD’s system architecture, sho
   > 🛑 **Authentication is not performed at the Gateway** — all `LOGIN` handling and session validation occurs in the **Game Session Service**.
 - **Spring Cloud Gateway is fully horizontally scalable and stateless**, with no sticky session requirements. Game sessions are stored externally, allowing any Gateway instance to serve any authenticated client.  
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers **active input**, but **discards it across reconnects**. Once upgraded to WebSocket, traffic flows through stateless layers — allowing transparent failover and reconnection.  
-- **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity:  
-  - The **TCP Proxy** buffers Telnet input during a session but clears it on disconnect  
-  - The **Spring Cloud Gateway** re-establishes downstream WebSocket connections to backend services  
-  - The **Game Session Service** restores gameplay context using external Redis state  
+- **Reconnection logic is distributed across layers** to preserve connection integrity and session continuity (see [Reconnection Strategy](./system-architecture-reconnection.md)).  
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency  
 - **Kubernetes DNS and IPVS-based load balancing** provide scalable, resilient service discovery and routing  
-- **Session state is externalized (e.g., Redis Cluster)** to keep services stateless and allow for graceful reconnection  
+- **Session state is stored in Redis** to keep services stateless and enable graceful reconnect and recovery (see [Session Keys](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding))  
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**, with the Game Design Service enabling live editing and versioning  
 - **Game Session Service orchestrates live game instances**, including runtime configuration, feature flags, published version tracking, and tick execution  
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**, enabling temporary or contextual behavior changes without altering the underlying game definition  
@@ -32,21 +29,15 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ## 🔁 Reconnection Strategy
 
-FireMUD supports multi-layer reconnection handling to ensure gameplay continuity across network interruptions, client restarts, or backend service failures. Each layer contributes to a robust recovery experience:
+FireMUD supports seamless gameplay recovery through a layered reconnection model across the TCP Proxy, Gateway, and Game Session layers. Each contributes to gameplay continuity after network or service disruption.
 
-- **TCP Proxy Service**  
-  Manages Telnet input at the raw TCP layer. Input is assembled per character and forwarded as full commands. Input buffers are cleared on disconnect and not retained across sessions.
+| Layer               | Responsibility                                               |
+|--------------------|---------------------------------------------------------------|
+| TCP Proxy          | Buffers Telnet input; clears on disconnect                    |
+| Spring Gateway     | Stateless; re-establishes backend connections on reconnect    |
+| Game Session       | Restores gameplay session using Redis (commands, tick, timers)|
 
-- **Spring Cloud Gateway**  
-  Acts as a stateless WebSocket entry point. Automatically reconnects clients to backend services. Maintains no gameplay or authentication state; simply routes traffic.
-
-- **Game Session Service**  
-  Uses Redis to recover session bindings, tick participation, and queued actions. Resumes the player’s active session and gameplay state.
-
-> 🔑 Clients must **always re-authenticate** using a `LOGIN` command after disconnect.  
-> If the account and character match a previous session, **Game Session may restore** the prior session state from Redis and resume gameplay automatically.  
-> Clients do **not** store or reuse tokens — session restoration is purely server-side.
-> 🔗 For full reconnection flows, recovery edge cases, and resume vs reload behavior, see [Reconnection Strategy](./system-architecture-reconnection.md)
+> 🔗 For full reconnection flows, session restoration logic, and edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
 ---
 
@@ -87,8 +78,9 @@ FireMUD supports multi-layer reconnection handling to ensure gameplay continuity
 ## 📦 Data and State Management
 
 - **Persistent data** (accounts, entities, world data including rooms) is owned by domain-aligned services with dedicated PostgreSQL databases.  
-- **Volatile state** (player sessions, transient gameplay state, ticks) is externalized to Redis Cluster and managed by the Game Session Service.  
-- Redis acts as a **real-time coordination buffer**, not a source of truth — yet it is **critical** for gameplay execution and recovery.  
+- **Volatile state** (player sessions, transient gameplay state, ticks) is stored in Redis Cluster and coordinated by the Game Session Service.  
+- Redis acts as a **real-time coordination buffer**, not a source of truth — yet it is **critical** for gameplay execution, retries, and recovery.  
+- Gameplay session keys and timers are defined in Redis — see [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for details.  
 - **Game configuration is versioned and published via the Game Design Service**, and consumed by runtime services locally.  
 - **Design-time feature flags** are defined in the Game Design Service; **runtime flags** are managed in the Game Session Service for temporary overrides.  
 - **Logging & Admin Service** provides UI/API tools to view and toggle active flags and audit historical changes.
@@ -96,7 +88,7 @@ FireMUD supports multi-layer reconnection handling to ensure gameplay continuity
 📤 **Game Configuration Rollout:**  
 When a new game version is published by the Game Design Service, the relevant domain services (e.g., Entity, World, Logic) update their PostgreSQL data accordingly. The Game Session Service assigns version IDs to active game instances and notifies participating services when needed — avoiding complex pub-sub for now.
 
-> 🔗 For Redis durability, Lua atomicity, and tick-level logic, see [Redis Architecture](./system-architecture-redis.md) and [Tick System](./system-architecture-ticks.md).
+> 🔗 For Redis durability, Lua atomicity, and tick-level logic, see [Redis Architecture](./system-architecture-redis.md) and [Tick System](./system-architecture-ticks.md)
 
 ---
 
@@ -106,10 +98,10 @@ FireMUD uses a **Hybrid Tick Model** that balances real-time responsiveness with
 
 Key design aspects:
 
-- Each **tick region** (typically a room or map segment) runs independently to maximize parallelism and fault isolation
-- **One action per entity** is pulled from per-entity queues and resolved in a fair, deterministic order
-- **Game Session Service** coordinates the tick lifecycle, lock acquisition, retries, and commit flow
-- **Game Logic Service** processes actions using deterministic rules and state from Entity/World services
+- Each **tick region** (typically a room or map segment) runs independently to maximize parallelism and fault isolation  
+- **One action per entity** is pulled from per-entity queues and resolved in a fair, deterministic order  
+- **Game Session Service** coordinates the tick lifecycle, lock acquisition, retries, and commit flow  
+- **Game Logic Service** processes actions using deterministic rules and state from Entity/World services  
 - Redis is used for **lock acquisition**, **tick staging**, **timer tracking**, and **conflict-safe retries**
 
 > 🔗 For complete execution flow and isolation model, see [Tick System and Runtime Design](./system-architecture-ticks.md)
@@ -120,7 +112,7 @@ Key design aspects:
 
 All clients authenticate using the `LOGIN` command, which is processed by the **Game Session Service**. Upon disconnect, clients must re-authenticate to resume gameplay.
 
-> 🔁 For the full login flow, reauthentication behavior, and token details, see [Authentication & Authorization](./system-architecture-authentication.md#🔁-login-flow-and-reauthentication)
+> 🔁 For the full login flow and session rebinding behavior, see [Authentication & Authorization](./system-architecture-authentication.md)
 
 ---
 
@@ -130,20 +122,20 @@ FireMUD uses a unified observability pipeline:
 
 ### 🔍 Logging
 
-- All services log structured JSON to stdout/stderr with metadata like `traceId`, `playerId`, `sessionId`
-- Logs are collected via **Fluent Bit** or similar and indexed into **Elasticsearch**
+- All services log structured JSON to stdout/stderr with metadata like `traceId`, `playerId`, `sessionId`  
+- Logs are collected via **Fluent Bit** or similar and indexed into **Elasticsearch**  
 - No logs are written to databases; logging is decoupled and async
 
 ### 🧾 Admin & Logging Service
 
-- Provides dashboards and moderation tools using ELK backend
+- Provides dashboards and moderation tools using ELK backend  
 - Does not persist logs; queries indexed data only
 
 ### 📈 Metrics and Tracing
 
-- All services export **Prometheus metrics**
-- Dashboards track tick latency, retry storms, Redis contention
-- **Redis-specific metrics** (e.g., Lua latency, lock failure) are described in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability)
+- All services export **Prometheus metrics**  
+- Dashboards track tick latency, retry storms, Redis contention  
+- **Redis-specific metrics** (e.g., Lua latency, lock failure) are described in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability)  
 - **OpenTelemetry** spans trace actions end-to-end across tick regions
 
 ---
@@ -178,6 +170,8 @@ Game Session manages context, pacing, retries, and tick lifecycle orchestration 
 
 - [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md)
 - [Redis Architecture](./system-architecture-redis.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Authentication & Authorization](./system-architecture-authentication.md)
 - [Microservices Responsibility Matrix](./system-architecture/responsibility-matrix.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)

@@ -16,7 +16,7 @@ All clients — whether connecting via Telnet or WebSocket — must authenticate
 
 Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss). On reconnect, if a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes gameplay seamlessly.
 
-> 🔗 For reconnection behavior and resume vs reload scenarios, see [Reconnection Strategy](./system-architecture-reconnection.md)
+> 🔁 Reconnection behavior, including session resumption and edge cases, is fully described in [Reconnection Strategy](./system-architecture-reconnection.md)
 
 ---
 
@@ -30,7 +30,7 @@ On reconnect:
 4. If missing or expired, a new session is created from scratch
 
 > 🔐 Clients are fully stateless — they never store or reuse tokens.  
-> Redis is the sole source of truth for session recovery.
+> 🔗 See [Redis Session Keys](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for how gameplay state is recovered.
 
 ---
 
