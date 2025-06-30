@@ -36,12 +36,14 @@ Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remai
 
 ### **Game Session Service**
 
-- Owns Redis session data: `session:{playerId}`, tick region, queued actions, timers
+- Uses Redis to store session data (e.g., gameplay state, tick region, timers, and command queues)
 - On reconnect, rebinds:
   - Socket connection
   - Tick region participation
   - Cooldowns, retry state, and in-flight commands
 - Deduplicates concurrent reconnect attempts using Redis locks
+
+> 🔗 For details on Redis session structure, see [Redis session state](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding)
 
 ---
 

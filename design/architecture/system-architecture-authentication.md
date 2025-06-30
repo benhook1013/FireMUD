@@ -91,11 +91,11 @@ If an account is granted new roles during an active session (e.g. made admin for
 The **Game Session Service** manages:
 
 - Socket authentication and identity binding
-- Redis session storage (`session:{playerId}`)
+- Session state stored in Redis (e.g. active player, world, and connection binding)
 - Gameplay context such as `playerId` and `worldId` after character selection
 - Injection of JWTs into downstream gRPC calls
 
-`playerId` and `worldId` are attached to commands routed by Game Session, not embedded in the JWT. This separation simplifies character switching and gameplay context management.
+> 🔗 For Redis session structure and rebinding behavior, see [Redis session state](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding)
 
 ---
 

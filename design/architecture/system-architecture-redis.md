@@ -149,6 +149,27 @@ FireMUD actively monitors Redis performance and tick health:
 
 ---
 
+## 🧠 Session Keys and Gameplay Binding
+
+Redis stores transient gameplay session state for each connected player, including:
+
+- Socket binding metadata
+- Active `playerId` and `worldId` context
+- Tick region participation and queued commands
+- Timer and cooldown data
+- Conflict and retry metadata
+
+This state is used by the **Game Session Service** to:
+
+- Resume gameplay after disconnects
+- Rebind gameplay context to a new socket
+- Deduplicate reconnect attempts
+- Handle character takeovers (one session per character)
+
+> 🔐 Key formats are internal and subject to change. Services treat Redis as a coordination layer, not a persistent or public contract.
+
+---
+
 ## ✅ Summary
 
 Redis in FireMUD is:
