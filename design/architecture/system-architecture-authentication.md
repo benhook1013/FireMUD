@@ -102,14 +102,24 @@ Reauthentication is only required after **client disconnect**:
 
 > Backend restarts (Gateway, Proxy, Game Session) are transparent **if the client connection is maintained**.
 
-### Multi-Client Behavior
+## 👥 Multi-Client and Session Takeover
 
-- Multiple simultaneous logins are allowed for different characters
-- Logging in as the **same character**:
-  - Terminates the previous session
-  - Transfers control and gameplay state to the new client
+An account may be logged in from **multiple clients** simultaneously, each using a different character.
 
-> 🔗 For reconnection edge cases and backend failover behavior, see [Reconnection Strategy](./system-architecture-reconnection.md)
+If a client logs into the **same character** from another session:
+
+- The existing session is **terminated**
+- Control is **transferred** to the new session
+- Redis session data (`session:{playerId}`) is rebound to the new socket
+- Gameplay resumes seamlessly, preserving tick participation, command queues, and timers
+
+This mechanism enables:
+
+- Fast, clean **session handoff** between devices or locations
+- Administrative or player-initiated **"force login"** behavior without data loss
+- A consistent model that aligns session ownership strictly with socket binding
+
+> 🔒 This behavior is enforced by the **Game Session Service**, based on Redis state and connection locks.
 
 ---
 

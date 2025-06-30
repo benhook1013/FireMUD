@@ -64,13 +64,9 @@ After reconnecting and logging in:
 
 ## 👥 Multi-Client and Session Takeover
 
-- An account may be logged in from **multiple clients** simultaneously, using different characters
-- Logging into the **same character** from another client:
-  - Terminates the old session
-  - Transfers control to the new one
-  - Rebinds session and gameplay context in Redis
+Gameplay resumes cleanly when a session is resumed — whether due to reconnect or takeover.
 
-This mirrors reconnection — gameplay resumes with no loss if Redis state is valid.
+> 🔄 For full takeover behavior, including forced logins from a different client and Redis socket rebinding, see [Authentication & Authorization](./system-architecture-authentication.md#👥-multi-client-and-session-takeover).
 
 ---
 
