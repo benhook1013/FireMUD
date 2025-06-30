@@ -14,23 +14,10 @@ All clients — whether connecting via Telnet or WebSocket — must authenticate
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
-Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss). On reconnect, if a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes gameplay seamlessly.
+Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss).  
+If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes gameplay seamlessly.
 
-> 🔁 Reconnection behavior, including session resumption and edge cases, is fully described in [Reconnection Strategy](./system-architecture-reconnection.md)
-
----
-
-### 🔄 Session Restoration Steps
-
-On reconnect:
-
-1. The client sends a fresh `LOGIN` command
-2. The Game Session Service checks Redis for session state using `accountId + playerId`
-3. If found and valid, the session is resumed and gameplay continues
-4. If missing or expired, a new session is created from scratch
-
-> 🔐 Clients are fully stateless — they never store or reuse tokens.  
-> 🔗 See [Redis Session Keys](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for how gameplay state is recovered.
+> 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
 ---
 
@@ -50,7 +37,8 @@ This enables:
 - Forced logins (e.g., "kick and take over")
 - Seamless resumption without gameplay loss
 
-> 🔒 All session rebinding is enforced by the Game Session Service using Redis locks.
+> 🔒 All session rebinding is enforced by the Game Session Service using Redis locks.  
+> 🔗 See [Redis Session Keys](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding)
 
 ---
 
@@ -114,7 +102,7 @@ The Game Session Service is responsible for:
 - Managing Redis session state (e.g. `playerId`, `worldId`, tick region)
 - Reinjecting updated JWTs into backend calls when needed
 
-> 🔗 See [Redis Architecture](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for session structure and gameplay rebinding.
+> 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 
 ---
 

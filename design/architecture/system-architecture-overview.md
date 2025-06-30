@@ -14,7 +14,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
   > 🛑 **Authentication is not performed at the Gateway** — all `LOGIN` handling and session validation occurs in the **Game Session Service**
 - **Spring Cloud Gateway is fully horizontally scalable and stateless**, with no sticky session requirements  
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers **active input**, but **discards it across reconnects**  
-- **Reconnection logic is distributed across layers** to preserve session continuity  
+- **Reconnection logic is handled in layers** to preserve gameplay continuity  
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency  
 - **Session state is stored in Redis** to keep services stateless and support gameplay recovery  
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**  
@@ -36,7 +36,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | Spring Gateway     | Stateless; re-establishes backend connections on reconnect    |
 | Game Session       | Restores gameplay session using Redis                         |
 
-> 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for full reconnection flows and edge cases
+> 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for full details on session resumption, reauthentication, and failure handling.
 
 ---
 
