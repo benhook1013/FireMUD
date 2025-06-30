@@ -10,7 +10,8 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
 
 Redis is used **exclusively for non-authoritative, transient data**, including:
 
-- WebSocket session bindings and live gameplay context
+- Gameplay session state and real-time coordination data  
+  _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
 - In-flight command queues
 - Tick locks and staged results
 - Cooldowns and timer expirations (stored in milliseconds)
@@ -65,15 +66,15 @@ Redis keys follow strict naming conventions to ensure:
 
 ### Key Format Examples
 
-| Redis Key                         | Description                              |
-|----------------------------------|------------------------------------------|
-| `session:{playerId}`             | Active session context and socket binding |
-| `tick:lock:{entityId}`           | Lock for entity during tick execution    |
-| `tick:pending:{regionId}`        | Staged results for a tick region         |
-| `room:{roomId}:occupants`        | Room occupancy snapshot                  |
-| `retry:{regionId}`               | Retry queue for failed actions           |
-| `timer:{entityId}:{effectId}`    | Cooldown/effect timer metadata (in ms)   |
+| Redis Key                      | Description                              |
+|-------------------------------|------------------------------------------|
+| `tick:lock:{entityId}`        | Lock for entity during tick execution    |
+| `tick:pending:{regionId}`     | Staged results for a tick region         |
+| `room:{roomId}:occupants`     | Room occupancy snapshot                  |
+| `retry:{regionId}`            | Retry queue for failed actions           |
+| `timer:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
 
+> 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
 
 ---
@@ -84,7 +85,7 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 
 - Entity lock acquisition (`tick:lock:*`)
 - Tick staging, commit, and rollback (`tick:pending:*`)
-- Session lifecycle management
+- Session rebinding and deduplication (see [Session Keys](#-session-keys-and-gameplay-binding))
 - Timer lifecycle management
 - Retry queue updates
 - AI/scripted action injection
@@ -175,7 +176,8 @@ This state is used by the **Game Session Service** to:
 Redis in FireMUD is:
 
 - A **transient, high-performance coordination layer**
-- Used for **ticks, timers, locks, retries, and in-flight state**
+- Used for **ticks, timers, locks, retries, and gameplay session state**  
+  _(see [Session Keys](#-session-keys-and-gameplay-binding))_
 - Not a source of truth — but treated as **critical infrastructure**
 - Durable via **AOF** and `WAIT` guarantees
 - Scripted via **Lua** for atomic tick control
