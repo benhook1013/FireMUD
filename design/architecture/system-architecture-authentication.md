@@ -6,24 +6,32 @@ Authentication uses **plaintext `LOGIN` commands** (also aliased as `LOGON`) and
 
 ---
 
-## 🧭 Login Command and Flow
+## 🔁 Login Flow and Reauthentication
 
-FireMUD supports both **MUD-style prompt-based login** and **argument-based login** through a unified `LOGIN` command:
+All clients — whether connecting via Telnet or WebSocket — must authenticate using a `LOGIN` command. This flow initiates a new session or attempts to resume a previous one based on Redis state.
 
-- `LOGIN` → Begins interactive prompt-based login flow (e.g., name → password)
-- `LOGIN <username> <password>` → Direct login attempt
+### 🧭 Login Command Behavior
 
-> The `LOGON` command is an exact alias of `LOGIN`. Both behave identically and are interchangeable.
+- `LOGIN` → Starts an interactive prompt-based login (e.g., username → password)
+- `LOGIN <username> <password>` → Attempts immediate login
+- `LOGON` → Exact alias for `LOGIN`, behaves identically
 
-### 🔁 Login Flow Summary
+### 🔄 Reauthentication Requirements
 
-1. Client connects (Telnet or Web)
-2. Sends `LOGIN` (with or without arguments)
-3. **Game Session Service** validates credentials via **Account Service**
-4. On success:
-   - A **JWT** is issued with identity and role claims
-   - Session metadata is stored in Redis and bound to the socket
-5. After character/world selection, session state is updated with `playerId`, `worldId`
+Clients must re-authenticate **only after disconnecting**:
+
+- **Telnet clients**: If the TCP connection to the Proxy is lost
+- **Web clients**: If the WebSocket connection to the Gateway drops
+
+Upon reconnection:
+
+1. The client sends a fresh `LOGIN` command
+2. The Game Session Service checks Redis for an existing session using `accountId + playerId`
+3. If valid: the session is resumed and gameplay continues
+4. If missing or expired: a new session is created
+
+> 🔐 Clients are fully stateless — they never store or reuse tokens.  
+> Redis state is the single source of truth for session restoration.
 
 ---
 

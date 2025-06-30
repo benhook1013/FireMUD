@@ -47,18 +47,14 @@ Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remai
 
 ## 🔐 When Reauthentication Is Required
 
-Clients must send a `LOGIN` command **only after losing connection**:
+Clients must send a `LOGIN` command **after any disconnect**, such as:
 
-- **Telnet**: TCP connection to Proxy is lost
-- **Web**: WebSocket connection to Gateway drops
+- TCP loss (Telnet clients)
+- WebSocket loss (Web clients)
 
-After reconnecting and logging in:
+Redis-backed session state enables seamless resumption if valid, or fresh login if expired.
 
-- **Game Session** checks Redis for an existing session (by `accountId + playerId`)
-- If found: session resumes automatically
-- If missing or expired: a new session is started
-
-> Clients are **stateless** — they do not see, store, or reuse tokens.
+> 🧭 For full details on `LOGIN` behavior, argument formats, and session flow, see [Authentication & Authorization](./system-architecture-authentication.md#🔁-login-flow-and-reauthentication)
 
 ---
 

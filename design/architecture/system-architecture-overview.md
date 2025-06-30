@@ -116,36 +116,11 @@ Key design aspects:
 
 ---
 
-## 🔐 Authentication and Authorization Flow
+### 🔐 Authentication and Authorization Flow
 
-FireMUD uses a unified authentication model across all client types (Telnet, WebSocket, HTTP), relying on plaintext `LOGIN` commands. All authentication is handled server-side by the **Game Session Service**, and clients never receive or transmit tokens.
+All clients authenticate using the `LOGIN` command, which is processed by the **Game Session Service**. Upon disconnect, clients must re-authenticate to resume gameplay.
 
-### 🧭 Flow Summary
-
-- **Telnet clients** connect via the **TCP Proxy Service**, which upgrades TCP to WebSocket and forwards it to the **Spring Cloud Gateway**
-- **Web clients** connect directly to the **Gateway** via WebSocket or HTTP
-- The **Spring Cloud Gateway is stateless** and does **not perform authentication** — it simply routes messages
-- On receiving `LOGIN`, the **Game Session Service** validates credentials via the **Account Service** and obtains a **backend-only JWT**
-
-### 🔑 Internal Token Handling
-
-- The **initial JWT** represents the **authenticated account** only
-- Claims include:
-  - `accountId`
-  - `roles[]` (e.g. `admin`, `moderator`, `player`)
-- Once the player selects a character and world, a new **augmented JWT** is issued including:
-  - `playerId`
-  - `worldId`
-- This updated token is used internally for all gRPC calls and ensures **character-level and world-specific access control**
-
-### ✅ Design Notes
-
-- All services enforce authorization based on claims in the current JWT
-- Clients must **explicitly re-authenticate** using `LOGIN` if disconnected
-- Game Session is the **trusted authority** on identity, character selection, and access rights
-- JWTs are used only within the backend and are **never sent to clients**
-
-> 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) for full login flow, token claims, and session propagation.
+> 🔁 For the full login flow, reauthentication behavior, and token details, see [Authentication & Authorization](./system-architecture-authentication.md#🔁-login-flow-and-reauthentication)
 
 ---
 
