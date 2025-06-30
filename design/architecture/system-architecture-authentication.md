@@ -1,111 +1,104 @@
 # 🔐 FireMUD System Architecture: Authentication & Authorization
 
-This document outlines how authentication and authorization are handled in FireMUD, including how accounts are authenticated, how identity context is propagated across services, and how roles govern access to features. Authentication uses internal-only JWTs, and reconnection is backed by Redis session state.
+This document explains how FireMUD authenticates players, manages internal session tokens, and enforces role-based access across services.
+
+Authentication uses **plaintext `LOGIN` commands** from clients and **internal-only JWTs**. All session state and identity context are managed server-side, backed by Redis.
 
 ---
 
-## 🧾 Token Format and Claims
+## 🔑 Login and Session Flow
 
-FireMUD uses **JWTs (JSON Web Tokens)** as internal backend-only tokens — never seen or stored by clients.
+Clients never see or store tokens. Instead, the `LOGIN` command initiates authentication:
 
-Tokens are issued by the **Account Service** and used by other services to validate access context. A token's contents depend on whether the player has selected a character yet.
+1. Client connects (Telnet or Web)
+2. Sends `LOGIN` with credentials
+3. **Game Session Service** validates via **Account Service**
+4. On success:
+   - Game Session receives a **JWT** with `accountId`, `roles[]`
+   - Binds the token to the socket and stores session state in Redis
+5. When the player selects a character/world:
+   - A new **augmented JWT** is issued with `playerId`, `worldId`
 
-### 🔖 Token Claims Summary
+These tokens are injected into **backend gRPC calls** only — never exposed to clients.
 
-- **Initial Login JWT**:  
-  Includes `accountId`, `roles[]`  
-  Used after authentication, before entering a game world
-
-- **Post-Character Selection JWT**:  
-  Includes `accountId`, `roles[]`, `playerId`, `worldId`  
-  Used after selecting a character and entering a game world
-
-> These tokens are passed only through backend gRPC calls. Clients never see or store them.
+> 🔗 For reconnection flows and Redis-backed session recovery, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
 ---
 
-## 🔑 Login Flow and Token Handling
+## 🧾 JWT Format and Claims
 
-Clients send a plaintext `LOGIN` command after connecting via Telnet or Web. They never transmit or manage JWTs — all token logic is internal.
+| Stage                 | Claims Included                              |
+|-----------------------|-----------------------------------------------|
+| Initial Login Token   | `accountId`, `roles[]`                        |
+| Post-Selection Token  | `accountId`, `roles[]`, `playerId`, `worldId` |
 
-### 🔁 Login Flow Summary
-
-1. **Client sends `LOGIN`** command with credentials
-2. **Game Session** verifies via the **Account Service**
-3. Account Service issues an **initial JWT** with `accountId`, `roles[]`
-4. Game Session stores it in Redis and binds it to the connection
-5. After the player selects a character/world, Game Session issues a **new JWT** with `playerId`, `worldId`
-
-This JWT is injected into all gRPC calls to downstream services, which use it to authorize commands and actions.
-
-> 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for how session resumption works after disconnects.
+- Tokens are **short-lived**, internal, and **backend-only**
+- No tokens are sent to or from clients
 
 ---
 
 ## 👮 Role-Based Authorization
 
-Access to admin tools, moderation commands, and world configuration APIs is governed by the `roles[]` claim in the JWT.
+Access control is enforced **locally per service** based on decoded JWT claims.
 
-### Local Authorization Checks
+| Role       | Permissions                              |
+|------------|-------------------------------------------|
+| `player`   | Standard gameplay                         |
+| `moderator`| Use of moderation tools                   |
+| `admin`    | Admin APIs and configuration tools        |
 
-- All services decode the JWT on each request
-- Validation is done **per-service** with no central auth gateway
-- Unauthorized requests are rejected locally
-
-Roles include:
-
-- `player` — standard gameplay
-- `moderator` — moderation tools
-- `admin` — game config and admin APIs
+Each service verifies the JWT and rejects unauthorized access.
 
 ---
 
-## 🧠 Session Context and Propagation
+## 🧠 Session and Identity Propagation
 
-The **Game Session Service** is the authority on gameplay sessions:
-
-- Binds the JWT to the client socket after login
-- Stores session state in Redis (e.g. `session:{playerId}`)
-- Reissues JWTs with `playerId` and `worldId` after character selection
-- Validates and forwards tokens in all internal gRPC calls
-
-> Clients are stateless. They reconnect by sending `LOGIN` again, and Game Session may resume the previous session if Redis state is intact.
+- Game Session is the **authority** on session state
+- Redis key: `session:{playerId}` tracks socket bindings, timers, and tick state
+- Game Session reissues updated JWTs after character/world selection
+- JWTs are injected into all downstream gRPC calls for access control
 
 ---
 
-## 🔄 Reconnection and Multi-Client Behavior
+## 🔄 Reconnection and Session Transfer
 
-### Reconnection
+Reauthentication is only required after **client disconnect**:
 
-- Clients must **re-authenticate** via `LOGIN` after disconnect
-- If the same account/character is reused:
-  - Game Session checks Redis
-  - If session exists → resumes gameplay
-  - Otherwise → starts a fresh session
+- Clients reconnect and resend `LOGIN`
+- Game Session checks Redis for session state (`accountId + playerId`)
+  - If valid: gameplay resumes
+  - If missing: a new session is created
 
-> Backend service restarts (e.g. Gateway, Game Session) do not require re-authentication as long as the client's network connection remains up.
+> Backend restarts (Gateway, Proxy, Game Session) are transparent **if the client connection is maintained**.
 
-### Multi-Client Sessions
+### Multi-Client Behavior
 
-- An account may connect from **multiple clients** using different characters
-- Logging in as the **same character** on a new client:
+- Multiple clients may connect using different characters
+- Logging in as the **same character** from another client:
   - Terminates the old session
-  - Transfers control to the new session
+  - Transfers gameplay control to the new client
+
+> 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for layered recovery and session resumption.
 
 ---
 
 ## ✅ Summary
 
-| Topic                    | Description                                                            |
-|--------------------------|------------------------------------------------------------------------|
-| Token Type               | JWT (internal-only, never client-visible)                              |
-| Issuer                   | Account Service                                                        |
-| Initial Claims           | `accountId`, `roles[]`                                                 |
-| Post-Login Claims        | `accountId`, `roles[]`, `playerId`, `worldId`                          |
-| Token Usage              | Injected into gRPC calls only                                          |
-| Auth Enforcement         | Local per-service based on decoded JWT claims                          |
-| Session Storage          | Redis (`session:{playerId}`), bound to socket                          |
-| Reconnection Behavior    | Requires fresh `LOGIN`; may resume via Redis                           |
-| Multi-Client Sessions    | One per character; logging in again transfers session control          |
+| Topic                 | Description                                                  |
+|-----------------------|--------------------------------------------------------------|
+| Auth Flow             | Client sends `LOGIN`; Game Session verifies via Account      |
+| Token Type            | Internal-only JWT                                            |
+| Claims                | `accountId`, `roles[]`, `playerId`, `worldId` (post-select)  |
+| Token Usage           | Injected into backend gRPC calls only                        |
+| Auth Enforcement      | Local per-service via JWT claims                             |
+| Session Storage       | Redis (`session:{playerId}`), bound to socket                |
+| Reconnection          | Requires fresh `LOGIN`; resumes if Redis session is intact   |
+| Multi-Client Behavior | One active session per character; new login takes control    |
 
-> 🔗 For more on reconnection behavior, session resumption, and layered fault tolerance, see [Reconnection Strategy](./system-architecture-reconnection.md).
+---
+
+📚 Related:
+
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [Redis Architecture](./system-architecture-redis.md)
