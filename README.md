@@ -123,13 +123,13 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
    - Implements core game mechanics and rules.
 1. **Automation & Scripting Service**
    - Handles AI behaviors, scripted events, and dynamic interactions.
-1. **Social and Groups Service**
+1. **Social & Groups Service**
    - Manages player groups, chat, and social features.
 1. **Logging & Admin Service**
    - Provides centralized logging and administration tools.
 1. **TCP Proxy Service**
    - Bridges Telnet clients into the WebSocket backend.
-1. **Spring Cloud Gateway Service**
+1. **Spring Cloud Gateway**
    - Routes WebSocket and HTTP traffic to backend services.
 
 ### Service Interactions
