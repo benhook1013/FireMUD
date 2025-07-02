@@ -15,10 +15,10 @@ This directory contains detailed design documents for each core microservice in 
 | [Entity Management Service](./entity-management-service/) | Controls player characters, NPCs, items, and inventory management. |
 | [Game Logic Service](./game-logic-service/)              | Implements core gameplay mechanics, command parsing, and actions. |
 | [Automation & Scripting Service](./automation-scripting-service/) | Handles AI behaviors, event scripting, and dynamic interactions. |
-| [Social and Groups Service](./social-groups-service/)    | Manages chat, guilds, and cross-game social networking features. |
+| [Social & Groups Service](./social-groups-service/)    | Manages chat, guilds, and cross-game social networking features. |
 | [Logging & Admin Service](./logging-admin-service/)      | Provides centralized logging, analytics, and administration tools. |
 | [TCP Proxy Service](./tcp-proxy-service/)                | Bridges Telnet clients into the WebSocket-based backend. |
-| [Spring Cloud Gateway Service](./spring-cloud-gateway-service/) | Routes WebSocket and HTTP traffic to backend services. |
+| [Spring Cloud Gateway](./spring-cloud-gateway-service/) | Routes WebSocket and HTTP traffic to backend services. |
 
 ---
 

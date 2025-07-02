@@ -1,4 +1,4 @@
-# Spring Cloud Gateway Service
+# Spring Cloud Gateway
 
 This service exposes WebSocket and HTTP endpoints for all clients. It routes requests to backend services and integrates with the TCP Proxy Service for Telnet clients.
 

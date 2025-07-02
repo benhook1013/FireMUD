@@ -54,7 +54,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **World Management Service**      | Owns maps, rooms, and tick region structure                            |
 | **Game Logic Service**            | Executes gameplay mechanics; resolves actions deterministically        |
 | **Automation & Scripting Service**| Triggers AI and scripted behaviors                                     |
-| **Social and Groups Service**     | Manages chat, mail, guilds, and social features                        |
+| **Social & Groups Service**     | Manages chat, mail, guilds, and social features                        |
 | **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs                   |
 | **Game Design Service**           | Authoring tool for designing and publishing game data                  |
 

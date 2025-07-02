@@ -23,7 +23,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Write initial design for each microservice
   - [ ] Investigate transaction support for microservices
   - [ ] Investigate where TCP/Telnet interface will sit, or new service required
-  - [ ] Create design updates for Spring Cloud Gateway service
+  - [ ] Create design updates for Spring Cloud Gateway
   - [ ] Update README after all services are defined
 
 ---
@@ -158,7 +158,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [ ] **Develop TCP Proxy Service**
   - [ ] Implement Telnet networking and WebSocket bridging
-- [ ] **Develop Spring Cloud Gateway Service**
+- [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
 
 - [ ] **Develop Cross-Game Social Networking**
