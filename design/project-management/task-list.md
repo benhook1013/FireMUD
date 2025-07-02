@@ -55,7 +55,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 2: Account & Game Management**
+## **🛠️ Phase 2: Account & Game Operations**
 
 - [ ] **Develop Account Service**
   - [ ] Implement user registration and authentication (OAuth2, JWT)
@@ -65,10 +65,12 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
 
-- [ ] **Develop Game Management Service**
-  - [ ] Implement game creation and configuration
-  - [ ] Implement multi-tenancy support for multiple hosted games
-  - [ ] Implement game templates for hosted game creation
+- [ ] **Expand Game Session Service**
+  - [ ] Implement game instance lifecycle (start, stop, restart)
+  - [ ] Support multi-tenancy for hosted games
+- [ ] **Expand Game Design Service**
+  - [ ] Provide game templates and configuration tools
+  - [ ] Enable publishing of game versions
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
