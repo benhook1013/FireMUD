@@ -22,7 +22,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**  
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one
 
-🖼️ See also: [System Architecture Diagram](./system-architecture/system-architecture-diagram.md)
+🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md)
 
 ---
 
@@ -145,7 +145,7 @@ FireMUD uses a unified observability pipeline:
 
 ## 🔎 Notes on Responsibility Alignment
 
-- Functional responsibilities are defined in the [Responsibility Matrix](./system-architecture/responsibility-matrix.md)  
+- Functional responsibilities are defined in the [Service Responsibility Matrix](./service-responsibility-matrix.md)  
 - **Game Session** orchestrates tick lifecycles, retries, and session management  
 - **Game Logic** resolves individual actions deterministically based on input state  
 - **Redis** acts as a passive, high-speed execution substrate — storing volatile state and enabling atomic coordination via Lua scripts
@@ -158,12 +158,12 @@ Game Session governs pacing, conflict handling, and orchestration across distrib
 
 ## 📚 Related Documentation
 
-- [Tick System and Runtime Design](./system-architecture/system-architecture-ticks.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [Redis Architecture](./system-architecture-redis.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Authentication & Authorization](./system-architecture-authentication.md)
-- [Microservices Responsibility Matrix](./system-architecture/responsibility-matrix.md)
-- [System Architecture Diagram](./system-architecture/system-architecture-diagram.md)
+- [Microservices Responsibility Matrix](./service-responsibility-matrix.md)
+- [System Architecture Diagram](./system-architecture-diagram.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)

@@ -54,8 +54,9 @@ spring:
 ## 🔌 Telnet / TCP Bridging
 
 - Traditional MUD clients connect via **raw TCP** (Telnet protocol)
-- These are handled by a **dedicated TCP gateway service** (outside of Spring Cloud Gateway)
-- The TCP service acts as a **bridge**, creating a WebSocket connection through the Gateway to normalize legacy TCP traffic
+- These connections are terminated by a **dedicated TCP Proxy Service** outside of Spring Cloud Gateway
+- The TCP Proxy Service acts as a **bridge**, creating a WebSocket connection through the Gateway to normalize legacy TCP traffic
+  - Spring Cloud Gateway itself only handles **HTTP** and **WebSocket** traffic
 
 This pattern ensures all real-time gameplay is unified through WebSocket on the backend, regardless of client type.
 

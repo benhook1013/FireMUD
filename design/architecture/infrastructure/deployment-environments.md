@@ -11,7 +11,7 @@ FireMUD uses Docker Compose for local development and testing:
 ### 🔧 Docker Compose Characteristics
 
 - All services, including the gateway, are built locally via `Dockerfile`s.
-- Service discovery is handled by Docker's internal DNS (e.g., `game-server:8080`).
+- Service discovery is handled by Docker's internal DNS (e.g., `game-session-service:8080`).
 - Route URIs in Spring Cloud Gateway use static hostnames defined in `application-dev.yml`.
 - Docker Compose orchestrates container startup, but not readiness.
 
@@ -34,7 +34,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 ### 🔧 Kubernetes Characteristics
 
 - Services are deployed as Pods and exposed via Kubernetes Services.
-- DNS-based discovery is built into Kubernetes (e.g., `game-server.default.svc.cluster.local`).
+- DNS-based discovery is built into Kubernetes (e.g., `game-session-service.default.svc.cluster.local`).
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
