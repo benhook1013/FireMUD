@@ -11,7 +11,7 @@ FireMUD enables real-time interaction through two types of client connections:
 | Client Type             | Protocol       | Entry Point                     |
 |-------------------------|----------------|----------------------------------|
 | Web-based clients       | WebSocket      | Spring Cloud Gateway (`/ws/**`) |
-| Traditional MUD clients | TCP (Telnet)   | TCP Gateway Service (custom)    |
+| Traditional MUD clients | TCP (Telnet)   | TCP Proxy Service (custom)      |
 
 Despite their differences, both protocols are normalized into the same internal architecture using a **WebSocket-based session layer**.
 
@@ -35,7 +35,7 @@ Despite their differences, both protocols are normalized into the same internal 
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible).
-- Handled by a dedicated **TCP Gateway Service** (not Spring-based).
+- Handled by a dedicated **TCP Proxy Service** (not Spring-based).
 - The service:
   - Accepts and parses Telnet line-based input.
   - Normalizes the connection.
@@ -59,7 +59,7 @@ The `game-session-service` is the central component responsible for:
 - Sending and receiving text streams in a line-based protocol format.
 - Managing disconnects, reconnections, and session cleanup.
 
-> Whether a client is connected via WebSocket directly or tunneled through the TCP gateway, the backend **treats all sessions the same**.
+> Whether a client is connected via WebSocket directly or tunneled through the TCP Proxy Service, the backend **treats all sessions the same**.
 
 ---
 
