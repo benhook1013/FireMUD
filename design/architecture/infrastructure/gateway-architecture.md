@@ -67,7 +67,8 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 ## 🔐 Centralized Gateway Benefits
 
-- Spring Cloud Gateway provides centralized management of client traffic, offering:
+Spring Cloud Gateway provides centralized management of client traffic, offering:
+
 - Optional JWT validation for admin or REST endpoints (gameplay clients do not
   provide JWTs)
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
