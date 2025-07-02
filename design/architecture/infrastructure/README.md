@@ -18,6 +18,10 @@ This directory contains core documentation for the shared infrastructure that po
 
 ---
 
+## 📜 Logging Stack
+
+Logs from each service are collected by Fluent Bit sidecars and forwarded to Elasticsearch for indexing and search.
+
 ## 🧭 Usage
 
 All service-level design documents should refer to this directory for shared infrastructure context, rather than duplicating gateway, deployment, or protocol behavior.

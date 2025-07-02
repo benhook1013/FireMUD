@@ -17,7 +17,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Real-Time Networking**: WebSocket/TCP
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
-- **Monitoring & Logging**: Prometheus, Grafana, Loki, Alertmanager
+- **Monitoring & Logging**: Prometheus, Grafana, Elasticsearch, Alertmanager
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Payment Gateway**: Stripe (with custom subscription integration)
 
