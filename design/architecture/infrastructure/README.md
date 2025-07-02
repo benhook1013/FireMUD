@@ -12,6 +12,7 @@ This directory contains core documentation for the shared infrastructure that po
 | [Deployment Environments](./deployment-environments.md) | Describes how Docker Compose and Kubernetes are used in dev/prod setups.   |
 | [Protocol Bridging](./protocol-bridging.md)             | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |
 | [Redis Architecture](../system-architecture-redis.md)   | Describes where Redis is deployed and how session state is stored. |
+| [CI/CD Pipeline](../system-architecture-cicd.md)        | Overview of GitHub Actions workflows for building, testing, and deployment. |
 | [System Architecture Overview](../system-architecture-overview.md) | High-level design with observability and service interactions. |
 | [System Architecture Diagram](../system-architecture-diagram.md) | Visual representation of component relationships and client flows. |
 

@@ -40,7 +40,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Publish common package to internal repository (Maven/Gradle)
 
 - [ ] **Set up Git repository and development workflow**
-- [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment**
+- [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
   - [ ] Ensure CI/CD includes the common package build process
 - [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
   - [ ] Ensure API contracts include standard error handling and request validation

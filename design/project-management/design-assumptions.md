@@ -18,7 +18,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
 - **Monitoring & Logging**: Prometheus, Grafana, Loki, Alertmanager
-- **CI/CD**: GitHub Actions
+- **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Payment Gateway**: Stripe (with custom subscription integration)
 
 ## Frontend
