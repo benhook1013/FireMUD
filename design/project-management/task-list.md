@@ -49,7 +49,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
-- [ ] **Set up centralized logging & monitoring (ELK Stack, Grafana, Prometheus, Loki)**
+- [ ] **Set up centralized logging & monitoring (ELK Stack, Grafana, Prometheus, Loki, Alertmanager)**
 - [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
 

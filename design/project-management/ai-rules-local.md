@@ -41,7 +41,7 @@ Deployment:
 
 - Docker, Kubernetes
 - GitHub Actions (CI/CD)
-- Prometheus, Grafana, Loki
+- Prometheus, Grafana, Loki, Alertmanager
 
 Testing:
 

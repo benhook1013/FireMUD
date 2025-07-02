@@ -143,6 +143,7 @@ FireMUD actively monitors Redis performance and tick health:
   - Retry queue depth
   - Keyspace and memory usage
 - **Grafana dashboards** visualize tick throughput and hotspots
+- **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
 - Redis is the **only** volatile coordination layer — no per-service caches are used
 
