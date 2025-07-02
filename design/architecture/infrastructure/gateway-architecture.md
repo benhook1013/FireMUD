@@ -35,7 +35,6 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   - Logging and metrics
   - Route-based filtering
   - Consistent handling across all clients
-  - Gameplay `LOGIN` commands are processed by the **Game Session Service**, not the Gateway
 
 Example WebSocket route config:
 
