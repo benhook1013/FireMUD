@@ -109,12 +109,14 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 ### Microservices
 
-1. **Game Management Service**
-   - Handles game creation, rules, templates, versioning, and moderation policies.
+1. **Game Design Service**
+   - Provides tools for game editing and customization.
 1. **World Management Service**
    - Manages world maps, regions, and procedural generation.
 1. **Account Service**
    - Handles user accounts, authentication, and profiles.
+1. **Game Session Service**
+   - Orchestrates live sessions and tick execution.
 1. **Entity Management Service**
    - Manages in-game entities, including NPCs, items, and inventory.
 1. **Game Logic Service**
@@ -125,10 +127,10 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
    - Manages player groups, chat, and social features.
 1. **Logging & Admin Service**
    - Provides centralized logging and administration tools.
-1. **Networking & Gateway Service**
-   - Handles real-time networking and API gateway functionality.
-1. **Game Design Service**
-   - Provides tools for game editing and customization.
+1. **TCP Proxy Service**
+   - Bridges Telnet clients into the WebSocket backend.
+1. **Spring Cloud Gateway Service**
+   - Routes WebSocket and HTTP traffic to backend services.
 
 ### Service Interactions
 
