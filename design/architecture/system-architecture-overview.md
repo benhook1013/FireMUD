@@ -11,7 +11,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway  
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service  
 - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**  
-  > 🛑 **Authentication is not performed at the Gateway** — all `LOGIN` handling and session validation occurs in the **Game Session Service**
+  > 🛑 **Gameplay login is handled by the Game Session Service** — the Gateway may validate JWTs for admin endpoints, but gameplay clients connect without tokens
 - **Spring Cloud Gateway is fully horizontally scalable and stateless**, with no sticky session requirements  
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy**, which buffers **active input**, but **discards it across reconnects**  
 - **Reconnection logic is handled in layers** to preserve gameplay continuity  
@@ -33,7 +33,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | Layer               | Responsibility                                               |
 |--------------------|---------------------------------------------------------------|
 | TCP Proxy          | Buffers Telnet input; clears on disconnect                    |
-| Spring Gateway     | Stateless; re-establishes backend connections on reconnect    |
+| Spring Cloud Gateway     | Stateless; re-establishes backend connections on reconnect    |
 | Game Session       | Restores gameplay session using Redis                         |
 
 > 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for full details on session resumption, reauthentication, and failure handling.
@@ -128,6 +128,7 @@ FireMUD uses a unified observability pipeline:
 - Prometheus Alertmanager triggers alerts for outages or latency spikes
 - OpenTelemetry spans across ticks
 - 🔗 See [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability) for Redis-specific metrics
+- 🔗 See [Infrastructure Overview](./infrastructure/README.md#🔀-core-infrastructure-docs) for deployment-specific monitoring integration
 
 ---
 

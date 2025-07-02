@@ -9,7 +9,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 | Layer              | Responsibility                                                               |
 |-------------------|-------------------------------------------------------------------------------|
 | **TCP Proxy**      | Parses Telnet input; clears input buffer on disconnect                        |
-| **Spring Gateway** | Stateless WebSocket passthrough; re-establishes backend connection automatically |
+| **Spring Cloud Gateway** | Stateless WebSocket passthrough; re-establishes backend connection automatically |
 | **Game Session**   | Restores session from Redis; rebinds socket, tick region, and timers          |
 
 Each layer handles fault tolerance independently.  
