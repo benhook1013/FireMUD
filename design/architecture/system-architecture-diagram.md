@@ -22,9 +22,9 @@
        +--------------------+----------------------------+--------------------+
        |                    |                            |                    |
        v                    v                            v                    v
-Game Management      Account Service              Entity Management     World Management
+Game Design         Account Service              Entity Management     World Management
     Service              (Auth)                    Service (Players,        Service
- (Backups, Rules)                                  NPCs, Items)          (Maps/Rooms)
+ (Templates, Backups)                             NPCs, Items)          (Maps/Rooms)
 
                               +-----------+-------------+
                               | Game Logic Service      |
