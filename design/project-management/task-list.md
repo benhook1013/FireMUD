@@ -156,8 +156,9 @@ This checklist is structured to **build foundational features first**, followed 
 
 ## **🛠️ Phase 6: Multiplayer & Social Features**
 
-- [ ] **Develop Networking & Gateway Service**
-  - [ ] Implement WebSocket and TCP networking
+- [ ] **Develop TCP Proxy Service**
+  - [ ] Implement Telnet networking and WebSocket bridging
+- [ ] **Develop Spring Cloud Gateway Service**
   - [ ] Handle API routing and request validation
 
 - [ ] **Develop Cross-Game Social Networking**
