@@ -64,10 +64,11 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Alertmanager notifies on failures or latency spikes.
 - See [System Architecture Overview](../system-architecture-overview.md#📊-observability-and-monitoring) for design details.
 
-### 📜 Logging Stack
+### 📜 Log Aggregation
 
-- Fluent Bit collects structured logs from each service.
-- Logs are forwarded to Elasticsearch for indexing and search.
+- **Fluent Bit** agents collect container logs from each pod.
+- **Elasticsearch** stores structured log data for long-term retention.
+- **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
 
 ---
 
