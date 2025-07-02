@@ -8,12 +8,15 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - Coordinates with Redis to store volatile session state and command queues.
 - Communicates with other microservices exclusively via gRPC.
+- Emits lifecycle events so other services can react to games starting or ending.
 
 ## Key Features
 
 - **Session Lifecycle Management** — creates, resumes, and terminates player sessions.
 - **Tick Orchestration** — drives the hybrid tick model for deterministic action processing.
 - **Runtime Configuration** — activates published game versions and feature flags.
+- **Termination Handling** — cleans up resources and logs results when a game ends.
+- **Instance Initialization** — starts new games from published templates.
 
 ## Dependencies
 

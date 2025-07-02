@@ -14,6 +14,7 @@ Centralized logging and administration tools for the platform. Collects log data
 - Central log collection and search.
 - Basic analytics dashboards for operators.
 - Tools for banning or restricting accounts.
+- Moderation policy definitions including profanity filters.
 
 ## Dependencies
 
@@ -23,3 +24,4 @@ Centralized logging and administration tools for the platform. Collects log data
 
 - Role-based admin UI.
 - Automated alerting for suspicious activity via Prometheus Alertmanager.
+- Real-time analytics on game performance.

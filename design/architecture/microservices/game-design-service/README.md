@@ -2,18 +2,21 @@
 
 ## Overview
 
-Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code.
+Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules and administrators.
 
 ## Architecture / Design Notes
 
 - Provides REST/gRPC APIs for editing game data.
 - Works closely with World Management and Automation services to apply changes.
+- Stores versioned configuration data so new game instances can be generated from templates.
 
 ## Key Features
 
 - World and room editors.
 - Ability and action design tools.
 - Scripting and event workflow creation.
+- Game templates with predefined rulesets and administrators.
+- Version and patch note management for published games.
 
 ## Dependencies
 
