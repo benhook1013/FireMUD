@@ -44,7 +44,7 @@ This enables:
 
 ## 🧾 JWT Format and Role Claims
 
-Internal JWTs are issued by the Account Service and used for backend gRPC authorization. Clients **never** store or transmit tokens.
+Internal JWTs are issued by the Account Service and used for backend gRPC authorization. Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs for optional validation at the Gateway.
 
 ### 🧠 Claims
 
