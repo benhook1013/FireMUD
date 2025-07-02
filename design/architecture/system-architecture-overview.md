@@ -33,7 +33,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | Layer               | Responsibility                                               |
 |--------------------|---------------------------------------------------------------|
 | TCP Proxy          | Buffers Telnet input; clears on disconnect                    |
-| Spring Gateway     | Stateless; re-establishes backend connections on reconnect    |
+| Spring Cloud Gateway     | Stateless; re-establishes backend connections on reconnect    |
 | Game Session       | Restores gameplay session using Redis                         |
 
 > 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for full details on session resumption, reauthentication, and failure handling.
@@ -128,6 +128,7 @@ FireMUD uses a unified observability pipeline:
 - Prometheus Alertmanager triggers alerts for outages or latency spikes
 - OpenTelemetry spans across ticks
 - 🔗 See [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability) for Redis-specific metrics
+- 🔗 See [Infrastructure Overview](./infrastructure/README.md#🔀-core-infrastructure-docs) for deployment-specific monitoring integration
 
 ---
 

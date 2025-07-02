@@ -12,6 +12,7 @@ This directory contains core documentation for the shared infrastructure that po
 | [Deployment Environments](./deployment-environments.md) | Describes how Docker Compose and Kubernetes are used in dev/prod setups.   |
 | [Protocol Bridging](./protocol-bridging.md)             | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |
 | [Redis Architecture](../system-architecture-redis.md)   | Describes where Redis is deployed and how session state is stored. |
+| [System Architecture Overview](../system-architecture-overview.md) | High-level design with observability and service interactions. |
 
 ---
 
@@ -23,3 +24,4 @@ For example:
 
 > See [**Gateway Architecture**](./gateway-architecture.md), [**Deployment Environments**](./deployment-environments.md), or [**Protocol Bridging**](./protocol-bridging.md) for relevant infrastructure details.
 > Redis-backed session state is described in detail in [**Redis Architecture**](../system-architecture-redis.md).
+> Observability and metrics integrations are outlined in the [**System Architecture Overview**](../system-architecture-overview.md#📊-observability-and-monitoring).
