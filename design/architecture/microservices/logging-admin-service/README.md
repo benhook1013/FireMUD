@@ -6,7 +6,8 @@ Centralized logging and administration tools for the platform. Collects log data
 
 ## Architecture / Design Notes
 
-- Aggregates logs and metrics using the ELK/Prometheus stack with Alertmanager for alerting.
+- Aggregates logs using Fluent Bit and Elasticsearch.
+- Prometheus collects metrics with Alertmanager handling alerts.
 - Exposes admin endpoints for reviewing logs and applying moderation actions.
 
 ## Key Features
