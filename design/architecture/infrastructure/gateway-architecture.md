@@ -9,14 +9,18 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 **Spring Cloud Gateway** serves as the **single entry point** into the FireMUD system for all **external client traffic**:
 
 - Built as a Spring Boot microservice
-- Handles **client** request routing, filtering, CORS, authentication, rate limiting, retries, and monitoring
+- Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
+- May validate JWTs for admin or REST APIs, but **gameplay `LOGIN`** requests are handled by the **Game Session Service**
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
+- **Stateless and horizontally scalable** – no sticky sessions required
 
 > **Important:**  
 > Spring Cloud Gateway is responsible for routing **only external client requests**.  
-> **Internal microservice-to-microservice communication does not pass through the Gateway**.  
+> **Internal microservice-to-microservice communication does not pass through the Gateway**.
 > Microservices use Kubernetes native service discovery and DNS for direct communication.
+> Services communicate with each other over **gRPC**.
+> See [System Architecture Overview](../system-architecture-overview.md) for the complete login and gRPC flow.
 
 - Static URIs in `application-dev.yml` (for Docker Compose)
 - Kubernetes DNS-based service names in `application-prod.yml` (for production)
@@ -28,10 +32,10 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - WebSocket is used by modern clients (e.g., browser-based interfaces) for real-time interaction
 - Spring Cloud Gateway supports **WebSocket proxying**, allowing connections to be routed to backend services (e.g., `game-session-service`)
 - WebSocket connections benefit from:
-  - Centralized authentication
   - Logging and metrics
   - Route-based filtering
   - Consistent handling across all clients
+  - Gameplay `LOGIN` commands are processed by the **Game Session Service**, not the Gateway
 
 Example WebSocket route config:
 
@@ -62,7 +66,7 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 Spring Cloud Gateway provides centralized management of client traffic, offering:
 
-- Centralized authentication (e.g., OAuth2, JWT)
+- Optional JWT validation for admin or REST endpoints
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices

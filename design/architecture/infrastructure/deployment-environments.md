@@ -37,6 +37,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - DNS-based discovery is built into Kubernetes (e.g., `game-server.default.svc.cluster.local`).
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
+- The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
 
 ### 🩺 Kubernetes Health Monitoring
 
