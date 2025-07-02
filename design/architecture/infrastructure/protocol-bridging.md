@@ -41,6 +41,11 @@ Despite their differences, both protocols are normalized into the same internal 
   - Normalizes the connection.
   - **Creates a WebSocket connection to the backend** on behalf of the TCP client.
   - Proxies I/O between the TCP client and the backend game session.
+  - Buffers active input while the client remains connected and discards it if
+    the TCP connection drops.
+  - Telnet clients keep a sticky connection to the TCP Proxy; reconnection and
+    session recovery are handled as described in
+    [Reconnection Strategy](../system-architecture-reconnection.md).
 
 ### 🌟 TCP Flow Benefits
 
