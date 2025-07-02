@@ -80,7 +80,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
 - **CI/CD**: GitHub Actions
-- **Monitoring and Logging**: Prometheus, Grafana, Loki
+- **Monitoring and Logging**: Prometheus, Grafana, Loki, Alertmanager
 
 #### Monetization
 

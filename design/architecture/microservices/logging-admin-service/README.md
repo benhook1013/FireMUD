@@ -6,7 +6,7 @@ Centralized logging and administration tools for the platform. Collects log data
 
 ## Architecture / Design Notes
 
-- Aggregates logs and metrics using the ELK/Prometheus stack.
+- Aggregates logs and metrics using the ELK/Prometheus stack with Alertmanager for alerting.
 - Exposes admin endpoints for reviewing logs and applying moderation actions.
 
 ## Key Features
@@ -17,9 +17,9 @@ Centralized logging and administration tools for the platform. Collects log data
 
 ## Dependencies
 
-- **External:** Elasticsearch, Prometheus, and Grafana for storage and visualization.
+- **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 
 ## Future Enhancements
 
 - Role-based admin UI.
-- Automated alerting for suspicious activity.
+- Automated alerting for suspicious activity via Prometheus Alertmanager.

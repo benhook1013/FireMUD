@@ -124,8 +124,9 @@ FireMUD uses a unified observability pipeline:
 
 ### 📈 Metrics and Tracing
 
-- Prometheus metrics from all services  
-- OpenTelemetry spans across ticks  
+- Prometheus metrics from all services
+- Prometheus Alertmanager triggers alerts for outages or latency spikes
+- OpenTelemetry spans across ticks
 - 🔗 See [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability) for Redis-specific metrics
 
 ---
