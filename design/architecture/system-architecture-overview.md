@@ -142,6 +142,10 @@ FireMUD uses a unified observability pipeline:
 | Service Layer          | Microservices (Account, Entity, World, Logic, etc.)          |
 | Infrastructure Layer   | Kubernetes with IPVS, Docker Compose (for local development) |
 
+Deployment health checks (readiness and liveness probes) for these layers are
+described in detail in
+[Deployment Environments](./infrastructure/deployment-environments.md).
+
 ---
 
 ## 🔎 Notes on Responsibility Alignment

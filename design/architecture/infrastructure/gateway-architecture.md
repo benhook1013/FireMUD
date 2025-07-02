@@ -17,8 +17,10 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
+- Telnet clients keep a **persistent TCP connection** to the TCP Proxy; the Gateway
+  itself does not hold session state between reconnects
 
-> **Important:**  
+> **Important:**
 > Spring Cloud Gateway is responsible for routing **only external client requests**.  
 > **Internal microservice-to-microservice communication does not pass through the Gateway**.
 > Microservices use Kubernetes native service discovery and DNS for direct communication.
@@ -75,6 +77,14 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
 
+## 🔗 Internal gRPC Communication
+
+Internal services communicate directly with each other over **gRPC**.
+Spring Cloud Gateway does not handle these calls. Each service discovers
+its peers via Docker or Kubernetes DNS and connects using the service name.
+This approach minimizes latency and matches the protocol table in the
+[System Architecture Overview](../system-architecture-overview.md#🌐-communication-flows).
+
 ---
 
 ## 🔧 Dev vs. Prod Configuration
@@ -93,5 +103,6 @@ Spring profiles (`application-dev.yml`, `application-prod.yml`) are used to conf
 - [Infrastructure Overview](./README.md)
 - [Deployment Environments](./deployment-environments.md)
 - [Protocol Bridging](./protocol-bridging.md)
+- [Reconnection Strategy](../system-architecture-reconnection.md)
 
 ---

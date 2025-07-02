@@ -83,3 +83,4 @@ Both connection types interface with:
 - [Infrastructure Overview](./README.md)
 - [Gateway Architecture](./gateway-architecture.md)
 - [Deployment Environments](./deployment-environments.md)
+- [Reconnection Strategy](../system-architecture-reconnection.md)
