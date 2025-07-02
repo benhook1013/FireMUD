@@ -124,7 +124,7 @@ This document outlines the **core functional and non-functional requirements** f
 
 - The platform is designed for **cloud-native deployment**, using:
   - **Docker & Kubernetes** for containerization and scaling.
-  - **Automated CI/CD pipelines** for service updates and maintenance.
+  - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
 - Supports **multi-region deployments** to provide better latency for global users.
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
 

@@ -6,5 +6,6 @@ The architecture section describes the platform infrastructure and each microser
 - **microservices/** – Individual service responsibilities and APIs.
 - **service-responsibility-matrix.md** – Summary of which service handles what.
 - **system-architecture-overview.md** – High-level diagrams and interactions.
+- **system-architecture-cicd.md** – CI/CD pipeline design using GitHub Actions.
 
 Refer to the README files within each subdirectory for more details.
