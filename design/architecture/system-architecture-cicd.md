@@ -1,4 +1,4 @@
-# 🚀 CI/CD Pipeline Overview
+# 🚀 FireMUD System Architecture: CI/CD Pipeline
 
 This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and deployed automatically so that changes reach production reliably.
 

@@ -1,4 +1,4 @@
-# 🏗️ FireMUD System Architecture Overview
+# 🏗️ FireMUD System Architecture: Overview
 
 This document provides a high-level view of FireMUD’s system architecture, showing how major services, protocols, and data flows interact across the platform.
 

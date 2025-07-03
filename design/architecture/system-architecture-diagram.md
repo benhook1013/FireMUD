@@ -1,4 +1,4 @@
-# 📈 System Architecture Diagram
+# 📈 FireMUD System Architecture: Diagram
 
 ```plaintext
       +------------+      TCP (Telnet)         +-------------------+
