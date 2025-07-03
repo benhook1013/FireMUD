@@ -174,6 +174,7 @@ Game Session governs pacing, conflict handling, and orchestration across distrib
 - [Redis Architecture](./system-architecture-redis.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Authentication & Authorization](./system-architecture-authentication.md)
+- [Security Architecture](./system-architecture-security.md)
 - [Microservices Responsibility Matrix](./service-responsibility-matrix.md)
 - [System Architecture Diagram](./system-architecture-diagram.md)
 - [Infrastructure Overview](./infrastructure/README.md)
