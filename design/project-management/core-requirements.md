@@ -115,10 +115,7 @@ This document outlines the **core functional and non-functional requirements** f
 ### **3.2 Persistence & Caching**
 
 - **PostgreSQL** is the primary database for game world, entity, and account storage.
-- **Redis caching** improves performance by storing:
-  - Frequently accessed **player profiles and inventory**.
-  - **World state snapshots** to reduce database queries.
-  - **Session data** for quick reconnections.
+- **Redis** stores transient gameplay and session state only; all authoritative data remains in PostgreSQL.
 
 ### **3.3 Deployment Model**
 

@@ -6,7 +6,7 @@ The World Management Service stores and manages game world data such as rooms, r
 
 ## Architecture / Design Notes
 
-- World data is stored in PostgreSQL with Redis caching active states for performance.
+- World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
 - Changes are persisted incrementally to avoid heavy writes.
 - Background jobs manage scheduled events like daily resets or seasonal changes.
 - Supports procedural generation with options for dynamic world expansion.
@@ -21,7 +21,7 @@ The World Management Service stores and manages game world data such as rooms, r
 ## Dependencies
 
 - **Internal:** Game Design Service for generation rules.
-- **External:** PostgreSQL and Redis.
+- **External:** PostgreSQL for world data, Redis for transient active state.
 
 ## Future Enhancements
 

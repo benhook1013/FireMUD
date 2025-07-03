@@ -17,7 +17,7 @@ This document collects common questions and answers about the FireMUD Game Platf
 ## Architecture and Design
 
 - **What technologies does FireMUD use?**  
-  The backend is composed of Java Spring Boot microservices communicating through gRPC. The web frontend is built with React and Material‑UI. Data is stored in PostgreSQL with Redis for caching.
+  The backend is composed of Java Spring Boot microservices communicating through gRPC. The web frontend is built with React and Material‑UI. Data is stored in PostgreSQL, while Redis holds only transient session and gameplay state.
 
 - **Why a microservice architecture?**  
   Separating functionality into services like account management, world management, and session management keeps the platform modular and allows each part to scale independently.
