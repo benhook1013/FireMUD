@@ -240,7 +240,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Scale & Optimize Performance**
   - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
   - [ ] Optimize database queries & network traffic handling
-  - [ ] Define backup & disaster recovery strategy
+  - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
 
 - [ ] **Iterate on Features & Add More Game Customization**
   - [ ] Expand game customization options for hosted games
