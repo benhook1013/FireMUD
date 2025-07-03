@@ -21,6 +21,10 @@ Centralized logging and administration tools for the platform. Collects log data
 
 - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 
+## Related Docs
+
+See the [📜 Logging Stack](../../infrastructure/README.md#📜-logging-stack) for details on the shared log aggregation setup.
+
 ## Future Enhancements
 
 - Role-based admin UI.
