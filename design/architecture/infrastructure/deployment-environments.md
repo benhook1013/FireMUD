@@ -35,9 +35,9 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 ### 🔧 Kubernetes Characteristics
 
 - Services are deployed as Pods and exposed via Kubernetes Services.
-- The **TCP Proxy** and **Spring Cloud Gateway** are typically exposed using
+- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using
   Kubernetes `LoadBalancer` Services so external clients can connect directly.
-- The TCP Proxy buffers active Telnet input but clears it when the TCP connection closes. Sticky TCP sessions terminate here, while the Gateway remains stateless.
+- The TCP Proxy Service buffers active Telnet input but clears it when the TCP connection closes. Sticky TCP sessions terminate here, while the Gateway remains stateless.
 - DNS-based discovery is built into Kubernetes (e.g., `game-session-service.default.svc.cluster.local`).
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Gateway.

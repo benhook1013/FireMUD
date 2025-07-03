@@ -17,7 +17,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
-- Telnet clients keep a **persistent TCP connection** to the TCP Proxy; the Gateway
+- Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
 
 > **Important:**
