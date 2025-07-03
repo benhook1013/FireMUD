@@ -22,6 +22,7 @@ FireMUD uses Docker Compose for local development and testing:
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
   - Docker does **not** automatically restart unhealthy containers by default.
   - Docker’s `depends_on` only controls startup order, not service readiness.
+  - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
 
 💡 **Tip**: For more reliable startup coordination, use **Gateway retry filters** or utilities like `wait-for-it.sh`.
 
@@ -52,10 +53,11 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 
 ### 🔄 Kubernetes Auto Recovery
 
-- Kubernetes automatically:
-  - Removes unready pods from Services
-  - Restarts failing pods based on probe failures
-  - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA)
+  - Kubernetes automatically:
+    - Removes unready pods from Services
+    - Restarts failing pods based on probe failures
+    - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA)
+  - Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
 
 ### 📈 Monitoring Stack
 
