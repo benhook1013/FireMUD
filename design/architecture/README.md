@@ -6,6 +6,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
 - [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
 - [**system-architecture-overview.md**](./system-architecture-overview.md) – High-level diagrams and interactions.
+- [**system-architecture-frontend.md**](./system-architecture-frontend.md) – React UI structure, state management, and build tooling.
 - [**system-architecture-cicd.md**](./system-architecture-cicd.md) – CI/CD pipeline design using GitHub Actions.
 - [**system-architecture-testing.md**](./system-architecture-testing.md) – Unit, integration, and load testing strategy.
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
