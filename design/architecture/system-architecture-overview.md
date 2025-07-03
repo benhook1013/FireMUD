@@ -115,6 +115,7 @@ FireMUD uses a unified observability pipeline:
 
 - Structured JSON logs with `traceId`, `playerId`, `sessionId`
 - Collected via Fluent Bit and indexed in Elasticsearch
+- Visualized with Kibana dashboards for easy log search
 
 ### 🧾 Admin & Logging Service
 
@@ -146,6 +147,11 @@ FireMUD uses a unified observability pipeline:
 Deployment health checks (readiness and liveness probes) for these layers are
 described in detail in
 [Deployment Environments](./infrastructure/deployment-environments.md).
+
+Environment-specific routing is configured through Spring profiles
+(`application-dev.yml`, `application-prod.yml`). See
+[Deployment Environments](./infrastructure/deployment-environments.md#🔁-spring-profile-configuration)
+for how these profiles differ in Docker Compose versus Kubernetes.
 
 ---
 
