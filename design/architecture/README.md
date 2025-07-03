@@ -9,6 +9,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-cicd.md**](./system-architecture-cicd.md) – CI/CD pipeline design using GitHub Actions.
 - [**system-architecture-testing.md**](./system-architecture-testing.md) – Unit, integration, and load testing strategy.
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
+- [**system-architecture-database-migrations.md**](./system-architecture-database-migrations.md) – How Flyway manages schema changes per service.
 - [**system-architecture-grpc.md**](./system-architecture-grpc.md) – Conventions for proto layout, versioning, and tooling.
 - [**system-architecture-authentication.md**](./system-architecture-authentication.md) – Authentication mechanisms and session handling.
 - [**system-architecture-security.md**](./system-architecture-security.md) – Cross-service security and secret management.
