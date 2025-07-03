@@ -77,6 +77,7 @@ Images are tagged with the commit SHA and pushed to **GitHub Container Registry 
 ## 🚢 Deploying to Kubernetes
 
 For production branches, an additional job deploys the newly built images using Helm:
+
 ```yaml
   deploy:
     needs: docker-build
@@ -116,4 +117,3 @@ These can be added as separate workflows or additional jobs in the main pipeline
 
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
-
