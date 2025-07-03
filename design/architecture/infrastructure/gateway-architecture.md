@@ -76,6 +76,7 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
+- TLS termination and mTLS between services are described in [Security Architecture](../system-architecture-security.md).
 
 ## 🔗 Internal gRPC Communication
 
