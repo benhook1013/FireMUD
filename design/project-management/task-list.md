@@ -71,6 +71,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Support multi-tenancy for hosted games
   - [ ] Implement tick orchestration using Redis for command queues
   - [ ] Persist session state in Redis for reconnect recovery
+  - [ ] Enforce single-session control per character (session takeover on new login)
+  - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service
+  - [ ] Plan for cross-region sharding and session handoff
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
@@ -105,6 +108,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Use Redis for transient session state and ephemeral gameplay coordination
   - [ ] Implement world saving/loading system
   - [ ] Implement per-instance state persistence
+  - [ ] Configure Redis cluster with AOF persistence and replica failover
 
 ---
 

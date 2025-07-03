@@ -74,12 +74,14 @@ This document outlines the **core functional and non-functional requirements** f
   - NPCs react dynamically to the world using **event-driven** (trigger-based) and **state-driven** (persistent memory) behaviors.
   - NPCs maintain **awareness of past interactions**, allowing dynamic responses.
   - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online.
+- Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions.
 
 ### **2.6 Real-Time Multiplayer & Communication**
 
 - **WebSockets/TCP-based real-time networking** for player interactions.
 - In-game **chat system, mail messaging, and guild/group communications**.
 - **PvP & cooperative multiplayer support**.
+- **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff.
 
 ### **2.7 Extensibility & Game Customization**
 
@@ -95,6 +97,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **Admin dashboard** for monitoring and moderating hosted games.
 - **In-game reporting & ban system** for handling violations.
 - **Analytics & logging** for tracking player activity and game performance.
+- **Runtime feature flags** managed by the **Game Session Service** and editable through the **Logging & Admin Service**.
 - **Monetization & Payment System**:
   - The platform integrates **Stripe or similar services** for in-game purchases.
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
@@ -126,12 +129,15 @@ This document outlines the **core functional and non-functional requirements** f
   - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
 - Supports **multi-region deployments** to provide better latency for global users.
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
+- **Central logging and metrics** are collected via **Fluent Bit**, **Elasticsearch**, **Kibana**, **Grafana**, **Prometheus**, and **OpenTelemetry**.
 
 ### **3.4 Gameplay Session Architecture**
 
 - **Game Session Service** orchestrates tick execution and runtime configuration.
 - **Redis** stores volatile session state so players can **reconnect seamlessly** after disruptions.
 - Tick regions operate independently for scalability but rely on Redis for atomic coordination.
+- Redis runs with **AOF persistence** and synchronous replication so tick state can be recovered after failover.
+- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows transparent service restarts.
 
 ---
 
