@@ -1,16 +1,16 @@
 # 📊 FireMUD System Context Diagram
 
 ```plaintext
-                  +-------------+                     +-------------+
-                  | Web Client  |                     | Telnet Client|
-                  +-------------+                     +-------------+
-                        |                                   |
-                        | HTTP/WebSocket                    | TCP
-                        v                                   v
-                +-----------------------+         +-------------------+
-                | Spring Cloud Gateway  | <------ |  TCP Proxy Service|
-                |         (DMZ)         |  wss    |        (DMZ)      |
-                +-----------+-----------+         +---------+--------+
+                      +-------------+                          +---------------+
+                      | Web Client  |                          | Telnet Client |
+                      +-------------+                          +---------------+
+                            |                                        |
+                            | HTTP/WebSocket                         | TCP
+                            v                                        v
+                +-----------------------+                  +---------------------+
+                | Spring Cloud Gateway  | <--------------- |  TCP Proxy Service  |
+                |         (DMZ)         |  HTTP/WebSocket  |        (DMZ)        |
+                +-----------+-----------+                  +---------------------+
                             |
                             | gRPC/WebSocket
                             v
