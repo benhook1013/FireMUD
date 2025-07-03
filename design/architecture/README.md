@@ -17,6 +17,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-redis.md**](./system-architecture-redis.md) – Redis deployment topology and usage patterns.
 - [**system-architecture-reconnection.md**](./system-architecture-reconnection.md) – Client reconnect flow across services.
 - [**system-architecture-diagram.md**](./system-architecture-diagram.md) – Diagram of component relationships.
+- [**system-context-diagram.md**](./system-context-diagram.md) – Shows clients, DMZ components, services, and datastores.
 - [**system-architecture-ticks.md**](./system-architecture-ticks.md) – Tick system and runtime design.
 - [**user-journeys.md**](./user-journeys.md) – Example creator and player workflows.
 

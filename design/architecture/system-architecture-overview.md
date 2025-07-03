@@ -22,7 +22,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**  
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one
 
-🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md)
+🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
 
 ---
 
@@ -178,6 +178,7 @@ Game Session governs pacing, conflict handling, and orchestration across distrib
 - [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
 - [Microservices Responsibility Matrix](./service-responsibility-matrix.md)
 - [System Architecture Diagram](./system-architecture-diagram.md)
+- [System Context Diagram](./system-context-diagram.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
