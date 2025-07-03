@@ -20,7 +20,7 @@ This directory contains core documentation for the shared infrastructure that po
 
 ## 📜 Logging Stack
 
-Logs from each service are collected by Fluent Bit sidecars and forwarded to Elasticsearch for indexing and search.
+Logs from each service are collected by Fluent Bit sidecars and forwarded to Elasticsearch for indexing and search. See [Logging & Admin Service](../microservices/logging-admin-service/README.md) for dashboards and moderation tools.
 
 ## 🧭 Usage
 
