@@ -7,7 +7,7 @@ Manages user accounts and authentication for the platform. Stores profile data a
 ## Architecture / Design Notes
 
 - Stateless authentication using JWT tokens.
-- Session information is cached in Redis for fast lookups and reconnections.
+- Session information is stored in Redis as transient data for quick reconnections.
 
 ## Key Features
 
@@ -17,7 +17,7 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 ## Dependencies
 
-- **External:** PostgreSQL for account data, Redis for session caching.
+- **External:** PostgreSQL for account data, Redis for transient session data.
 
 ## Future Enhancements
 

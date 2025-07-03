@@ -28,7 +28,7 @@ Backend:
 - Lombok
 - MapStruct
 - PostgreSQL
-- Redis (caching)
+- Redis (transient session state)
 - WebSocket/TCP (real-time)
 - Spring Cloud Gateway
 
@@ -41,7 +41,7 @@ Deployment:
 
 - Docker, Kubernetes
 - GitHub Actions (CI/CD)
-- Prometheus, Grafana, Loki, Alertmanager
+- Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager
 
 Testing:
 

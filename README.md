@@ -67,8 +67,9 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 - **Framework**: Java Spring Framework
 - **Database**: PostgreSQL
-- **Caching**: Redis
+- **Caching**: Redis for transient session and gameplay state
 - **Networking**: WebSocket/TCP
+- **Inter-Service Communication**: gRPC
 - **API Gateway**: Spring Cloud Gateway
 
 #### Frontend
@@ -81,7 +82,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
 - **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
-- **Monitoring and Logging**: Prometheus, Grafana, Elasticsearch, Alertmanager
+- **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager
 
 #### Monetization
 

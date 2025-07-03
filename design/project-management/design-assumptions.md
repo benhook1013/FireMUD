@@ -8,16 +8,17 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Architecture**: Microservices
 - **Framework**: Java Spring Framework
 - **Database**: PostgreSQL
-- **Caching**: Redis
+- **Caching**: Redis for transient session and gameplay state
 - **Database Access**: Spring Data JPA
 - **Service Discovery**:
   - **Local Development**: Docker internal DNS-based discovery
   - **Production**: Kubernetes DNS-based discovery
 - **API Gateway**: Spring Cloud Gateway
 - **Real-Time Networking**: WebSocket/TCP
+- **Inter-Service Communication**: gRPC
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
-- **Monitoring & Logging**: Prometheus, Grafana, Elasticsearch, Alertmanager
+- **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Payment Gateway**: Stripe (with custom subscription integration)
 
