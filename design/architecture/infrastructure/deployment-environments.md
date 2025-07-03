@@ -39,10 +39,12 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - The TCP Proxy buffers active Telnet input but clears it when the TCP connection closes. Sticky TCP sessions terminate here, while the Gateway remains stateless.
 - DNS-based discovery is built into Kubernetes (e.g., `game-session-service.default.svc.cluster.local`).
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
+- Internal microservices communicate directly over gRPC, bypassing the Gateway.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
 - Redis runs as a clustered StatefulSet with automatic failover. Details are in [Redis Architecture](../system-architecture-redis.md).
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management).
+- Deployments are managed via Helm charts in the CI/CD pipeline. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
 ### 🩺 Kubernetes Health Monitoring
 
@@ -93,3 +95,4 @@ Spring Boot services use environment-specific profiles:
 - [Infrastructure Overview](./README.md)
 - [Gateway Architecture](./gateway-architecture.md)
 - [Protocol Bridging](./protocol-bridging.md)
+- [CI/CD Pipeline](../system-architecture-cicd.md)
