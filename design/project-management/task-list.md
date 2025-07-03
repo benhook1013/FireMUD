@@ -44,6 +44,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Ensure CI/CD includes the common package build process
 - [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
   - [ ] Ensure API contracts include standard error handling and request validation
+  - [ ] Configure gRPC infrastructure with **mTLS** certificates for internal calls
 - [ ] **Define high-level architecture & microservices boundaries**
 - [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
@@ -68,6 +69,8 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Expand Game Session Service**
   - [ ] Implement game instance lifecycle (start, stop, restart)
   - [ ] Support multi-tenancy for hosted games
+  - [ ] Implement tick orchestration using Redis for command queues
+  - [ ] Persist session state in Redis for reconnect recovery
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
@@ -160,8 +163,10 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [ ] **Develop TCP Proxy Service**
   - [ ] Implement Telnet networking and WebSocket bridging
+  - [ ] Buffer Telnet input and discard on disconnect to support reconnection
 - [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
+  - [ ] Terminate TLS and forward traffic to internal services using mTLS
 
 - [ ] **Develop Cross-Game Social Networking**
   - [ ] Enable players to add friends and communicate across games

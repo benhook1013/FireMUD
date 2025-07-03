@@ -111,6 +111,8 @@ This document outlines the **core functional and non-functional requirements** f
 - **WebSocket/TCP-based real-time networking** for low-latency gameplay.
 - Multi-server support to enable **scaling hosted games separately**.
 - **API Gateway** for managing requests between microservices and handling external integrations.
+- **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
+- **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
 
 ### **3.2 Persistence & Caching**
 
@@ -124,6 +126,12 @@ This document outlines the **core functional and non-functional requirements** f
   - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
 - Supports **multi-region deployments** to provide better latency for global users.
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
+
+### **3.4 Gameplay Session Architecture**
+
+- **Game Session Service** orchestrates tick execution and runtime configuration.
+- **Redis** stores volatile session state so players can **reconnect seamlessly** after disruptions.
+- Tick regions operate independently for scalability but rely on Redis for atomic coordination.
 
 ---
 

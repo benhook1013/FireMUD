@@ -30,7 +30,12 @@ List of things in Design currently being worked on.
   - [ ] Game instance lifecycle management (start, stop, restart).
   - [ ] Hosting live runtime configuration (e.g., flags).
   - [ ] Holding current `version_id`/manifest for each live game.
-- [ ] Clarify distinction between **player session management** and **game instance orchestration**.
+  - [ ] Clarify distinction between **player session management** and **game instance orchestration**.
+
+### 🔗 Internal Communication & Security
+
+- [ ] Adopt **gRPC** for all service-to-service calls.
+- [ ] Secure internal traffic with **mTLS** certificates managed by Kubernetes.
 
 ### 📦 Game Management Service Deprecation (Completed)
 

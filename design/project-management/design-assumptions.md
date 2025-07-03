@@ -14,6 +14,7 @@ This document outlines high-level design and technology assumptions for the Fire
   - **Local Development**: Docker internal DNS-based discovery
   - **Production**: Kubernetes DNS-based discovery
 - **API Gateway**: Spring Cloud Gateway
+- **Inter-service Communication**: gRPC over mTLS
 - **Real-Time Networking**: WebSocket/TCP
 - **Inter-Service Communication**: gRPC
 - **Containerization**: Docker
