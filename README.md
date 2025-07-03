@@ -26,6 +26,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 - [Architecture](#architecture)
   - [Microservices](#microservices)
   - [Service Interactions](#service-interactions)
+- [Developer Setup](./DEVELOPER_SETUP.md)
 - [Getting Started and Contributing](#getting-started-and-contributing)
   - [Learn About the Platform](#learn-about-the-platform)
   - [Ways to Contribute](#ways-to-contribute)
@@ -141,6 +142,8 @@ For detailed architecture diagrams and explanations, refer to the [System Archit
 ## Getting Started and Contributing
 
 We welcome feedback, ideas, and contributions to improve the FireMUD platform. Here's how you can get involved:
+
+For local environment setup instructions, see [Developer Setup](./DEVELOPER_SETUP.md).
 
 ---
 
