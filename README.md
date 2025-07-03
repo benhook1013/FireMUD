@@ -1,7 +1,7 @@
 # FireMUD Game Platform - Documentation and Design
 
 [![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./design/project-management/task-list.md)
-[![License: Business Source License 1.1](https://img.shields.io/badge/License-Business_Source_License_1.1-blue.svg)](LICENSE)
+[![License: Business Source License 1.1](https://img.shields.io/badge/License-Business_Source_License_1.1-blue.svg)](LICENSE.md)
 
 [![Backend: Java Spring](https://img.shields.io/badge/Backend-Java_Spring_Framework-green)](https://spring.io/)
 [![Frontend: React](https://img.shields.io/badge/Frontend-React-blue)](https://react.dev/)
@@ -12,7 +12,7 @@
 
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
-*This project is licensed under the [Business Source License 1.1](LICENSE). For common questions, please refer to our [FAQ](FAQ.md).*
+*This project is licensed under the [Business Source License 1.1](LICENSE.md). For common questions, please refer to our [FAQ](FAQ.md).*
 
 ---
 
@@ -157,28 +157,28 @@ Before contributing, we recommend reviewing the following key documents:
 
 ### Ways to Contribute
 
-- **Improve Documentation**:  
+- **Improve Documentation**:
   Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
 
-- **Report Bugs or Suggest Features**:  
+- **Report Bugs or Suggest Features**:
   Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
 
 - **Contribute Code**:
   1. **Fork** the repository you want to contribute to.
-  2. **Create a new branch**:  
+  2. **Create a new branch**:
      `git checkout -b feature/your-feature-name`
   3. **Make your changes**, following our coding standards.
   4. **Commit with clear messages**.
-  5. **Push to your fork**:  
+  5. **Push to your fork**:
      `git push origin feature/your-feature-name`
   6. **Open a pull request** against the `main` branch.
 
-- **Review Pull Requests**:  
+- **Review Pull Requests**:
   Provide thoughtful, constructive feedback on open pull requests.
 
-- **Report Security Issues**:  
-  If you discover a security vulnerability, please **do not** file a public issue.  
-  Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net).  
+- **Report Security Issues**:
+  If you discover a security vulnerability, please **do not** file a public issue.
+  Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net).
   We take security seriously and will respond promptly.
 
 ---
