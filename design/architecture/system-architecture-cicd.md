@@ -11,6 +11,8 @@ This document describes the basic continuous integration and deployment strategy
 - **Deploy to Kubernetes** when changes are merged into designated branches (e.g., `main` or `release/*`).
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 
+To save on cloud costs, this pipeline only builds and deploys services. Contributors run all unit, integration, and cross-service tests locally as part of manual code review. See [System Architecture Testing](./system-architecture-testing.md) for details.
+
 ---
 
 ## 🛠️ Workflow Structure
@@ -117,3 +119,4 @@ These can be added as separate workflows or additional jobs in the main pipeline
 
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
+- [Testing Strategy](./system-architecture-testing.md)
