@@ -33,12 +33,12 @@ List of things in Design currently being worked on.
   - [ ] Holding current `version_id`/manifest for each live game.
 - [ ] Clarify distinction between **player session management** and **game instance orchestration**.
 
-### 📦 Deprecating Game Management Service
+### 📦 Game Management Service Deprecation (Completed)
 
-- [ ] Eliminate `Game Management Service` as a standalone service.
-- [ ] Redistribute responsibilities:
-  - [ ] Game creation, templates → `Game Design Service`.
-  - [ ] Game instance start/stop → `Game Session Service`.
-  - [ ] Game metadata/versioning → `Game Design Service`.
-  - [ ] Moderation policies → `Logging & Admin Service`.
-  - [ ] Ownership relations → `Account Service`.
+The former Game Management Service has been removed. Responsibilities were redistributed:
+
+- Game creation and templates → `Game Design Service`.
+- Game instance start/stop → `Game Session Service`.
+- Game metadata/versioning → `Game Design Service`.
+- Moderation policies → `Logging & Admin Service`.
+- Ownership relations → `Account Service`.

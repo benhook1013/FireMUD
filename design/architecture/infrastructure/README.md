@@ -18,6 +18,10 @@ This directory contains core documentation for the shared infrastructure that po
 
 ---
 
+## 📜 Logging Stack
+
+Logs from each service are collected by Fluent Bit sidecars and forwarded to Elasticsearch for indexing and search.
+
 ## 🧭 Usage
 
 All service-level design documents should refer to this directory for shared infrastructure context, rather than duplicating gateway, deployment, or protocol behavior.
@@ -27,4 +31,5 @@ For example:
 > See [**Gateway Architecture**](./gateway-architecture.md), [**Deployment Environments**](./deployment-environments.md), or [**Protocol Bridging**](./protocol-bridging.md) for relevant infrastructure details.
 > Redis-backed session state is described in detail in [**Redis Architecture**](../system-architecture-redis.md).
 > Observability and metrics integrations are outlined in the [**System Architecture Overview**](../system-architecture-overview.md#📊-observability-and-monitoring).
+> Log aggregation using Fluent Bit, Elasticsearch, and Kibana is covered in the [**Log Aggregation**](./deployment-environments.md#📜-log-aggregation) section of **Deployment Environments**.
 > Client reconnection flow is covered in the [**Reconnection Strategy**](../system-architecture-reconnection.md).
