@@ -47,6 +47,8 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 - **Failover behavior is tested under live tick loads**
 - Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff.
 
+> For operational context on Docker Compose vs Kubernetes, see [Deployment Environments](./infrastructure/deployment-environments.md).
+
 ### Replication and Durability
 
 - Writes are **asynchronously replicated**
