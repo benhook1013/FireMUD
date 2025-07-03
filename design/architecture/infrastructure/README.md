@@ -15,6 +15,9 @@ This directory contains core documentation for the shared infrastructure that po
 | [CI/CD Pipeline](../system-architecture-cicd.md)        | Overview of GitHub Actions workflows for building, testing, and deployment. |
 | [System Architecture Overview](../system-architecture-overview.md) | High-level design with observability and service interactions. |
 | [System Architecture Diagram](../system-architecture-diagram.md) | Visual representation of component relationships and client flows. |
+| [Security Architecture](../system-architecture-security.md) | TLS termination, mTLS usage, and network policy overview. |
+| [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) | Snapshot schedules and restore workflow. |
+| [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md) | Conventions for service APIs. |
 
 ---
 
@@ -33,3 +36,6 @@ For example:
 > Observability and metrics integrations are outlined in the [**System Architecture Overview**](../system-architecture-overview.md#📊-observability-and-monitoring).
 > Log aggregation using Fluent Bit, Elasticsearch, and Kibana is covered in the [**Log Aggregation**](./deployment-environments.md#📜-log-aggregation) section of **Deployment Environments**.
 > Client reconnection flow is covered in the [**Reconnection Strategy**](../system-architecture-reconnection.md).
+> TLS, certificate rotation, and network policies are detailed in the [**Security Architecture**](../system-architecture-security.md).
+> Backup procedures and disaster recovery steps are outlined in [**Backup & Disaster Recovery**](../system-architecture-backup-recovery.md).
+> Service developers should follow the [**gRPC API Style & Versioning Guidelines**](../system-architecture-grpc.md) when defining new APIs.

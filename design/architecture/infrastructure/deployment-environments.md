@@ -42,9 +42,10 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Gateway.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
+- See [Security Architecture](../system-architecture-security.md) for TLS termination, mTLS certificates, and network policy details.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
-- Redis runs as a clustered StatefulSet with automatic failover. Details are in [Redis Architecture](../system-architecture-redis.md).
-- PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management).
+- Redis runs as a clustered StatefulSet with automatic failover. Details are in [Redis Architecture](../system-architecture-redis.md). Redis persistence uses **AOF**, as described there.
+- PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md).
 - Deployments are managed via Helm charts in the CI/CD pipeline. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
 ### 🩺 Kubernetes Health Monitoring
@@ -66,6 +67,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Prometheus scrapes metrics from all services.
 - Grafana dashboards visualize performance metrics.
 - Alertmanager notifies on failures or latency spikes.
+- OpenTelemetry spans are emitted by services for distributed tracing.
 - See [System Architecture Overview](../system-architecture-overview.md#📊-observability-and-monitoring) for design details.
 
 ### 📜 Log Aggregation
