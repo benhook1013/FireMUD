@@ -79,7 +79,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
- - **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
+- **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
 - **Monitoring and Logging**: Prometheus, Grafana, Loki, Alertmanager
 
 #### Monetization
