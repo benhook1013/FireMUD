@@ -55,11 +55,11 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 
 ### 🔄 Kubernetes Auto Recovery
 
-  - Kubernetes automatically:
-    - Removes unready pods from Services
-    - Restarts failing pods based on probe failures
-    - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA)
-  - Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
+- Kubernetes automatically:
+  - Removes unready pods from Services
+  - Restarts failing pods based on probe failures
+  - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA)
+- Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
 
 ### 📈 Monitoring Stack
 
