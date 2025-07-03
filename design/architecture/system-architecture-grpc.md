@@ -1,4 +1,4 @@
-# 📦 gRPC API Style & Versioning Guidelines
+# 📦 FireMUD System Architecture: gRPC API Style & Versioning Guidelines
 
 These guidelines define how FireMUD microservices design and document their gRPC APIs. Following a consistent structure makes it easier for teams to evolve services over time and share tooling.
 

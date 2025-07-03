@@ -8,7 +8,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-overview.md**](./system-architecture-overview.md) – High-level diagrams and interactions.
 - [**system-architecture-cicd.md**](./system-architecture-cicd.md) – CI/CD pipeline design using GitHub Actions.
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
-- [**system-architecture-grpc.mc**](./system-architecture-grpc.mc) – Conventions for proto layout, versioning, and tooling.
+- [**system-architecture-grpc.md**](./system-architecture-grpc.md) – Conventions for proto layout, versioning, and tooling.
 - [**system-architecture-authentication.md**](./system-architecture-authentication.md) – Authentication mechanisms and session handling.
 - [**system-architecture-security.md**](./system-architecture-security.md) – Cross-service security and secret management.
 - [**system-architecture-redis.md**](./system-architecture-redis.md) – Redis deployment topology and usage patterns.
