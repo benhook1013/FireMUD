@@ -15,6 +15,7 @@ This directory contains core documentation for the shared infrastructure that po
 | [CI/CD Pipeline](../system-architecture-cicd.md)        | Overview of GitHub Actions workflows for building, testing, and deployment. |
 | [System Architecture Overview](../system-architecture-overview.md) | High-level design with observability and service interactions. |
 | [System Architecture Diagram](../system-architecture-diagram.md) | Visual representation of component relationships and client flows. |
+| [System Context Diagram](../system-context-diagram.md) | Shows clients, DMZ components, internal services, and datastores. |
 | [Security Architecture](../system-architecture-security.md) | TLS termination, mTLS usage, and network policy overview. |
 | [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) | Snapshot schedules and restore workflow. |
 | [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md) | Conventions for service APIs. |
