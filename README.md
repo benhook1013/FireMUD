@@ -154,6 +154,7 @@ Before contributing, we recommend reviewing the following key documents:
 - **[System Architecture Overview](design/architecture/system-architecture-overview.md)**: Understand the overall platform design, service layout, and communication flows.
 - **[Infrastructure Overview](design/architecture/infrastructure/README.md)**: Learn about our deployment environments, shared systems, and networking architecture.
 - **[Security Architecture](design/architecture/system-architecture-security.md)**: Understand how JWT secrets, TLS, and cross-service trust are managed.
+- **[Frontend Architecture](design/architecture/system-architecture-frontend.md)**: Learn how the React interface is structured and integrated with backend services.
 - **[Service Design Documents](design/architecture/microservices/README.md)**: Explore detailed designs for each microservice.
 - **[FAQ](FAQ.md)**: Browse frequently asked questions to get quick context.
 
