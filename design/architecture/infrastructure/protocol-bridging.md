@@ -43,7 +43,7 @@ Despite their differences, both protocols are normalized into the same internal 
   - Proxies I/O between the TCP client and the backend game session.
   - Buffers active input while the client remains connected and discards it if
     the TCP connection drops.
-  - Telnet clients keep a sticky connection to the TCP Proxy; reconnection and
+  - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and
     session recovery are handled as described in
     [Reconnection Strategy](../system-architecture-reconnection.md).
 
