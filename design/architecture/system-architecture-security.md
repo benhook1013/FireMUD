@@ -22,7 +22,7 @@ This document outlines how FireMUD secures service communication, manages authen
 
 ## 🔒 TLS Termination & Internal Encryption
 
-- External `https/wss` traffic is terminated at the **Ingress** or load balancer.
+- External `https/wss` traffic is terminated at the load balancer.
 - The **Spring Cloud Gateway** communicates with backend services over **TLS** to protect gameplay traffic.
 - All internal gRPC calls between microservices use **mutual TLS (mTLS)**:
   - Certificates are issued by **cert-manager**
@@ -94,7 +94,7 @@ These controls are not yet implemented but are expected to strengthen security a
 |---------------------------|--------------------------------------------------------------------------|
 | JWT Secret Storage        | Kubernetes Secrets via cert-manager                                      |
 | Key & Cert Rotation       | Hot-reload with caching of old credentials                               |
-| TLS Termination           | Load balancer or ingress                                                 |
+| TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets                                              |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
 | Brute-Force Defense       | Per-IP tracking, blacklisting, global throttle delays                    |

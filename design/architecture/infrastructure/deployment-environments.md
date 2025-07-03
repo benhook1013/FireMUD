@@ -42,11 +42,14 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Gateway.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
+- Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
+- The external load balancer exposes only the Gateway and TCP Proxy Service, forming a DMZ that shields internal services.
 - See [Security Architecture](../system-architecture-security.md) for TLS termination, mTLS certificates, and network policy details.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
 - Redis runs as a clustered StatefulSet with automatic failover. Details are in [Redis Architecture](../system-architecture-redis.md). Redis persistence uses **AOF**, as described there.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md).
 - Deployments are managed via Helm charts in the CI/CD pipeline. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
+- All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
 
 ### 🩺 Kubernetes Health Monitoring
 

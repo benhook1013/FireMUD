@@ -21,6 +21,14 @@ This directory contains core documentation for the shared infrastructure that po
 
 ---
 
+### 🌐 Network Boundary and Certificates
+
+The **Spring Cloud Gateway** and **TCP Proxy Service** sit in a DMZ behind the external load balancer. TLS and mTLS certificates for all services are issued by **cert-manager** and stored as Kubernetes Secrets.
+
+### 🏢 Multi-Tenant Deployment
+
+All games share the same Kubernetes cluster and infrastructure. Databases use per-service schemas keyed by `tenantId`; no tenant-specific clusters exist. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
+
 ## 📜 Logging Stack
 
 Logs from each service are collected by Fluent Bit sidecars and forwarded to Elasticsearch for indexing and search. See [Logging & Admin Service](../microservices/logging-admin-service/README.md) for dashboards and moderation tools.
