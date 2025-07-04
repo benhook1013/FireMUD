@@ -10,11 +10,11 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
 
 Redis is used **exclusively for non-authoritative, transient data**, including:
 
-- Gameplay session state and real-time coordination data  
-  _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
 - In-flight command queues
 - Tick locks and staged results
 - Cooldowns and timer expirations (stored in milliseconds)
+- Gameplay session state and real-time coordination data
+  _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
 - Retry metadata and **inter-tick conflict tracking**
 - AI/scripted action injection
 
@@ -62,9 +62,9 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 Redis keys follow strict naming conventions to ensure:
 
 - Shard-aware key locality
+- Clean atomic execution across tick regions
 - Conflict and retry isolation
 - Debuggable and traceable behavior
-- Clean atomic execution across tick regions
 
 ### Key Format Examples
 
@@ -87,8 +87,8 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 
 - Entity lock acquisition (`tick:lock:*`)
 - Tick staging, commit, and rollback (`tick:pending:*`)
-- Session rebinding and deduplication (`session:*` keys)
 - Timer lifecycle management
+- Session rebinding and deduplication (`session:*` keys)
 - Retry queue updates
 - AI/scripted action injection
 
@@ -110,10 +110,10 @@ Redis is essential for **coordinating tick execution** across distributed worker
 It provides:
 
 - Per-entity **command queues**
-- Distributed **locks** and **retry tracking**
 - Durable **tick staging**
-- Accurate **cooldown and timer tracking**
+- Distributed **locks** and **retry tracking**
 - **Conflict metadata** for retry prioritization
+- Accurate **cooldown and timer tracking**
 
 > 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.  
 > 🔗 See [Tick Execution Flow](./system-architecture-ticks.md#🔄-tick-execution-flow)
@@ -179,13 +179,13 @@ This state is used by the **Game Session Service** to:
 Redis in FireMUD is:
 
 - A **transient, high-performance coordination layer**
-- Used for **ticks, timers, locks, retries, and gameplay session state**  
+- Used for **ticks, timers, locks, retries, and gameplay session state**
   _(see [Session Keys](#-session-keys-and-gameplay-binding))_
-- Not a source of truth — but treated as **critical infrastructure**
-- Durable via **AOF** and `WAIT` guarantees
 - Scripted via **Lua** for atomic tick and session control
+- Durable via **AOF** and `WAIT` guarantees
 - Always **shard-local** to avoid cross-node inconsistencies
 - Tightly coupled with the **Game Session Service**, which orchestrates all tick-related flow
+- Not a source of truth — but treated as **critical infrastructure**
 
 ---
 
