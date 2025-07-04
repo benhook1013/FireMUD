@@ -19,6 +19,11 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Reconnection support for dropped clients.
 - Routes REST and gRPC traffic to appropriate backend services.
 
+### Data Model
+
+The gateway is stateless. Route configurations are stored in
+`application-*.yml` and reloaded on startup. No persistent database is required.
+
 ### Filter Chain
 
 - Authentication, rate limiting, and logging filters run before routing.

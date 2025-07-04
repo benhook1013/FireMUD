@@ -19,6 +19,12 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
 
+### Data Model
+
+- Log events are stored in Elasticsearch indexes for search.
+- `moderation_action` table records bans and warnings with timestamps.
+- `feature_flag` table mirrors active runtime settings for auditing.
+
 ### Moderation Workflow
 
 - Operators review flagged logs through the web UI.
