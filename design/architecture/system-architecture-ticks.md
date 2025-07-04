@@ -8,7 +8,7 @@
 
 ## 🧠 Hybrid Tick Model
 
-FireMUD uses a **Hybrid Tick Model (Model C)** to balance real-time responsiveness with deterministic action resolution:
+FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with deterministic action resolution:
 
 - **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues**
 - At regular **tick intervals** (e.g., 1s):
