@@ -100,7 +100,7 @@ The Game Session Service is responsible for:
 
 - Authenticating sockets and binding identity context
 - Managing Redis session state (e.g. `playerId`, `worldId`, tick region)
-- Reinjecting updated JWTs into backend calls when needed
+- Managing refreshed JWTs for backend interactions
 
 > 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 
