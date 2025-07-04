@@ -27,8 +27,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Payment Gateway**: Stripe (with custom subscription integration)
 - **Certificate Management**: TLS and mTLS certificates issued by **cert-manager** and stored as Kubernetes Secrets
-- **Cluster Backups**: **Velero** snapshots StatefulSets and persistent volumes
-- Snapshots are taken **every 15 minutes** in production with **24 hours of retention**
+- **Cluster Backups**: **Velero** snapshots StatefulSets and persistent volumes. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the snapshot schedule.
 
 ## Frontend
 

@@ -15,6 +15,10 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 *This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
 
+## Start Here
+
+For an overview of all architecture and design documents, see [Architecture Overview](design/architecture/README.md).
+
 ---
 
 ## 📚 Table of Contents

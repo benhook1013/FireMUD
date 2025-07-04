@@ -258,7 +258,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Optimize database queries & network traffic handling
   - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
   - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
-  - [ ] Configure production snapshots every **15 minutes** with **24 hours of retention**
+  - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
 
 - [ ] **Iterate on Features & Add More Game Customization**
   - [ ] Expand game customization options for hosted games
