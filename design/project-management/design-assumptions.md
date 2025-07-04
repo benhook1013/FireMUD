@@ -18,6 +18,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **TCP Proxy Service** bridges Telnet clients to the Gateway
 - **Inter-service Communication**: gRPC over mTLS
 - **Real-Time Networking**: WebSocket/TCP
+- **Inter-Service Communication**: gRPC
 - **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service
 - **Game Session Service** orchestrates ticks and runtime flags using Redis
 - **Single Session** per character with layered reconnection (Proxy → Gateway → Session)
