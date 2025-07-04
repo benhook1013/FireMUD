@@ -16,6 +16,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Region and location management with shard support.
 - Persistent world state with incremental saves.
 - Procedural generation tools for rooms and terrain.
+- Pathfinding algorithms and navmesh data for movement calculations.
 - Event scheduling for world-wide holidays or timed modifiers, communicating changes over gRPC.
 
 ## Dependencies
