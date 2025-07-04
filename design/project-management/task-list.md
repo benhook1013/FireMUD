@@ -22,8 +22,8 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Miscellaneous**
   - [ ] Write initial design for each microservice
   - [ ] Investigate transaction support for microservices
-  - [ ] Investigate where TCP/Telnet interface will sit, or new service required
-  - [ ] Create design updates for Spring Cloud Gateway
+  - [ ] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
+  - [ ] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
   - [ ] Update README after all services are defined
 
 ---
@@ -121,7 +121,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement event-driven logic processing (triggers, world events)
   - [ ] Implement action aliases system (custom command mappings)
 
-- [ ] **Develop AI & Automation Service**
+ - [ ] **Develop Automation & Scripting Service**
   - [ ] Implement state-driven & event-driven NPC behaviors
   - [ ] Implement procedural world generation
   - [ ] Implement scripted events for game mechanics and NPC interactions
@@ -172,26 +172,23 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Handle API routing and request validation
   - [ ] Terminate TLS and forward traffic to internal services using mTLS
 
-- [ ] **Develop Cross-Game Social Networking**
-  - [ ] Enable players to add friends and communicate across games
-
-- [ ] **Develop Chat & Messaging System**
+- [ ] **Develop Social & Groups Service**
+  - [ ] Enable cross-game friend lists and social graph
   - [ ] Support private messages, global chat, and guild channels
   - [ ] Implement player-to-player mail system (asynchronous in-game messaging)
-
-- [ ] **Develop Guilds & Group System**
   - [ ] Allow players to form and manage guilds
   - [ ] Implement guild ranking & permissions system
-  - [ ] Implement shared guild storage
-  - [ ] Implement alliance system between guilds
+  - [ ] Implement shared guild storage and alliance system
 
 ---
 
 ## **🛠️ Phase 7: Moderation & Restrictions**
 
-- [ ] **Develop Moderation Logging & Player Reporting**
+- [ ] **Develop Logging & Admin Service**
+  - [ ] Collect logs from all services and provide search dashboards
   - [ ] Allow players to report others for abuse/violations
-  - [ ] Store logs for admin moderation
+  - [ ] Store logs for admin moderation and auditing
+  - [ ] Expose runtime feature flag toggles
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
