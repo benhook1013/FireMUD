@@ -48,7 +48,7 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 Players connect through the networking layer:
 
-1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway-service/README.md).
+1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
 2. **Session Management** – Connections reach the Game Session Service, which retrieves entity and world data over gRPC from other services.
 
 ```plaintext

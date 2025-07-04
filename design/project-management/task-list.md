@@ -258,4 +258,4 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Onboard Game Creators & Improve UX**
   - [ ] Develop tutorials & guides for game creators
   - [ ] Gather feedback from early users & iterate on UI/UX
-  - [ ] Add MCP support for AI assited game creation
+  - [ ] Add MCP support for AI assisted game creation

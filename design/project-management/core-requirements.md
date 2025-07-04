@@ -124,6 +124,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Multi-server support to enable **scaling hosted games separately**.
 - **API Gateway** for managing requests between microservices and handling external integrations.
 - **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
+- **Gameplay login is handled by the Game Session Service**. The Gateway may validate JWTs for admin or REST endpoints, but gameplay clients connect without tokens.
 - **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
 - **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
 
