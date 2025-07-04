@@ -8,7 +8,6 @@ This document outlines common flows for creators and players when interacting wi
 
 1. **Sign Up** – Players create an account through the [Account Service](./microservices/account-service/README.md).
 2. **Create a Game** – Newly registered creators use the [Game Design Service](./microservices/game-design-service/README.md) to start a fresh game project.
-3. **Link External Accounts** – Users may link Google, Discord, or Steam credentials for easier login and profile enrichment.
 
 ```plaintext
 Player → Account Service → Game Design Service (new game)
@@ -98,17 +97,6 @@ Game Design Service (publish) → Game Session Service (restart)
 
 ```plaintext
 Player → Account Service → Logging & Admin Service
-```
-
----
-
-## 10. Private Instances and Player Housing
-
-1. **Create Instance** – The [World Management Service](./microservices/world-management-service/README.md) provisions private regions such as dungeons or homes.
-2. **Enter Instance** – The Game Session Service spawns an isolated session and persists progress via the Entity Management Service.
-
-```plaintext
-World Management Service → Game Session Service → Entity Management Service
 ```
 
 ---
