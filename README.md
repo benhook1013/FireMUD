@@ -161,13 +161,13 @@ For local environment setup instructions, see [Developer Setup](./DEVELOPER_SETU
 Before contributing, we recommend reviewing the following key documents:
 
 - **[Core Requirements](design/project-management/core-requirements.md)**: Review the high-level product requirements for the platform.
+- **[Example User Journeys](design/architecture/user-journeys.md)**: Step-by-step workflows for creators and players.
 - **[System Architecture Overview](design/architecture/system-architecture-overview.md)**: Understand the overall platform design, service layout, and communication flows.
 - **[Service Design Documents](design/architecture/microservices/README.md)**: Explore detailed designs for each microservice.
 - **[Infrastructure Overview](design/architecture/infrastructure/README.md)**: Learn about deployment environments, shared systems, and networking architecture.
-- **[Security Architecture](design/architecture/system-architecture-security.md)**: See how JWT secrets, TLS, and cross-service trust are managed.
 - **[Frontend Architecture](design/architecture/system-architecture-frontend.md)**: Understand how the React interface integrates with backend services.
+- **[Security Architecture](design/architecture/system-architecture-security.md)**: See how JWT secrets, TLS, and cross-service trust are managed.
 - **[Versioning & Runtime Configuration](design/architecture/system-architecture-versioning-runtime.md)**: Learn how versions are published and how runtime flags are controlled.
-- **[Example User Journeys](design/architecture/user-journeys.md)**: Step-by-step workflows for creators and players.
 - **[Task List](design/project-management/task-list.md)**: Track planned features and development progress.
 - **[FAQ](FAQ.md)**: Browse frequently asked questions for quick context.
 
