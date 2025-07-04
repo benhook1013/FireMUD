@@ -67,11 +67,20 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 
 ### 📈 Monitoring Stack
 
-See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for metrics and tracing tools.
+- Prometheus scrapes metrics from all services.
+- Grafana dashboards visualize performance metrics.
+- Alertmanager notifies on failures or latency spikes.
+- OpenTelemetry spans are emitted by services for distributed tracing.
+
+See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the monitoring stack.
 
 ### 📜 Log Aggregation
 
-See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on Fluent Bit and Elasticsearch.
+- **Fluent Bit** agents collect container logs from each pod.
+- **Elasticsearch** stores structured log data for long-term retention.
+- **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
+
+See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the logging stack.
 
 ---
 
