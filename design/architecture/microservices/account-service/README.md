@@ -7,16 +7,21 @@ Manages user accounts and authentication for the platform. Stores profile data a
 ## Architecture / Design Notes
 
 - Stateless authentication using JWT tokens.
+- Passwords are hashed with strong salts and stored only in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
+- Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
 
 ## Key Features
 
 - Account registration and login.
 - Profile management and email notifications.
+- Password reset and verification flows.
 - Banning and subscription tracking.
+- gRPC APIs for account creation, authentication, and profile queries.
 
 ## Dependencies
 
+- **Internal:** Logging & Admin Service for audit logging.
 - **External:** PostgreSQL for account data, Redis for transient session data.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

@@ -8,12 +8,15 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 - Uses JPA for persistence of entity data.
 - Exposes gRPC endpoints for other microservices.
+- Caches frequently accessed character data in Redis for quick lookups.
+- Applies optimistic locking to avoid conflicting updates on the same entity.
 
 ## Key Features
 
 - Character and NPC management.
 - Item storage and inventory handling.
 - Experience and level tracking.
+- Character creation templates pulled from the Game Design Service.
 
 ## Dependencies
 

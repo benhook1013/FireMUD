@@ -10,6 +10,8 @@ The World Management Service stores and manages game world data such as rooms, r
 - Changes are persisted incrementally to avoid heavy writes.
 - Background tasks trigger scheduled world changes (daily resets or seasonal shifts) and notify relevant services via gRPC.
 - Supports procedural generation with options for dynamic world expansion.
+- Uses a region → zone → room hierarchy for efficient lookups.
+- Publishes world event notifications for NPC scripts and game logic processing.
 
 ## Key Features
 
@@ -18,6 +20,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Procedural generation tools for rooms and terrain.
 - Pathfinding algorithms and navmesh data for movement calculations.
 - Event scheduling for world-wide holidays or timed modifiers, communicating changes over gRPC.
+- Chunk-based world snapshots for backup and recovery.
 
 ## Dependencies
 

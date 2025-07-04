@@ -8,12 +8,15 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 
 - Lightweight custom service separate from Spring Boot.
 - Buffers incoming input during brief disconnects and clears it on connection loss.
+- Handles Telnet negotiation and character encoding quirks.
+- Works with the Reconnection Strategy to resume sessions transparently.
 
 ## Key Features
 
 - **Telnet Compatibility** — accepts standard MUD clients over TCP.
 - **WebSocket Bridging** — forwards all traffic to the gateway via WebSocket.
 - **Connection Buffering** — temporarily queues input to handle latency.
+- **Graceful Disconnects** — informs the Game Session Service when a client drops.
 
 ## Dependencies
 

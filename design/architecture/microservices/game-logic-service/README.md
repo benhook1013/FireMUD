@@ -8,12 +8,15 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 - Stateless service accessed over gRPC by other microservices.
 - Uses a modular command parser for extensibility.
+- Deterministic rule execution; random seeds come from the Game Session Service.
+- Fetches contextual world and entity data on demand via gRPC.
 
 ## Key Features
 
 - Command parsing and alias system.
 - Rule processing for combat and progression.
 - Emote and roleplay action handling.
+- Effect stacking and cooldown calculation.
 
 ## Dependencies
 

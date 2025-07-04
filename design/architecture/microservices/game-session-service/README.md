@@ -9,6 +9,8 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Coordinates with Redis to store volatile session state and command queues.
 - Communicates with other microservices exclusively via gRPC.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
+- Provides a single point of truth for current tick and world time.
+- Ensures atomic command execution using Redis transactions and Lua scripts.
 
 ## Key Features
 
@@ -17,6 +19,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - **Runtime Configuration** — stores runtime flag values created in the Game Design Service and activates published game versions.
 - **Termination Handling** — cleans up resources and logs results when a game ends.
 - **Instance Initialization** — starts new games from published templates.
+- **State Queries** — exposes gRPC methods to retrieve current game or player state for the web UI.
 
 ## Dependencies
 

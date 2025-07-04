@@ -7,6 +7,7 @@ Centralized logging and administration tools for the platform. Collects log data
 ## Architecture / Design Notes
 
 Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
+All admin APIs are secured via role-based access control integrated with the Account Service.
 
 ## Key Features
 
@@ -15,6 +16,7 @@ Uses the common stack outlined in [Logging & Monitoring](../../system-architectu
 - Tools for banning or restricting accounts.
 - Moderation policy definitions including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
+- Audit trail for account actions and world changes.
 
 ## Dependencies
 
