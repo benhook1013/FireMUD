@@ -103,7 +103,16 @@ This document outlines the **core functional and non-functional requirements** f
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
   - A **platform fee** applies to all transactions.
   - **External payment methods are not allowed** to ensure security and compliance.
-  - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
+   - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
+
+---
+
+### **2.9 Versioning & Runtime Configuration**
+
+- The **Game Design Service** publishes immutable game versions identified by a `version_id`.
+- Domain services copy design data by `version_id` and do not query the design database at runtime.
+- The **Game Session Service** activates the desired `version_id` when starting a game instance.
+- Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**.
 
 ---
 
