@@ -8,10 +8,12 @@ Provides chat, guild, and social networking features across games. Enables playe
 
 - Uses WebSocket channels for chat delivery.
 - Stores guild and friend relationships in PostgreSQL.
+- Integrates with the Logging & Admin Service for moderation events.
 
 ## Key Features
 
 - Global and guild chat rooms.
+- Private messaging and presence indicators.
 - Guild creation and membership management.
 - Cross-game friend lists.
 

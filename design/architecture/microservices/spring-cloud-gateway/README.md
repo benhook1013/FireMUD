@@ -7,12 +7,14 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
 - Event-driven updates synchronize game state across connected players.
 - Includes a fallback mechanism so players with unstable connections can rejoin seamlessly.
+- Applies rate limiting and authentication filters for admin endpoints.
 
 ## Key Features
 
 - Central API gateway and authentication point.
 - Real-time state synchronization for multiplayer actions.
 - Reconnection support for dropped clients.
+- Routes REST and gRPC traffic to appropriate backend services.
 
 ## Dependencies
 

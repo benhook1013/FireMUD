@@ -9,6 +9,7 @@ For details on how scripts are authored and executed safely, see [System Archite
 ## Architecture / Design Notes
 
 - Executes scripts in response to world or player events received via gRPC callbacks.
+- Scripts run inside a sandboxed engine to prevent malicious behavior.
 - AI computations are optimized for large worlds using tick-based batching.
 - NPCs that are far from active players are deprioritized and only "wake up" on interaction.
 
@@ -16,6 +17,7 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 - Scriptable quests and event triggers.
 - Persistent NPC memory and dynamic reactions.
+- Timers and delayed actions for asynchronous events.
 - On-demand AI execution to reduce CPU load.
 
 ## Dependencies
