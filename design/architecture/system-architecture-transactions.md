@@ -1,36 +1,121 @@
 # ⚙️ FireMUD System Architecture: Transaction Strategies
 
-This document explains how FireMUD coordinates data consistency across its independent microservices. It complements the [System Architecture Overview](./system-architecture-overview.md) by outlining patterns for cross-service workflows. Traditional distributed transactions are impractical in a polyglot environment, so the platform favors lighter approaches. Tick execution itself is handled atomically in Redis; see [Redis Architecture](./system-architecture-redis.md) and [Tick System](./system-architecture-ticks.md) for details on those local transactions.
+This document explains how FireMUD coordinates data consistency across its independent microservices. It distinguishes between **real-time gameplay commands** (executed within ticks using Redis) and **long-running business workflows** (executed via a Saga pattern using a shared orchestration library). It clarifies when sagas are needed — and when they are not.
 
 ---
 
-## 📚 Options Considered
+## 🧠 Terminology Clarification
 
-- **Two-Phase Commit (2PC)**
-  - Guarantees atomicity across services but adds heavy coordination overhead.
-  - Requires all services to share a transaction coordinator and can block progress during failures.
-- **Event-Driven Saga Pattern**
-  - Orchestrates a multi-step workflow as a sequence of local transactions.
-  - Each service emits an event after completing its step; compensating actions undo work on failure.
-- **Choreography with Asynchronous Messaging**
-  - Services react to published events without a centralized orchestrator.
-  - Simpler but harder to trace; compensations still required for rollbacks.
+| Term         | Meaning |
+|--------------|---------|
+| **Command**  | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained transaction**, backed by Redis. |
+| **Transaction** | A unit of work that must either fully succeed or be rolled back. Each in-game command is treated as an atomic transaction. |
+| **Tick**     | A scheduled gameplay loop slice. Each tick processes one command per entity and uses Redis for coordination, rollback, and fairness. Ticks are not atomic across all commands — each command is executed as an independent transaction. |
+| **Saga**     | A long-running, cross-service workflow composed of multiple local transactions. Used only for **non-gameplay**, out-of-band operations (e.g., account creation, game publishing). Sagas rely on compensating actions for rollback and eventual consistency. |
 
-## ✅ FireMUD Approach
+---
 
-FireMUD adopts the **Saga pattern** executed over **gRPC** calls rather than a message broker. Each service owns its data and exposes gRPC endpoints for local transaction steps. A lightweight orchestrator invokes these services in sequence, propagating transaction context between them. If a step fails, the orchestrator triggers compensating gRPC calls to roll back prior work.
+## 🎮 In-Game Command Transactions (No Sagas Needed)
 
-- **Consistency Level** — eventual consistency is acceptable for gameplay state that spans services.
-- **Failure Handling** — compensating calls roll back partial state, while the orchestrator logs unfinished sagas for manual review.
-- **Implementation** — the orchestrator stores Saga state in PostgreSQL and uses standard gRPC retry semantics to ensure commands are delivered.
+All real-time gameplay logic — movement, combat, item use, AI — is executed inside **ticks**. Each command is:
 
-This design keeps services loosely coupled while providing a clear strategy for multi-step operations such as account creation, game publishing, or in-game purchases.
+- Pulled from the command queue
+- Executed using deterministic game logic
+- Staged in Redis with rollback support via Lua
+- Committed only if successful
+- Automatically retried on failure (e.g., lock contention)
+
+This model provides:
+
+- **Per-command atomicity**
+- **Tick-level fairness and isolation**
+- **Crash-safe, replayable execution**
+- **No need for Saga orchestration**
+
+> 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md) for detail on how ticks provide transactional guarantees.
+
+---
+
+## 🧩 When Sagas *Are* Used (Out-of-Band Workflows)
+
+Sagas are only used for **non-tick, multi-service workflows** involving persistent state changes that cannot be coordinated via Redis. These include:
+
+| Use Case              | Description |
+|-----------------------|-------------|
+| **Account Creation**  | Create account → provision default character → initialize world state |
+| **Game Publishing**   | Validate and persist design → push to World Service → toggle publish flags |
+| **Admin Operations**  | Issue bans, content revocation, or entity cleanup with audit logging |
+| **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
+
+These workflows:
+- Happen **outside the tick loop**
+- Modify **persistent storage (PostgreSQL)** across multiple services
+- Require durable coordination and rollback capabilities
+
+---
+
+## ✅ FireMUD Saga Architecture
+
+FireMUD uses a **shared saga orchestration library**, not a separate microservice.
+
+### Characteristics:
+
+- **Orchestration**:
+  - Centralized in a **shared Java library module** (e.g., `firemud-saga-core`)
+  - Hosts define saga flows declaratively using a fluent API
+  - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
+  
+- **State Management**:
+  - All saga state is persisted in a **dedicated `saga` schema** (e.g., `saga_instances`, `saga_steps`)
+  - Tracks in-progress, completed, and failed workflows
+  - Supports retry, compensation, and alerting
+  
+- **Execution Model**:
+  - Steps are gRPC calls to owning services
+  - All steps are **idempotent**
+  - Compensation logic is registered via hooks
+  - Retried automatically or flagged for manual review
+
+### Fluent API Example:
+
+```java
+sagaBuilder("accountCreation")
+.step("createAccount", accountClient::createAccount)
+.step("provisionCharacter", entityClient::createPlayer)
+.step("assignStartingRoom", worldClient::placeInWorld)
+.onFailure("provisionCharacter", accountClient::deleteAccount)
+.run();
+```
+
+This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
+
+---
+
+## 🔁 When Not to Use Sagas
+
+Do **not** use sagas for:
+- Gameplay commands (combat, move, cast spell, AI)
+- Anything inside a tick
+- Transient state managed via Redis
+- Tasks that are already retryable via tick rescheduling
+
+Use Redis rollback + tick retries for fast, fair, and consistent gameplay handling.
+
+---
+
+## 🔭 Future Enhancements
+
+- **Saga Dashboard** for operators to inspect saga states and failures
+- **Timeout detection** and auto-recovery of stalled workflows
+- **Declarative flow definitions** via YAML or annotations
+- **Integration with logging/metrics** for saga observability
+
+---
 
 ## 📚 Related Documentation
 
 - [System Architecture Overview](./system-architecture-overview.md)
-- [Game Session Service](./microservices/game-session-service/README.md) — atomic command execution using Redis transactions
-- [Logging & Admin Service](./microservices/logging-admin-service/README.md)
-- [Redis Architecture](./system-architecture-redis.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
-
+- [Redis Architecture](./system-architecture-redis.md)
+- [Game Session Service](./microservices/game-session-service/README.md)
+- [Logging & Admin Service](./microservices/logging-admin-service/README.md)
