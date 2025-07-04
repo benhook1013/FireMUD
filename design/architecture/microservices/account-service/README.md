@@ -18,6 +18,7 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Profile management and email notifications.
 - Password reset and verification flows.
 - Banning and subscription tracking.
+- Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
 - Links accounts to player characters for ownership and permissions.
 - gRPC APIs for account creation, authentication, and profile queries.
 
@@ -58,6 +59,7 @@ The gRPC schemas for this service live in
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [User Journeys](../user-journeys.md#9-purchases-and-subscriptions) – payment and subscription workflow.
 
 ## Future Enhancements
 

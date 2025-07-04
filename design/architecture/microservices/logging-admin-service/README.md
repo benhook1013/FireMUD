@@ -17,6 +17,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Moderation policy definitions including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
+- Transaction logs for purchases and subscription events.
 
 ### Moderation Workflow
 
@@ -33,6 +34,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ## Dependencies
 
+- **Internal:** Account Service forwards account events and payment notifications.
 - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
