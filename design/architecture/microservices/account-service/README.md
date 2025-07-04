@@ -54,6 +54,8 @@ The gRPC schemas for this service live in
 ## 📚 Related Documentation
 
 - [Authentication & Authorization](../system-architecture-authentication.md)
+- [Security Architecture](../system-architecture-security.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 

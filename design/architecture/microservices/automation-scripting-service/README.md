@@ -55,6 +55,11 @@ stubs.
 ## 📚 Related Documentation
 
 - [System Architecture: Scripting & Automation](../system-architecture-scripting.md)
+- [Tick System and Runtime Design](../system-architecture-ticks.md)
+- [Redis Architecture](../system-architecture-redis.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [System Architecture Overview](../system-architecture-overview.md)
 
 ## Future Enhancements
 
