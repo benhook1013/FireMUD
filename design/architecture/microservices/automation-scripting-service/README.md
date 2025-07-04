@@ -23,6 +23,15 @@ For details on how scripts are authored and executed safely, see [System Archite
 - **Internal:** Game Logic Service for rule evaluation.
 - **External:** Redis for queuing automation tasks.
 
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## 📚 Related Documentation
+
+- [System Architecture: Scripting & Automation](../system-architecture-scripting.md)
+
 ## Future Enhancements
 
 - Web UI for creating and testing scripts.

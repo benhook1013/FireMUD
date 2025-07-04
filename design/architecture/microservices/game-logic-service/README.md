@@ -19,6 +19,15 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 - **Internal:** Entity Management Service for characters and items.
 
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](../system-architecture-overview.md)
+
 ## Future Enhancements
 
 - Scripting hooks for custom actions.

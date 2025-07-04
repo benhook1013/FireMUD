@@ -19,6 +19,15 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - **Internal:** Game Session Service and other microservices over gRPC.
 - **External:** Spring Cloud Gateway infrastructure.
 
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](../system-architecture-overview.md)
+
 ## Future Enhancements
 
 - Connection metrics and throttling.
