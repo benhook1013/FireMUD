@@ -75,6 +75,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Enforce single-session control per character (session takeover on new login)
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service
   - [ ] Plan for cross-region sharding and session handoff
+  - [ ] Emit gameplay analytics for operators
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
@@ -191,6 +192,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Allow players to report others for abuse/violations
   - [ ] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles
+  - [ ] Provide analytics dashboards for operators
+  - [ ] Define moderation policies including profanity filters
+  - [ ] Integrate Alertmanager for automated alerts
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions

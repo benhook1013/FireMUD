@@ -96,7 +96,8 @@ This document outlines the **core functional and non-functional requirements** f
 
 - **Admin dashboard** for monitoring and moderating hosted games.
 - **In-game reporting & ban system** for handling violations.
-- **Analytics & logging** for tracking player activity and game performance.
+- **Moderation policy definitions** including profanity filters.
+- **Central analytics dashboards and logging** for tracking player activity and game performance.
 - **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**.
 - **Monetization & Payment System**:
   - The platform integrates **Stripe or similar services** for in-game purchases.
