@@ -23,9 +23,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Write initial design for each microservice
   - [x] Investigate transaction support for microservices
     - See [Transaction Strategies](../architecture/system-architecture-transactions.md)
-    - Document gRPC endpoints and compensating actions
-    - Implement lightweight Saga orchestrator service
-    - Provide example workflows (e.g., user registration)
+    - [x] Document gRPC endpoints and compensating actions
+    - [x] Describe lightweight Saga orchestrator service
+    - [x] Provide example workflows (e.g., user registration)
   - [x] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
   - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
   - [x] Update README after all services are defined
@@ -36,7 +36,9 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
-    - [ ] Document REST endpoints and gRPC method flows in each microservice README
+  - [ ] Document REST endpoints and gRPC method flows in each microservice README
+  - [ ] Expand `docker-compose.yml` to include all services
+  - [ ] Create baseline Kubernetes manifests or Helm charts for deployment
 
 ---
 
