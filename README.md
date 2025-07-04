@@ -157,6 +157,8 @@ Before contributing, we recommend reviewing the following key documents:
 - **[Security Architecture](design/architecture/system-architecture-security.md)**: Understand how JWT secrets, TLS, and cross-service trust are managed.
 - **[Frontend Architecture](design/architecture/system-architecture-frontend.md)**: Learn how the React interface is structured and integrated with backend services.
 - **[Service Design Documents](design/architecture/microservices/README.md)**: Explore detailed designs for each microservice.
+- **[Core Requirements](design/project-management/core-requirements.md)**: Review the high-level product requirements for the platform.
+- **[Task List](design/project-management/task-list.md)**: Track planned features and development progress.
 - **[FAQ](FAQ.md)**: Browse frequently asked questions to get quick context.
 
 ---
