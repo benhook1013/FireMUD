@@ -13,6 +13,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**infrastructure/**](./infrastructure/) – Deployment environments, gateway design, and protocol bridging.
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
 - [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
+- [**repository-structure.md**](./repository-structure.md) – Layout of Gradle modules and repository files.
 
 ## Runtime Architecture
 
