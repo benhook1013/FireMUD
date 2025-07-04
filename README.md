@@ -154,31 +154,17 @@ Before contributing, we recommend reviewing the following key documents:
 
 ### Ways to Contribute
 
-- **Contribute Code**:
-  See our [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy,
-  coding standards, and how to submit a pull request.
-
-- **Review Pull Requests**:
-  Provide thoughtful, constructive feedback on open pull requests.
-
-- **Improve Documentation**:
-  Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
-
-- **Report Bugs or Suggest Features**:
-  Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
-
-- **Report Security Issues**:
-  If you discover a security vulnerability, please **do not** file a public issue.
-  Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net).
-  We take security seriously and will respond promptly.
+- **Contribute Code**: See our [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, coding standards, and how to submit a pull request.
+- **Review Pull Requests**: Provide thoughtful, constructive feedback on open pull requests.
+- **Improve Documentation**: Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
+- **Report Bugs or Suggest Features**: Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
+- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net). We take security seriously and will respond promptly.
 
 ---
 
 ### Additional Guidelines
 
-See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our
-AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and
-[Global Rules](design/project-management/ai-rules-global.md).
+See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and [Global Rules](design/project-management/ai-rules-global.md).
 
 ---
 
@@ -188,10 +174,7 @@ Your support can make a significant difference in the development and success of
 
 - **Contribute**: See the [Getting Started and Contributing](#getting-started-and-contributing) section for ways to contribute code, documentation, or ideas.
 - **Spread the Word**: Share the project with friends, colleagues, and on social media platforms to help us reach a wider audience.
-- **Financial Contributions**: *[TODO: Set up financial contribution options]*
-
-  We plan to set up options for financial support in the near future, including:
-
+- **Financial Contributions**: *[TODO: Set up financial contribution options]* We plan to set up options for financial support in the near future, including:
   - **Donate via PayPal**: *[Coming Soon]* <!-- TODO: Add PayPal donation link -->
   - **Sponsor on GitHub**: *[Coming Soon]* <!-- TODO: Set up GitHub Sponsors profile -->
   - **Patreon**: *[Coming Soon]* <!-- TODO: Create Patreon page -->
