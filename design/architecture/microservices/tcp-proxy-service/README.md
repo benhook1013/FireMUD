@@ -41,6 +41,11 @@ internal operations when communicating with other microservices:
 - **Internal:** Spring Cloud Gateway, Game Session Service.
 - **External:** None, runs as a standalone proxy.
 
+### Data Model
+
+The proxy is stateless. Any buffered input lives only in memory until forwarded
+to the gateway.
+
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
@@ -56,7 +61,9 @@ regenerated via `./gradlew generateProto` when the proto files change.
 
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Security Architecture](../system-architecture-security.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 
 ## Future Enhancements
 

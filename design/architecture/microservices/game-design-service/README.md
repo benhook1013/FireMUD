@@ -20,6 +20,13 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Version and patch note management for published games.
 - Import/export of design assets for sharing between game worlds.
 
+### Data Model
+
+- `game` table defines the project and its owner account.
+- `revision` table stores individual asset changes with author metadata.
+- `version` table groups revisions into immutable snapshots for publishing.
+- `runtime_flag` table holds feature flag definitions copied to the Game Session Service.
+
 ### Design Workflow
 
 1. Creators use the web UI to craft worlds, items, and scripts.
@@ -52,6 +59,9 @@ stubs with `./gradlew generateProto` whenever these files are updated.
 ## 📚 Related Documentation
 
 See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [System Architecture Overview](../system-architecture-overview.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 

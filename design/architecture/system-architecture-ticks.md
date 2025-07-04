@@ -1,6 +1,6 @@
 # ⏱️ FireMUD System Architecture: Tick System and Runtime Design
 
-📄 This document expands on the [Game Loop / Tick Model](./system-architecture-overview.md#⏱️-game-loop--tick-model) section of the FireMUD System Architecture Overview. It defines how ticks execute, resolve concurrency, handle crashes, and preserve deterministic, fair game logic under load.
+📄 This document expands on the [Game Loop / Tick Model](./system-architecture-overview.md#⏱️-game-loop--tick-model) section of the FireMUD System Architecture Overview. It defines how ticks execute, resolve concurrency, handle crashes, and preserve deterministic, fair game logic under load. Cross-service operations triggered by ticks follow the **gRPC-based Saga approach** in [Transaction Strategies](./system-architecture-transactions.md).
 
 > 🔗 For Redis keys, Lua-based atomicity, and operational guarantees, see the [Redis Architecture](./system-architecture-redis.md).
 
@@ -212,3 +212,11 @@ This supports **idempotent, replayable** ticks — without risk of duplicate eff
 - ✅ No in-service volatile state — everything recoverable via Redis
 
 > FireMUD treats time as **localized pulses**, not a global clock. Each tick is a self-contained transaction — safely composing gameplay logic in a world that never stops evolving.
+
+---
+
+📚 **Related Documentation**
+
+- [Redis Architecture](./system-architecture-redis.md)
+- [Transaction Strategies](./system-architecture-transactions.md)
+- [System Architecture Overview](./system-architecture-overview.md)

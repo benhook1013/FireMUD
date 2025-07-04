@@ -17,6 +17,13 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Moderation policy definitions including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
+- Transaction logs for purchases and subscription events.
+
+### Data Model
+
+- Log events are stored in Elasticsearch indexes for search.
+- `moderation_action` table records bans and warnings with timestamps.
+- `feature_flag` table mirrors active runtime settings for auditing.
 
 ### Moderation Workflow
 
@@ -33,6 +40,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ## Dependencies
 
+- **Internal:** Account Service forwards account events and payment notifications.
 - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
@@ -50,6 +58,7 @@ these change, run `./gradlew generateProto` to refresh generated sources.
 
 See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for details on the shared observability stack.
 - [Security Architecture](../system-architecture-security.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements

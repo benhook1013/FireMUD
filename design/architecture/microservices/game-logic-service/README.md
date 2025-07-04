@@ -20,6 +20,12 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Environmental effect resolution (weather, lighting) influencing gameplay.
 - Economy logic for trading, shops, and pricing adjustments.
 
+### Data Model
+
+This service is largely stateless. It relies on:
+- Contextual entity and world data fetched from other services via gRPC.
+- Temporary command queues stored in Redis by the Game Session Service.
+
 ### Command Flow
 
 1. Commands are queued in Redis by the Game Session Service.
@@ -49,6 +55,9 @@ the generated code with `./gradlew generateProto` after making changes.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Tick System and Runtime Design](../system-architecture-ticks.md)
+- [Redis Architecture](../system-architecture-redis.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
