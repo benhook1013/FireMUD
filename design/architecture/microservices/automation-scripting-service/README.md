@@ -20,6 +20,12 @@ For details on how scripts are authored and executed safely, see [System Archite
 - Timers and delayed actions for asynchronous events.
 - On-demand AI execution to reduce CPU load.
 
+### Data Model
+
+- `script` table holds the compiled component definitions and version metadata.
+- `npc_memory` table stores persistent state for NPC behaviors.
+- `automation_queue` keys in Redis buffer triggered events until a script runs.
+
 ### Script Lifecycle
 
 - Scripts reside in the Automation & Scripting Service database and are versioned independently from running game sessions.

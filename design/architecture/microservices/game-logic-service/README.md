@@ -20,6 +20,12 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Environmental effect resolution (weather, lighting) influencing gameplay.
 - Economy logic for trading, shops, and pricing adjustments.
 
+### Data Model
+
+This service is largely stateless. It relies on:
+- Contextual entity and world data fetched from other services via gRPC.
+- Temporary command queues stored in Redis by the Game Session Service.
+
 ### Command Flow
 
 1. Commands are queued in Redis by the Game Session Service.
