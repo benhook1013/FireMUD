@@ -53,6 +53,14 @@ The frontend uses **Vite** for fast development and production builds:
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
 
+## 🎨 Game-Specific Customization (Planned)
+
+FireMUD aims to let each hosted game supply its own UI styling and layout tweaks.
+
+- The React app will load theme files and configuration based on the game's `tenantId`.
+- Creators can override Material-UI themes, logos, and optionally define extra routes.
+- Core components remain shared so feature updates reach all games without forks.
+
 ---
 
 This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend services or features can follow the same patterns for consistency.
