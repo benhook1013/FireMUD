@@ -5,25 +5,24 @@ This document outlines high-level design and technology assumptions for the Fire
 ## Backend
 
 - **Language**: Java
-- **Architecture**: Microservices
 - **Framework**: Java Spring Framework
-- **Database**: PostgreSQL
-- **Caching**: Redis for transient session and gameplay state
-- **Redis Consistency**: Lua scripts enforce atomic updates with `WAIT` for replica acknowledgment
-- **Database Access**: Spring Data JPA
+- **Architecture**: Microservices
+- **Containerization**: Docker
+- **Orchestration**: Kubernetes
 - **Service Discovery**:
   - **Local Development**: Docker internal DNS-based discovery
   - **Production**: Kubernetes DNS-based discovery
 - **API Gateway**: Spring Cloud Gateway
 - **TCP Proxy Service** bridges Telnet clients to the Gateway
-- **Inter-service Communication**: gRPC over mTLS
+- **Inter-Service Communication**: gRPC secured with mTLS
 - **Real-Time Networking**: WebSocket/TCP
-- **Inter-Service Communication**: gRPC
+- **Database**: PostgreSQL
+- **Database Access**: Spring Data JPA
+- **Caching**: Redis for transient session and gameplay state
+- **Redis Consistency**: Lua scripts enforce atomic updates with `WAIT` for replica acknowledgment
 - **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service
 - **Game Session Service** orchestrates ticks and runtime flags using Redis
 - **Single Session** per character with layered reconnection (Proxy → Gateway → Session)
-- **Containerization**: Docker
-- **Orchestration**: Kubernetes
 - **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Payment Gateway**: Stripe (with custom subscription integration)
