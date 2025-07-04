@@ -40,6 +40,22 @@ Build all modules with:
 
 Gradle compiles the services and prepares Docker images using the included Dockerfiles.
 
+## Lombok and MapStruct
+
+The microservices use **Lombok** to cut down on boilerplate and **MapStruct** for DTO mapping. Each service's `build.gradle.kts` already declares these dependencies:
+
+```kotlin
+dependencies {
+    implementation("org.mapstruct:mapstruct:1.5.5.Final")
+    annotationProcessor("org.mapstruct:mapstruct-processor:1.5.5.Final")
+
+    compileOnly("org.projectlombok:lombok:1.18.30")
+    annotationProcessor("org.projectlombok:lombok:1.18.30")
+}
+```
+
+Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so Lombok and MapStruct can generate code during compilation.
+
 ## Running with Docker Compose
 
 The `docker-compose.yml` file (to be added in a future update) orchestrates all services for local development. Launch the stack with:
