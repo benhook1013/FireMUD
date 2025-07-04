@@ -21,20 +21,23 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
-  - [ ] Investigate transaction support for microservices
+  - [x] Investigate transaction support for microservices
   - [x] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
   - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
   - [x] Update README after all services are defined
   - [x] Finalize architecture design documentation and diagrams
+  - [ ] Finalize gRPC proto definitions and database schema diagrams for each microservice
 
 ---
 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
 - [x] Create Gradle modules for all services with placeholder sources
 - [ ] Add base Spring Boot Application classes for each service
+- [ ] Generate skeleton controllers and service classes for each microservice
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [ ] Implement common request/response DTOs for inter-service communication
+  - [ ] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
   - [ ] Implement centralized logging utilities
   - [ ] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [ ] Implement database connection utilities (PostgreSQL, Redis connectors)
@@ -56,8 +59,9 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
-- [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
+  - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
+  - [ ] Add initial protobuf IDL files for all microservices
 
 ---
 
