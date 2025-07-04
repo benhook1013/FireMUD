@@ -35,8 +35,7 @@ Despite their differences, both protocols are normalized into the same internal 
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible).
-- Handled by a dedicated **TCP Proxy Service** built with Spring Boot like the
-  rest of the platform's services.
+- Handled by a dedicated **TCP Proxy Service**.
 - The service:
   - Accepts and parses Telnet line-based input.
   - Normalizes the connection.
