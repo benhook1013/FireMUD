@@ -1,3 +1,5 @@
+# Architecture Overview
+
 The architecture section describes the platform infrastructure and each microservice.
 
 - [**infrastructure/**](./infrastructure/) – Deployment environments, gateway design, and protocol bridging.
