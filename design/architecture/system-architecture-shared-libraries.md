@@ -1,6 +1,6 @@
 # 📚 Shared Libraries Overview
 
-FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules.
+FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.fire-devops.firemud.shared` with the **artifact ID** `firemud-common`.
 
 ---
 
@@ -23,6 +23,8 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 - **Security Utilities** – JWT creation/verification and role helpers aligned with the [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – Spring Boot configuration helpers for PostgreSQL and Redis, reducing boilerplate setup.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
+- **Spring Boot Starter** – Lightweight autoconfiguration for logging, JWT, Redis and PostgreSQL so services can opt in.
+- **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
 
@@ -47,14 +49,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
    }
    ```
 3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
-
----
-
-## ❓ Open Questions & Decisions
-
-- **Package naming** – choose a consistent group ID/artifact ID for the library.
-- **Autoconfiguration** – decide whether to ship Spring Boot starter modules.
-- **Release workflow** – confirm how versions are tagged and published in the CI/CD pipeline.
-- **Additional helpers** – determine if gRPC stubs or other utilities belong here.
+4. Automate tagging and version bumps using `semantic-release`.
+5. Deploy artifacts to GitHub Packages via CI/CD. If needed, publish a separate `firemud-protos` artifact containing only the shared gRPC definitions.
 
 This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
