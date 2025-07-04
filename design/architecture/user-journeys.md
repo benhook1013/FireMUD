@@ -78,4 +78,27 @@ Operators monitor the game and enforce rules using the [Logging & Admin Service]
 
 ---
 
+## 8. Patch and Update a Live Game
+
+1. **Iterate on Content** – Creators modify worlds, items, or rules using the Game Design Service.
+2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
+3. **Restart Game Instance** – Administrators instruct the Game Session Service to load the new `version_id`.
+
+```plaintext
+Game Design Service (publish) → Game Session Service (restart)
+```
+
+---
+
+## 9. Purchases and Subscriptions
+
+1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles purchases and subscription renewals via Stripe.
+2. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for reporting and refunds.
+
+```plaintext
+Player → Account Service → Logging & Admin Service
+```
+
+---
+
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
