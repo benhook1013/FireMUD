@@ -90,6 +90,8 @@ This document outlines the **core functional and non-functional requirements** f
   - The platform offers **AI & scripting tools** for creating deep, dynamic game interactions.
   - Games can define **unique AI behaviors, quest logic, and in-game events** without requiring custom code deployments.
   - AI behaviors should be flexible enough to allow **autonomous world simulation**, making the game feel persistent and alive.
+  - Scripts are authored through a **component-based DSL** with a **visual editor**.
+  - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse.
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance.
 
 ### **2.8 Moderation, Administration & Monetization**
@@ -114,6 +116,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Domain services copy design data by `version_id` and do not query the design database at runtime.
 - The **Game Session Service** activates the desired `version_id` when starting a game instance.
 - Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**.
+- The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time.
 
 ---
 
@@ -133,6 +136,7 @@ This document outlines the **core functional and non-functional requirements** f
 
 - **PostgreSQL** is the primary database for game world, entity, and account storage.
 - **Redis** stores transient gameplay and session state only; all authoritative data remains in PostgreSQL.
+- **Database migrations are managed per service using [Flyway](../architecture/system-architecture-database-migrations.md).**
 
 ### **3.3 Deployment Model**
 
@@ -143,6 +147,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
 - **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery.
+- Production databases are snapshotted **every 15 minutes** with **24 hours of retention**.
 
 
 ### **3.4 Gameplay Session Architecture**
