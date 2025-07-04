@@ -7,7 +7,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ## Architecture / Design Notes
 
 - Provides REST/gRPC APIs for editing game data.
-- Works closely with World Management and Automation services to apply changes.
+- Works closely with World Management and Automation & Scripting Service to apply changes.
 - Stores versioned configuration data so new game instances can be generated from templates.
 
 ## Key Features
@@ -20,7 +20,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 ## Dependencies
 
-- **Internal:** World Management Service for map data, Automation Service for scripts.
+- **Internal:** World Management Service for map data, Automation & Scripting Service for scripts.
 - **External:** PostgreSQL for storing design assets.
 
 ## 📚 Related Documentation
