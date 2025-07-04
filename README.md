@@ -85,7 +85,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
 - **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
-- **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager
+- **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](design/architecture/system-architecture-logging-monitoring.md))
 
 #### Monetization
 
