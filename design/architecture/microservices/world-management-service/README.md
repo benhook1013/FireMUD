@@ -43,6 +43,12 @@ The World Management Service stores and manages game world data such as rooms, r
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+The gRPC contract for world operations is located in
+[../../../../protos/world-management/v1](../../../../protos/world-management/v1).
+Run `./gradlew generateProto` to regenerate sources after editing these files.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)

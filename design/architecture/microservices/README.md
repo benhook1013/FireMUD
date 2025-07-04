@@ -37,6 +37,10 @@ For cross-service systems (e.g., networking, infrastructure), refer to:
 
 > See [**Infrastructure Overview**](../infrastructure/README.md) for shared architecture, deployment environments, and networking patterns.
 
+All gRPC schema files are organized under the top-level
+[`protos/`](../../protos) directory. Individual service documents link to their
+corresponding versioned proto folders.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)

@@ -37,6 +37,12 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+Gateway-related proto definitions are stored in
+[../../../../protos/spring-cloud-gateway/v1](../../../../protos/spring-cloud-gateway/v1).
+After edits, run `./gradlew generateProto` to regenerate gateway stubs.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)

@@ -38,6 +38,12 @@ Executes the core gameplay rules and command parsing. It processes player action
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+gRPC service definitions can be found in
+[../../../../protos/game-logic/v1](../../../../protos/game-logic/v1). Rebuild
+the generated code with `./gradlew generateProto` after making changes.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)

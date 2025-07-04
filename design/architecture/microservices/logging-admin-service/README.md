@@ -40,6 +40,12 @@ All admin APIs are secured via role-based access control integrated with the Acc
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+API schemas are kept in
+[../../../../protos/logging-admin/v1](../../../../protos/logging-admin/v1). When
+these change, run `./gradlew generateProto` to refresh generated sources.
+
 ## 📚 Related Documentation
 
 See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for details on the shared observability stack.

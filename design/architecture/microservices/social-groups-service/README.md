@@ -41,6 +41,13 @@ Provides chat, guild, and social networking features across games. Enables playe
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+The social APIs are defined in
+[../../../../protos/social-groups/v1](../../../../protos/social-groups/v1).
+Regenerate the service stubs with `./gradlew generateProto` whenever the proto
+files change.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)

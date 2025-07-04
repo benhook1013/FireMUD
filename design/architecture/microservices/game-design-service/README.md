@@ -43,6 +43,12 @@ Offers tools for building worlds, items, actions, and events that make up each g
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+The service API contract resides in
+[../../../../protos/game-design/v1](../../../../protos/game-design/v1). Generate
+stubs with `./gradlew generateProto` whenever these files are updated.
+
 ## 📚 Related Documentation
 
 See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
