@@ -197,6 +197,7 @@ Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on:
 - Code style
 - Testing requirements
 - How to submit a PR
+- **AI Coding Standards**: [Local Rules](design/project-management/ai-rules-local.md) and [Global Rules](design/project-management/ai-rules-global.md)
 
 ---
 
