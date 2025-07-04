@@ -8,17 +8,17 @@ This directory contains core documentation for the shared infrastructure that po
 
 | Document                          | Description                                                                 |
 |-----------------------------------|-----------------------------------------------------------------------------|
-| [Gateway Architecture](./gateway-architecture.md)       | Details on Spring Cloud Gateway routing, WebSocket support, and service access. |
-| [Deployment Environments](./deployment-environments.md) | Describes how Docker Compose and Kubernetes are used in dev/prod setups.   |
-| [Protocol Bridging](./protocol-bridging.md)             | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |
-| [Redis Architecture](../system-architecture-redis.md)   | Describes where Redis is deployed and how session state is stored. |
-| [CI/CD Pipeline](../system-architecture-cicd.md)        | Overview of GitHub Actions workflows for building, testing, and deployment. |
 | [System Architecture Overview](../system-architecture-overview.md) | High-level design with observability and service interactions. |
 | [System Architecture Diagram](../system-architecture-diagram.md) | Visual representation of component relationships and client flows. |
 | [System Context Diagram](../system-context-diagram.md) | Shows clients, DMZ components, internal services, and datastores. |
+| [Gateway Architecture](./gateway-architecture.md)       | Details on Spring Cloud Gateway routing, WebSocket support, and service access. |
+| [Protocol Bridging](./protocol-bridging.md)             | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |
+| [Deployment Environments](./deployment-environments.md) | Describes how Docker Compose and Kubernetes are used in dev/prod setups.   |
+| [Redis Architecture](../system-architecture-redis.md)   | Describes where Redis is deployed and how session state is stored. |
 | [Security Architecture](../system-architecture-security.md) | TLS termination, mTLS usage, and network policy overview. |
-| [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) | Snapshot schedules and restore workflow. |
 | [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md) | Conventions for service APIs. |
+| [CI/CD Pipeline](../system-architecture-cicd.md)        | Overview of GitHub Actions workflows for building, testing, and deployment. |
+| [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) | Snapshot schedules and restore workflow. |
 
 ---
 
@@ -51,6 +51,6 @@ For example:
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
-- [Deployment Environments](./deployment-environments.md)
 - [Gateway Architecture](./gateway-architecture.md)
+- [Deployment Environments](./deployment-environments.md)
 - [Protocol Bridging](./protocol-bridging.md)
