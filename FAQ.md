@@ -6,30 +6,30 @@ This document collects common questions and answers about the FireMUD Game Platf
 
 ## General
 
-- **What is the purpose of FireMUD?**  
+- **What is the purpose of FireMUD?**
   FireMUD is a modular platform for hosting and creating text-based MUD games. It provides real-time multiplayer services and integrated tools for game creators.
 
-- **Is FireMUD open source?**  
-  The project is released under the Business Source License 1.1, which converts to the Apache 2.0 License in April 2027. Non-commercial use is permitted without a separate license.
+- **Is FireMUD open source?**
+  The project is released under the Business Source License 1.1. Each version automatically switches to the Apache 2.0 License two years after it is published. Non-commercial use is permitted without a separate license.
 
 ---
 
 ## Architecture and Design
 
-- **What technologies does FireMUD use?**  
+- **What technologies does FireMUD use?**
   The backend is composed of Java Spring Boot microservices communicating through gRPC. The web frontend is built with React and Material‑UI. Data is stored in PostgreSQL, while Redis holds only transient session and gameplay state.
 
-- **Why a microservice architecture?**  
+- **Why a microservice architecture?**
   Separating functionality into services like account management, world management, and session management keeps the platform modular and allows each part to scale independently.
 
 ---
 
 ## Development and Contribution
 
-- **How can I contribute to FireMUD?**  
+- **How can I contribute to FireMUD?**
   Fork this repository, create a feature branch, make your changes, and open a pull request against `main`. Follow the coding standards described in the README and design documents.
 
-- **Where do I find design resources?**  
+- **Where do I find design resources?**
   The `design/` directory contains architecture diagrams, service descriptions, and planning documents that explain how the system fits together.
 
 ---
@@ -42,9 +42,15 @@ This document collects common questions and answers about the FireMUD Game Platf
 - **Can GitHub Actions work with Docker and Kubernetes?**
   Yes. GitHub Actions can build Docker images, run tests, and push images to a registry. From there you can deploy those images to any Kubernetes cluster using actions that invoke `kubectl` or Helm. Many projects use this workflow for CI/CD.
 
+- **How are new versions published?**
+  Each FireMUD service is tagged and released through GitHub Actions. The resulting Docker images are pushed to a registry and deployed to Kubernetes. Every release enters its own two‑year BSL period before converting to Apache 2.0.
+
+- **How are mTLS certificates issued?**
+  The Kubernetes cluster runs `cert-manager`, which automatically issues and renews TLS and mTLS certificates for each service. Certificates are stored as Kubernetes Secrets and mounted into the pods.
+
 ---
 
 ## Other
 
-- **Who maintains FireMUD?**  
+- **Who maintains FireMUD?**
   The project is led by Ben Hook under the Fire‑DevOps.net umbrella. Contact details are listed in the README.

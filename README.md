@@ -13,9 +13,7 @@
 
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
-*This project is licensed under the [Business Source License 1.1](LICENSE.md). For common questions, please refer to our [FAQ](FAQ.md).* 
-
-*The BSL automatically converts to the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) on April 2, 2027, as noted in [LICENSE.md](LICENSE.md) and [FAQ.md](FAQ.md). Each new FireMUD release starts its own two‑year BSL period, so the conversion date rolls forward with every version.*
+*This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
 
 ---
 

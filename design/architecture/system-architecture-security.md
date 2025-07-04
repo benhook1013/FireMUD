@@ -106,7 +106,7 @@ These controls are not yet implemented but are expected to strengthen security a
 
 ---
 
-📚 Related:
+## 📚 Related Documentation
 
 - [Authentication & Authorization](./system-architecture-authentication.md)
 - [Redis Architecture](./system-architecture-redis.md)

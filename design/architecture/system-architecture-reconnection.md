@@ -12,8 +12,8 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 | **Spring Cloud Gateway** | Stateless WebSocket passthrough; re-establishes backend connection automatically |
 | **Game Session**   | Restores session from Redis; rebinds socket, tick region, and timers          |
 
-Each layer handles fault tolerance independently.  
-**Only client connection loss requires reauthentication.**  
+Each layer handles fault tolerance independently.
+**Only client connection loss requires reauthentication.**
 Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remains connected.
 
 ---
@@ -36,7 +36,7 @@ Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remai
 
 ### **Game Session Service**
 
-- Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info  
+- Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info
 - On reconnect, rebinds:
   - Socket connection
   - Tick region context
@@ -93,7 +93,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 ---
 
-📚 Related:
+## 📚 Related Documentation
 
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [Redis Architecture](./system-architecture-redis.md)

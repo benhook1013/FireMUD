@@ -18,7 +18,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   itself does not hold session state between reconnects
 
 > **Important:**
-> Spring Cloud Gateway is responsible for routing **only external client requests**.  
+> Spring Cloud Gateway is responsible for routing **only external client requests**.
 > **Internal microservice-to-microservice communication does not pass through the Gateway**.
 > Microservices use Kubernetes native service discovery and DNS for direct communication.
 > Services communicate with each other over **gRPC**.
@@ -96,7 +96,7 @@ Spring profiles (`application-dev.yml`, `application-prod.yml`) are used to conf
 
 ---
 
-## 📚 Related Docs
+## 📚 Related Documentation
 
 - [Infrastructure Overview](./README.md)
 - [Deployment Environments](./deployment-environments.md)

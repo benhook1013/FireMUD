@@ -14,7 +14,7 @@ All clients — whether connecting via Telnet or WebSocket — must authenticate
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
-Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss).  
+Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss).
 If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes gameplay seamlessly.
 
 > 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
@@ -37,7 +37,7 @@ This enables:
 - Forced logins (e.g., "kick and take over")
 - Seamless resumption without gameplay loss
 
-> 🔒 All session rebinding is enforced by the Game Session Service using Redis locks.  
+> 🔒 All session rebinding is enforced by the Game Session Service using Redis locks.
 > 🔗 See [Redis Session Keys](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding)
 
 ---
@@ -121,7 +121,7 @@ The Game Session Service is responsible for:
 
 ---
 
-📚 Related:
+## 📚 Related Documentation
 
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
