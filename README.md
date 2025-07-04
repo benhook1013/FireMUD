@@ -10,7 +10,6 @@
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
-
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
 *This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
@@ -103,12 +102,12 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Design Goals
 
 1. **Modularity**: Independently scalable and maintainable services.
-1. **Flexibility**: Extensible features for diverse gameplay and customization.
-1. **Performance**: Optimized for real-time interactions and low latency.
-1. **User-Friendly Creation**: Intuitive tools for game creators.
-1. **Community Engagement**: Facilitate a vibrant community of players and creators.
-1. **Security**: Ensure data protection and secure interactions across services.
-1. **Accessibility**: Provide an inclusive gaming experience by ensuring the platform is accessible to all players, including those who are visually impaired or blind, through compatibility with screen readers and other assistive technologies.
+2. **Flexibility**: Extensible features for diverse gameplay and customization.
+3. **Performance**: Optimized for real-time interactions and low latency.
+4. **User-Friendly Creation**: Intuitive tools for game creators.
+5. **Community Engagement**: Facilitate a vibrant community of players and creators.
+6. **Security**: Ensure data protection and secure interactions across services.
+7. **Accessibility**: Provide an inclusive gaming experience by ensuring the platform is accessible to all players, including those who are visually impaired or blind, through compatibility with screen readers and other assistive technologies.
 
 ---
 

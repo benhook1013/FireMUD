@@ -125,7 +125,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement event-driven logic processing (triggers, world events)
   - [ ] Implement action aliases system (custom command mappings)
 
- - [ ] **Develop Automation & Scripting Service**
+- [ ] **Develop Automation & Scripting Service**
   - [ ] Implement state-driven & event-driven NPC behaviors
   - [ ] Implement procedural world generation
   - [ ] Implement scripted events for game mechanics and NPC interactions
