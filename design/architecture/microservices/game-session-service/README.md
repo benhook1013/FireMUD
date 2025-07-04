@@ -53,6 +53,11 @@ Service definitions reside in
  - [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) — how game instances load published versions and runtime flags.
  - [Reconnection Strategy](../system-architecture-reconnection.md)
  - [Authentication & Authorization](../system-architecture-authentication.md)
+- [Tick System and Runtime Design](../system-architecture-ticks.md)
+- [Redis Architecture](../system-architecture-redis.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [System Architecture Overview](../system-architecture-overview.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 

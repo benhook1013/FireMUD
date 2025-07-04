@@ -56,6 +56,7 @@ regenerated via `./gradlew generateProto` when the proto files change.
 
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Security Architecture](../system-architecture-security.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
