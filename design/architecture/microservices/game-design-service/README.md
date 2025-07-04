@@ -20,6 +20,19 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Version and patch note management for published games.
 - Import/export of design assets for sharing between game worlds.
 
+### Design Workflow
+
+1. Creators use the web UI to craft worlds, items, and scripts.
+2. Changes are staged as revisions with metadata and author information.
+3. Revisions are grouped into versions that can be published to runtime.
+
+### gRPC APIs
+
+- `SaveRevision` – persists a new or updated design asset.
+- `PublishVersion` – freezes a set of revisions and notifies downstream services.
+- `ListVersions` – enumerates published versions for selection when creating a
+  game instance.
+
 ## Dependencies
 
 - **Internal:** World Management Service for map data, Automation & Scripting Service for scripts.

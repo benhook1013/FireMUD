@@ -18,6 +18,17 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Emote and roleplay action handling.
 - Effect stacking and cooldown calculation.
 
+### Command Flow
+
+1. Commands are queued in Redis by the Game Session Service.
+2. This service fetches the next command, loads the required context, and
+   resolves the action to a rule engine module.
+3. Results are pushed back to the session queue for delivery to players.
+
+### gRPC APIs
+
+- `ExecuteCommand` – evaluates a parsed command and returns the outcome.
+
 ## Dependencies
 
 - **Internal:** Entity Management Service for characters and items.

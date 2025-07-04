@@ -18,6 +18,19 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 
+### Moderation Workflow
+
+- Operators review flagged logs through the web UI.
+- Actions such as bans or warnings are issued via secured API calls.
+- Events are forwarded to the Account Service for enforcement and stored for
+  compliance purposes.
+
+### gRPC/REST APIs
+
+- `QueryLogs` – streams filtered log entries for analysis.
+- `ApplyModerationAction` – bans or restricts an account based on policy.
+- `ToggleFeatureFlag` – updates runtime configuration values.
+
 ## Dependencies
 
 - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
