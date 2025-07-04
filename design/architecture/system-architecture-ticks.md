@@ -88,16 +88,16 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 
 Each tick proceeds as follows:
 
-1. **Collect Actions**  
+1. **Collect Actions**
    From the command queues of active entities in the tick region
 
-2. **Resolve Fairly**  
+2. **Resolve Fairly**
    Sort by timestamp, stat priority, or custom policy; only one action per entity is executed per tick
 
-3. **Apply Effects**  
+3. **Apply Effects**
    Mutate entity state (e.g., HP, inventory, buffs, position)
 
-4. **Trigger Events**  
+4. **Trigger Events**
    Run regeneration, room scripts, NPC behaviors, AI-driven commands — all use the same command queue model
 
 > Note: Game Logic Service resolves each action statelessly and does not participate in commit or rollback phases — those are fully managed by the Game Session Service via Redis.
