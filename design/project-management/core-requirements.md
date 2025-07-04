@@ -100,7 +100,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **In-game reporting & ban system** for handling violations.
 - **Moderation policy definitions** including profanity filters.
 - **Central analytics dashboards and logging** for tracking player activity and game performance.
-- **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**.
+- **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for details.
 - **Monetization & Payment System**:
   - The platform integrates **Stripe or similar services** for in-game purchases.
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
@@ -115,7 +115,7 @@ This document outlines the **core functional and non-functional requirements** f
 - The **Game Design Service** publishes immutable game versions identified by a `version_id`.
 - Domain services copy design data by `version_id` and do not query the design database at runtime.
 - The **Game Session Service** activates the desired `version_id` when starting a game instance.
-- Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**.
+- Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
 - The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time.
 
 ---

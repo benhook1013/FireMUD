@@ -74,7 +74,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement tick orchestration using Redis for command queues
   - [ ] Persist session state in Redis for reconnect recovery
   - [ ] Enforce single-session control per character (session takeover on new login)
-  - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service
+  - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [ ] Plan for cross-region sharding and session handoff
   - [ ] Emit gameplay analytics for operators
 - [ ] **Expand Game Design Service**
@@ -195,7 +195,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Collect logs from all services and provide search dashboards
   - [ ] Allow players to report others for abuse/violations
   - [ ] Store logs for admin moderation and auditing
-  - [ ] Expose runtime feature flag toggles
+  - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [ ] Provide analytics dashboards for operators
   - [ ] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts

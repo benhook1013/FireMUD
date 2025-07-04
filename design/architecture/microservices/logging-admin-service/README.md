@@ -14,7 +14,7 @@ Uses the common stack outlined in [Logging & Monitoring](../../system-architectu
 - Basic analytics dashboards for operators.
 - Tools for banning or restricting accounts.
 - Moderation policy definitions including profanity filters.
-- UI and APIs for toggling runtime feature flags.
+- UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 
 ## Dependencies
 
