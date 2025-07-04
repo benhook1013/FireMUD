@@ -48,7 +48,7 @@ Each service folder typically includes:
 
 - `*_service.proto` — defines the gRPC service and its RPC methods
 - `*_types.proto` — defines request/response messages and shared types
-- Optional `*_events.proto` — streaming or pubsub interfaces
+- Optional `*_events.proto` — server-side streaming RPCs for event notifications (no separate message bus)
 
 Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `protos/shared/`.
 

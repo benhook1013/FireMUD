@@ -6,7 +6,7 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 
 ## Architecture / Design Notes
 
-- Event-driven execution engine triggered by world or player events.
+- Executes scripts in response to world or player events received via gRPC callbacks.
 - AI computations are optimized for large worlds using tick-based batching.
 - NPCs that are far from active players are deprioritized and only "wake up" on interaction.
 

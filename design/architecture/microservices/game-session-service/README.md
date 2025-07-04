@@ -8,7 +8,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - Coordinates with Redis to store volatile session state and command queues.
 - Communicates with other microservices exclusively via gRPC.
-- Emits lifecycle events so other services can react to games starting or ending.
+- Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 
 ## Key Features
 
