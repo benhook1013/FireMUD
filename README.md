@@ -17,6 +17,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 ## Start Here
 
 For an overview of all architecture and design documents, see [Architecture Overview](design/architecture/README.md).
+See [Repository Structure](docs/REPO_STRUCTURE.md) for module layout.
 
 ---
 
@@ -31,6 +32,7 @@ For an overview of all architecture and design documents, see [Architecture Over
   - [Microservices](#microservices)
   - [Service Interactions](#service-interactions)
 - [Developer Setup](./DEVELOPER_SETUP.md)
+- [Repository Structure](docs/REPO_STRUCTURE.md)
 - [Getting Started and Contributing](#getting-started-and-contributing)
   - [Learn About the Platform](#learn-about-the-platform)
   - [Ways to Contribute](#ways-to-contribute)
