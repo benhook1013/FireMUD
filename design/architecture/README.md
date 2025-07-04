@@ -12,6 +12,10 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
 - [**system-architecture-database-migrations.md**](./system-architecture-database-migrations.md) – How Flyway manages schema changes per service.
 - [**system-architecture-grpc.md**](./system-architecture-grpc.md) – Conventions for proto layout, versioning, and tooling.
+- [**system-architecture-logging-monitoring.md**](./system-architecture-logging-monitoring.md) – Logging and observability stack.
+- [**system-architecture-multi-tenancy.md**](./system-architecture-multi-tenancy.md) – Hosting multiple games on shared infrastructure.
+- [**system-architecture-scripting.md**](./system-architecture-scripting.md) – Automation and scripting framework.
+- [**system-architecture-shared-libraries.md**](./system-architecture-shared-libraries.md) – Common libraries for microservices.
 - [**system-architecture-authentication.md**](./system-architecture-authentication.md) – Authentication mechanisms and session handling.
 - [**system-architecture-security.md**](./system-architecture-security.md) – Cross-service security and secret management.
 - [**system-architecture-redis.md**](./system-architecture-redis.md) – Redis deployment topology and usage patterns.
