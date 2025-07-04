@@ -112,7 +112,7 @@ State changes are first **staged in Redis** under keys like `tick:pending:{regio
 
 - Only committed if **all actions succeed**
 - Timeout or failed actions are **excluded** and **rescheduled with priority**
-- Commit and rollback are coordinated by Game Session using Lua scripts in Redis
+- Commit and rollback are coordinated by Game Session Service using Lua scripts in Redis
 
 This ensures:
 
@@ -170,14 +170,14 @@ Durations can be modified on the fly:
 
 ## 💥 Crash Recovery and Replay
 
-If a tick crashes mid-flight (e.g., Game Session restart), Redis preserves:
+If a tick crashes mid-flight (e.g., Game Session Service restart), Redis preserves:
 
 - Tick locks (`tick:lock:*`)
 - Staged effects (`tick:pending:*`)
 - Timers (`timer:*`)
 - Retry and conflict state
 
-Recovery is coordinated by Game Session and backed by:
+Recovery is coordinated by Game Session Service and backed by:
 
 - **Lua-based atomic updates**
 - **AOF (Append-Only File)** persistence
@@ -191,13 +191,13 @@ This supports **idempotent, replayable** ticks — without risk of duplicate eff
 
 | Service                   | Role                                                                 |
 |---------------------------|----------------------------------------------------------------------|
-| **Game Session**          | Orchestrates tick regions, lock acquisition, retries, commit flow    |
-| **Game Logic**            | Resolves each queued action deterministically                        |
+| **Game Session Service**          | Orchestrates tick regions, lock acquisition, retries, commit flow    |
+| **Game Logic Service**            | Resolves each queued action deterministically                        |
 | **Automation & Scripting**| Injects AI or scripted commands into queues                          |
 | **World Management**      | Defines tick region layout and room segmentation                     |
 | **Redis**                 | Stores locks, timers, staged changes, retry metadata; executes Lua   |
 
-> Game Session manages all tick lifecycle logic and delegates atomic operations to Redis via Lua.
+> Game Session Service manages all tick lifecycle logic and delegates atomic operations to Redis via Lua.
 
 ---
 

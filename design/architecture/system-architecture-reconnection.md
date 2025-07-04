@@ -24,7 +24,7 @@ Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remai
 
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
-- No gameplay state is preserved across reconnects — Game Session handles recovery
+- No gameplay state is preserved across reconnects — Game Session Service handles recovery
 
 ### **Spring Cloud Gateway (Web Clients)**
 
@@ -72,7 +72,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 | Event                                           | Result                                         |
 |------------------------------------------------|------------------------------------------------|
 | Client disconnect (TCP/WebSocket)              | Requires new `LOGIN`; may resume via Redis     |
-| Proxy/Gateway/Game Session restart             | Transparent — if client remains connected      |
+| Proxy/Gateway/Game Session Service restart             | Transparent — if client remains connected      |
 | Manual re-`LOGIN` from same character          | Treated as reconnect; resumes if Redis intact  |
 | Redis session expired/missing                  | Treated as fresh login; gameplay starts anew   |
 | New client logs in as same character           | Old session terminated; new one resumes control |
@@ -87,7 +87,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
   - Socket bindings and session metadata
   - Queued commands and tick state
   - Timers, cooldowns, and retry info
-- Game Session governs all reconnection, deduplication, and rebinding
+- Game Session Service governs all reconnection, deduplication, and rebinding
 - Clients are **fully stateless**
 - Transparent failover is supported across infrastructure layers
 

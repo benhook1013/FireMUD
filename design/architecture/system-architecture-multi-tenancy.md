@@ -23,7 +23,7 @@ This document explains how FireMUD hosts many independent games on shared infras
 - Game-specific settings—such as world size, tick intervals, and feature flags—are stored in configuration tables keyed by `tenantId`.
   Runtime flag behavior is described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 - All microservices run as shared deployments; there is **no tenant-specific infrastructure** or dedicated clusters.
-- Game Session instances scale horizontally based on overall load. Future improvements may add per-game quotas or scaling limits.
+- Game Session Service instances scale horizontally based on overall load. Future improvements may add per-game quotas or scaling limits.
 
 ---
 

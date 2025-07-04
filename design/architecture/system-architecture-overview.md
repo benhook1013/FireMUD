@@ -33,7 +33,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 |--------------------|---------------------------------------------------------------|
 | TCP Proxy Service          | Buffers Telnet input; clears on disconnect                    |
 | Spring Cloud Gateway     | Stateless; re-establishes backend connections on reconnect    |
-| Game Session       | Restores gameplay session using Redis                         |
+| Game Session Service | Restores gameplay session using Redis                         |
 
 > 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for full details on session resumption, reauthentication, and failure handling.
 
@@ -139,13 +139,13 @@ for how these profiles differ in Docker Compose versus Kubernetes.
 ## 🔎 Notes on Responsibility Alignment
 
 - Functional responsibilities are defined in the [Service Responsibility Matrix](./service-responsibility-matrix.md)  
-- **Game Session** orchestrates tick lifecycles, retries, and session management  
-- **Game Logic** resolves individual actions deterministically based on input state  
+- **Game Session Service** orchestrates tick lifecycles, retries, and session management  
+- **Game Logic Service** resolves individual actions deterministically based on input state  
 - **Redis** acts as a passive, high-speed execution substrate — storing volatile state and enabling atomic coordination via Lua scripts
 
-🧠 **Why Game Session vs Game Logic?**  
-Game Logic is stateless and deterministic.  
-Game Session governs pacing, conflict handling, and orchestration across distributed tick regions.
+🧠 **Why Game Session Service vs Game Logic Service?**  
+Game Logic Service is stateless and deterministic.  
+Game Session Service governs pacing, conflict handling, and orchestration across distributed tick regions.
 
 ---
 
