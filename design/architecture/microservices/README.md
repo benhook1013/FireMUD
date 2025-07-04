@@ -6,8 +6,8 @@ This directory contains detailed design documents for each core microservice in 
 
 ## 🧩 Core Microservices
 
-| Microservice                    | Purpose                                                    |
-|----------------------------------|------------------------------------------------------------|
+| Microservice | Purpose |
+|-------------|---------|
 | [Account Service](./account-service/)                    | Manages user accounts, authentication, profiles, and sessions. |
 | [Automation & Scripting Service](./automation-scripting-service/) | Handles AI behaviors, event scripting, and dynamic interactions. |
 | [Entity Management Service](./entity-management-service/) | Controls player characters, NPCs, items, and inventory management. |
