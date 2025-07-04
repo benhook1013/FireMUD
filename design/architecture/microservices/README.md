@@ -18,7 +18,7 @@ This directory contains detailed design documents for each core microservice in 
 | [Social & Groups Service](./social-groups-service/)    | Manages chat, guilds, and cross-game social networking features. |
 | [Logging & Admin Service](./logging-admin-service/)      | Provides centralized logging, analytics, and administration tools. |
 | [TCP Proxy Service](./tcp-proxy-service/)                | Bridges Telnet clients into the WebSocket-based backend. |
-| [Spring Cloud Gateway](./spring-cloud-gateway-service/) | Routes WebSocket and HTTP traffic to backend services. |
+| [Spring Cloud Gateway](./spring-cloud-gateway/) | Routes WebSocket and HTTP traffic to backend services. |
 | [Service Template](./service-template.md) | Template for creating new microservice docs. |
 
 ---
