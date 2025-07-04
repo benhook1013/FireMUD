@@ -10,7 +10,6 @@
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
-
 Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
 *This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
@@ -18,6 +17,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 ## Start Here
 
 For an overview of all architecture and design documents, see [Architecture Overview](design/architecture/README.md).
+See [Repository Structure](design/architecture/repository-structure.md) for module layout.
 
 ---
 
@@ -32,6 +32,7 @@ For an overview of all architecture and design documents, see [Architecture Over
   - [Microservices](#microservices)
   - [Service Interactions](#service-interactions)
 - [Developer Setup](./DEVELOPER_SETUP.md)
+- [Repository Structure](design/architecture/repository-structure.md)
 - [Getting Started and Contributing](#getting-started-and-contributing)
   - [Learn About the Platform](#learn-about-the-platform)
   - [Ways to Contribute](#ways-to-contribute)
@@ -103,12 +104,12 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Design Goals
 
 1. **Modularity**: Independently scalable and maintainable services.
-1. **Flexibility**: Extensible features for diverse gameplay and customization.
-1. **Performance**: Optimized for real-time interactions and low latency.
-1. **User-Friendly Creation**: Intuitive tools for game creators.
-1. **Community Engagement**: Facilitate a vibrant community of players and creators.
-1. **Security**: Ensure data protection and secure interactions across services.
-1. **Accessibility**: Provide an inclusive gaming experience by ensuring the platform is accessible to all players, including those who are visually impaired or blind, through compatibility with screen readers and other assistive technologies.
+2. **Flexibility**: Extensible features for diverse gameplay and customization.
+3. **Performance**: Optimized for real-time interactions and low latency.
+4. **User-Friendly Creation**: Intuitive tools for game creators.
+5. **Community Engagement**: Facilitate a vibrant community of players and creators.
+6. **Security**: Ensure data protection and secure interactions across services.
+7. **Accessibility**: Provide an inclusive gaming experience by ensuring the platform is accessible to all players, including those who are visually impaired or blind, through compatibility with screen readers and other assistive technologies.
 
 ---
 
@@ -138,46 +139,32 @@ For local environment setup instructions, see [Developer Setup](./DEVELOPER_SETU
 
 Before contributing, we recommend reviewing the following key documents:
 
-- **[Core Requirements](design/project-management/core-requirements.md)**: Review the high-level product requirements for the platform.
-- **[Example User Journeys](design/architecture/user-journeys.md)**: Step-by-step workflows for creators and players.
-- **[System Architecture Overview](design/architecture/system-architecture-overview.md)**: Understand the overall platform design, service layout, and communication flows.
-- **[Service Design Documents](design/architecture/microservices/README.md)**: Explore detailed designs for each microservice.
-- **[Infrastructure Overview](design/architecture/infrastructure/README.md)**: Learn about deployment environments, shared systems, and networking architecture.
-- **[Frontend Architecture](design/architecture/system-architecture-frontend.md)**: Understand how the React interface integrates with backend services.
-- **[Security Architecture](design/architecture/system-architecture-security.md)**: See how JWT secrets, TLS, and cross-service trust are managed.
-- **[Versioning & Runtime Configuration](design/architecture/system-architecture-versioning-runtime.md)**: Learn how versions are published and how runtime flags are controlled.
-- **[Task List](design/project-management/task-list.md)**: Track planned features and development progress.
-- **[FAQ](FAQ.md)**: Browse frequently asked questions for quick context.
+- **[Core Requirements](design/project-management/core-requirements.md)** – high-level product requirements.
+- **[System Architecture Overview](design/architecture/system-architecture-overview.md)** – platform design and service interactions.
+- **[Service Design Documents](design/architecture/microservices/README.md)** – details for each microservice.
+- **[Infrastructure Overview](design/architecture/infrastructure/README.md)** – deployment environments and shared systems.
+- **[Frontend Architecture](design/architecture/system-architecture-frontend.md)** – how the React interface integrates with backend services.
+- **[Security Architecture](design/architecture/system-architecture-security.md)** – JWT secrets, TLS, and cross-service trust.
+- **[Versioning & Runtime Configuration](design/architecture/system-architecture-versioning-runtime.md)** – publishing versions and controlling runtime flags.
+- **[Example User Journeys](design/architecture/user-journeys.md)** – step-by-step workflows for creators and players.
+- **[Task List](design/project-management/task-list.md)** – planned features and development progress.
+- **[FAQ](FAQ.md)** – frequently asked questions for quick context.
 
 ---
 
 ### Ways to Contribute
 
-- **Contribute Code**:
-  See our [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy,
-  coding standards, and how to submit a pull request.
-
-- **Review Pull Requests**:
-  Provide thoughtful, constructive feedback on open pull requests.
-
-- **Improve Documentation**:
-  Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
-
-- **Report Bugs or Suggest Features**:
-  Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
-
-- **Report Security Issues**:
-  If you discover a security vulnerability, please **do not** file a public issue.
-  Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net).
-  We take security seriously and will respond promptly.
+- **Contribute Code**: See our [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, coding standards, and how to submit a pull request.
+- **Review Pull Requests**: Provide thoughtful, constructive feedback on open pull requests.
+- **Improve Documentation**: Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
+- **Report Bugs or Suggest Features**: Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
+- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net). We take security seriously and will respond promptly.
 
 ---
 
 ### Additional Guidelines
 
-See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our
-AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and
-[Global Rules](design/project-management/ai-rules-global.md).
+See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and [Global Rules](design/project-management/ai-rules-global.md).
 
 ---
 
@@ -187,10 +174,7 @@ Your support can make a significant difference in the development and success of
 
 - **Contribute**: See the [Getting Started and Contributing](#getting-started-and-contributing) section for ways to contribute code, documentation, or ideas.
 - **Spread the Word**: Share the project with friends, colleagues, and on social media platforms to help us reach a wider audience.
-- **Financial Contributions**: *[TODO: Set up financial contribution options]*
-
-  We plan to set up options for financial support in the near future, including:
-
+- **Financial Contributions**: *[TODO: Set up financial contribution options]* We plan to set up options for financial support in the near future, including:
   - **Donate via PayPal**: *[Coming Soon]* <!-- TODO: Add PayPal donation link -->
   - **Sponsor on GitHub**: *[Coming Soon]* <!-- TODO: Set up GitHub Sponsors profile -->
   - **Patreon**: *[Coming Soon]* <!-- TODO: Create Patreon page -->

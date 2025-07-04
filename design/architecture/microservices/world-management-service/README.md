@@ -10,6 +10,8 @@ The World Management Service stores and manages game world data such as rooms, r
 - Changes are persisted incrementally to avoid heavy writes.
 - Background tasks trigger scheduled world changes (daily resets or seasonal shifts) and notify relevant services via gRPC.
 - Supports procedural generation with options for dynamic world expansion.
+- Uses a region → zone → room hierarchy for efficient lookups.
+- Publishes world event notifications for NPC scripts and game logic processing.
 
 ## Key Features
 
@@ -18,11 +20,38 @@ The World Management Service stores and manages game world data such as rooms, r
 - Procedural generation tools for rooms and terrain.
 - Pathfinding algorithms and navmesh data for movement calculations.
 - Event scheduling for world-wide holidays or timed modifiers, communicating changes over gRPC.
+- Chunk-based world snapshots for backup and recovery.
+
+### Data Model
+
+- Tables for `region`, `zone`, and `room` define the world hierarchy.
+- `terrain` and `object_spawn` tables support procedural generation.
+- Redis caches hot rooms for active sessions to speed up lookups.
+
+### gRPC APIs
+
+- `GetRoom` – retrieves room data including exits and environmental effects.
+- `UpdateWorldState` – persists scheduled changes and notifies listeners.
 
 ## Dependencies
 
 - **Internal:** Game Design Service for generation rules.
 - **External:** PostgreSQL for world data, Redis for transient active state.
+
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## Proto Files
+
+The gRPC contract for world operations is located in
+[../../../../protos/world-management/v1](../../../../protos/world-management/v1).
+Run `./gradlew generateProto` to regenerate sources after editing these files.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](../system-architecture-overview.md)
 
 ## Future Enhancements
 

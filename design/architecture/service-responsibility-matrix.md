@@ -42,6 +42,7 @@
 | TCP/Telnet socket handling                    |                     |                          |                |                      |                           |                    |                               |                           |                         | ✔                 |                       |
 | Telnet → WebSocket bridging                   |                     |                          |                |                      |                           |                    |                               |                           |                         | ✔                 |                       |
 | WebSocket upgrade, routing, and auth gateway  |                     |                          |                |                      |                           |                    |                               |                           |                         |                   | ✔                     |
+
 ## 📚 Related Documentation
 
 - [Microservices Overview](./microservices/README.md)

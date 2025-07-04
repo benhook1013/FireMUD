@@ -1,12 +1,12 @@
-# **Product Requirements Document (PRD): MUD Game Platform**
+# Product Requirements Document (PRD): MUD Game Platform
 
-## **1. Introduction**
+## 1. Introduction
 
-### **1.1 Purpose**
+### 1.1 Purpose
 
 The MUD Game Platform is a **multi-tenant system** that enables users to **create, host, and run multiple independent MUD games**. The platform provides a **scalable, modular, and extensible architecture**, supporting **game world management, player interactions, scripting, automation, and real-time networking**.
 
-### **1.2 Scope**
+### 1.2 Scope
 
 This document outlines the **core functional and non-functional requirements** for the MUD Game Platform, focusing on:
 
@@ -17,25 +17,25 @@ This document outlines the **core functional and non-functional requirements** f
 - **Administration, moderation, and logging tools** for game operators.
 - **Scalability, persistence, and deployment considerations**.
 
-### **1.3 Users & Stakeholders**
+### 1.3 Users & Stakeholders
 
- - **Game Designers (Creators)**: Users who design and manage games using the platform's tools.
- - **Players**: End users who join and play games on the platform.
- - **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
- - **Platform Developers**: Those extending or modifying the FireMUD platform itself.
+- **Game Designers (Creators)**: Users who design and manage games using the platform's tools.
+- **Players**: End users who join and play games on the platform.
+- **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
+- **Platform Developers**: Those extending or modifying the FireMUD platform itself.
 
 ---
 
-## **2. Key Features & Functional Requirements**
+## 2. Key Features & Functional Requirements
 
-### **2.1 Multi-Tenancy & Game Hosting**
+### 2.1 Multi-Tenancy & Game Hosting
 
 - The platform supports **multiple hosted games**, each **isolated at the game level**.
 - Each hosted game has **separate world data, player characters, and configurations**.
 - Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
 - Game creators can **host multiple games** with independent settings.
 
-### **2.2 Game Design & Customization**
+### 2.2 Game Design & Customization
 
 - Provides **game editing tools** for modifying world layouts, NPCs, items, and abilities.
 - Allows **game creators to configure rulesets and mechanics** without requiring code changes.
@@ -43,7 +43,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Enables **scripted event design for quests, encounters, and world events**.
 - **Procedural generation** supports **algorithm-driven world creation** (e.g., procedural room layouts) while allowing **manual overrides**.
 
-### **2.3 User & Account Management**
+### 2.3 User & Account Management
 
 - The platform must provide **secure authentication and user management**.
 - Role-based access control (RBAC) for **admins, moderators, and players**.
@@ -54,7 +54,7 @@ This document outlines the **core functional and non-functional requirements** f
   - Profiles should include **game history, achievements, and social features**.
   - Persistent session tracking to **ensure seamless reconnection across devices**.
 
-### **2.4 Game World & Entity Management**
+### 2.4 Game World & Entity Management
 
 - Support for **multi-room game worlds** with region-based navigation.
 - **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing).
@@ -65,7 +65,7 @@ This document outlines the **core functional and non-functional requirements** f
   - NPC actions and environmental changes should **continue in a believable way even if no players are online**.
 - Persistent storage for **player, NPC, and item data**.
 
-### **2.5 Game Logic & Automation**
+### 2.5 Game Logic & Automation
 
 - Players interact with the game via **text-based command parsing** (e.g., `"move north"`, `"attack goblin"`).
 - The platform must support **custom game logic per hosted game**.
@@ -76,14 +76,14 @@ This document outlines the **core functional and non-functional requirements** f
   - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online.
 - Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions.
 
-### **2.6 Real-Time Multiplayer & Communication**
+### 2.6 Real-Time Multiplayer & Communication
 
 - **WebSockets/TCP-based real-time networking** for player interactions.
 - In-game **chat system, mail messaging, and guild/group communications**.
 - **PvP & cooperative multiplayer support**.
 - **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff.
 
-### **2.7 Extensibility & Game Customization**
+### 2.7 Extensibility & Game Customization
 
 - Games should support **custom game rules, abilities, and world data**.
 - **Scripting API & Advanced AI Customization**:
@@ -94,7 +94,7 @@ This document outlines the **core functional and non-functional requirements** f
   - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse.
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance.
 
-### **2.8 Moderation, Administration & Monetization**
+### 2.8 Moderation, Administration & Monetization
 
 - **Admin dashboard** for monitoring and moderating hosted games.
 - **In-game reporting & ban system** for handling violations.
@@ -110,7 +110,7 @@ This document outlines the **core functional and non-functional requirements** f
 
 ---
 
-### **2.9 Versioning & Runtime Configuration**
+### 2.9 Versioning & Runtime Configuration
 
 - The **Game Design Service** publishes immutable game versions identified by a `version_id`.
 - Domain services copy design data by `version_id` and do not query the design database at runtime.
@@ -120,9 +120,9 @@ This document outlines the **core functional and non-functional requirements** f
 
 ---
 
-## **3. Infrastructure & Scalability Considerations**
+## 3. Infrastructure & Scalability Considerations
 
-### **3.1 Networking & API Gateway**
+### 3.1 Networking & API Gateway
 
 - **WebSocket/TCP-based real-time networking** for low-latency gameplay.
 - **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
@@ -132,13 +132,13 @@ This document outlines the **core functional and non-functional requirements** f
 - **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
 - Multi-server support enables **scaling hosted games separately**.
 
-### **3.2 Persistence & Caching**
+### 3.2 Persistence & Caching
 
 - **PostgreSQL** is the primary database for game world, entity, and account storage.
 - **Redis** stores transient gameplay and session state only; all authoritative data remains in PostgreSQL.
 - **Database migrations are managed per service using [Flyway](../architecture/system-architecture-database-migrations.md).**
 
-### **3.3 Deployment Model**
+### 3.3 Deployment Model
 
 - The platform is designed for **cloud-native deployment**, using:
   - **Docker & Kubernetes** for containerization and scaling.
@@ -146,10 +146,10 @@ This document outlines the **core functional and non-functional requirements** f
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
 - Supports **multi-region deployments** to provide better latency for global users.
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
- - **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery. The production snapshot schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
+- **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery. The production snapshot schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
 
 
-### **3.4 Gameplay Session Architecture**
+### 3.4 Gameplay Session Architecture
 
 - **Game Session Service** orchestrates tick execution and runtime configuration.
 - **Redis** stores volatile session state so players can **reconnect seamlessly** after disruptions.
@@ -160,7 +160,7 @@ This document outlines the **core functional and non-functional requirements** f
 
 ---
 
-## **4. Non-Functional Requirements**
+## 4. Non-Functional Requirements
 
 | **Category** | **Requirement** |
 |-------------|----------------|

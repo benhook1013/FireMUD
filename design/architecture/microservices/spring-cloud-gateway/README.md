@@ -7,17 +7,45 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
 - Event-driven updates synchronize game state across connected players.
 - Includes a fallback mechanism so players with unstable connections can rejoin seamlessly.
+- Applies rate limiting and authentication filters for admin endpoints.
 
 ## Key Features
 
 - Central API gateway and authentication point.
 - Real-time state synchronization for multiplayer actions.
 - Reconnection support for dropped clients.
+- Routes REST and gRPC traffic to appropriate backend services.
+
+### Filter Chain
+
+- Authentication, rate limiting, and logging filters run before routing.
+- WebSocket upgrades are handled with heartbeat and idle timeout logic.
+
+### Key Routes
+
+- `/api/session/**` → Game Session Service (WebSocket and REST endpoints).
+- `/api/admin/**` → Logging & Admin Service with JWT authentication.
+- `/api/design/**` → Game Design Service for content management.
 
 ## Dependencies
 
 - **Internal:** Game Session Service and other microservices over gRPC.
 - **External:** Spring Cloud Gateway infrastructure.
+
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## Proto Files
+
+Gateway-related proto definitions are stored in
+[../../../../protos/spring-cloud-gateway/v1](../../../../protos/spring-cloud-gateway/v1).
+After edits, run `./gradlew generateProto` to regenerate gateway stubs.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](../system-architecture-overview.md)
 
 ## Future Enhancements
 

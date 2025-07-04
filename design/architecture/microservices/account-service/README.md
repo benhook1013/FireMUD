@@ -7,17 +7,52 @@ Manages user accounts and authentication for the platform. Stores profile data a
 ## Architecture / Design Notes
 
 - Stateless authentication using JWT tokens.
+- Passwords are hashed with strong salts and stored only in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
+- Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
 
 ## Key Features
 
 - Account registration and login.
 - Profile management and email notifications.
+- Password reset and verification flows.
 - Banning and subscription tracking.
+- gRPC APIs for account creation, authentication, and profile queries.
+
+### Data Model
+
+- `account` table stores username, password hash, email, and status flags.
+- `profile` table captures optional user details and preferences.
+- `session` keys in Redis map temporary session tokens to account IDs for quick
+  reconnects.
+
+### gRPC APIs
+
+- `CreateAccount` – registers a new user and returns an auth token on success.
+- `Authenticate` – verifies credentials and issues a session token.
+- `GetProfile` – retrieves profile information for the current account.
+- `UpdateProfile` – modifies profile fields and triggers notification emails.
 
 ## Dependencies
 
+- **Internal:** Logging & Admin Service for audit logging.
 - **External:** PostgreSQL for account data, Redis for transient session data.
+
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## Proto Files
+
+The gRPC schemas for this service live in
+[../../../../protos/account/v1](../../../../protos/account/v1). Use
+`./gradlew generateProto` to regenerate Java stubs when the definitions change.
+
+## 📚 Related Documentation
+
+- [Authentication & Authorization](../system-architecture-authentication.md)
+- [System Architecture Overview](../system-architecture-overview.md)
 
 ## Future Enhancements
 

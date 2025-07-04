@@ -29,13 +29,17 @@ Each microservice document follows a consistent structure, covering:
 
 - **Service Overview**
 - **Architecture and Key Responsibilities**
-- **Key Features and APIs**
+- **Key Features, Data Models, and APIs**
 - **External and Internal Dependencies**
 - **Future Enhancements and Roadmap**
 
 For cross-service systems (e.g., networking, infrastructure), refer to:
 
 > See [**Infrastructure Overview**](../infrastructure/README.md) for shared architecture, deployment environments, and networking patterns.
+
+All gRPC schema files are organized under the top-level
+[`protos/`](../../protos) directory. Individual service documents link to their
+corresponding versioned proto folders.
 
 ## 📚 Related Documentation
 

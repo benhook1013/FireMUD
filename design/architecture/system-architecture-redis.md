@@ -15,7 +15,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - Cooldowns and timer expirations (stored in milliseconds)
 - Gameplay session state and real-time coordination data
   _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
-- Retry metadata and **inter-tick conflict tracking**
+- Retry metadata and inter-tick conflict tracking
 - AI/scripted action injection
 
 All **canonical game data** — accounts, entities, items, rooms — resides in **PostgreSQL**, owned by domain-specific services.
@@ -76,7 +76,7 @@ Redis keys follow strict naming conventions to ensure:
 | `retry:{regionId}`            | Retry queue for failed actions           |
 | `timer:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
 
-> 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)  
+> 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
 
 ---
@@ -115,7 +115,7 @@ It provides:
 - **Conflict metadata** for retry prioritization
 - Accurate **cooldown and timer tracking**
 
-> 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.  
+> 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.
 > 🔗 See [Tick Execution Flow](./system-architecture-ticks.md#🔄-tick-execution-flow)
 
 ### 💥 Crash and Recovery Safety

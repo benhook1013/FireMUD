@@ -113,9 +113,9 @@ The Game Session Service is responsible for:
 | Auth Command          | `LOGIN` (or `LOGON`) — supports prompt or argument input         |
 | JWT Usage             | Internal-only for backend gRPC auth                             |
 | Claims                | `accountId`, `globalRoles[]`, `scopedRoles{}`                   |
-| Session State         | Stored in Redis; bound to socket by Game Session                |
+| Session State         | Stored in Redis; bound to socket by Game Session Service        |
 | Reauthentication      | Required after disconnect; resumes via Redis if valid           |
-| Role Enforcement      | Meta/control services only; gameplay services trust Game Session |
+| Role Enforcement      | Meta/control services only; gameplay services trust Game Session Service |
 | Role Updates          | Refreshed in-session; no client interaction needed              |
 | Multi-Client Behavior | One session per character; new login replaces old session        |
 

@@ -14,11 +14,28 @@ Install the following tools before building the services:
 
 ## Building Services
 
-Each microservice will include a `Dockerfile` and a Gradle build script. Once you have cloned the repository:
+Each microservice includes a `Dockerfile` and a Gradle build script. After cloning the repository, generate the Gradle wrapper scripts if they are not already present:
+
+```bash
+gradle wrapper --gradle-version 8.5 --distribution-type bin
+```
+
+This creates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`. You only need to run it once after cloning.
+
+If you're on Windows, a PowerShell script is available in the `services` directory to generate wrappers for every service:
+
+```powershell
+cd services
+./init-gradle-wrappers.ps1
+```
+
+Run this script after cloning if the wrapper files are missing from the individual service folders.
+
+Build all modules with:
 
 ```bash
 # Build all images
-./gradlew build     # or `gradle build` if the wrapper is unavailable
+./gradlew build
 ```
 
 Gradle compiles the services and prepares Docker images using the included Dockerfiles.

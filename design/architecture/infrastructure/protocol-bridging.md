@@ -35,12 +35,12 @@ Despite their differences, both protocols are normalized into the same internal 
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible).
-- Handled by a dedicated **TCP Proxy Service** (not Spring-based).
+- Handled by a dedicated **TCP Proxy Service**.
 - The service:
   - Accepts and parses Telnet line-based input.
   - Normalizes the connection.
   - **Creates a WebSocket connection to the backend** on behalf of the TCP client.
-  - Proxies I/O between the TCP client and the backend game session.
+  - Proxies I/O between the TCP client and Spring Cloud Gateway.
   - Buffers active input while the client remains connected and discards it if
     the TCP connection drops.
   - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and

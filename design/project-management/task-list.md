@@ -1,10 +1,10 @@
-# **🚀 MUD Game Platform Development To-Do List**
+# 🚀 MUD Game Platform Development To-Do List
 
 This checklist is structured to **build foundational features first**, followed by **gameplay mechanics, multiplayer, administration, and optimizations**.
 
 ---
 
-## **📋 Phase 0: Project Planning**
+## 📋 Phase 0: Project Planning
 
 - [ ] **Define Vision & Scope of the Platform**
   - [ ] Write a high-level product vision and key goals
@@ -28,7 +28,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 1: Core Infrastructure & Basic Services**
+## 🛠️ Phase 1: Core Infrastructure & Basic Services
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [ ] Implement common request/response DTOs for inter-service communication
@@ -58,7 +58,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 2: Account & Game Operations**
+## 🛠️ Phase 2: Account & Game Operations
 
 - [ ] **Develop Account Service**
   - [ ] Implement user registration and authentication (OAuth2, JWT)
@@ -88,7 +88,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 3: Game World & Entity Persistence**
+## 🛠️ Phase 3: Game World & Entity Persistence
 
 - [ ] **Develop World Management Service**
   - [ ] Implement world map storage (rooms, regions)
@@ -116,7 +116,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 4: Game Logic & AI**
+## 🛠️ Phase 4: Game Logic & AI
 
 - [ ] **Develop Game Logic Service**
   - [ ] Implement command parsing & validation
@@ -125,7 +125,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement event-driven logic processing (triggers, world events)
   - [ ] Implement action aliases system (custom command mappings)
 
- - [ ] **Develop Automation & Scripting Service**
+- [ ] **Develop Automation & Scripting Service**
   - [ ] Implement state-driven & event-driven NPC behaviors
   - [ ] Implement procedural world generation
   - [ ] Implement scripted events for game mechanics and NPC interactions
@@ -152,7 +152,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 5: Game Design & Customization**
+## 🛠️ Phase 5: Game Design & Customization
 
 - [ ] **Develop Game Design Service**
   - [ ] Implement world editing & customization tools
@@ -170,7 +170,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 6: Multiplayer & Social Features**
+## 🛠️ Phase 6: Multiplayer & Social Features
 
 - [ ] **Develop TCP Proxy Service**
   - [ ] Implement Telnet networking and WebSocket bridging
@@ -189,7 +189,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 7: Moderation & Restrictions**
+## 🛠️ Phase 7: Moderation & Restrictions
 
 - [ ] **Develop Logging & Admin Service**
   - [ ] Collect logs from all services and provide search dashboards
@@ -211,7 +211,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 8: Monetization & Payment System**
+## 🛠️ Phase 8: Monetization & Payment System
 
 - [ ] **Develop Monetization & Payment System**
   - [ ] Integrate Stripe or similar for in-game purchases
@@ -225,7 +225,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 9: Testing & Pre-Launch Preparations**
+## 🛠️ Phase 9: Testing & Pre-Launch Preparations
 
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
@@ -247,7 +247,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 ---
 
-## **🛠️ Phase 10: Deployment & Post-Launch Iteration**
+## 🛠️ Phase 10: Deployment & Post-Launch Iteration
 
 - [ ] **Monitor Logs & Fix Issues in Production**
   - [ ] Track errors, crashes, and performance issues
