@@ -47,6 +47,7 @@ For example:
 > TLS, certificate rotation, and network policies are detailed in the [**Security Architecture**](../system-architecture-security.md).
 > Backup procedures and disaster recovery steps are outlined in [**Backup & Disaster Recovery**](../system-architecture-backup-recovery.md).
 > Service developers should follow the [**gRPC API Style & Versioning Guidelines**](../system-architecture-grpc.md) when defining new APIs.
+> Distributed workflows are explained in [**Transaction Strategies**](../system-architecture-transactions.md).
 
 ## 📚 Related Documentation
 
@@ -54,3 +55,4 @@ For example:
 - [Deployment Environments](./deployment-environments.md)
 - [Gateway Architecture](./gateway-architecture.md)
 - [Protocol Bridging](./protocol-bridging.md)
+- [Transaction Strategies](../system-architecture-transactions.md)

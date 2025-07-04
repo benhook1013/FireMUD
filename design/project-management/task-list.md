@@ -21,7 +21,11 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
-  - [ ] Investigate transaction support for microservices
+  - [x] Investigate transaction support for microservices
+    - See [Transaction Strategies](../architecture/system-architecture-transactions.md)
+    - Document gRPC endpoints and compensating actions
+    - Implement lightweight Saga orchestrator service
+    - Provide example workflows (e.g., user registration)
   - [x] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
   - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
   - [x] Update README after all services are defined
