@@ -15,11 +15,11 @@ This directory contains detailed design documents for each core microservice in 
 | [Game Logic Service](./game-logic-service/)              | Implements core gameplay mechanics, command parsing, and actions. |
 | [Game Session Service](./game-session-service/)          | Orchestrates live gameplay sessions and tick execution. |
 | [Logging & Admin Service](./logging-admin-service/)      | Provides centralized logging, analytics, and administration tools. |
-| [Social & Groups Service](./social-groups-service/)    | Manages chat, guilds, and cross-game social networking features. |
-| [Spring Cloud Gateway](./spring-cloud-gateway/) | Routes WebSocket and HTTP traffic to backend services. |
+| [Service Template](./service-template.md)                | Template for creating new microservice docs. |
+| [Social & Groups Service](./social-groups-service/)      | Manages chat, guilds, and cross-game social networking features. |
+| [Spring Cloud Gateway](./spring-cloud-gateway/)          | Routes WebSocket and HTTP traffic to backend services. |
 | [TCP Proxy Service](./tcp-proxy-service/)                | Bridges Telnet clients into the WebSocket-based backend. |
 | [World Management Service](./world-management-service/)  | Handles world maps, regions, pathfinding data, and procedural generation. |
-| [Service Template](./service-template.md) | Template for creating new microservice docs. |
 
 ---
 
