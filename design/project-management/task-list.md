@@ -49,6 +49,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Define high-level architecture & microservices boundaries**
 - [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
+- [ ] **Configure Flyway-based database migrations for each microservice**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
 - [ ] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
@@ -156,8 +157,11 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop Game Design Service**
   - [ ] Implement world editing & customization tools
   - [ ] Implement scripting & event design tools
+  - [ ] Build a **visual scripting editor** using a **component-based DSL**
+  - [ ] Sandbox script execution with quotas via the Automation & Scripting Service
   - [ ] Implement ability & action design tools
   - [ ] Implement item & equipment balancing tools
+  - [ ] Track version history and patch notes for published games
 
 - [ ] **Expand Scripting & Modding**
   - [ ] Implement event-driven scripting API for game creators
@@ -254,6 +258,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Optimize database queries & network traffic handling
   - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
   - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
+  - [ ] Configure production snapshots every **15 minutes** with **24 hours of retention**
 
 - [ ] **Iterate on Features & Add More Game Customization**
   - [ ] Expand game customization options for hosted games

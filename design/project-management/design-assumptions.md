@@ -29,6 +29,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Payment Gateway**: Stripe (with custom subscription integration)
 - **Certificate Management**: TLS and mTLS certificates issued by **cert-manager** and stored as Kubernetes Secrets
 - **Cluster Backups**: **Velero** snapshots StatefulSets and persistent volumes
+- Snapshots are taken **every 15 minutes** in production with **24 hours of retention**
 
 ## Frontend
 
