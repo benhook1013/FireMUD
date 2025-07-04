@@ -30,6 +30,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
   - [x] Update README after all services are defined
   - [x] Finalize architecture design documentation and diagrams
+  - [x] Document service responsibility matrix
+  - [x] Remove legacy Game Management Service and redistribute duties
   - [ ] Finalize API schemas
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
@@ -42,7 +44,12 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
 - [x] Generate skeleton controllers and service classes for each microservice
- - [ ] Define base entity and repository classes for core domains
+- [ ] Define base entity and repository classes for core domains
+  - [ ] Account Service: `Account` and `Profile` entities with JPA repositories
+  - [ ] Entity Management Service: `Character`, `Item`, `NPC` entities
+  - [ ] World Management Service: `Room` and `Region` entities
+  - [ ] Game Session Service: `GameInstance` entity
+  - [ ] Game Design Service: design-time schema entities
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
@@ -72,7 +79,12 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
   - [ ] Add initial protobuf IDL files for all microservices
-  - [ ] Generate Java gRPC stubs in each module
+    - [ ] Account Service proto definitions
+    - [ ] Game Session Service proto definitions
+    - [ ] World Management Service proto definitions
+    - [ ] Entity Management Service proto definitions
+    - [ ] Shared common types
+  - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
 
 ---
 
@@ -85,6 +97,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
+  - [ ] Create `AccountController` REST endpoints
+  - [ ] Create JPA repositories for `Account` and `Profile`
+  - [ ] Add gRPC AccountService with proto contract
 
 - [ ] **Expand Game Session Service**
   - [ ] Implement game instance lifecycle (start, stop, restart)
@@ -95,14 +110,18 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [ ] Plan for cross-region sharding and session handoff
   - [ ] Emit gameplay analytics for operators
+  - [ ] Create `GameSessionController` REST endpoints
+  - [ ] Add gRPC GameSessionService with proto contract
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
   - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
+  - [ ] Create gRPC GameDesignService and design-time database models
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages
+  - [ ] Configure SMTP provider and test templates
 
 ---
 
@@ -116,6 +135,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
+  - [ ] Create `WorldController` REST endpoints
+  - [ ] Add gRPC WorldManagementService with proto contract
 
 - [ ] **Develop Entity Management Service**
   - [ ] Implement player character storage
@@ -124,6 +145,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement entity stats and progression tracking
   - [ ] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
+  - [ ] Create `EntityController` REST endpoints
+  - [ ] Add gRPC EntityManagementService with proto contract
 
 - [ ] **Implement Persistence Strategy**
   - [ ] Use PostgreSQL for primary storage
@@ -142,6 +165,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement roleplay actions & emotes
   - [ ] Implement event-driven logic processing (triggers, world events)
   - [ ] Implement action aliases system (custom command mappings)
+  - [ ] Create `GameLogicController` REST endpoints
+  - [ ] Add gRPC GameLogicService with proto contract
 
 - [ ] **Develop Automation & Scripting Service**
   - [ ] Implement state-driven & event-driven NPC behaviors
@@ -153,6 +178,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC aggression states (hostile, neutral, passive)
   - [ ] Implement NPC fleeing/surrender logic
   - [ ] Implement NPC formations & squad AI
+  - [ ] Add gRPC AutomationService with script execution API
+  - [ ] Create sandboxed script runtime
 
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions
