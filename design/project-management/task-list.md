@@ -78,6 +78,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
+  - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
