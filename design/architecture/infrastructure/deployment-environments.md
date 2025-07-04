@@ -100,7 +100,7 @@ Spring Boot services use environment-specific profiles:
 
 ---
 
-## 📚 Related Docs
+## 📚 Related Documentation
 
 - [Infrastructure Overview](./README.md)
 - [Gateway Architecture](./gateway-architecture.md)

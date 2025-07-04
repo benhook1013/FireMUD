@@ -23,7 +23,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - **Internal:** World Management Service for map data, Automation Service for scripts.
 - **External:** PostgreSQL for storing design assets.
 
-## Related Docs
+## 📚 Related Documentation
 
 See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
 

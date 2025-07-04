@@ -50,9 +50,17 @@ More details on deployment environments and gateway routing can be found in the 
 
 - [Deployment Environments](design/architecture/infrastructure/deployment-environments.md)
 - [Gateway Architecture](design/architecture/infrastructure/gateway-architecture.md)
+- [Infrastructure Overview](design/architecture/infrastructure/README.md) – explains TLS/mTLS certificates, multi-tenancy, and network boundaries.
 
 These documents explain how the compose setup differs from production and provide examples of the configuration files.
 
 ---
 
 You are now ready to explore the codebase and contribute!
+
+## 📚 Related Documentation
+
+- [Infrastructure Overview](design/architecture/infrastructure/README.md)
+- [Deployment Environments](design/architecture/infrastructure/deployment-environments.md)
+- [Gateway Architecture](design/architecture/infrastructure/gateway-architecture.md)
+- [System Architecture Overview](design/architecture/system-architecture-overview.md)
