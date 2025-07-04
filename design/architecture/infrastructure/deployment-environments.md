@@ -71,13 +71,16 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Grafana dashboards visualize performance metrics.
 - Alertmanager notifies on failures or latency spikes.
 - OpenTelemetry spans are emitted by services for distributed tracing.
-- See [System Architecture Overview](../system-architecture-overview.md#📊-observability-and-monitoring) for design details.
+
+See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the monitoring stack.
 
 ### 📜 Log Aggregation
 
 - **Fluent Bit** agents collect container logs from each pod.
 - **Elasticsearch** stores structured log data for long-term retention.
 - **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
+
+See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the logging stack.
 
 ---
 

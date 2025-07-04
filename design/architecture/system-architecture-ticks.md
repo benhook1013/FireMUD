@@ -164,6 +164,7 @@ Durations can be modified on the fly:
 - Time scaling affects **durations**, not tick rate
 
 > Runtime feature flags controlling global pace or status effects are applied by the Game Session Service before tick execution.
+> For how these flags are defined and edited, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ---
 

@@ -36,6 +36,7 @@ Once the world is ready:
 
 1. **Publish a Version** – Creators publish the current design in the Game Design Service.
 2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version.
+   For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (start instance)

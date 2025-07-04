@@ -85,7 +85,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
 - **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
-- **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager
+- **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](design/architecture/system-architecture-logging-monitoring.md))
 
 #### Monetization
 
@@ -162,6 +162,7 @@ Before contributing, we recommend reviewing the following key documents:
 - **[Frontend Architecture](design/architecture/system-architecture-frontend.md)**: Learn how the React interface is structured and integrated with backend services.
 - **[Service Design Documents](design/architecture/microservices/README.md)**: Explore detailed designs for each microservice.
 - **[Example User Journeys](design/architecture/user-journeys.md)**: See step-by-step workflows for creators and players.
+- **[Versioning & Runtime Configuration](design/architecture/system-architecture-versioning-runtime.md)**: Learn how versions are published and how runtime flags are controlled.
 - **[Core Requirements](design/project-management/core-requirements.md)**: Review the high-level product requirements for the platform.
 - **[Task List](design/project-management/task-list.md)**: Track planned features and development progress.
 - **[FAQ](FAQ.md)**: Browse frequently asked questions to get quick context.

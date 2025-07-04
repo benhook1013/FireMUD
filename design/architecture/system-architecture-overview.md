@@ -109,27 +109,9 @@ Session state is stored in Redis and reused for recovery.
 
 ## 📊 Observability and Monitoring
 
-FireMUD uses a unified observability pipeline:
+See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the full pipeline, including Fluent Bit, Prometheus, and related dashboards.
 
-### 🔍 Logging
-
-- Structured JSON logs with `traceId`, `playerId`, `sessionId`
-- Collected via Fluent Bit and indexed in Elasticsearch
-- Visualized with Kibana dashboards for easy log search
-
-### 🧾 Admin & Logging Service
-
-- Provides interactive dashboards for metrics and game health monitoring  
-- Offers log query tools for real-time inspection of structured logs (via Elasticsearch)  
-- Includes moderation interfaces for managing player reports, bans, and administrative actions  
-
-### 📈 Metrics and Tracing
-
-- Prometheus metrics from all services
-- Prometheus Alertmanager triggers alerts for outages or latency spikes
-- OpenTelemetry spans across ticks
-- 🔗 See [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability) for Redis-specific metrics
-- 🔗 See [Infrastructure Overview](./infrastructure/README.md#🔀-core-infrastructure-docs) for deployment-specific monitoring integration
+🔗 Additional Redis metrics are noted in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability).
 
 ---
 

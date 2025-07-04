@@ -6,9 +6,7 @@ Centralized logging and administration tools for the platform. Collects log data
 
 ## Architecture / Design Notes
 
-- Aggregates logs using Fluent Bit and Elasticsearch.
-- Prometheus collects metrics with Alertmanager handling alerts.
-- Exposes admin endpoints for reviewing logs and applying moderation actions.
+Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
 
 ## Key Features
 
@@ -23,7 +21,7 @@ Centralized logging and administration tools for the platform. Collects log data
 
 ## Related Docs
 
-See the [📜 Logging Stack](../../infrastructure/README.md#📜-logging-stack) for details on the shared log aggregation setup.
+See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for details on the shared observability stack.
 
 ## Future Enhancements
 

@@ -130,8 +130,9 @@ This document outlines the **core functional and non-functional requirements** f
   - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
 - Supports **multi-region deployments** to provide better latency for global users.
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
-- **Central logging and metrics** are collected via **Fluent Bit**, **Elasticsearch**, **Kibana**, **Grafana**, **Prometheus**, and **OpenTelemetry**.
+- **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
 - **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery.
+
 
 ### **3.4 Gameplay Session Architecture**
 
