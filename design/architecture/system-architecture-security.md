@@ -64,7 +64,7 @@ This document outlines how FireMUD secures service communication, manages authen
 
 - All failed logins, suspicious activity, and abuse attempts are captured in:
   - **Elasticsearch-backed logs**
-  - The **Admin & Logging Service dashboard**
+  - The **Logging & Admin Service dashboard**
 - Admin actions (e.g., bans, role changes) are tracked for auditability.
 
 ---
