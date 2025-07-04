@@ -24,6 +24,7 @@
                 | - Automation & Scripting Service             |
                 | - Social & Groups Service                    |
                 | - Logging & Admin Service                    |
+                | - Game Design Service                        |
                 +-----------+----------------------------------+
                             |
                             | DB/Cache/Logs
