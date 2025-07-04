@@ -17,6 +17,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Rule processing for combat and progression.
 - Emote and roleplay action handling.
 - Effect stacking and cooldown calculation.
+- Environmental effect resolution (weather, lighting) influencing gameplay.
+- Economy logic for trading, shops, and pricing adjustments.
 
 ### Command Flow
 
@@ -47,6 +49,7 @@ the generated code with `./gradlew generateProto` after making changes.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 
