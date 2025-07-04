@@ -19,10 +19,10 @@ This document outlines the **core functional and non-functional requirements** f
 
 ### **1.3 Users & Stakeholders**
 
- - **Game Designers (Creators)**: Users who design and manage games using the platform's tools.
- - **Players**: End users who join and play games on the platform.
- - **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
- - **Platform Developers**: Those extending or modifying the FireMUD platform itself.
+- **Game Designers (Creators)**: Users who design and manage games using the platform's tools.
+- **Players**: End users who join and play games on the platform.
+- **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
+- **Platform Developers**: Those extending or modifying the FireMUD platform itself.
 
 ---
 
@@ -146,7 +146,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
 - Supports **multi-region deployments** to provide better latency for global users.
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
- - **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery. The production snapshot schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
+- **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery. The production snapshot schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
 
 
 ### **3.4 Gameplay Session Architecture**
