@@ -1,6 +1,6 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.2.5" apply false
+    id("org.springframework.boot") version "3.2.5" 
 }
 
 repositories {
@@ -8,5 +8,6 @@ repositories {
 }
 
 dependencies {
+    implementation("org.springframework.boot:spring-boot-starter:3.2.5")
     implementation(project(":common-library"))
 }

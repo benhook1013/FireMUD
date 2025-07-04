@@ -31,14 +31,14 @@ This checklist is structured to **build foundational features first**, followed 
 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
 - [x] Create Gradle modules for all services with placeholder sources
-- [ ] Add base Spring Boot Application classes for each service
+ - [x] Add base Spring Boot Application classes for each service
 
 - [ ] **Create a Common Package for Shared Microservice Code**
-  - [ ] Implement common request/response DTOs for inter-service communication
-  - [ ] Implement centralized logging utilities
+   - [x] Implement common request/response DTOs for inter-service communication
+   - [x] Implement centralized logging utilities
   - [ ] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [ ] Implement database connection utilities (PostgreSQL, Redis connectors)
-  - [ ] Implement common exception handling & error response structures
+   - [x] Implement common exception handling & error response structures
   - [ ] Implement configuration management (centralized properties, environment handling)
   - [ ] Publish common package to internal repository (Maven/Gradle)
 
