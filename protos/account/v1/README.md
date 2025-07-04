@@ -1,5 +1,8 @@
-# Proto files for account service
+# Account Service Proto (v1)
 
-This folder will contain v1 proto definitions.
+This directory houses the version 1 protocol buffer definitions for the Account Service. These
+files define registration, authentication, profile, and session management APIs.
 
-See docs for gRPC schema rules.
+Generate Java stubs via `./gradlew generateProto` from the repository root.
+
+For service usage see the [Account Service design](../../../design/architecture/microservices/account-service/README.md).

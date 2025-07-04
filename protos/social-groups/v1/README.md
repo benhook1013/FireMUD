@@ -1,5 +1,7 @@
-# Proto files for social-groups service
+# Social-groups Service Proto (v1)
 
-This folder will contain v1 proto definitions.
+This directory contains version 1 protocol buffer definitions for the social groups service.
+They describe the gRPC API exposed by the service.
 
-See docs for gRPC schema rules.
+Generate Java stubs with `./gradlew generateProto` from the repository root.
+For details see the [design docs](../../../design/architecture/microservices/social-groups-service/README.md).

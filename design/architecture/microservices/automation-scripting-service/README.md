@@ -45,6 +45,13 @@ For details on how scripts are authored and executed safely, see [System Archite
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+API definitions are located in
+[../../../../protos/automation-scripting/v1](../../../../protos/automation-scripting/v1).
+Run `./gradlew generateProto` after modifying these schemas to update the gRPC
+stubs.
+
 ## 📚 Related Documentation
 
 - [System Architecture: Scripting & Automation](../system-architecture-scripting.md)

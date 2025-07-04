@@ -40,6 +40,12 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.
 
+## Proto Files
+
+Service definitions reside in
+[../../../../protos/game-session/v1](../../../../protos/game-session/v1). Run
+`./gradlew generateProto` after modifying these files to regenerate stubs.
+
 ## 📚 Related Documentation
 
 See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how game instances load published versions and runtime flags.

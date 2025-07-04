@@ -43,6 +43,12 @@ Manages user accounts and authentication for the platform. Stores profile data a
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+The gRPC schemas for this service live in
+[../../../../protos/account/v1](../../../../protos/account/v1). Use
+`./gradlew generateProto` to regenerate Java stubs when the definitions change.
+
 ## 📚 Related Documentation
 
 - [Authentication & Authorization](../system-architecture-authentication.md)

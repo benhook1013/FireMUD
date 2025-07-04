@@ -46,6 +46,12 @@ internal operations when communicating with other microservices:
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on how Telnet connections are integrated into the platform.
 
+## Proto Files
+
+Even though the proxy has no public API, supporting event messages are defined
+in [../../../../protos/tcp-proxy/v1](../../../../protos/tcp-proxy/v1). Stubs are
+regenerated via `./gradlew generateProto` when the proto files change.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)

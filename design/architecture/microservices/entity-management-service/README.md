@@ -39,6 +39,12 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Proto Files
+
+Service interface definitions are stored in
+[../../../../protos/entity/v1](../../../../protos/entity/v1). After editing the
+proto files, run `./gradlew generateProto` to update generated sources.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
