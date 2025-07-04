@@ -57,14 +57,14 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 ### Key Features
 
+- **Microservice Architecture**: Modular services for scalability and maintainability.
+- **Multi-Server Hosting**: Support for hosting multiple MUD games simultaneously.
 - **Real-Time Game Server**: Backend for gameplay mechanics, player actions, and world state management.
-- **Web Frontend**: React-based interface for players and creators.
-- **Integrated Game Editor**: Tools for designing rooms, entities, quests, and dialogues.
 - **Extensible Command Parsing**: Flexible system to interpret player commands.
 - **Dynamic Scripting Support**: For events and interactions within the game world.
-- **Multi-Server Hosting**: Support for hosting multiple MUD games simultaneously.
+- **Integrated Game Editor**: Tools for designing rooms, entities, quests, and dialogues.
+- **Web Frontend**: React-based interface for players and creators.
 - **Moderation Tools**: Comprehensive tools for administrators and moderators.
-- **Microservice Architecture**: Modular services for scalability and maintainability.
 
 ### Tech Stack
 
@@ -153,18 +153,18 @@ Before contributing, we recommend reviewing the following key documents:
 
 ### Ways to Contribute
 
-- **Improve Documentation**:
-  Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
-
-- **Report Bugs or Suggest Features**:
-  Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
-
 - **Contribute Code**:
   See our [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy,
   coding standards, and how to submit a pull request.
 
 - **Review Pull Requests**:
   Provide thoughtful, constructive feedback on open pull requests.
+
+- **Improve Documentation**:
+  Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
+
+- **Report Bugs or Suggest Features**:
+  Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
 
 - **Report Security Issues**:
   If you discover a security vulnerability, please **do not** file a public issue.
@@ -185,8 +185,8 @@ AI coding conventions are documented in [Local Rules](design/project-management/
 
 Your support can make a significant difference in the development and success of the FireMUD Game Platform. If you're interested in supporting the project, here are some ways you can help:
 
-- **Spread the Word**: Share the project with friends, colleagues, and on social media platforms to help us reach a wider audience.
 - **Contribute**: See the [Getting Started and Contributing](#getting-started-and-contributing) section for ways to contribute code, documentation, or ideas.
+- **Spread the Word**: Share the project with friends, colleagues, and on social media platforms to help us reach a wider audience.
 - **Financial Contributions**: *[TODO: Set up financial contribution options]*
 
   We plan to set up options for financial support in the near future, including:

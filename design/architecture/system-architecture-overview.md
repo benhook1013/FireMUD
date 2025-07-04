@@ -151,16 +151,16 @@ Game Session governs pacing, conflict handling, and orchestration across distrib
 
 ## 📚 Related Documentation
 
-- [Tick System and Runtime Design](./system-architecture-ticks.md)
-- [Redis Architecture](./system-architecture-redis.md)
-- [Reconnection Strategy](./system-architecture-reconnection.md)
-- [Authentication & Authorization](./system-architecture-authentication.md)
-- [Security Architecture](./system-architecture-security.md)
-- [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
-- [Microservices Responsibility Matrix](./service-responsibility-matrix.md)
 - [System Architecture Diagram](./system-architecture-diagram.md)
 - [System Context Diagram](./system-context-diagram.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Protocol Bridging](./infrastructure/protocol-bridging.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Authentication & Authorization](./system-architecture-authentication.md)
+- [Security Architecture](./system-architecture-security.md)
+- [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
+- [Microservices Responsibility Matrix](./service-responsibility-matrix.md)
