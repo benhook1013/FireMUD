@@ -1,6 +1,6 @@
 # 🔄 FireMUD User Journeys
 
-This document outlines a high level flow for creators and players when interacting with the FireMUD platform. Each step references the microservice responsible for that portion of the journey.
+This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
 
 ---
 
@@ -15,28 +15,35 @@ Player → Account Service → Game Design Service (new game)
 
 ---
 
-## 2. Editing World Data
+## 2. World and Entity Design
 
-Creators design and refine the world using tools from both services:
+Creators refine the world and its inhabitants using several services:
 
-- **Game Design Service** – Versioned templates and item/ability editors.
-- **World Management Service** – Stores maps, regions, and procedural generation rules.
-
-Refer to [Game Design Service](./microservices/game-design-service/README.md) and [World Management Service](./microservices/world-management-service/README.md) for details.
+- **Game Design Service** – Versioned templates, ability editors, and runtime flag definitions.
+- **World Management Service** – Maps, regions, and procedural generation rules.
+- **Entity Management Service** – Player characters, NPCs, items, and inventory.
 
 ```plaintext
-Game Design Edits ↔ World Management Service (maps, rooms)
+Game Design ↔ World Management ↔ Entity Management
 ```
 
 ---
 
-## 3. Publish and Start a Game Instance
+## 3. Add Automation & Scripting
+
+Dynamic behavior is implemented via the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md):
+
+- Script quests and NPC routines.
+- Trigger world events in response to player actions.
+
+---
+
+## 4. Publish and Start a Game Instance
 
 Once the world is ready:
 
 1. **Publish a Version** – Creators publish the current design in the Game Design Service.
-2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version.
-   For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (start instance)
@@ -44,18 +51,30 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 ---
 
-## 4. Player Login and Gameplay
+## 5. Player Login and Gameplay
 
 Players connect through the networking layer:
 
 1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
-2. **Session Management** – Connections reach the Game Session Service, which retrieves entity and world data over gRPC from other services.
+2. **Session Management** – The Game Session Service retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md).
 
 ```plaintext
-Client → Proxy/Gateway → Game Session Service → gRPC calls to Entity/World services
+Client → Proxy/Gateway → Game Session Service → Game Logic Service / Entity & World services
 ```
 
-The Game Session Service handles login, session recovery, and active gameplay.
+The Game Session Service handles login, session recovery, and active gameplay. Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
+
+---
+
+## 6. Social Interaction
+
+During gameplay, players form groups and communicate via the [Social & Groups Service](./microservices/social-groups-service/README.md). Chat rooms, guilds, and friend lists are synchronized in real time.
+
+---
+
+## 7. Monitoring and Moderation
+
+Operators monitor the game and enforce rules using the [Logging & Admin Service](./microservices/logging-admin-service/README.md). It aggregates logs, provides analytics dashboards, and exposes moderation tools such as bans or runtime feature toggles.
 
 ---
 
