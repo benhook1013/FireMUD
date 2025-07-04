@@ -8,6 +8,7 @@ This document outlines common flows for creators and players when interacting wi
 
 1. **Sign Up** – Players create an account through the [Account Service](./microservices/account-service/README.md).
 2. **Create a Game** – Newly registered creators use the [Game Design Service](./microservices/game-design-service/README.md) to start a fresh game project.
+3. **Link External Accounts** – Users may link Google, Discord, or Steam credentials for easier login and profile enrichment.
 
 ```plaintext
 Player → Account Service → Game Design Service (new game)
@@ -75,6 +76,40 @@ During gameplay, players form groups and communicate via the [Social & Groups Se
 ## 7. Monitoring and Moderation
 
 Operators monitor the game and enforce rules using the [Logging & Admin Service](./microservices/logging-admin-service/README.md). It aggregates logs, provides analytics dashboards, and exposes moderation tools such as bans or runtime feature toggles.
+
+---
+
+## 8. Patch and Update a Live Game
+
+1. **Iterate on Content** – Creators modify worlds, items, or rules using the Game Design Service.
+2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
+3. **Restart Game Instance** – Administrators instruct the Game Session Service to load the new `version_id`.
+
+```plaintext
+Game Design Service (publish) → Game Session Service (restart)
+```
+
+---
+
+## 9. Purchases and Subscriptions
+
+1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles purchases and subscription renewals via Stripe.
+2. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for reporting and refunds.
+
+```plaintext
+Player → Account Service → Logging & Admin Service
+```
+
+---
+
+## 10. Private Instances and Player Housing
+
+1. **Create Instance** – The [World Management Service](./microservices/world-management-service/README.md) provisions private regions such as dungeons or homes.
+2. **Enter Instance** – The Game Session Service spawns an isolated session and persists progress via the Entity Management Service.
+
+```plaintext
+World Management Service → Game Session Service → Entity Management Service
+```
 
 ---
 
