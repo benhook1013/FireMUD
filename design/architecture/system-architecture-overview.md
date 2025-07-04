@@ -6,19 +6,19 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ## 🧩 Core Architecture Principles
 
-- **Microservices-based** domain-driven architecture with clearly separated responsibilities  
-- **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients  
-- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway  
+- **Microservices-based** domain-driven architecture with clearly separated responsibilities
+- **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
+- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service
  - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./infrastructure/gateway-architecture.md) for deployment details and stateless behavior.
    > 🛑 **Gameplay login is handled by the Game Session Service** — the Gateway may validate JWTs for admin endpoints, but gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input**, but **discards it across reconnects**
-- **Reconnection logic is handled in layers** to preserve gameplay continuity  
-- **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency  
-- **Session state is stored in Redis** to keep services stateless and support gameplay recovery  
-- **Game definitions and rules are data-driven and editable via tooling without redeploying code**  
-- **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration  
-- **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**  
+- **Reconnection logic is handled in layers** to preserve gameplay continuity
+- **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency
+- **Session state is stored in Redis** to keep services stateless and support gameplay recovery
+- **Game definitions and rules are data-driven and editable via tooling without redeploying code**
+- **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration
+- **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one
 
 🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
@@ -75,10 +75,10 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 
 ## 📦 Data and State Management
 
-- **Persistent data** (accounts, entities, rooms) is stored in PostgreSQL by domain-aligned services  
-- **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service  
-- Redis is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery  
-- Tick regions are shard-aligned in Redis to preserve atomicity  
+- **Persistent data** (accounts, entities, rooms) is stored in PostgreSQL by domain-aligned services
+- **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service
+- Redis is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
+- Tick regions are shard-aligned in Redis to preserve atomicity
 
 📌 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -98,8 +98,8 @@ FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
 ## 🔐 Authentication and Authorization Flow
 
-Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.  
-On disconnect, clients must reauthenticate to resume gameplay.  
+Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
+On disconnect, clients must reauthenticate to resume gameplay.
 Session state is stored in Redis and reused for recovery.
 
 > 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) for JWT format and session flow.
@@ -138,31 +138,31 @@ for how these profiles differ in Docker Compose versus Kubernetes.
 
 ## 🔎 Notes on Responsibility Alignment
 
-- Functional responsibilities are defined in the [Service Responsibility Matrix](./service-responsibility-matrix.md)  
-- **Game Session Service** orchestrates tick lifecycles, retries, and session management  
-- **Game Logic Service** resolves individual actions deterministically based on input state  
+- Functional responsibilities are defined in the [Service Responsibility Matrix](./service-responsibility-matrix.md)
+- **Game Session Service** orchestrates tick lifecycles, retries, and session management
+- **Game Logic Service** resolves individual actions deterministically based on input state
 - **Redis** acts as a passive, high-speed execution substrate — storing volatile state and enabling atomic coordination via Lua scripts
 
-🧠 **Why Game Session Service vs Game Logic Service?**  
-Game Logic Service is stateless and deterministic.  
+🧠 **Why Game Session Service vs Game Logic Service?**
+Game Logic Service is stateless and deterministic.
 Game Session Service governs pacing, conflict handling, and orchestration across distributed tick regions.
 
 ---
 
 ## 📚 Related Documentation
 
-**Diagrams**
+### Diagrams
 - [System Architecture Diagram](./system-architecture-diagram.md)
 - [System Context Diagram](./system-context-diagram.md)
 
-**Infrastructure & Deployment**
+### Infrastructure & Deployment
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
 - [Protocol Bridging](./infrastructure/protocol-bridging.md)
 - [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
 
-**Runtime & Security**
+### Runtime & Security
 - [Redis Architecture](./system-architecture-redis.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
@@ -172,5 +172,5 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 - [Database Migrations](./system-architecture-database-migrations.md)
 - [Testing Strategy](./system-architecture-testing.md)
 
-**Responsibilities**
+### Responsibilities
 - [Microservices Responsibility Matrix](./service-responsibility-matrix.md)

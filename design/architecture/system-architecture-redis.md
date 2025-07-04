@@ -76,7 +76,7 @@ Redis keys follow strict naming conventions to ensure:
 | `retry:{regionId}`            | Retry queue for failed actions           |
 | `timer:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
 
-> 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)  
+> 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
 
 ---
@@ -115,7 +115,7 @@ It provides:
 - **Conflict metadata** for retry prioritization
 - Accurate **cooldown and timer tracking**
 
-> 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.  
+> 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.
 > 🔗 See [Tick Execution Flow](./system-architecture-ticks.md#🔄-tick-execution-flow)
 
 ### 💥 Crash and Recovery Safety
