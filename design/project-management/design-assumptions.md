@@ -5,11 +5,13 @@ This document outlines high-level design and technology assumptions for the Fire
 ## Backend
 
 ### Core Technologies
+
 - **Language**: Java
 - **Framework**: Java Spring Framework
 - **Architecture**: Microservices
 
 ### Deployment & Networking
+
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
 - **Service Discovery**:
@@ -21,6 +23,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Real-Time Networking**: WebSocket/TCP
 
 ### Data & Session Management
+
 - **Database**: PostgreSQL
 - **Database Access**: Spring Data JPA
 - **Caching**: Redis for transient session and gameplay state
@@ -30,6 +33,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service
 
 ### Operations & Support
+
 - **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Certificate Management**: TLS and mTLS certificates issued by **cert-manager** and stored as Kubernetes Secrets

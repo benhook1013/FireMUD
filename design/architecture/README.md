@@ -37,6 +37,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
 
 ## Additional Resources
+
 - [**user-journeys.md**](./user-journeys.md) – Example creator and player workflows.
 
 Refer to the README files within each subdirectory for more details.
