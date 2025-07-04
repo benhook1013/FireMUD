@@ -27,8 +27,9 @@ The **Game Session Service** controls which published version is active for each
 
 ## 🔧 Runtime Feature Flags
 
-Runtime feature flags allow limited behavior changes without publishing a new design version. These flags are stored within the **Game Session Service** (typically in a configuration table keyed by `tenantId`).
+Runtime feature flags allow limited behavior changes without publishing a new design version. They are **defined in the Game Design Service** and copied into the **Game Session Service** (typically in a configuration table keyed by `tenantId`) when a version is published.
 
+- Designers create and maintain the set of flag definitions in the Game Design Service.
 - Administrators edit flag values through the [**Logging & Admin Service**](./microservices/logging-admin-service/README.md), which exposes management APIs and a web UI.
 - The Game Session Service loads these flags during initialization and may re-check them periodically or in response to admin updates.
 - Flags are separate from design-time configuration but still scoped by `version_id` to avoid mismatched behavior.

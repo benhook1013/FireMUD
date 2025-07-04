@@ -14,7 +14,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - **Session Lifecycle Management** — creates, resumes, and terminates player sessions.
 - **Tick Orchestration** — drives the hybrid tick model for deterministic action processing.
-- **Runtime Configuration** — activates published game versions and feature flags.
+- **Runtime Configuration** — stores runtime flag values created in the Game Design Service and activates published game versions.
 - **Termination Handling** — cleans up resources and logs results when a game ends.
 - **Instance Initialization** — starts new games from published templates.
 

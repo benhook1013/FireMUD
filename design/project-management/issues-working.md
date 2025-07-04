@@ -20,8 +20,8 @@ List of things in Design currently being worked on.
 
 ### 🧪 Runtime Feature Flags
 
-- [ ] Remove runtime flags from `Game Design Service`.
-- [ ] Relocate runtime flags to `Game Session Service` (or a new `Runtime Config Service`).
+- [ ] Keep runtime flag definitions in `Game Design Service`.
+- [ ] Store and manage runtime flag values in `Game Session Service`.
 - [ ] Enable live editing of flags via `Logging & Admin Service`.
 
 ### 🧠 Role of Game Session Service
