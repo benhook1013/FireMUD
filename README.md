@@ -116,30 +116,8 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 ### Microservices
 
-For details on each service, see the [Microservices documentation](design/architecture/microservices/README.md).
-
-1. **[Account Service](design/architecture/microservices/account-service/)**
-   - Handles user accounts, authentication, and profiles.
-1. **[Automation & Scripting Service](design/architecture/microservices/automation-scripting-service/)**
-   - Handles AI behaviors, scripted events, and dynamic interactions.
-1. **[Entity Management Service](design/architecture/microservices/entity-management-service/)**
-   - Manages in-game entities, including NPCs, items, and inventory.
-1. **[Game Design Service](design/architecture/microservices/game-design-service/)**
-   - Provides tools for game editing and customization.
-1. **[Game Logic Service](design/architecture/microservices/game-logic-service/)**
-   - Implements core game mechanics and rules.
-1. **[Game Session Service](design/architecture/microservices/game-session-service/)**
-   - Orchestrates live sessions and tick execution.
-1. **[Logging & Admin Service](design/architecture/microservices/logging-admin-service/)**
-   - Provides centralized logging and administration tools.
-1. **[Social & Groups Service](design/architecture/microservices/social-groups-service/)**
-   - Manages player groups, chat, and social features.
-1. **[Spring Cloud Gateway](design/architecture/microservices/spring-cloud-gateway/)**
-   - Routes WebSocket and HTTP traffic to backend services.
-1. **[TCP Proxy Service](design/architecture/microservices/tcp-proxy-service/)**
-   - Bridges Telnet clients into the WebSocket backend.
-1. **[World Management Service](design/architecture/microservices/world-management-service/)**
-   - Manages world maps, regions, pathfinding data, and procedural generation.
+The platform is composed of multiple Spring Boot services that communicate over gRPC. The complete list and responsibilities are maintained in the
+[Microservices documentation](design/architecture/microservices/README.md).
 
 ### Service Interactions
 
@@ -182,14 +160,8 @@ Before contributing, we recommend reviewing the following key documents:
   Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
 
 - **Contribute Code**:
-  1. **Fork** the repository you want to contribute to.
-  2. **Create a new branch**:
-     `git checkout -b feature/your-feature-name`
-  3. **Make your changes**, following our coding standards.
-  4. **Commit with clear messages**.
-  5. **Push to your fork**:
-     `git push origin feature/your-feature-name`
-  6. **Open a pull request** against the `main` branch.
+  See our [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy,
+  coding standards, and how to submit a pull request.
 
 - **Review Pull Requests**:
   Provide thoughtful, constructive feedback on open pull requests.
@@ -203,13 +175,9 @@ Before contributing, we recommend reviewing the following key documents:
 
 ### Additional Guidelines
 
-Please see our [Contributing Guidelines](./CONTRIBUTING.md) for more details on:
-
-- Branching strategy
-- Code style
-- Testing requirements
-- How to submit a PR
-- **AI Coding Standards**: [Local Rules](design/project-management/ai-rules-local.md) and [Global Rules](design/project-management/ai-rules-global.md)
+See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our
+AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and
+[Global Rules](design/project-management/ai-rules-global.md).
 
 ---
 
