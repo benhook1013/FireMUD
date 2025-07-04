@@ -56,13 +56,13 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Key Features
 
 - **Real-Time Game Server**: Backend for gameplay mechanics, player actions, and world state management.
-- **Integrated Game Editor**: Tools for creators to design rooms, entities, quests, and dialogues.
-- **Microservice Architecture**: Modular services for scalability and maintainability.
 - **Web Frontend**: React-based interface for players and creators.
+- **Integrated Game Editor**: Tools for designing rooms, entities, quests, and dialogues.
 - **Extensible Command Parsing**: Flexible system to interpret player commands.
 - **Dynamic Scripting Support**: For events and interactions within the game world.
 - **Multi-Server Hosting**: Support for hosting multiple MUD games simultaneously.
 - **Moderation Tools**: Comprehensive tools for administrators and moderators.
+- **Microservice Architecture**: Modular services for scalability and maintainability.
 
 ### Tech Stack
 

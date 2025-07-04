@@ -125,12 +125,12 @@ This document outlines the **core functional and non-functional requirements** f
 ### **3.1 Networking & API Gateway**
 
 - **WebSocket/TCP-based real-time networking** for low-latency gameplay.
-- Multi-server support to enable **scaling hosted games separately**.
-- **API Gateway** for managing requests between microservices and handling external integrations.
 - **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
-- **Gameplay login is handled by the Game Session Service**. The Gateway may validate JWTs for admin or REST endpoints, but gameplay clients connect without tokens.
+- **API Gateway** manages requests between microservices and handles external integrations.
+- **Gameplay login is handled by the Game Session Service**; the Gateway may validate JWTs for admin or REST endpoints, but gameplay clients connect without tokens.
 - **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
 - **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
+- Multi-server support enables **scaling hosted games separately**.
 
 ### **3.2 Persistence & Caching**
 
@@ -143,8 +143,8 @@ This document outlines the **core functional and non-functional requirements** f
 - The platform is designed for **cloud-native deployment**, using:
   - **Docker & Kubernetes** for containerization and scaling.
   - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
-- Supports **multi-region deployments** to provide better latency for global users.
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
+- Supports **multi-region deployments** to provide better latency for global users.
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
 - **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery.
 - Production databases are snapshotted **every 15 minutes** with **24 hours of retention**.
