@@ -32,7 +32,7 @@ All games share the same Kubernetes cluster and infrastructure. Databases use pe
 
 ## 📜 Logging Stack
 
-Logs from each service are collected by Fluent Bit sidecars and forwarded to Elasticsearch for indexing and search. See [Logging & Admin Service](../microservices/logging-admin-service/README.md) for dashboards and moderation tools.
+The log aggregation pipeline is summarized in [Logging & Monitoring](../system-architecture-logging-monitoring.md).
 
 ## 🧭 Usage
 
@@ -42,8 +42,7 @@ For example:
 
 > See [**Gateway Architecture**](./gateway-architecture.md), [**Deployment Environments**](./deployment-environments.md), or [**Protocol Bridging**](./protocol-bridging.md) for relevant infrastructure details.
 > Redis-backed session state is described in detail in [**Redis Architecture**](../system-architecture-redis.md).
-> Observability and metrics integrations are outlined in the [**System Architecture Overview**](../system-architecture-overview.md#📊-observability-and-monitoring).
-> Log aggregation using Fluent Bit, Elasticsearch, and Kibana is covered in the [**Log Aggregation**](./deployment-environments.md#📜-log-aggregation) section of **Deployment Environments**.
+> Observability integrations are summarized in [**Logging & Monitoring**](../system-architecture-logging-monitoring.md).
 > Client reconnection flow is covered in the [**Reconnection Strategy**](../system-architecture-reconnection.md).
 > TLS, certificate rotation, and network policies are detailed in the [**Security Architecture**](../system-architecture-security.md).
 > Backup procedures and disaster recovery steps are outlined in [**Backup & Disaster Recovery**](../system-architecture-backup-recovery.md).

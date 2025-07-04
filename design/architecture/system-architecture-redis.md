@@ -149,7 +149,7 @@ FireMUD actively monitors Redis performance and tick health:
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
 - Redis is the **only** volatile coordination layer — no per-service caches are used
 
-> 🔗 Redis observability is connected to system-wide dashboards. See [System Overview](./system-architecture-overview.md#📊-observability-and-monitoring)
+> 🔗 Redis observability feeds into the common stack described in [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 
 ---
 

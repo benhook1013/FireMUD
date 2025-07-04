@@ -19,7 +19,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Inter-Service Communication**: gRPC
 - **Containerization**: Docker
 - **Orchestration**: Kubernetes
-- **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager
+ - **Monitoring & Logging**: see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md)
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Payment Gateway**: Stripe (with custom subscription integration)
 
