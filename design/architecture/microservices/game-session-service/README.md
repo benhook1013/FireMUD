@@ -23,6 +23,11 @@ Orchestrates live game sessions, including tick execution, player input validati
 - **Reconnection Handling** — resumes gameplay via Redis-backed session state as described in [Reconnection Strategy](../system-architecture-reconnection.md).
 - **State Queries** — exposes gRPC methods to retrieve current game or player state for the web UI.
 
+### Data Model
+
+- `session` table tracks active games, associated `version_id`, and owner account.
+- Redis stores volatile queues, timers, and reconnect metadata.
+
 ### Tick Execution Model
 
 - Each session advances in fixed-length ticks controlled by a Redis-based timer.
