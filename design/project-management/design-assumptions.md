@@ -6,9 +6,12 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ### Core Technologies
 
-- **Language**: Java
-- **Framework**: Java Spring Framework
+- **Language**: Java 17+
+- **Framework**: Spring Boot 3.x
 - **Architecture**: Microservices
+- **Boilerplate Reduction**: Lombok
+- **DTO Mapping**: MapStruct
+- **Build Integration**: Each service declares Lombok and MapStruct dependencies with annotation processors enabled.
 
 ### Deployment & Networking
 
