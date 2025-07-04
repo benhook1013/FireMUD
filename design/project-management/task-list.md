@@ -6,25 +6,25 @@ This checklist is structured to **build foundational features first**, followed 
 
 ## 📋 Phase 0: Project Planning
 
-- [ ] **Define Vision & Scope of the Platform**
-  - [ ] Write a high-level product vision and key goals
-  - [ ] Create phased development plan
+- [x] **Define Vision & Scope of the Platform**
+  - [x] Write a high-level product vision and key goals
+  - [x] Create phased development plan
 
-- [ ] **Establish Naming Conventions & Folder Structure**
-  - [ ] Standardize service names, package structure, and code conventions
-  - [ ] Document folder and repo layout for multi-service organization
+- [x] **Establish Naming Conventions & Folder Structure**
+  - [x] Standardize service names, package structure, and code conventions
+  - [x] Document folder and repo layout for multi-service organization
 
-- [ ] **Draft Technical Architecture Diagrams**
-  - [ ] High-level service map
-  - [ ] Data flow diagrams between client/editor/server
-  - [ ] Deployment architecture (e.g., Kubernetes clusters, CI/CD flow)
+- [x] **Draft Technical Architecture Diagrams**
+  - [x] High-level service map
+  - [x] Data flow diagrams between client/editor/server
+  - [x] Deployment architecture (e.g., Kubernetes clusters, CI/CD flow)
 
-- [ ] **Miscellaneous**
-  - [ ] Write initial design for each microservice
+- [x] **Miscellaneous**
+  - [x] Write initial design for each microservice
   - [ ] Investigate transaction support for microservices
-  - [ ] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
-  - [ ] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
-  - [ ] Update README after all services are defined
+  - [x] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
+  - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
+  - [x] Update README after all services are defined
 
 ---
 
@@ -39,21 +39,21 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement configuration management (centralized properties, environment handling)
   - [ ] Publish common package to internal repository (Maven/Gradle)
 
-- [ ] **Set up Git repository and development workflow**
-- [ ] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
-  - [ ] Ensure CI/CD includes the common package build process
-- [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
-  - [ ] Ensure API contracts include standard error handling and request validation
-  - [ ] Configure gRPC infrastructure with **mTLS** certificates for internal calls
-  - [ ] Install **cert-manager** and store certificates as Kubernetes Secrets
-- [ ] **Define high-level architecture & microservices boundaries**
-- [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
-- [ ] **Set up Docker and Kubernetes for containerized deployment**
-- [ ] **Configure Flyway-based database migrations for each microservice**
-- [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
+- [x] **Set up Git repository and development workflow**
+- [x] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
+  - [x] Ensure CI/CD includes the common package build process
+- [x] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
+  - [x] Ensure API contracts include standard error handling and request validation
+  - [x] Configure gRPC infrastructure with **mTLS** certificates for internal calls
+  - [x] Install **cert-manager** and store certificates as Kubernetes Secrets
+- [x] **Define high-level architecture & microservices boundaries**
+- [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
+- [x] **Set up Docker and Kubernetes for containerized deployment**
+- [x] **Configure Flyway-based database migrations for each microservice**
+- [x] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
-- [ ] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
-- [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
+- [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
+- [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
 
 ---
