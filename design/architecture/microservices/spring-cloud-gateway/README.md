@@ -16,6 +16,17 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Reconnection support for dropped clients.
 - Routes REST and gRPC traffic to appropriate backend services.
 
+### Filter Chain
+
+- Authentication, rate limiting, and logging filters run before routing.
+- WebSocket upgrades are handled with heartbeat and idle timeout logic.
+
+### Key Routes
+
+- `/api/session/**` → Game Session Service (WebSocket and REST endpoints).
+- `/api/admin/**` → Logging & Admin Service with JWT authentication.
+- `/api/design/**` → Game Design Service for content management.
+
 ## Dependencies
 
 - **Internal:** Game Session Service and other microservices over gRPC.

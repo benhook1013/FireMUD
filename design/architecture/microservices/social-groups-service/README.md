@@ -15,7 +15,21 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Global and guild chat rooms.
 - Private messaging and presence indicators.
 - Guild creation and membership management.
-- Cross-game friend lists.
+- Friend lists scoped both to individual games and to overall accounts.
+- In-game social chat plus account-to-account direct messaging.
+
+### Chat Pipeline
+
+- Messages are published to Redis streams and fanned out to WebSocket channels
+  through the gateway.
+- Guild and direct messages share a common persistence model for history.
+
+### gRPC/REST APIs
+
+- `SendMessage` – publishes a chat message to an in-game channel or player.
+- `SendAccountMessage` – delivers a direct message between account holders.
+- `CreateGuild` – establishes a new guild with an owner account.
+- `AddFriend` – adds a friend relationship at the game or account level.
 
 ## Dependencies
 

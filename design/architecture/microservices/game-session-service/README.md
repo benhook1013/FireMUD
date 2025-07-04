@@ -21,6 +21,18 @@ Orchestrates live game sessions, including tick execution, player input validati
 - **Instance Initialization** — starts new games from published templates.
 - **State Queries** — exposes gRPC methods to retrieve current game or player state for the web UI.
 
+### Tick Execution Model
+
+- Each session advances in fixed-length ticks controlled by a Redis-based timer.
+- Commands are collected during a tick and executed in deterministic order.
+- After execution, results are persisted and broadcast to connected clients.
+
+### gRPC APIs
+
+- `StartSession` – spins up a game instance from a published version.
+- `EnqueueCommand` – adds a player action to the next tick's queue.
+- `QueryState` – retrieves condensed session or player state for monitoring.
+
 ## Dependencies
 
 - **Internal:** Entity Management Service, Game Logic Service, World Management Service.

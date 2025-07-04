@@ -22,6 +22,17 @@ The World Management Service stores and manages game world data such as rooms, r
 - Event scheduling for world-wide holidays or timed modifiers, communicating changes over gRPC.
 - Chunk-based world snapshots for backup and recovery.
 
+### Data Model
+
+- Tables for `region`, `zone`, and `room` define the world hierarchy.
+- `terrain` and `object_spawn` tables support procedural generation.
+- Redis caches hot rooms for active sessions to speed up lookups.
+
+### gRPC APIs
+
+- `GetRoom` – retrieves room data including exits and environmental effects.
+- `UpdateWorldState` – persists scheduled changes and notifies listeners.
+
 ## Dependencies
 
 - **Internal:** Game Design Service for generation rules.

@@ -20,10 +20,25 @@ For details on how scripts are authored and executed safely, see [System Archite
 - Timers and delayed actions for asynchronous events.
 - On-demand AI execution to reduce CPU load.
 
+### Script Lifecycle
+
+- Scripts reside in the Automation & Scripting Service database and are versioned independently from running game sessions.
+- Events from the Game Session Service trigger script execution via gRPC.
+- The sandboxed engine limits CPU time and memory for each script to prevent
+  runaway behavior.
+
+### gRPC APIs
+
+- `TriggerEvent` – informs the service of an in-game event so matching scripts
+  can run.
+- `UpdateScript` – uploads or replaces a script definition for later use.
+- `GetScriptStatus` – queries whether a script is queued or running for a given
+  entity.
+
 ## Dependencies
 
 - **Internal:** Game Logic Service for rule evaluation.
-- **External:** Redis for queuing automation tasks.
+- **External:** PostgreSQL for script storage and Redis for queuing automation tasks.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),

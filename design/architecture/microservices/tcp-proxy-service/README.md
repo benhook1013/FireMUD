@@ -18,6 +18,24 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - **Connection Buffering** — temporarily queues input to handle latency.
 - **Graceful Disconnects** — informs the Game Session Service when a client drops.
 
+### Data Flow
+
+- TCP connections are accepted on a dedicated port and upgraded to WebSocket
+  using a lightweight frame protocol.
+- Incoming bytes are queued and forwarded to the gateway in order.
+- If the connection is lost, the queue is flushed and the session is marked for
+  possible reconnection.
+
+### Service Interactions
+
+The proxy does not expose its own public gRPC API. Instead it performs two
+internal operations when communicating with other microservices:
+
+- **NotifyDisconnect** – informs the Game Session Service when a Telnet client
+  drops so the session may be suspended.
+- **PushBufferedInput** – forwards any queued commands after a reconnect
+  event.
+
 ## Dependencies
 
 - **Internal:** Spring Cloud Gateway, Game Session Service.

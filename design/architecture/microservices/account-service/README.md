@@ -19,6 +19,20 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Banning and subscription tracking.
 - gRPC APIs for account creation, authentication, and profile queries.
 
+### Data Model
+
+- `account` table stores username, password hash, email, and status flags.
+- `profile` table captures optional user details and preferences.
+- `session` keys in Redis map temporary session tokens to account IDs for quick
+  reconnects.
+
+### gRPC APIs
+
+- `CreateAccount` – registers a new user and returns an auth token on success.
+- `Authenticate` – verifies credentials and issues a session token.
+- `GetProfile` – retrieves profile information for the current account.
+- `UpdateProfile` – modifies profile fields and triggers notification emails.
+
 ## Dependencies
 
 - **Internal:** Logging & Admin Service for audit logging.
