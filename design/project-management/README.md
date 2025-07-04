@@ -2,7 +2,7 @@
 
 This section tracks planning materials, AI rules, and other documents used to organize development of the FireMUD platform.
 
-These docs are aligned with the detailed architecture found in [../architecture](../architecture/README.md). Key files include:
+Key files include:
 
 - [**ai-rules-global.md**](./ai-rules-global.md) and [**ai-rules-local.md**](./ai-rules-local.md) – Coding and documentation guidelines.
 - [**core-requirements.md**](./core-requirements.md) – High-level feature requirements.
