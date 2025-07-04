@@ -11,7 +11,7 @@
 FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with deterministic action resolution:
 
 - **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues**
-- **At regular tick intervals** (e.g., 1s):
+- At regular **tick intervals** (e.g., 1s):
   - One action (if any) is pulled from each entity’s command queue
   - Actions are resolved in a fair, ordered cycle (e.g. by timestamps or stat priority)
   - Only **one action per entity per tick** is executed for fairness

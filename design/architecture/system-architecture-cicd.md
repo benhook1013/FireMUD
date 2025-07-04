@@ -9,7 +9,7 @@ This document describes the basic continuous integration and deployment strategy
 - **Automate builds and tests** for all microservices whenever code changes are pushed.
 - **Build Docker images** and push them to a container registry.
 - **Deploy to Kubernetes** when changes are merged into designated branches (e.g., `main` or `release/*`).
-- **Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.**
+- Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 
 To save on cloud costs, this pipeline only builds and deploys services. Contributors run all unit, integration, and cross-service tests locally as part of manual code review. See [System Architecture Testing](./system-architecture-testing.md) for details.
 
