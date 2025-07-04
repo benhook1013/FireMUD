@@ -22,6 +22,10 @@
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.
 
+## 📚 Related Documentation
+
+- {{ Links to other design docs that expand on this service. }}
+
 ## Future Enhancements
 
 - {{ Planned Feature 1 }}
