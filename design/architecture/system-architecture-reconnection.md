@@ -20,13 +20,13 @@ Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remai
 
 ## 🛰️ Layer Behavior Breakdown
 
-### **TCP Proxy Service (Telnet Clients)**
+### TCP Proxy Service (Telnet Clients)
 
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
 - No gameplay state is preserved across reconnects — Game Session Service handles recovery
 
-### **Spring Cloud Gateway (Web Clients)**
+### Spring Cloud Gateway (Web Clients)
 
 - Stateless WebSocket router
 - Automatically re-establishes backend connections if restarted
@@ -34,7 +34,7 @@ Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remai
 
 > Proxy and Gateway restarts do not interrupt gameplay as long as the client’s physical connection is maintained.
 
-### **Game Session Service**
+### Game Session Service
 
 - Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info
 - On reconnect, rebinds:
