@@ -19,10 +19,10 @@ This document outlines the **core functional and non-functional requirements** f
 
 ### **1.3 Users & Stakeholders**
 
-- **Game Creators**: Users who create and manage MUD games.
-- **Players**: End users who join and play games on the platform.
-- **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
-- **Developers**: Those extending and integrating with the platform via APIs and scripting.
+ - **Game Designers (Creators)**: Users who design and manage games using the platform's tools.
+ - **Players**: End users who join and play games on the platform.
+ - **Administrators & Moderators**: Users who oversee platform security, logging, and compliance.
+ - **Platform Developers**: Those extending or modifying the FireMUD platform itself.
 
 ---
 
