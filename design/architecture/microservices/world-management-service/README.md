@@ -24,6 +24,15 @@ The World Management Service stores and manages game world data such as rooms, r
 - **Internal:** Game Design Service for generation rules.
 - **External:** PostgreSQL for world data, Redis for transient active state.
 
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](../system-architecture-overview.md)
+
 ## Future Enhancements
 
 - Tools for fine-tuning procedural generation rules.

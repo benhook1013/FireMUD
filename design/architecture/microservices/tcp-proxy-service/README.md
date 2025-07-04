@@ -20,7 +20,14 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - **Internal:** Spring Cloud Gateway, Game Session Service.
 - **External:** None, runs as a standalone proxy.
 
-> See [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on how Telnet connections are integrated into the platform.
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on how Telnet connections are integrated into the platform.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](../system-architecture-overview.md)
 
 ## Future Enhancements
 

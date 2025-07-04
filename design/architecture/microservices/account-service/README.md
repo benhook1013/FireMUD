@@ -19,6 +19,16 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 - **External:** PostgreSQL for account data, Redis for transient session data.
 
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## 📚 Related Documentation
+
+- [Authentication & Authorization](../system-architecture-authentication.md)
+- [System Architecture Overview](../system-architecture-overview.md)
+
 ## Future Enhancements
 
 - OAuth2 support for social logins.

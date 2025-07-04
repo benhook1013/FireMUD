@@ -19,6 +19,15 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 - **External:** PostgreSQL for entity data.
 
+> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+details on shared infrastructure components.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](../system-architecture-overview.md)
+
 ## Future Enhancements
 
 - Entity graph caching for faster lookups.
