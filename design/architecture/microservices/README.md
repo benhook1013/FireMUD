@@ -8,7 +8,7 @@ This directory contains detailed design documents for each core microservice in 
 
 | Microservice                    | Purpose                                                    |
 |----------------------------------|------------------------------------------------------------|
-| [World Management Service](./world-management-service/)  | Handles world maps, regions, procedural generation, and locations. |
+| [World Management Service](./world-management-service/)  | Handles world maps, regions, pathfinding data, and procedural generation. |
 | [Account Service](./account-service/)                    | Manages user accounts, authentication, profiles, and sessions. |
 | [Game Session Service](./game-session-service/)          | Orchestrates live gameplay sessions and tick execution. |
 | [Game Design Service](./game-design-service/)            | Provides tools for designing worlds, actions, items, and game events. |
