@@ -45,6 +45,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
   - [ ] Ensure API contracts include standard error handling and request validation
   - [ ] Configure gRPC infrastructure with **mTLS** certificates for internal calls
+  - [ ] Install **cert-manager** and store certificates as Kubernetes Secrets
 - [ ] **Define high-level architecture & microservices boundaries**
 - [ ] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [ ] **Set up Docker and Kubernetes for containerized deployment**
@@ -247,6 +248,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
   - [ ] Optimize database queries & network traffic handling
   - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
+  - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
 
 - [ ] **Iterate on Features & Add More Game Customization**
   - [ ] Expand game customization options for hosted games

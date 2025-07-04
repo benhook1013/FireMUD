@@ -116,6 +116,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **API Gateway** for managing requests between microservices and handling external integrations.
 - **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
 - **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
+- **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
 
 ### **3.2 Persistence & Caching**
 
@@ -129,7 +130,9 @@ This document outlines the **core functional and non-functional requirements** f
   - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)).
 - Supports **multi-region deployments** to provide better latency for global users.
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
- - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
+- **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
+- **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery.
+
 
 ### **3.4 Gameplay Session Architecture**
 
@@ -137,6 +140,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **Redis** stores volatile session state so players can **reconnect seamlessly** after disruptions.
 - Tick regions operate independently for scalability but rely on Redis for atomic coordination.
 - Redis runs with **AOF persistence** and synchronous replication so tick state can be recovered after failover.
+- Lua scripts in Redis ensure atomic tick updates and use `WAIT` for replica acknowledgment.
 - A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows transparent service restarts.
 
 ---

@@ -9,6 +9,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Framework**: Java Spring Framework
 - **Database**: PostgreSQL
 - **Caching**: Redis for transient session and gameplay state
+- **Redis Consistency**: Lua scripts enforce atomic updates with `WAIT` for replica acknowledgment
 - **Database Access**: Spring Data JPA
 - **Service Discovery**:
   - **Local Development**: Docker internal DNS-based discovery
@@ -22,6 +23,8 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Payment Gateway**: Stripe (with custom subscription integration)
+- **Certificate Management**: TLS and mTLS certificates issued by **cert-manager** and stored as Kubernetes Secrets
+- **Cluster Backups**: **Velero** snapshots StatefulSets and persistent volumes
 
 ## Frontend
 
