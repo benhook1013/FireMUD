@@ -35,11 +35,13 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
 - Previous versions remain available for rollback or auditing.
 
-## 🛡️ Fairness & Abuse Prevention
+## 🛡️ Fairness & Abuse Prevention (Planned)
 
-- The platform limits how often a script may run and how many resources it consumes per tick.
-- Future enhancements will track fairness metrics and detect scripts that attempt to monopolize CPU or grief other players.
-- Administrators can disable or throttle problematic scripts via the Game Design Service.
+The following mechanics are **future additions** to the platform and are not yet implemented:
+
+- Limits on how often a script may run and how many resources it consumes per tick.
+- Tracking fairness metrics and detecting scripts that attempt to monopolize CPU or grief other players.
+- Tools for administrators to disable or throttle problematic scripts via the Game Design Service.
 
 ---
 
