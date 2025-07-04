@@ -30,6 +30,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
+    - [ ] Document REST endpoints and gRPC method flows in each microservice README
 
 ---
 
@@ -37,13 +38,15 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
 - [ ] Generate skeleton controllers and service classes for each microservice
+ - [ ] Define base entity and repository classes for core domains
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
-  - [ ] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
+  - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
   - [x] Implement centralized logging utilities
   - [ ] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [ ] Implement database connection utilities (PostgreSQL, Redis connectors)
+  - [ ] Implement base configuration classes for service discovery and shared properties
    - [x] Implement common exception handling & error response structures
   - [ ] Implement configuration management (centralized properties, environment handling)
   - [ ] Publish common package to internal repository (Maven/Gradle)
@@ -65,6 +68,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
   - [ ] Add initial protobuf IDL files for all microservices
+  - [ ] Generate Java gRPC stubs in each module
 
 ---
 
