@@ -52,6 +52,7 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 

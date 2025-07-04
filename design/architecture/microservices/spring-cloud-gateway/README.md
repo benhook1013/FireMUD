@@ -8,6 +8,7 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Event-driven updates synchronize game state across connected players.
 - Includes a fallback mechanism so players with unstable connections can rejoin seamlessly.
 - Applies rate limiting and authentication filters for admin endpoints.
+- Relies on the Game Session Service for gameplay login and session management.
 
 ## Key Features
 
@@ -46,6 +47,8 @@ After edits, run `./gradlew generateProto` to regenerate gateway stubs.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 
