@@ -8,17 +8,17 @@ This directory contains detailed design documents for each core microservice in 
 
 | Microservice                    | Purpose                                                    |
 |----------------------------------|------------------------------------------------------------|
-| [World Management Service](./world-management-service/)  | Handles world maps, regions, pathfinding data, and procedural generation. |
 | [Account Service](./account-service/)                    | Manages user accounts, authentication, profiles, and sessions. |
-| [Game Session Service](./game-session-service/)          | Orchestrates live gameplay sessions and tick execution. |
-| [Game Design Service](./game-design-service/)            | Provides tools for designing worlds, actions, items, and game events. |
-| [Entity Management Service](./entity-management-service/) | Controls player characters, NPCs, items, and inventory management. |
-| [Game Logic Service](./game-logic-service/)              | Implements core gameplay mechanics, command parsing, and actions. |
 | [Automation & Scripting Service](./automation-scripting-service/) | Handles AI behaviors, event scripting, and dynamic interactions. |
-| [Social & Groups Service](./social-groups-service/)    | Manages chat, guilds, and cross-game social networking features. |
+| [Entity Management Service](./entity-management-service/) | Controls player characters, NPCs, items, and inventory management. |
+| [Game Design Service](./game-design-service/)            | Provides tools for designing worlds, actions, items, and game events. |
+| [Game Logic Service](./game-logic-service/)              | Implements core gameplay mechanics, command parsing, and actions. |
+| [Game Session Service](./game-session-service/)          | Orchestrates live gameplay sessions and tick execution. |
 | [Logging & Admin Service](./logging-admin-service/)      | Provides centralized logging, analytics, and administration tools. |
-| [TCP Proxy Service](./tcp-proxy-service/)                | Bridges Telnet clients into the WebSocket-based backend. |
+| [Social & Groups Service](./social-groups-service/)    | Manages chat, guilds, and cross-game social networking features. |
 | [Spring Cloud Gateway](./spring-cloud-gateway/) | Routes WebSocket and HTTP traffic to backend services. |
+| [TCP Proxy Service](./tcp-proxy-service/)                | Bridges Telnet clients into the WebSocket-based backend. |
+| [World Management Service](./world-management-service/)  | Handles world maps, regions, pathfinding data, and procedural generation. |
 | [Service Template](./service-template.md) | Template for creating new microservice docs. |
 
 ---
