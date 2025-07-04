@@ -137,6 +137,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Service Interactions
 
 For detailed architecture diagrams and explanations, refer to the [System Architecture Overview](design/architecture/system-architecture-overview.md).
+For an overview of service responsibilities, see the [Service Responsibility Matrix](design/architecture/service-responsibility-matrix.md).
 
 ---
 
