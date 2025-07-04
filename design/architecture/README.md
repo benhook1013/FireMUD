@@ -2,17 +2,20 @@
 
 The architecture section describes the platform infrastructure and each microservice.
 
-### High-Level Diagrams
+## High-Level Diagrams
+
 - [**system-architecture-overview.md**](./system-architecture-overview.md) – High-level diagrams and interactions.
 - [**system-context-diagram.md**](./system-context-diagram.md) – Shows clients, DMZ components, services, and datastores.
 - [**system-architecture-diagram.md**](./system-architecture-diagram.md) – Component relationships.
 
-### Directories & Responsibilities
+## Directories & Responsibilities
+
 - [**infrastructure/**](./infrastructure/) – Deployment environments, gateway design, and protocol bridging.
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
 - [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
 
-### Runtime Architecture
+## Runtime Architecture
+
 - [**system-architecture-authentication.md**](./system-architecture-authentication.md) – Authentication mechanisms and session handling.
 - [**system-architecture-security.md**](./system-architecture-security.md) – Cross-service security and secret management.
 - [**system-architecture-grpc.md**](./system-architecture-grpc.md) – Conventions for proto layout and versioning.
@@ -28,11 +31,12 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-database-migrations.md**](./system-architecture-database-migrations.md) – Managing schema changes per service.
 - [**system-architecture-testing.md**](./system-architecture-testing.md) – Unit, integration, and load testing strategy.
 
-### Operations
+## Operations
+
 - [**system-architecture-cicd.md**](./system-architecture-cicd.md) – CI/CD pipeline design using GitHub Actions.
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
 
-### Additional Resources
+## Additional Resources
 - [**user-journeys.md**](./user-journeys.md) – Example creator and player workflows.
 
 Refer to the README files within each subdirectory for more details.
