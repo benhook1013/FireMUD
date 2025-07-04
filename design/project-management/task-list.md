@@ -22,6 +22,10 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
   - [x] Investigate transaction support for microservices
+    - See [Transaction Strategies](../architecture/system-architecture-transactions.md)
+    - Document gRPC endpoints and compensating actions
+    - Implement lightweight Saga orchestrator service
+    - Provide example workflows (e.g., user registration)
   - [x] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
   - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
   - [x] Update README after all services are defined
@@ -37,7 +41,7 @@ This checklist is structured to **build foundational features first**, followed 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
-- [ ] Generate skeleton controllers and service classes for each microservice
+- [x] Generate skeleton controllers and service classes for each microservice
  - [ ] Define base entity and repository classes for core domains
 
 - [ ] **Create a Common Package for Shared Microservice Code**
