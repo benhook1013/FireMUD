@@ -25,6 +25,10 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.
 
+## Related Docs
+
+See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how game instances load published versions and runtime flags.
+
 ## Future Enhancements
 
 - Cross-region sharding for massive worlds.

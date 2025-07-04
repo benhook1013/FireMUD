@@ -42,3 +42,5 @@
 | TCP/Telnet socket handling                    |                     |                          |                |                      |                           |                    |                               |                           |                         | ✔                 |                       |
 | Telnet → WebSocket bridging                   |                     |                          |                |                      |                           |                    |                               |                           |                         | ✔                 |                       |
 | WebSocket upgrade, routing, and auth gateway  |                     |                          |                |                      |                           |                    |                               |                           |                         |                   | ✔                     |
+
+> For a detailed look at how versions flow through these services and how runtime flags are managed, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
