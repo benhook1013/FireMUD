@@ -11,9 +11,9 @@ FireMUD uses Docker Compose for local development and testing:
 ### 🔧 Docker Compose Characteristics
 
 - All services, including the gateway, are built locally via `Dockerfile`s.
+- Docker Compose orchestrates container startup, but not readiness.
 - Service discovery is handled by Docker's internal DNS (e.g., `game-session-service:8080`).
 - Route URIs in Spring Cloud Gateway use static hostnames defined in `application-dev.yml`.
-- Docker Compose orchestrates container startup, but not readiness.
 
 ### 🩺 Docker Health Checks
 
@@ -35,22 +35,20 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 ### 🔧 Kubernetes Characteristics
 
 - Services are deployed as Pods and exposed via Kubernetes Services.
-- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using
-  Kubernetes `LoadBalancer` Services so external clients can connect directly.
- - The TCP Proxy Service buffers active Telnet input but clears it when the TCP connection closes. Sticky TCP sessions terminate here. See [Gateway Architecture](./gateway-architecture.md) for how the stateless Gateway handles reconnects.
 - DNS-based discovery is built into Kubernetes (e.g., `game-session-service.default.svc.cluster.local`).
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Gateway.
-- Configuration and secrets are managed through ConfigMaps and Secrets.
-- Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
+- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly.
+  - The TCP Proxy Service buffers active Telnet input but clears it when the TCP connection closes. Sticky TCP sessions terminate here. See [Gateway Architecture](./gateway-architecture.md) for how the stateless Gateway handles reconnects.
 - The external load balancer exposes only the Gateway and TCP Proxy Service, forming a DMZ that shields internal services.
 - See [Security Architecture](../system-architecture-security.md) for TLS termination, mTLS certificates, and network policy details.
+- Configuration and secrets are managed through ConfigMaps and Secrets.
+- Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
 - Redis runs as a clustered StatefulSet with automatic failover. Details are in [Redis Architecture](../system-architecture-redis.md). Redis persistence uses **AOF**, as described there.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md).
 - Deployments are managed via Helm charts in the CI/CD pipeline. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 - All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
-
 ### 🩺 Kubernetes Health Monitoring
 
 - Kubernetes uses Spring Boot’s `/actuator/health` for both:

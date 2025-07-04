@@ -59,9 +59,9 @@ When an action fails due to contention:
 - Redis logs the **blocking lock** and conflicting region
 - The Game Session Service:
   - Reschedules the action within the blocked region
+  - **Prioritizes retries** to minimize player-visible delays
   - Staggers or delays conflicting ticks to avoid churn
   - Prevents retry storms and wasted CPU
-  - **Prioritizes retries** to minimize player-visible delays
 
 Future enhancements may include:
 
