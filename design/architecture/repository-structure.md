@@ -1,14 +1,15 @@
 # Repository Structure
 
-This repository uses a hierarchical Gradle layout. Each microservice and the shared `common-library` are standalone modules under the root project.
+This repository uses a hierarchical Gradle layout. All microservices and the shared `common-library` now live under a top-level `services/` folder to keep the root tidy.
 
 ```
 root
-├── common-library
-├── account-service
-├── ...
-├── spring-cloud-gateway
-├── tcp-proxy-service
+├── services/
+│   ├── common-library
+│   ├── account-service
+│   ├── ...
+│   ├── spring-cloud-gateway
+│   └── tcp-proxy-service
 ├── protos/
 └── docker-compose.yml
 ```
