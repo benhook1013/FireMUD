@@ -6,7 +6,7 @@
 
 ## Architecture / Design Notes
 
-- {{ Key architecture choice or pattern (e.g., event-driven, REST). }}
+- {{ Key architecture choice or pattern (e.g., gRPC, REST). }}
 - {{ State management approach or other design considerations. }}
 
 ## Key Features

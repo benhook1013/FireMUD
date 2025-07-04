@@ -2,13 +2,13 @@
 
 ## Overview
 
-The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled events that affect the environment.
+The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events, notifying other services over gRPC when the environment changes.
 
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
 - Changes are persisted incrementally to avoid heavy writes.
-- Background jobs manage scheduled events like daily resets or seasonal changes.
+- Background tasks trigger scheduled world changes (daily resets or seasonal shifts) and notify relevant services via gRPC.
 - Supports procedural generation with options for dynamic world expansion.
 
 ## Key Features
@@ -16,7 +16,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Region and location management with shard support.
 - Persistent world state with incremental saves.
 - Procedural generation tools for rooms and terrain.
-- Event scheduling for world-wide holidays or timed modifiers.
+- Event scheduling for world-wide holidays or timed modifiers, communicating changes over gRPC.
 
 ## Dependencies
 
