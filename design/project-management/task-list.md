@@ -26,7 +26,10 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
   - [x] Update README after all services are defined
   - [x] Finalize architecture design documentation and diagrams
-  - [ ] Finalize gRPC proto definitions and database schema diagrams for each microservice
+  - [ ] Finalize API schemas
+    - [ ] gRPC proto definitions for each microservice
+    - [ ] Database schema diagrams for each microservice
+    - [ ] Example Flyway migration scripts
 
 ---
 
