@@ -52,6 +52,10 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
+- [Tick System and Runtime Design](../system-architecture-ticks.md)
+- [Redis Architecture](../system-architecture-redis.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements

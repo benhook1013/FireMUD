@@ -50,6 +50,7 @@ these change, run `./gradlew generateProto` to refresh generated sources.
 
 See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for details on the shared observability stack.
 - [Security Architecture](../system-architecture-security.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements

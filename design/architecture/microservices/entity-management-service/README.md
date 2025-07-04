@@ -48,6 +48,9 @@ proto files, run `./gradlew generateProto` to update generated sources.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Redis Architecture](../system-architecture-redis.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 

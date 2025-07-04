@@ -48,6 +48,8 @@ After edits, run `./gradlew generateProto` to regenerate gateway stubs.
 
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Security Architecture](../system-architecture-security.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
