@@ -33,10 +33,10 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Document service responsibility matrix
   - [x] Remove legacy Game Management Service and redistribute duties
   - [x] Conduct final review of all design documentation
-  - [ ] Address any missing diagrams or cross-references discovered during review
+  - [x] Address any missing diagrams or cross-references discovered during review
   - [ ] Set up financial contribution links (PayPal, GitHub Sponsors, Patreon)
   - [ ] Expand `CONTRIBUTING.md` with onboarding instructions
-  - [ ] Populate `FAQ.md` with common questions
+  - [x] Populate `FAQ.md` with common questions
   - [ ] Finalize API schemas
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
@@ -44,6 +44,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
   - [ ] Expand `docker-compose.yml` to include all services
   - [ ] Create baseline Kubernetes manifests or Helm charts for deployment
+  - [ ] Add "Quickstart" build instructions to `README.md`
 
 ---
 
@@ -100,6 +101,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add base `application.yml` configuration for all services
   - [ ] Expose `/actuator/health` endpoints for service monitoring
   - [ ] Provide Docker image build tasks for each service
+  - [ ] Add unit tests for `PingController` endpoints to verify service startup
 
 ---
 
