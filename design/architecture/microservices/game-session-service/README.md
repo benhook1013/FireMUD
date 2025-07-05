@@ -96,6 +96,8 @@ Service definitions reside in
 - [User Journeys – Publish and Start a Game Instance](../user-journeys.md#4-publish-and-start-a-game-instance)
 - [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
 
+- [System Architecture Diagram](../system-architecture-diagram.md)
+- [System Context Diagram](../system-context-diagram.md)
 ## Future Enhancements
 
 - Cross-region sharding for massive worlds.

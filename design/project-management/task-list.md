@@ -80,6 +80,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Game Design Service: design-time schema entities
   - [x] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
   - [x] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
+  - [ ] Automation & Scripting Service: `ScriptDefinition` entity
   - [x] Create DTO records and MapStruct mappers
 
 
@@ -143,23 +144,23 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add baseline `Dockerfile` for each service
   - [ ] Create Gradle tasks to build Docker images for each service
   - [x] Verify `./gradlew :<service>:build` succeeds for every module
-  - [ ] Add a minimal `README.md` in each service with local run instructions
+  - [x] Add a minimal `README.md` in each service with local run instructions
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Add gRPC `PingService` stub in each service to validate connectivity
-  - [ ] Update each service `README.md` with links to design docs and proto definitions
+  - [x] Update each service `README.md` with links to design docs and proto definitions
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [ ] Enable Spotless plugin for code formatting
-  - [ ] Add GitHub Actions workflow for build and format checks
+  - [ ] Add GitHub Actions workflow to build and publish Docker images for each service
   - [ ] Integrate `markdownlint` in CI build
   - [ ] Configure static analysis tools
     - [ ] Add Checkstyle rules for code style enforcement
     - [ ] Integrate SpotBugs for static bug detection
     - [ ] Generate JaCoCo coverage reports in CI
-  - [ ] Establish base integration test setup using Spring Boot Test
+  - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
@@ -216,6 +217,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages
   - [ ] Configure SMTP provider and test templates
+  - [ ] Document email and notification design in `account-service/design/README.md`
+  - [ ] Add asynchronous NotificationService components with gRPC endpoints
 
 ---
 
@@ -279,6 +282,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC fleeing/surrender logic
   - [ ] Implement NPC formations & squad AI
   - [ ] Add gRPC AutomationService with script execution API
+  - [ ] Create `ScriptingController` REST endpoints
   - [ ] Create sandboxed script runtime
   - [ ] Provide web UI for script creation and testing
   - [ ] Add advanced AI modules for complex behaviors
@@ -345,6 +349,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement shared guild storage and alliance system
   - [ ] Provide rich moderation tools for chat
   - [ ] Add optional voice chat integration
+  - [ ] Create `SocialController` REST endpoints
 
 ---
 
@@ -363,6 +368,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
   - [ ] Build role-based admin UI
   - [ ] Integrate optional 2FA for administrator accounts
+  - [ ] Create `AdminController` REST endpoints
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
@@ -385,6 +391,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
   - [ ] Add gRPC `PaymentService` endpoints for billing operations
+  - [ ] Create `PaymentController` REST endpoints
   - [ ] Define proto contracts for payment and subscription flows
   - [ ] Add Flyway migration scripts for payment tables
   - [ ] Document monetization design in `account-service/design/README.md`
