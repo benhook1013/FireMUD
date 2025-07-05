@@ -137,11 +137,13 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Configure Kubernetes readiness and liveness probes
   
 #### Coding Kickoff Checklist
+  - [ ] Add baseline `Dockerfile` for each service
   - [ ] Create Gradle tasks to build Docker images for each service
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Add MapStruct mappers and DTO records for core domains
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
+  - [ ] Implement `PingController` endpoint in each service for basic health check
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow for build and format checks
