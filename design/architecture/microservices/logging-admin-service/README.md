@@ -11,6 +11,10 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Access to this service is protected by mTLS and JWT validation through the
   JWKS endpoint provided by the Account Service. See
   [Security Architecture](../system-architecture-security.md).
+- Moderation data and log indices include a `tenantId` field so administrators
+  only see information for the games they manage. Cross-tenant queries are
+  rejected per the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  strategy.
 
 ## Key Features
 

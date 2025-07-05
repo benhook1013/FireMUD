@@ -13,6 +13,9 @@ Provides chat, guild, and social networking features across games. Enables playe
   enable delivery retries.
 - Guild creation and membership changes participate in Saga workflows so other
   services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
+- Chat history and guild data are stored with a `tenantId` so conversations are
+  isolated per game. Redis stream keys also include this prefix. See
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 

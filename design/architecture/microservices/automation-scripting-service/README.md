@@ -16,6 +16,9 @@ For details on how scripts are authored and executed safely, see [System Archite
   described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
 - Uploading or replacing scripts is handled as a Saga workflow so that failures
   can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
+- Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
+  one game cannot access another's data. Redis queues also include the tenant
+  prefix; see [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 

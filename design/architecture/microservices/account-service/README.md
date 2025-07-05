@@ -11,6 +11,10 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Session information is stored in Redis as transient data for quick reconnections.
 - Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
 - Maintains account-to-character relationships so players can own characters across multiple games.
+- All tables include a `tenantId` column so the same platform account can join
+  multiple games without data leakage. Every query enforces this tenant filter as
+  described in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  design.
 - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
   via cert-manager as described in the [Security Architecture](../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.

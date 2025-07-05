@@ -13,6 +13,9 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - Can optionally terminate Telnet-over-TLS and then forward traffic to the
   gateway using mutual TLS. See
   [Security Architecture](../system-architecture-security.md).
+- During the login handshake the proxy tags the connection with the selected
+  `tenantId` so the gateway can route commands to the proper game. See
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 
