@@ -15,7 +15,7 @@ kubectl apply -f logging-admin-service.yaml
 kubectl apply -f social-groups-service.yaml
 kubectl apply -f tcp-proxy-service.yaml
 kubectl apply -f world-management-service.yaml
-kubectl apply -f gateway.yaml
+kubectl apply -f spring-cloud-gateway.yaml
 ```
 
 These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). See the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md) document for production considerations.

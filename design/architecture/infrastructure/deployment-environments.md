@@ -37,7 +37,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Services are deployed as Pods and exposed via Kubernetes Services.
 - DNS-based discovery is built into Kubernetes (e.g., `game-session-service.default.svc.cluster.local`).
 - Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
-- Internal microservices communicate directly over gRPC, bypassing the Gateway.
+- Internal microservices communicate directly over gRPC, bypassing the Spring Cloud Gateway.
 - The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly.
   - The TCP Proxy Service buffers active Telnet input but clears it when the TCP connection closes. Sticky TCP sessions terminate here. See [Gateway Architecture](./gateway-architecture.md) for how the stateless Gateway handles reconnects.
 - The external load balancer exposes only the Gateway and TCP Proxy Service, forming a DMZ that shields internal services.
