@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package entity_management.v1;
+
+option java_package = "net.fire_devops.firemud.entitymanagement.v1";
+option java_multiple_files = true;
+
+service EntityManagementService {
+  rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
+  rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
+  rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
+}
+
+message CreateCharacterRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string name = 3;
+}
+
+message CreateCharacterResponse {
+  string character_id = 1;
+}
+
+message UpdateEntityRequest {
+  string entity_id = 1;
+}
+
+message UpdateEntityResponse {
+  bool success = 1;
+}
+
+message QueryInventoryRequest {
+  string entity_id = 1;
+}
+
+message QueryInventoryResponse {
+  repeated string item_ids = 1;
+}
