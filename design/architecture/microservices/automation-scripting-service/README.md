@@ -12,6 +12,10 @@ For details on how scripts are authored and executed safely, see [System Archite
 - Scripts run inside a sandboxed engine to prevent malicious behavior.
 - AI computations are optimized for large worlds using tick-based batching.
 - NPCs that are far from active players are deprioritized and only "wake up" on interaction.
+- Script definitions are versioned and can be hot reloaded without downtime as
+  described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
+- Uploading or replacing scripts is handled as a Saga workflow so that failures
+  can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 

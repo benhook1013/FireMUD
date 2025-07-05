@@ -8,6 +8,9 @@ Centralized logging and administration tools for the platform. Collects log data
 
 Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
 All admin APIs are secured via role-based access control integrated with the Account Service.
+- Access to this service is protected by mTLS and JWT validation through the
+  JWKS endpoint provided by the Account Service. See
+  [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 
@@ -18,6 +21,8 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
+- Works with Saga workflows to record state changes across services. See
+  [Transaction Strategies](../system-architecture-transactions.md).
 
 ### Data Model
 

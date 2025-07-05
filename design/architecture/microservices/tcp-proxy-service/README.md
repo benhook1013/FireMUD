@@ -10,6 +10,9 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - Buffers incoming input during brief disconnects and clears it on connection loss.
 - Handles Telnet negotiation and character encoding quirks.
 - Works with the Reconnection Strategy to resume sessions transparently.
+- Can optionally terminate Telnet-over-TLS and then forward traffic to the
+  gateway using mutual TLS. See
+  [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 

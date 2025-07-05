@@ -42,6 +42,12 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
+### Immediate Next Steps
+- [ ] Configure Gradle protobuf plugin and generate gRPC stubs
+- [ ] Add base `application.yml` configuration and profiles
+- [ ] Implement PostgreSQL and Redis Docker containers for local dev
+- [ ] Create ERD diagrams and baseline Flyway scripts for all services
+
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
 - [x] Generate skeleton controllers and service classes for each microservice

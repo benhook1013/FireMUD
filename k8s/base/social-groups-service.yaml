@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: social-groups-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: social-groups-service
+  template:
+    metadata:
+      labels:
+        app: social-groups-service
+    spec:
+      containers:
+        - name: social-groups-service
+          image: social-groups-service:latest
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: social-groups-service
+spec:
+  selector:
+    app: social-groups-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
