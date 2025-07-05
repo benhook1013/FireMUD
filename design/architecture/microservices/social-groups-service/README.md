@@ -46,7 +46,9 @@ Provides chat, guild, and social networking features across games. Enables playe
 
 ## Dependencies
 
-- **Internal:** Account Service for user identities.
+- **Internal:**
+  - Account Service for user identities.
+  - Logging & Admin Service consumes chat logs for moderation.
 - **External:** PostgreSQL for social data.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
