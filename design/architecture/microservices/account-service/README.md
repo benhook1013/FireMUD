@@ -2,7 +2,7 @@
 
 ## Overview
 
-Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections. Session objects themselves are created immediately when a socket connects and are marked authenticated only after the Account Service verifies credentials.
+Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections.
 
 ## Architecture / Design Notes
 
