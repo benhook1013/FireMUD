@@ -23,8 +23,8 @@ All admin APIs are secured via role-based access control integrated with the Acc
   only see information for the games they manage. Cross-tenant queries are
   rejected per the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
   strategy.
-
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+
 ## Key Features
 
 - Central log collection and search.

@@ -27,8 +27,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
   Service's JWKS endpoint. Service-to-service traffic is protected with mutual
   TLS certificates managed by cert-manager as described in the
   [Security Architecture](../system-architecture-security.md).
-
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+
 ## Key Features
 
 - World and room editors.
