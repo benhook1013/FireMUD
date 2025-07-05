@@ -39,18 +39,20 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add service-level design README links to central architecture docs
 - [x] Expand `docker-compose.yml` to include all services
 - [x] Create baseline Kubernetes manifests or Helm charts for deployment
-  - [ ] Add Deployment and Service YAML manifests for each microservice
-    - [ ] account-service
-    - [ ] automation-scripting-service
-    - [ ] entity-management-service
-    - [ ] game-design-service
-    - [ ] game-logic-service
-    - [ ] game-session-service
-    - [ ] logging-admin-service
-    - [ ] social-groups-service
-    - [ ] spring-cloud-gateway
-    - [ ] tcp-proxy-service
-    - [ ] world-management-service
+  - [x] Add Deployment and Service YAML manifests for each microservice
+    - [x] account-service
+    - [x] automation-scripting-service
+    - [x] entity-management-service
+    - [x] game-design-service
+    - [x] game-logic-service
+    - [x] game-session-service
+    - [x] logging-admin-service
+    - [x] social-groups-service
+    - [x] spring-cloud-gateway
+    - [x] tcp-proxy-service
+    - [x] world-management-service
+  - [ ] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
+    - [ ] Document network policy usage in architecture docs
 
 ---
 
