@@ -4,6 +4,12 @@
 
 Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections.
 
+### Responsibilities
+- Registration and login flows, including password resets
+- Issuing JWT tokens consumed by other microservices
+- Tracking profiles, achievements, and external account links
+- Managing subscription status and bans
+
 ## Architecture / Design Notes
 
 - Stateless authentication using JWT tokens.

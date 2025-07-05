@@ -4,6 +4,12 @@
 
 Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. Acts as the central hub for gameplay state.
 
+### Responsibilities
+- Maintain session state and tick timing in Redis
+- Queue player commands and dispatch them to Game Logic Service
+- Broadcast lifecycle events and world updates to other services
+- Support reconnection and recovery of running games
+
 ## Architecture / Design Notes
 
 - Coordinates with Redis to store volatile session state and command queues.

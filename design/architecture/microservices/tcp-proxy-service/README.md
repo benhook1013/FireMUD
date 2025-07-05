@@ -4,6 +4,12 @@
 
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
 
+### Responsibilities
+- Accept Telnet connections and perform protocol negotiation
+- Proxy buffered input to Spring Cloud Gateway as WebSocket frames
+- Tag connections with tenant information for accurate routing
+- Provide graceful disconnect and reconnection handling
+
 ## Architecture / Design Notes
 
 - Lightweight custom service separate from Spring Boot.

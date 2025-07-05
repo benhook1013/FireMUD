@@ -4,6 +4,12 @@
 
 Handles player characters, NPCs, items, and inventory. Provides CRUD operations for entities and exposes them to other services.
 
+### Responsibilities
+- Persist characters, NPCs, and items with optimistic locking
+- Provide CRUD and query APIs for other services
+- Manage inventories and instanced zones
+- Coordinate deferred writes through Game Session Service
+
 ## Architecture / Design Notes
 
 - Uses JPA for persistence of entity data.

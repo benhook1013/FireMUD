@@ -4,6 +4,12 @@
 
 Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules and administrators.
 
+### Responsibilities
+- Provide web and gRPC tools for editing game assets
+- Version and publish immutable game configurations
+- Track revision history for rollback
+- Notify downstream services when new versions are available
+
 ## Architecture / Design Notes
 
 - Provides REST/gRPC APIs for editing game data.
