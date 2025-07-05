@@ -123,6 +123,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Ensure API contracts include standard error handling and request validation
   - [x] Configure gRPC infrastructure with **mTLS** certificates for internal calls
   - [x] Install **cert-manager** and store certificates as Kubernetes Secrets
+  - [ ] Implement hot reload for TLS certificates and JWKS keys across services
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
@@ -337,6 +338,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create `ScriptingController` REST endpoints
     - [ ] Upload and manage script definitions via REST
   - [ ] Create sandboxed script runtime
+  - [ ] Support hot reloading of scripts published by the Game Design Service
   - [ ] Provide web UI for script creation and testing
   - [ ] Add advanced AI modules for complex behaviors
   - [ ] Enforce fairness quotas and per-script resource limits
@@ -427,6 +429,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Provide analytics dashboards for operators
   - [ ] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts
+  - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
