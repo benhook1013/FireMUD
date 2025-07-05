@@ -12,6 +12,9 @@ The World Management Service stores and manages game world data such as rooms, r
 - Supports procedural generation with options for dynamic world expansion.
 - Uses a region → zone → room hierarchy for efficient lookups.
 - Publishes world event notifications for NPC scripts and game logic processing.
+- During version publishing the service participates in a Saga that copies design
+  data into its schema, ensuring world data matches the active version. See
+  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 
 ## Key Features
 
@@ -43,6 +46,17 @@ The World Management Service stores and manages game world data such as rooms, r
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a Kubernetes Deployment with horizontal scaling to serve large world
+  datasets.
+- Health endpoints (`/actuator/health`) are used for readiness and liveness
+  checks.
+- Metrics and traces are collected by Prometheus and OpenTelemetry, and logs are
+  shipped via Fluent Bit to Elasticsearch.
+- Environment-specific configuration values are described in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 The gRPC contract for world operations is located in
@@ -59,6 +73,9 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Database Migrations](../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

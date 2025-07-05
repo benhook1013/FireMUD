@@ -9,6 +9,10 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Uses WebSocket channels for chat delivery.
 - Stores guild and friend relationships in PostgreSQL.
 - Integrates with the Logging & Admin Service for moderation events.
+- Messages are briefly cached in Redis streams to smooth bursts of activity and
+  enable delivery retries.
+- Guild creation and membership changes participate in Saga workflows so other
+  services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 
@@ -47,6 +51,16 @@ Provides chat, guild, and social networking features across games. Enables playe
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a Kubernetes Deployment. WebSocket chat traffic scales horizontally
+  with multiple replicas.
+- The service publishes metrics scraped by Prometheus and forwards logs through
+  Fluent Bit to Elasticsearch with trace IDs from OpenTelemetry.
+- Health is monitored via `/actuator/health`; see
+  [Deployment Environments](../../infrastructure/deployment-environments.md) for
+  differences between local Docker Compose and production.
+
 ## Proto Files
 
 The social APIs are defined in
@@ -62,6 +76,9 @@ files change.
 - [User Journeys](../user-journeys.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Database Migrations](../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

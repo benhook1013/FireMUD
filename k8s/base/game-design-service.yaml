@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: spring-cloud-gateway
+  name: game-design-service
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: spring-cloud-gateway
+      app: game-design-service
   template:
     metadata:
       labels:
-        app: spring-cloud-gateway
+        app: game-design-service
     spec:
       containers:
-        - name: spring-cloud-gateway
-          image: spring-cloud-gateway:latest
+        - name: game-design-service
+          image: game-design-service:latest
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -33,11 +33,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: spring-cloud-gateway
+  name: game-design-service
 spec:
   selector:
-    app: spring-cloud-gateway
+    app: game-design-service
   ports:
-    - port: 80
+    - port: 8080
       targetPort: 8080
-  type: LoadBalancer
+  type: ClusterIP

@@ -10,6 +10,9 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Works closely with World Management and Automation & Scripting Service to apply changes.
 - Stores versioned configuration data so new game instances can be generated from templates.
 - Maintains history of revisions so designers can roll back to prior versions.
+- Publishing a new game version triggers a Saga that copies data to other
+  services as outlined in
+  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 
 ## Key Features
 
@@ -50,6 +53,18 @@ Offers tools for building worlds, items, actions, and events that make up each g
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a Kubernetes Deployment with optional horizontal scaling controlled by
+  HPA.
+- Health and readiness are exposed via `/actuator/health` and monitored by the
+  cluster.
+- Metrics and traces integrate with Prometheus and OpenTelemetry, while logs are
+  forwarded through Fluent Bit to Elasticsearch.
+- Local Docker Compose uses the same Spring profiles; see
+  [Deployment Environments](../../infrastructure/deployment-environments.md) for
+  details.
+
 ## Proto Files
 
 The service API contract resides in
@@ -64,6 +79,9 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Database Migrations](../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

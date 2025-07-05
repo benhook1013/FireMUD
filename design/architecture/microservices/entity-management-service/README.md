@@ -12,6 +12,8 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Applies **optimistic locking** to avoid conflicting updates on the same entity.
 - **Database writes are deferred and batched**, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is only updated during safe persistence boundaries (e.g. logout, autosave).
 - This design reduces write frequency and contention, making optimistic locking a natural fit — most entities are updated by only one process at a time, and conflicts are rare.
+- Cross-service operations such as item transfers use Saga orchestration so that
+  partial failures can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 
@@ -41,6 +43,16 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a scalable Deployment in Kubernetes, exposing `/actuator/health` for
+  readiness and liveness checks.
+- Prometheus scrapes service metrics while Fluent Bit ships logs to
+  Elasticsearch; tracing integrates with OpenTelemetry.
+- Local Docker Compose uses the same Spring profiles to mimic production, as
+  documented in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 Service interface definitions are stored in
@@ -56,6 +68,9 @@ proto files, run `./gradlew generateProto` to update generated sources.
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Database Migrations](../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

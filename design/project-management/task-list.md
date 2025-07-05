@@ -36,17 +36,34 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Address any missing diagrams or cross-references discovered during review
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
-  - [ ] Finalize API schemas
-    - [ ] gRPC proto definitions for each microservice
-    - [ ] Database schema diagrams for each microservice
-    - [ ] Example Flyway migration scripts
-  - [ ] Document REST endpoints and gRPC method flows in each microservice README
+  - [x] Add service-level design README links to central architecture docs
   - [x] Expand `docker-compose.yml` to include all services
   - [x] Create baseline Kubernetes manifests or Helm charts for deployment
 
 ---
 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
+### Immediate Next Steps
+- [ ] Configure Gradle protobuf plugin and generate gRPC stubs
+  - [ ] Apply `com.google.protobuf` Gradle plugin in each service module
+  - [ ] Verify Java sources are generated under `build/generated` after `./gradlew build`
+- [ ] Add base `application.yml` configuration and profiles
+  - [ ] Create default `application.yml` with dev and prod profiles
+  - [ ] Externalize database and Redis settings via environment variables
+- [ ] Implement PostgreSQL and Redis Docker containers for local dev
+  - [ ] Add `postgres` and `redis` services to `docker-compose.yml`
+  - [ ] Provide default credentials and mounted volumes for local data
+  - [ ] Document connection settings in `DEVELOPER_SETUP.md`
+
+### Behavior and Orchestration Planning
+- [ ] Define core service responsibilities and runtime behaviors
+  - [ ] Outline tick flow, session management, reconnect logic, and command execution
+- [ ] Write sample gameplay use cases and trace the end-to-end flow
+  - [ ] Example flows: LOGIN, MOVE, CAST_SPELL
+- [ ] Identify the data each service needs to handle those flows
+- [ ] Derive minimal data models and proto schemas based on real usage
+- [ ] Refine shared DTOs and gRPC contracts from concrete examples
+
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
 - [x] Generate skeleton controllers and service classes for each microservice
@@ -57,7 +74,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Game Session Service: `GameInstance` entity
   - [ ] Game Design Service: design-time schema entities
   - [ ] Create DTO records and MapStruct mappers
-  - [ ] Add baseline Flyway migration scripts
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
@@ -91,7 +107,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
-  - [ ] Add initial protobuf IDL files for all microservices
+  - [ ] Add initial protobuf IDL files for all microservices based on sample flows
     - [ ] Account Service proto definitions
     - [ ] Game Session Service proto definitions
     - [ ] World Management Service proto definitions
@@ -99,9 +115,23 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Shared common types
   - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
   - [ ] Add base `application.yml` configuration for all services
-  - [ ] Expose `/actuator/health` endpoints for service monitoring
+  - [x] Expose `/actuator/health` endpoints for service monitoring
+  - [x] Configure Kubernetes readiness and liveness probes
   - [ ] Provide Docker image build tasks for each service
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [ ] Finalize API schemas from concrete gameplay flows
+    - [ ] gRPC proto definitions for each microservice
+    - [ ] Database schema diagrams for each microservice
+    - [ ] Example Flyway migration scripts
+  - [ ] Create ERD diagrams and baseline Flyway scripts for all services
+    - [ ] Produce entity relationship diagrams for initial domain models
+    - [ ] Add `V1__init.sql` migrations for each service database
+    - [ ] Configure Flyway plugin in each service build file
+    - [ ] Verify migrations run on startup
+  - [ ] Document REST endpoints and gRPC method flows in each microservice README
+    - [ ] Summarize controller routes in service `design/README.md`
+    - [ ] Include example request/response payloads
+    - [ ] Link to corresponding proto files
 
 ---
 
@@ -128,6 +158,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Enforce single-session control per character (session takeover on new login)
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [ ] Plan for cross-region sharding and session handoff
+  - [ ] Implement `game_manifest` table for version coordination
   - [ ] Emit gameplay analytics for operators
   - [ ] Create `GameSessionController` REST endpoints
   - [ ] Add gRPC GameSessionService with proto contract

@@ -12,6 +12,10 @@ For details on how scripts are authored and executed safely, see [System Archite
 - Scripts run inside a sandboxed engine to prevent malicious behavior.
 - AI computations are optimized for large worlds using tick-based batching.
 - NPCs that are far from active players are deprioritized and only "wake up" on interaction.
+- Script definitions are versioned and can be hot reloaded without downtime as
+  described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
+- Uploading or replacing scripts is handled as a Saga workflow so that failures
+  can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 
@@ -51,6 +55,16 @@ For details on how scripts are authored and executed safely, see [System Archite
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Deployed as a Kubernetes Deployment with optional horizontal scaling.
+- Exposes Spring Boot health endpoints for readiness and liveness probing.
+- Prometheus and Fluent Bit collect metrics and logs for Elasticsearch analysis,
+  with traces emitted via OpenTelemetry.
+- Development under Docker Compose mirrors this setup using the same Spring
+  profiles as described in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 API definitions are located in
@@ -68,6 +82,9 @@ stubs.
 - [System Architecture Overview](../system-architecture-overview.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Database Migrations](../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

@@ -10,6 +10,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Uses a modular command parser for extensibility.
 - Deterministic rule execution; random seeds come from the Game Session Service.
 - Fetches contextual world and entity data on demand via gRPC.
+- Integrates with the tick system described in [Tick System and Runtime Design](../system-architecture-ticks.md) to ensure deterministic command ordering.
+- When combat or trade spans multiple services, compensating actions are coordinated via the Saga model in [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 
@@ -45,6 +47,16 @@ This service is largely stateless. It relies on:
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
+
+## Operational Notes
+
+- Deployed as a stateless Kubernetes Deployment with horizontal scaling enabled
+  for high concurrency.
+- `/actuator/health` is used for readiness and liveness probes in the cluster.
+- Prometheus collects command execution metrics while Fluent Bit forwards logs
+  to Elasticsearch with trace context from OpenTelemetry.
+- For environment-specific configuration see
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
 
 ## Proto Files
 

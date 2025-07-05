@@ -10,6 +10,9 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - Buffers incoming input during brief disconnects and clears it on connection loss.
 - Handles Telnet negotiation and character encoding quirks.
 - Works with the Reconnection Strategy to resume sessions transparently.
+- Can optionally terminate Telnet-over-TLS and then forward traffic to the
+  gateway using mutual TLS. See
+  [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 
@@ -50,6 +53,15 @@ to the gateway.
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on how Telnet connections are integrated into the platform.
+
+## Operational Notes
+
+- Deployed alongside the gateway in the DMZ as a lightweight container.
+- Health is checked using a custom TCP probe defined in the Kubernetes manifest.
+- Logs are forwarded via Fluent Bit and metrics are exported for Prometheus via
+  a minimal collector endpoint.
+- Configuration for local Docker Compose versus production clusters is described
+  in [Deployment Environments](../../infrastructure/deployment-environments.md).
 
 ## Proto Files
 

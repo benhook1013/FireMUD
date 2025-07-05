@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tcp-proxy-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tcp-proxy-service
+  template:
+    metadata:
+      labels:
+        app: tcp-proxy-service
+    spec:
+      containers:
+        - name: tcp-proxy-service
+          image: tcp-proxy-service:latest
+          ports:
+            - containerPort: 2323
+          readinessProbe:
+            tcpSocket:
+              port: 2323
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 2323
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-proxy-service
+spec:
+  selector:
+    app: tcp-proxy-service
+  ports:
+    - port: 2323
+      targetPort: 2323
+  type: LoadBalancer

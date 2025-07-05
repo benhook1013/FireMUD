@@ -11,6 +11,12 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Session information is stored in Redis as transient data for quick reconnections.
 - Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
 - Maintains account-to-character relationships so players can own characters across multiple games.
+- Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
+  via cert-manager as described in the [Security Architecture](../system-architecture-security.md).
+- All service-to-service communication is protected by mutual TLS.
+- Non-gameplay workflows such as account creation or billing updates are
+  orchestrated using the Saga pattern outlined in
+  [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 
@@ -46,6 +52,17 @@ Manages user accounts and authentication for the platform. Stores profile data a
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Deployed via Kubernetes as a horizontally scalable Deployment. Local
+  development uses Docker Compose with the same Spring profiles.
+- Exposes `/actuator/health` for readiness and liveness probes consumed by the
+  cluster.
+- Metrics are scraped by Prometheus and logs shipped through Fluent Bit to
+  Elasticsearch, with traces captured via OpenTelemetry.
+- Configuration differences between environments are described in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 The gRPC schemas for this service live in
@@ -62,6 +79,9 @@ The gRPC schemas for this service live in
 - [User Journeys](../user-journeys.md#9-purchases-and-subscriptions) – payment and subscription workflow.
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Database Migrations](../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 
