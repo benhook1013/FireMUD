@@ -22,6 +22,9 @@ services:
       - "8081:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -33,6 +36,9 @@ services:
       - "8080:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -44,6 +50,9 @@ services:
       - "8082:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -55,6 +64,9 @@ services:
       - "8083:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -66,6 +78,9 @@ services:
       - "8084:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -77,6 +92,9 @@ services:
       - "8085:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -88,6 +106,9 @@ services:
       - "8086:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -99,6 +120,9 @@ services:
       - "8087:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -110,6 +134,9 @@ services:
       - "8088:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -121,6 +148,9 @@ services:
       - "2323:2323"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
@@ -132,6 +162,9 @@ services:
       - "8089:8080"
     environment:
       <<: *service-env
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
       - postgres
       - redis
