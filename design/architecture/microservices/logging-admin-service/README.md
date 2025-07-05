@@ -11,6 +11,12 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Access to this service is protected by mTLS and JWT validation through the
   JWKS endpoint provided by the Account Service. See
   [Security Architecture](../system-architecture-security.md).
+- The security model relies solely on JWT roles; there is no additional
+  network-layer isolation for admin endpoints.
+- Moderation data and log indices include a `tenantId` field so administrators
+  only see information for the games they manage. Cross-tenant queries are
+  rejected per the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  strategy.
 
 ## Key Features
 
@@ -21,6 +27,8 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
+- Captures failed login attempts and suspicious activity reported by the Game
+  Session Service for operator review.
 - Works with Saga workflows to record state changes across services. See
   [Transaction Strategies](../system-architecture-transactions.md).
 
@@ -45,7 +53,10 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ## Dependencies
 
-- **Internal:** Account Service forwards account events and payment notifications.
+- **Internal:**
+  - Account Service forwards account events and payment notifications.
+  - Game Session Service streams session lifecycle metrics.
+  - Social & Groups Service delivers chat logs for moderation.
 - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
@@ -85,3 +96,5 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 - Role-based admin UI.
 - Automated alerting for suspicious activity via Prometheus Alertmanager.
 - Real-time analytics on game performance.
+- Optional 2FA support for administrator accounts, pending
+  [Security Architecture](../system-architecture-security.md) enhancements.

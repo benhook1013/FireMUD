@@ -10,12 +10,17 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 - Executes scripts in response to world or player events received via gRPC callbacks.
 - Scripts run inside a sandboxed engine to prevent malicious behavior.
+- Scripts are authored in a **component-based DSL** using a visual editor so
+  designers can build behaviors without coding.
 - AI computations are optimized for large worlds using tick-based batching.
 - NPCs that are far from active players are deprioritized and only "wake up" on interaction.
 - Script definitions are versioned and can be hot reloaded without downtime as
   described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
 - Uploading or replacing scripts is handled as a Saga workflow so that failures
   can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
+- Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
+  one game cannot access another's data. Redis queues also include the tenant
+  prefix; see [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 
@@ -47,7 +52,10 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 ## Dependencies
 
-- **Internal:** Game Logic Service for rule evaluation.
+- **Internal:**
+  - Game Session Service sends events that trigger scripts.
+  - Game Logic Service for rule evaluation.
+  - World Management Service receives world-state updates from scripts.
 - **External:** PostgreSQL for script storage and Redis for queuing automation tasks.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
@@ -92,3 +100,5 @@ stubs.
 
 - Web UI for creating and testing scripts.
 - Additional AI modules for advanced behaviors.
+- Fairness quotas and per-script resource limits to prevent abuse, as outlined
+  in [System Architecture: Scripting & Automation](../system-architecture-scripting.md#fairness--abuse-prevention-planned).

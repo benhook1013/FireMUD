@@ -13,12 +13,17 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Publishing a new game version triggers a Saga that copies data to other
   services as outlined in
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
+- Design assets are stored per `tenantId` so multiple games can coexist in the
+  same database schema. Queries and version publishing workflows enforce this
+  tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 
 - World and room editors.
 - Ability and action design tools.
 - Scripting and event workflow creation.
+- Visual editor for building scripts in the same component-based DSL used by the
+  Automation & Scripting Service.
 - Game templates with predefined rulesets and administrators.
 - Version and patch note management for published games.
 - Import/export of design assets for sharing between game worlds.
@@ -45,7 +50,10 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 ## Dependencies
 
-- **Internal:** World Management Service for map data, Automation & Scripting Service for scripts.
+- **Internal:**
+  - World Management Service for map data.
+  - Automation & Scripting Service for scripts.
+  - Logging & Admin Service records publishing audits.
 - **External:** PostgreSQL for storing design assets.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

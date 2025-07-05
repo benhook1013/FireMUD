@@ -11,9 +11,20 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Session information is stored in Redis as transient data for quick reconnections.
 - Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
 - Maintains account-to-character relationships so players can own characters across multiple games.
+- All tables include a `tenantId` column so the same platform account can join
+  multiple games without data leakage. Every query enforces this tenant filter as
+  described in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  design.
 - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
   via cert-manager as described in the [Security Architecture](../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
+- Client authentication is initiated via the `LOGIN` command flow described in
+  [Authentication & Authorization](../system-architecture-authentication.md).
+  Session tokens stored in Redis allow seamless reconnection by the Game Session
+  Service without re-entering credentials.
+- Sends notification emails when the Game Session Service reports suspicious
+  login activity. See
+  [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Non-gameplay workflows such as account creation or billing updates are
   orchestrated using the Saga pattern outlined in
   [Transaction Strategies](../system-architecture-transactions.md).
@@ -22,8 +33,10 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 - Account registration and login.
 - Profile management and email notifications.
+- Profiles track optional game history and achievements for each player.
 - Password reset and verification flows.
 - Banning and subscription tracking.
+- External account linking (Google, Discord, Steam) allows unified logins.
 - Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
 - Links accounts to player characters for ownership and permissions.
 - gRPC APIs for account creation, authentication, and profile queries.
@@ -32,6 +45,8 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 - `account` table stores username, password hash, email, and status flags.
 - `profile` table captures optional user details and preferences.
+- `achievement` table records earned achievements keyed by account and game.
+- `external_account` table links third-party OAuth IDs to platform accounts.
 - `session` keys in Redis map temporary session tokens to account IDs for quick
   reconnects.
 
@@ -44,7 +59,9 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 ## Dependencies
 
-- **Internal:** Logging & Admin Service for audit logging.
+- **Internal:**
+  - Logging & Admin Service for audit logging.
+  - Game Session Service consumes tokens to create gameplay sessions.
 - **External:** PostgreSQL for account data, Redis for transient session data.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
@@ -89,3 +106,5 @@ The gRPC schemas for this service live in
 
 - OAuth2 support for social logins.
 - Self-service account recovery tools.
+- Optional 2FA for elevated roles, as planned in the
+  [Security Architecture](../system-architecture-security.md#%F0%9F%94%A1-summary).

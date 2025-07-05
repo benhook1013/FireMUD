@@ -13,6 +13,12 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - Can optionally terminate Telnet-over-TLS and then forward traffic to the
   gateway using mutual TLS. See
   [Security Architecture](../system-architecture-security.md).
+- During the login handshake the proxy tags the connection with the selected
+  `tenantId` so the gateway can route commands to the proper game. See
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+- Runs in the network DMZ and never contacts internal services directly.
+- Future hardening includes whitelisting Telnet commands and sanitizing input as
+  described in the [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
 
 ## Key Features
 
@@ -47,7 +53,7 @@ internal operations when communicating with other microservices:
 ### Data Model
 
 The proxy is stateless. Any buffered input lives only in memory until forwarded
-to the gateway.
+to the Spring Cloud Gateway.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),

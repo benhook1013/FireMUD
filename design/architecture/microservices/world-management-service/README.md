@@ -15,10 +15,15 @@ The World Management Service stores and manages game world data such as rooms, r
 - During version publishing the service participates in a Saga that copies design
   data into its schema, ensuring world data matches the active version. See
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
+- All world tables are keyed by `tenantId`; background jobs and gRPC queries
+  include this filter so one game's world data never mixes with another's. See
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 
 - Region and location management with shard support.
+- Instance-based zones allow temporary dungeons or housing separate from the
+  shared world map.
 - Persistent world state with incremental saves.
 - Procedural generation tools for rooms and terrain.
 - Pathfinding algorithms and navmesh data for movement calculations.
@@ -29,6 +34,7 @@ The World Management Service stores and manages game world data such as rooms, r
 
 - Tables for `region`, `zone`, and `room` define the world hierarchy.
 - `terrain` and `object_spawn` tables support procedural generation.
+- `instance` table tracks temporary copies of zones for instanced gameplay.
 - Redis caches hot rooms for active sessions to speed up lookups.
 
 ### gRPC APIs
@@ -38,7 +44,10 @@ The World Management Service stores and manages game world data such as rooms, r
 
 ## Dependencies
 
-- **Internal:** Game Design Service for generation rules.
+- **Internal:**
+  - Game Design Service supplies generation rules and versioned world data.
+  - Game Session Service queries rooms and receives world event updates.
+  - Automation & Scripting Service reacts to scheduled world changes.
 - **External:** PostgreSQL for world data, Redis for transient active state.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

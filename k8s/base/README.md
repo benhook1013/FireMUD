@@ -15,9 +15,17 @@ kubectl apply -f logging-admin-service.yaml
 kubectl apply -f social-groups-service.yaml
 kubectl apply -f tcp-proxy-service.yaml
 kubectl apply -f world-management-service.yaml
-kubectl apply -f gateway.yaml
+kubectl apply -f spring-cloud-gateway.yaml
 ```
 
 These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). See the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md) document for production considerations.
 
+Ports align with the design documents:
+
+- Application services expose `8080`.
+- The TCP proxy listens on `2323` for Telnet connections.
+- Spring Cloud Gateway is reachable via port `80`.
+
 All deployments include basic readiness and liveness probes that hit the `/actuator/health` endpoint (or open a TCP socket for the proxy service) as described in the design docs.
+
+Spring Boot services run with the `prod` Spring profile by default. This is set via the `SPRING_PROFILES_ACTIVE` environment variable in each deployment manifest.

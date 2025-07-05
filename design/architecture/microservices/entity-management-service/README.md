@@ -14,6 +14,10 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - This design reduces write frequency and contention, making optimistic locking a natural fit — most entities are updated by only one process at a time, and conflicts are rare.
 - Cross-service operations such as item transfers use Saga orchestration so that
   partial failures can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
+- All entity tables include a `tenantId` column. Service methods always filter on
+  this value so character data for different games remains isolated; Redis keys
+  mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  document.
 
 ## Key Features
 
@@ -21,12 +25,16 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Item storage and inventory handling.
 - Experience and level tracking.
 - Character creation templates pulled from the Game Design Service.
+- Supports instance-based spaces so characters can enter private dungeons or
+  personalized housing without affecting the main world state.
 
 ### Data Model
 
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
 - Many-to-many tables define inventory and equipment relationships.
+- `instance_member` table tracks which characters are present in optional
+  instance-based spaces.
 
 ### gRPC APIs
 
@@ -36,6 +44,9 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 ## Dependencies
 
+- **Internal:**
+  - Game Design Service supplies character templates and item definitions.
+  - Game Session Service coordinates runtime updates via Redis queues.
 - **External:** PostgreSQL for entity data.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
@@ -56,7 +67,7 @@ details on shared infrastructure components.
 ## Proto Files
 
 Service interface definitions are stored in
-[../../../../protos/entity/v1](../../../../protos/entity/v1). After editing the
+[../../../../protos/entity-management/v1](../../../../protos/entity-management/v1). After editing the
 proto files, run `./gradlew generateProto` to update generated sources.
 
 ## 📚 Related Documentation

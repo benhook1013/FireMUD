@@ -11,10 +11,21 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
 - Ensures atomic command execution using Redis transactions and Lua scripts.
+- Crash recovery replays ticks stored in Redis using AOF persistence and `WAIT`
+  semantics, ensuring deterministic recovery as described in
+  [Tick System and Runtime Design](../system-architecture-ticks.md#crash-recovery-and-replay).
+- Every session record includes a `tenantId` identifying the game instance.
+  Redis keys and database tables prefix this value so sessions from different
+  games remain isolated. The platform may enforce per-game resource quotas at this level so one tenant cannot exhaust cluster capacity.
+  See the [Multi-Tenancy](../system-architecture-multi-tenancy.md) document.
 - Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../system-architecture-transactions.md).
+- Monitors login attempts per IP and temporarily blacklists repeat offenders.
+  Global spikes introduce small delays and suspicious activity triggers
+  notification emails to the account holder. See
+  [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 
 ## Key Features
 
@@ -45,7 +56,9 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ## Dependencies
 
-- **Internal:** Entity Management Service, Game Logic Service, World Management Service.
+- **Internal:**
+  - Entity Management Service, Game Logic Service, World Management Service.
+  - Logging & Admin Service receives session lifecycle events.
 - **External:** Redis for session state.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.

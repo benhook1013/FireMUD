@@ -1,9 +1,10 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: world-management-service
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: world-management-service
@@ -15,6 +16,16 @@ spec:
       containers:
         - name: world-management-service
           image: world-management-service:latest
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -40,4 +51,5 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+      protocol: TCP
   type: ClusterIP

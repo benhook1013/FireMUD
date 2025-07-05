@@ -43,37 +43,45 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
+
 ### Immediate Next Steps
-- [ ] Configure Gradle protobuf plugin and generate gRPC stubs
-  - [ ] Apply `com.google.protobuf` Gradle plugin in each service module
-  - [ ] Verify Java sources are generated under `build/generated` after `./gradlew build`
-- [ ] Add base `application.yml` configuration and profiles
-  - [ ] Create default `application.yml` with dev and prod profiles
-  - [ ] Externalize database and Redis settings via environment variables
-- [ ] Implement PostgreSQL and Redis Docker containers for local dev
-  - [ ] Add `postgres` and `redis` services to `docker-compose.yml`
-  - [ ] Provide default credentials and mounted volumes for local data
-  - [ ] Document connection settings in `DEVELOPER_SETUP.md`
+- [x] Configure Gradle protobuf plugin and generate gRPC stubs
+  - [x] Apply `com.google.protobuf` Gradle plugin in each service module
+  - [x] Verify Java sources are generated under `build/generated` after `./gradlew build`
+- [x] Add base `application.yml` configuration and profiles
+  - [x] Create default `application.yml` with dev and prod profiles
+  - [x] Externalize database and Redis settings via environment variables
+- [x] Implement PostgreSQL and Redis Docker containers for local dev
+  - [x] Add `postgres` and `redis` services to `docker-compose.yml`
+  - [x] Provide default credentials and mounted volumes for local data
+  - [x] Document connection settings in `DEVELOPER_SETUP.md`
+  - [x] Create Docker volumes for persistent databases
+  - [ ] Verify services start via `docker compose up`
+  - [ ] Confirm each service logs `Started` without errors
 
 ### Behavior and Orchestration Planning
-- [ ] Define core service responsibilities and runtime behaviors
-  - [ ] Outline tick flow, session management, reconnect logic, and command execution
-- [ ] Write sample gameplay use cases and trace the end-to-end flow
-  - [ ] Example flows: LOGIN, MOVE, CAST_SPELL
-- [ ] Identify the data each service needs to handle those flows
-- [ ] Derive minimal data models and proto schemas based on real usage
+- [x] Define core service responsibilities and runtime behaviors
+  - [x] Outline tick flow, session management, reconnect logic, and command execution
+  - [x] Document game instance lifecycle diagrams
+- [x] Write sample gameplay use cases and trace the end-to-end flow
+  - [x] Example flows: LOGIN, MOVE, CAST_SPELL
+- [x] Identify the data each service needs to handle those flows
+- [x] Derive minimal data models and proto schemas based on real usage
 - [ ] Refine shared DTOs and gRPC contracts from concrete examples
 
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
 - [x] Generate skeleton controllers and service classes for each microservice
-- [ ] Define base entity and repository classes for core domains
-  - [ ] Account Service: `Account` and `Profile` entities with JPA repositories
-  - [ ] Entity Management Service: `Character`, `Item`, `NPC` entities
-  - [ ] World Management Service: `Room` and `Region` entities
-  - [ ] Game Session Service: `GameInstance` entity
+- [x] Define base entity and repository classes for core domains
+  - [x] Account Service: `Account` and `Profile` entities with JPA repositories
+  - [x] Entity Management Service: `Character`, `Item`, `NPC` entities
+  - [x] World Management Service: `Room` and `Region` entities
+  - [x] Game Session Service: `GameInstance` entity
   - [ ] Game Design Service: design-time schema entities
-  - [ ] Create DTO records and MapStruct mappers
+  - [ ] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
+  - [ ] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
+  - [x] Create DTO records and MapStruct mappers
+
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
@@ -101,24 +109,43 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
-- [x] **Configure Flyway-based database migrations for each microservice**
-- [x] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
+- [ ] **Configure Flyway-based database migrations for each microservice**
+- [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
   - [ ] Add initial protobuf IDL files for all microservices based on sample flows
-    - [ ] Account Service proto definitions
-    - [ ] Game Session Service proto definitions
-    - [ ] World Management Service proto definitions
-    - [ ] Entity Management Service proto definitions
+    - [x] Account Service proto definitions
+    - [x] Game Session Service proto definitions
+    - [x] World Management Service proto definitions
+    - [x] Entity Management Service proto definitions
+    - [ ] Game Logic Service proto definitions
+    - [ ] Automation & Scripting Service proto definitions
+    - [ ] Game Design Service proto definitions
+    - [ ] Social & Groups Service proto definitions
+    - [ ] Logging & Admin Service proto definitions
+    - [ ] TCP Proxy Service proto definitions
+    - [ ] Spring Cloud Gateway proto definitions
     - [ ] Shared common types
+  - [ ] Integrate proto generation into CI workflow
   - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
-  - [ ] Add base `application.yml` configuration for all services
+  - [x] Add base `application.yml` configuration for all services
   - [x] Expose `/actuator/health` endpoints for service monitoring
+    - [x] Add `spring-boot-starter-actuator` dependency to each service
+    - [x] Enable health endpoint in `application.yml`
   - [x] Configure Kubernetes readiness and liveness probes
-  - [ ] Provide Docker image build tasks for each service
+  
+#### Coding Kickoff Checklist
+  - [ ] Create Gradle tasks to build Docker images for each service
+  - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
+  - [x] Add MapStruct mappers and DTO records for core domains
+  - [x] Implement basic JPA entities and repositories in Account Service
+  - [x] Set up protobuf generation with gRPC stubs
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [ ] Enable Spotless plugin for code formatting
+  - [ ] Add GitHub Actions workflow for build and format checks
+  - [ ] Establish base integration test setup using Spring Boot Test
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
@@ -145,7 +172,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
   - [ ] Create `AccountController` REST endpoints
-  - [ ] Create JPA repositories for `Account` and `Profile`
+  - [x] Create JPA repositories for `Account` and `Profile`
   - [ ] Add gRPC AccountService with proto contract
   - [ ] Use saga orchestrator for account creation workflow
 
@@ -231,6 +258,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC formations & squad AI
   - [ ] Add gRPC AutomationService with script execution API
   - [ ] Create sandboxed script runtime
+
+- [ ] Add gRPC SocialGroupsService with proto contract
+- [ ] Add gRPC LoggingAdminService with proto contract
+- [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
+- [ ] Add baseline route configuration for Spring Cloud Gateway
 
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions

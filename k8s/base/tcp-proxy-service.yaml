@@ -1,9 +1,10 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tcp-proxy-service
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: tcp-proxy-service
@@ -15,6 +16,13 @@ spec:
       containers:
         - name: tcp-proxy-service
           image: tcp-proxy-service:latest
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
           ports:
             - containerPort: 2323
           readinessProbe:
@@ -38,4 +46,5 @@ spec:
   ports:
     - port: 2323
       targetPort: 2323
+      protocol: TCP
   type: LoadBalancer

@@ -10,8 +10,13 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Uses a modular command parser for extensibility.
 - Deterministic rule execution; random seeds come from the Game Session Service.
 - Fetches contextual world and entity data on demand via gRPC.
+- Gameplay rules are imported from the Game Design Service when a version is
+  published; the runtime service does not query design databases.
 - Integrates with the tick system described in [Tick System and Runtime Design](../system-architecture-ticks.md) to ensure deterministic command ordering.
 - When combat or trade spans multiple services, compensating actions are coordinated via the Saga model in [Transaction Strategies](../system-architecture-transactions.md).
+- All commands are scoped by `tenantId` so that rules execute only against data
+  for the active game instance. The Game Session Service passes this context on
+  every request. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 
@@ -41,7 +46,11 @@ This service is largely stateless. It relies on:
 
 ## Dependencies
 
-- **Internal:** Entity Management Service for characters and items.
+- **Internal:**
+  - Entity Management Service for characters and items.
+  - World Management Service for room and region data.
+  - Game Session Service supplies tick context and command queues.
+  - Automation & Scripting Service triggers additional effects during rule execution.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),

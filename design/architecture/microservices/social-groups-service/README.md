@@ -13,6 +13,9 @@ Provides chat, guild, and social networking features across games. Enables playe
   enable delivery retries.
 - Guild creation and membership changes participate in Saga workflows so other
   services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
+- Chat history and guild data are stored with a `tenantId` so conversations are
+  isolated per game. Redis stream keys also include this prefix. See
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 
@@ -20,6 +23,8 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Private messaging and presence indicators.
 - Guild creation and membership management.
 - Friend lists scoped both to individual games and to overall accounts.
+- Cross-game presence lets players know when friends are online in any hosted
+  game.
 - In-game social chat plus account-to-account direct messaging.
 
 ### Data Model
@@ -31,7 +36,7 @@ Provides chat, guild, and social networking features across games. Enables playe
 ### Chat Pipeline
 
 - Messages are published to Redis streams and fanned out to WebSocket channels
-  through the gateway.
+  through the Spring Cloud Gateway.
 - Guild and direct messages share a common persistence model for history.
 
 ### gRPC/REST APIs
@@ -43,7 +48,9 @@ Provides chat, guild, and social networking features across games. Enables playe
 
 ## Dependencies
 
-- **Internal:** Account Service for user identities.
+- **Internal:**
+  - Account Service for user identities.
+  - Logging & Admin Service consumes chat logs for moderation.
 - **External:** PostgreSQL for social data.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
