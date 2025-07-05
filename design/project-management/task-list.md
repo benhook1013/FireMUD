@@ -48,14 +48,14 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Configure Gradle protobuf plugin and generate gRPC stubs
   - [ ] Apply `com.google.protobuf` Gradle plugin in each service module
   - [ ] Verify Java sources are generated under `build/generated` after `./gradlew build`
-- [ ] Add base `application.yml` configuration and profiles
-  - [ ] Create default `application.yml` with dev and prod profiles
-  - [ ] Externalize database and Redis settings via environment variables
-- [ ] Implement PostgreSQL and Redis Docker containers for local dev
-  - [ ] Add `postgres` and `redis` services to `docker-compose.yml`
-  - [ ] Provide default credentials and mounted volumes for local data
-  - [ ] Document connection settings in `DEVELOPER_SETUP.md`
-  - [ ] Create Docker volumes for persistent databases
+- [x] Add base `application.yml` configuration and profiles
+  - [x] Create default `application.yml` with dev and prod profiles
+  - [x] Externalize database and Redis settings via environment variables
+- [x] Implement PostgreSQL and Redis Docker containers for local dev
+  - [x] Add `postgres` and `redis` services to `docker-compose.yml`
+  - [x] Provide default credentials and mounted volumes for local data
+  - [x] Document connection settings in `DEVELOPER_SETUP.md`
+  - [x] Create Docker volumes for persistent databases
   - [ ] Verify services start via `docker compose up`
 
 ### Behavior and Orchestration Planning
