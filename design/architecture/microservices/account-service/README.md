@@ -18,6 +18,10 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
   via cert-manager as described in the [Security Architecture](../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
+- Client authentication is initiated via the `LOGIN` command flow described in
+  [Authentication & Authorization](../system-architecture-authentication.md).
+  Session tokens stored in Redis allow seamless reconnection by the Game Session
+  Service without re-entering credentials.
 - Non-gameplay workflows such as account creation or billing updates are
   orchestrated using the Saga pattern outlined in
   [Transaction Strategies](../system-architecture-transactions.md).
@@ -93,3 +97,5 @@ The gRPC schemas for this service live in
 
 - OAuth2 support for social logins.
 - Self-service account recovery tools.
+- Optional 2FA for elevated roles, as planned in the
+  [Security Architecture](../system-architecture-security.md#%F0%9F%94%A1-summary).
