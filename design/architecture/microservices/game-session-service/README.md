@@ -22,6 +22,10 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../system-architecture-transactions.md).
+- Monitors login attempts per IP and temporarily blacklists repeat offenders.
+  Global spikes introduce small delays and suspicious activity triggers
+  notification emails to the account holder. See
+  [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 
 ## Key Features
 
