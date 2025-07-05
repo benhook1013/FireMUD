@@ -34,7 +34,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Remove legacy Game Management Service and redistribute duties
   - [x] Conduct final review of all design documentation
   - [x] Address any missing diagrams or cross-references discovered during review
-  - [ ] Create Architectural Decision Records (ADRs) for major design changes
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [x] Add service-level design README links to central architecture docs
