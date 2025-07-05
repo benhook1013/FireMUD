@@ -380,6 +380,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Initialize `TcpProxyServiceApplication` with Netty server
   - [x] Create base Spring Boot application skeleton
   - [ ] Enforce Telnet command whitelist and input sanitization
+  - [ ] Implement connection throttling and rate limits
+  - [ ] Support TLS termination for secure Telnet clients
 - [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
   - [ ] Terminate TLS and forward traffic to internal services using mTLS
