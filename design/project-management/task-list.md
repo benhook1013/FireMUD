@@ -32,6 +32,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Finalize architecture design documentation and diagrams
   - [x] Document service responsibility matrix
   - [x] Remove legacy Game Management Service and redistribute duties
+  - [x] Conduct final review of all design documentation
+  - [ ] Address any missing diagrams or cross-references discovered during review
+  - [ ] Set up financial contribution links (PayPal, GitHub Sponsors, Patreon)
+  - [ ] Expand `CONTRIBUTING.md` with onboarding instructions
+  - [ ] Populate `FAQ.md` with common questions
   - [ ] Finalize API schemas
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
@@ -87,6 +92,9 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Entity Management Service proto definitions
     - [ ] Shared common types
   - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
+  - [ ] Add base `application.yml` configuration for all services
+  - [ ] Expose `/actuator/health` endpoints for service monitoring
+  - [ ] Provide Docker image build tasks for each service
 
 ---
 
