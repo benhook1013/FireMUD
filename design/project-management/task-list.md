@@ -362,6 +362,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Enforce platform fee on transactions
   - [ ] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows
+  - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
+  - [ ] Add gRPC `PaymentService` endpoints for billing operations
+  - [ ] Define proto contracts for payment and subscription flows
+  - [ ] Add Flyway migration scripts for payment tables
+  - [ ] Document monetization design in `account-service/design/README.md`
   - [ ] Implement virtual currency system (game-specific currencies)
   - [ ] Implement premium hosting tiers & features for game creators
   - [ ] Implement platform-controlled ad system (for free-to-play games)
