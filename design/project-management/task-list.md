@@ -130,10 +130,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create Gradle tasks to build Docker images for each service
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Add MapStruct mappers and DTO records for core domains
-  - [ ] Add MapStruct mappers and DTO records for core domains
-  - [ ] Implement basic JPA entities and repositories in Account Service
+  - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [ ] Enable Spotless plugin for code formatting
+  - [ ] Add GitHub Actions workflow for build and format checks
   - [ ] Establish base integration test setup using Spring Boot Test
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] gRPC proto definitions for each microservice
@@ -161,7 +162,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
   - [ ] Create `AccountController` REST endpoints
-  - [ ] Create JPA repositories for `Account` and `Profile`
+  - [x] Create JPA repositories for `Account` and `Profile`
   - [ ] Add gRPC AccountService with proto contract
   - [ ] Use saga orchestrator for account creation workflow
 
