@@ -11,6 +11,12 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Session information is stored in Redis as transient data for quick reconnections.
 - Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
 - Maintains account-to-character relationships so players can own characters across multiple games.
+- Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
+  via cert-manager as described in the [Security Architecture](../system-architecture-security.md).
+- All service-to-service communication is protected by mutual TLS.
+- Non-gameplay workflows such as account creation or billing updates are
+  orchestrated using the Saga pattern outlined in
+  [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 

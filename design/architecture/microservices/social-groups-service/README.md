@@ -9,6 +9,10 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Uses WebSocket channels for chat delivery.
 - Stores guild and friend relationships in PostgreSQL.
 - Integrates with the Logging & Admin Service for moderation events.
+- Messages are briefly cached in Redis streams to smooth bursts of activity and
+  enable delivery retries.
+- Guild creation and membership changes participate in Saga workflows so other
+  services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 
