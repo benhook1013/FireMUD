@@ -142,15 +142,15 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add baseline `Dockerfile` for each service
   - [ ] Create Gradle tasks to build Docker images for each service
   - [ ] Verify `./gradlew :<service>:build` succeeds for every module
-  - [ ] Add a minimal `README.md` in each service with local run instructions
+  - [x] Add a minimal `README.md` in each service with local run instructions
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Add gRPC `PingService` stub in each service to validate connectivity
-  - [ ] Update each service `README.md` with links to design docs and proto definitions
-  - [ ] Add Docker Compose health checks for PostgreSQL, Redis, and all services
+  - [x] Update each service `README.md` with links to design docs and proto definitions
+  - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [ ] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow for build and format checks
   - [ ] Configure static analysis tools
