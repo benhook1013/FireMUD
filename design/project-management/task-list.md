@@ -108,7 +108,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement configuration management (centralized properties, environment handling)
   - [ ] Enforce `tenantId` validation for create endpoints across all microservices
   - [ ] Publish common package to internal repository (Maven/Gradle)
-  - [ ] Add `common-library` README with usage examples
+  - [x] Add `common-library` README with usage examples
   - [ ] Extend **firemud-common** with saga orchestration support
     - [ ] Define `saga` schema tables for step tracking and state
     - [ ] Implement fluent API for saga orchestration
@@ -167,11 +167,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
-  - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [x] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Add gRPC `PingService` stub in each service to validate connectivity
   - [x] Update each service `README.md` with links to design docs and proto definitions
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
-  - [ ] Enable Spotless plugin for code formatting
+  - [x] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow to build and publish Docker images for each service
   - [ ] Integrate `markdownlint` in CI build
   - [ ] Add pre-commit hooks for Spotless, Checkstyle, and markdownlint

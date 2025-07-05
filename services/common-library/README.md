@@ -22,4 +22,12 @@ The library provides `ApiResponse` and other helpers. Controllers typically retu
 return ResponseEntity.ok(ApiResponse.success(data));
 ```
 
+For structured logging, obtain service-specific loggers via `LoggingUtil`:
+
+```java
+private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
+```
+
+`JwtUtil` offers helper methods for creating and verifying JWT tokens.
+
 See the [design document](../../design/architecture/system-architecture-shared-libraries.md) for more details and additional utilities.

@@ -4,6 +4,7 @@ plugins {
     java
     id("com.github.node-gradle.node") version "7.1.0"
     id("com.google.protobuf") version "0.9.4" apply false
+    id("com.diffplug.spotless") version "6.25.0"
 }
 
 node {
@@ -20,16 +21,24 @@ allprojects {
 subprojects {
     apply(plugin = "java")
     apply(plugin = "com.google.protobuf")
+    apply(plugin = "com.diffplug.spotless")
     group = "net.firedevops.firemud"
     version = "0.1.0-SNAPSHOT"
 
     dependencies {
         testImplementation("org.junit.jupiter:junit-jupiter:5.9.3")
+        testImplementation("org.springframework.boot:spring-boot-starter-test:3.2.5")
         implementation("io.grpc:grpc-stub:1.61.0")
         implementation("io.grpc:grpc-protobuf:1.61.0")
         implementation("io.grpc:grpc-netty-shaded:1.61.0")
         implementation("com.google.protobuf:protobuf-java:3.25.3")
         implementation("javax.annotation:javax.annotation-api:1.3.2")
+    }
+
+    spotless {
+        java {
+            googleJavaFormat()
+        }
     }
 
     tasks.test {
