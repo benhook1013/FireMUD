@@ -72,6 +72,9 @@ stubs.
 - [System Architecture Overview](../system-architecture-overview.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Database Migrations](../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 
