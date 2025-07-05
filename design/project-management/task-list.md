@@ -59,12 +59,12 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Verify services start via `docker compose up`
 
 ### Behavior and Orchestration Planning
-- [ ] Define core service responsibilities and runtime behaviors
-  - [ ] Outline tick flow, session management, reconnect logic, and command execution
-  - [ ] Document game instance lifecycle diagrams
-- [ ] Write sample gameplay use cases and trace the end-to-end flow
-  - [ ] Example flows: LOGIN, MOVE, CAST_SPELL
-- [ ] Identify the data each service needs to handle those flows
+- [x] Define core service responsibilities and runtime behaviors
+  - [x] Outline tick flow, session management, reconnect logic, and command execution
+  - [x] Document game instance lifecycle diagrams
+- [x] Write sample gameplay use cases and trace the end-to-end flow
+  - [x] Example flows: LOGIN, MOVE, CAST_SPELL
+- [x] Identify the data each service needs to handle those flows
 - [ ] Derive minimal data models and proto schemas based on real usage
 - [ ] Refine shared DTOs and gRPC contracts from concrete examples
 
