@@ -70,7 +70,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
 
 - [x] Create Gradle modules for all services with placeholder sources
- - [x] Add base Spring Boot Application classes for each service
+- [x] Add base Spring Boot Application classes for each service
 - [x] Generate skeleton controllers and service classes for each microservice
 - [x] Define base entity and repository classes for core domains
   - [x] Account Service: `Account` and `Profile` entities with JPA repositories
@@ -100,6 +100,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Implement fluent API for saga orchestration
     - [ ] Add gRPC call helpers with retry and compensation hooks
     - [ ] Document example saga usage
+  - [ ] Replace placeholder classes with real implementations
 
 - [x] **Set up Git repository and development workflow**
 - [x] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
@@ -334,6 +335,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop TCP Proxy Service**
   - [ ] Implement Telnet networking and WebSocket bridging
   - [ ] Buffer Telnet input and discard on disconnect to support reconnection
+  - [ ] Initialize `TcpProxyServiceApplication` with Netty server
   - [x] Create base Spring Boot application skeleton
 - [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
