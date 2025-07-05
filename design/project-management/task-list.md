@@ -133,7 +133,11 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Add `spring-boot-starter-actuator` dependency to each service
     - [x] Enable health endpoint in `application.yml`
   - [x] Configure Kubernetes readiness and liveness probes
-  
+
+  - [ ] Add metrics and tracing instrumentation for all services
+    - [ ] Configure Micrometer with Prometheus registry
+    - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
+
 #### Coding Kickoff Checklist
   - [ ] Add baseline `Dockerfile` for each service
   - [ ] Create Gradle tasks to build Docker images for each service
@@ -144,6 +148,10 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow for build and format checks
+  - [ ] Configure static analysis tools
+    - [ ] Add Checkstyle rules for code style enforcement
+    - [ ] Integrate SpotBugs for static bug detection
+    - [ ] Generate JaCoCo coverage reports in CI
   - [ ] Establish base integration test setup using Spring Boot Test
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
