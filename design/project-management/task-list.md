@@ -156,10 +156,12 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow to build and publish Docker images for each service
   - [ ] Integrate `markdownlint` in CI build
+  - [ ] Add pre-commit hooks for Spotless, Checkstyle, and markdownlint
   - [ ] Configure static analysis tools
     - [ ] Add Checkstyle rules for code style enforcement
     - [ ] Integrate SpotBugs for static bug detection
     - [ ] Generate JaCoCo coverage reports in CI
+  - [ ] Integrate container and dependency scanning (Trivy) in CI
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
@@ -174,6 +176,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Summarize controller routes in service `design/README.md`
     - [ ] Include example request/response payloads
     - [ ] Link to corresponding proto files
+    - [ ] Generate OpenAPI specs and publish Swagger UI
 
 ---
 
