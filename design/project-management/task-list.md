@@ -311,6 +311,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop TCP Proxy Service**
   - [ ] Implement Telnet networking and WebSocket bridging
   - [ ] Buffer Telnet input and discard on disconnect to support reconnection
+  - [x] Create base Spring Boot application skeleton
 - [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
   - [ ] Terminate TLS and forward traffic to internal services using mTLS
