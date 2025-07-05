@@ -33,8 +33,10 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 - Account registration and login.
 - Profile management and email notifications.
+- Profiles track optional game history and achievements for each player.
 - Password reset and verification flows.
 - Banning and subscription tracking.
+- External account linking (Google, Discord, Steam) allows unified logins.
 - Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
 - Links accounts to player characters for ownership and permissions.
 - gRPC APIs for account creation, authentication, and profile queries.
@@ -43,6 +45,8 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 - `account` table stores username, password hash, email, and status flags.
 - `profile` table captures optional user details and preferences.
+- `achievement` table records earned achievements keyed by account and game.
+- `external_account` table links third-party OAuth IDs to platform accounts.
 - `session` keys in Redis map temporary session tokens to account IDs for quick
   reconnects.
 

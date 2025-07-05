@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package account.v1;
 
-option java_package = "net.fire_devops.firemud.account.v1";
+option java_package = "net.firedevops.firemud.account.v1";
 option java_multiple_files = true;
 
 service AccountService {

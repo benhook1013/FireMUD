@@ -25,12 +25,16 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Item storage and inventory handling.
 - Experience and level tracking.
 - Character creation templates pulled from the Game Design Service.
+- Supports instance-based spaces so characters can enter private dungeons or
+  personalized housing without affecting the main world state.
 
 ### Data Model
 
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
 - Many-to-many tables define inventory and equipment relationships.
+- `instance_member` table tracks which characters are present in optional
+  instance-based spaces.
 
 ### gRPC APIs
 

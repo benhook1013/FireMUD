@@ -22,6 +22,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - World and room editors.
 - Ability and action design tools.
 - Scripting and event workflow creation.
+- Visual editor for building scripts in the same component-based DSL used by the
+  Automation & Scripting Service.
 - Game templates with predefined rulesets and administrators.
 - Version and patch note management for published games.
 - Import/export of design assets for sharing between game worlds.

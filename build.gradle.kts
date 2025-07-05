@@ -20,7 +20,7 @@ allprojects {
 subprojects {
     apply(plugin = "java")
     apply(plugin = "com.google.protobuf")
-    group = "net.fire-devops.firemud"
+    group = "net.firedevops.firemud"
     version = "0.1.0-SNAPSHOT"
 
     dependencies {
