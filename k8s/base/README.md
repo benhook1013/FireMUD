@@ -21,3 +21,5 @@ kubectl apply -f spring-cloud-gateway.yaml
 These files expose the services internally using `ClusterIP` (except the gateway and TCP proxy which are `LoadBalancer`). See the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md) document for production considerations.
 
 All deployments include basic readiness and liveness probes that hit the `/actuator/health` endpoint (or open a TCP socket for the proxy service) as described in the design docs.
+
+Spring Boot services run with the `prod` Spring profile by default. This is set via the `SPRING_PROFILES_ACTIVE` environment variable in each deployment manifest.

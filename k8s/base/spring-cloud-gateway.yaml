@@ -16,6 +16,9 @@ spec:
       containers:
         - name: spring-cloud-gateway
           image: spring-cloud-gateway:latest
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
           resources:
             requests:
               cpu: "100m"

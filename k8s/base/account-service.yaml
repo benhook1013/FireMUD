@@ -15,6 +15,9 @@ spec:
       containers:
         - name: account-service
           image: account-service:latest
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
           resources:
             requests:
               cpu: "100m"
