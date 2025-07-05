@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logging-admin-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logging-admin-service
+  template:
+    metadata:
+      labels:
+        app: logging-admin-service
+    spec:
+      containers:
+        - name: logging-admin-service
+          image: logging-admin-service:latest
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logging-admin-service
+spec:
+  selector:
+    app: logging-admin-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP

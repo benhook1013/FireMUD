@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: world-management-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: world-management-service
+  template:
+    metadata:
+      labels:
+        app: world-management-service
+    spec:
+      containers:
+        - name: world-management-service
+          image: world-management-service:latest
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: world-management-service
+spec:
+  selector:
+    app: world-management-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
