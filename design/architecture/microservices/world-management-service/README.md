@@ -14,7 +14,8 @@ The World Management Service stores and manages game world data such as rooms, r
 - Publishes world event notifications for NPC scripts and game logic processing.
 - During version publishing the service participates in a Saga that copies design
   data into its schema, ensuring world data matches the active version. See
-  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
+  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
+  and [Transaction Strategies](../system-architecture-transactions.md).
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
