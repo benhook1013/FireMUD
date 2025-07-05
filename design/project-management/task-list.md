@@ -129,8 +129,6 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Spring Cloud Gateway proto definitions
     - [ ] Shared common types
   - [ ] Integrate proto generation into CI workflow
-  - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
-  - [x] Add base `application.yml` configuration for all services
   - [x] Expose `/actuator/health` endpoints for service monitoring
     - [x] Add `spring-boot-starter-actuator` dependency to each service
     - [x] Enable health endpoint in `application.yml`
@@ -139,15 +137,12 @@ This checklist is structured to **build foundational features first**, followed 
 #### Coding Kickoff Checklist
   - [ ] Create Gradle tasks to build Docker images for each service
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
-  - [x] Add MapStruct mappers and DTO records for core domains
   - [x] Implement basic JPA entities and repositories in Account Service
-  - [x] Set up protobuf generation with gRPC stubs
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow for build and format checks
   - [ ] Establish base integration test setup using Spring Boot Test
   - [ ] Finalize API schemas from concrete gameplay flows
-    - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
   - [ ] Create ERD diagrams and baseline Flyway scripts for all services
@@ -405,3 +400,12 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add timeout detection and automatic recovery
   - [ ] Support declarative saga definitions via YAML or annotations
   - [ ] Integrate saga events with logging and metrics
+
+---
+
+## 🛠️ Phase 11: Community & Funding
+
+- [ ] Set up financial contribution options
+  - [ ] Add PayPal donation link
+  - [ ] Configure GitHub Sponsors profile
+  - [ ] Create Patreon page
