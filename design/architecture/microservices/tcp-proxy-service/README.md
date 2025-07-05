@@ -26,6 +26,7 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - Future hardening includes whitelisting Telnet commands and sanitizing input as
   described in the [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
 
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 ## Key Features
 
 - **Telnet Compatibility** — accepts standard MUD clients over TCP.

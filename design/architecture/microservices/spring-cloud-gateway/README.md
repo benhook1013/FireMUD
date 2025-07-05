@@ -24,6 +24,7 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Hostnames or path prefixes map incoming connections to a `tenantId` so the
   gateway can route players to the correct game instance. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 

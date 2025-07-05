@@ -28,6 +28,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
   JWKS endpoint, and all traffic between services uses mutual TLS certificates as
   outlined in the [Security Architecture](../system-architecture-security.md).
 
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 ## Key Features
 
 - Character and NPC management.

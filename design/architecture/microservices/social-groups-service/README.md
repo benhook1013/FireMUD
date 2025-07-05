@@ -25,6 +25,7 @@ Provides chat, guild, and social networking features across games. Enables playe
 - APIs require authenticated JWTs from the Account Service and all inter-service
   communication is encrypted via mutual TLS, following the
   [Security Architecture](../system-architecture-security.md).
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
