@@ -1,5 +1,7 @@
 # Spring Cloud Gateway
 
+## Overview
+
 This service exposes WebSocket and HTTP endpoints for all clients. It routes requests to backend services and integrates with the TCP Proxy Service for Telnet clients.
 
 ## Architecture / Design Notes
@@ -8,6 +10,7 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Event-driven updates synchronize game state across connected players.
 - Includes a fallback mechanism so players with unstable connections can rejoin seamlessly.
 - Applies rate limiting and authentication filters for admin endpoints.
+- Relies on the Game Session Service for gameplay login and session management.
 
 ## Key Features
 
@@ -15,6 +18,11 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Real-time state synchronization for multiplayer actions.
 - Reconnection support for dropped clients.
 - Routes REST and gRPC traffic to appropriate backend services.
+
+### Data Model
+
+The gateway is stateless. Route configurations are stored in
+`application-*.yml` and reloaded on startup. No persistent database is required.
 
 ### Filter Chain
 
@@ -46,6 +54,10 @@ After edits, run `./gradlew generateProto` to regenerate gateway stubs.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Security Architecture](../system-architecture-security.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 

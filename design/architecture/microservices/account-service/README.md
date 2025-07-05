@@ -10,6 +10,7 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Passwords are hashed with strong salts and stored only in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
 - Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
+- Maintains account-to-character relationships so players can own characters across multiple games.
 
 ## Key Features
 
@@ -17,6 +18,8 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Profile management and email notifications.
 - Password reset and verification flows.
 - Banning and subscription tracking.
+- Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
+- Links accounts to player characters for ownership and permissions.
 - gRPC APIs for account creation, authentication, and profile queries.
 
 ### Data Model
@@ -52,7 +55,11 @@ The gRPC schemas for this service live in
 ## 📚 Related Documentation
 
 - [Authentication & Authorization](../system-architecture-authentication.md)
+- [Security Architecture](../system-architecture-security.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [User Journeys](../user-journeys.md#9-purchases-and-subscriptions) – payment and subscription workflow.
 
 ## Future Enhancements
 

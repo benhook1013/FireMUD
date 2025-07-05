@@ -18,6 +18,12 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Friend lists scoped both to individual games and to overall accounts.
 - In-game social chat plus account-to-account direct messaging.
 
+### Data Model
+
+- `chat_message` table persists guild and private messages.
+- `guild` and `guild_member` tables store group ownership and membership roles.
+- `friend_link` table tracks account or character friendships and blocks.
+
 ### Chat Pipeline
 
 - Messages are published to Redis streams and fanned out to WebSocket channels
@@ -51,6 +57,9 @@ files change.
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [User Journeys](../user-journeys.md)
 
 ## Future Enhancements
 

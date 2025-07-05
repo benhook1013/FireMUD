@@ -11,6 +11,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
 - Ensures atomic command execution using Redis transactions and Lua scripts.
+- Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
 
 ## Key Features
 
@@ -19,7 +20,13 @@ Orchestrates live game sessions, including tick execution, player input validati
 - **Runtime Configuration** — stores runtime flag values created in the Game Design Service and activates published game versions.
 - **Termination Handling** — cleans up resources and logs results when a game ends.
 - **Instance Initialization** — starts new games from published templates.
+- **Reconnection Handling** — resumes gameplay via Redis-backed session state as described in [Reconnection Strategy](../system-architecture-reconnection.md).
 - **State Queries** — exposes gRPC methods to retrieve current game or player state for the web UI.
+
+### Data Model
+
+- `session` table tracks active games, associated `version_id`, and owner account.
+- Redis stores volatile queues, timers, and reconnect metadata.
 
 ### Tick Execution Model
 
@@ -48,7 +55,14 @@ Service definitions reside in
 
 ## 📚 Related Documentation
 
-See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how game instances load published versions and runtime flags.
+ - [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) — how game instances load published versions and runtime flags.
+ - [Reconnection Strategy](../system-architecture-reconnection.md)
+ - [Authentication & Authorization](../system-architecture-authentication.md)
+- [Tick System and Runtime Design](../system-architecture-ticks.md)
+- [Redis Architecture](../system-architecture-redis.md)
+- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [System Architecture Overview](../system-architecture-overview.md)
+- [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements
 
