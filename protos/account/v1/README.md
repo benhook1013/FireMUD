@@ -1,7 +1,8 @@
 # Account Service Proto (v1)
 
 This directory houses the version 1 protocol buffer definitions for the Account Service. These
-files define registration, authentication, profile, and session management APIs.
+files define registration, authentication, profile, and session management APIs. The
+initial schema provides a simple `Ping` RPC for connectivity testing.
 
 Generate Java stubs via `./gradlew generateProto` from the repository root.
 

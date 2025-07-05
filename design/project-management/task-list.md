@@ -45,9 +45,9 @@ This checklist is structured to **build foundational features first**, followed 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
 
 ### Immediate Next Steps
-- [ ] Configure Gradle protobuf plugin and generate gRPC stubs
-  - [ ] Apply `com.google.protobuf` Gradle plugin in each service module
-  - [ ] Verify Java sources are generated under `build/generated` after `./gradlew build`
+- [x] Configure Gradle protobuf plugin and generate gRPC stubs
+  - [x] Apply `com.google.protobuf` Gradle plugin in each service module
+  - [x] Verify Java sources are generated under `build/generated` after `./gradlew build`
 - [x] Add base `application.yml` configuration and profiles
   - [x] Create default `application.yml` with dev and prod profiles
   - [x] Externalize database and Redis settings via environment variables
@@ -72,7 +72,7 @@ This checklist is structured to **build foundational features first**, followed 
  - [x] Add base Spring Boot Application classes for each service
 - [x] Generate skeleton controllers and service classes for each microservice
 - [ ] Define base entity and repository classes for core domains
-  - [ ] Account Service: `Account` and `Profile` entities with JPA repositories
+  - [x] Account Service: `Account` and `Profile` entities with JPA repositories
   - [ ] Entity Management Service: `Character`, `Item`, `NPC` entities
   - [ ] World Management Service: `Room` and `Region` entities
   - [ ] Game Session Service: `GameInstance` entity
@@ -112,7 +112,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
   - [ ] Add initial protobuf IDL files for all microservices based on sample flows
-    - [ ] Account Service proto definitions
+    - [x] Account Service proto definitions
     - [ ] Game Session Service proto definitions
     - [ ] World Management Service proto definitions
     - [ ] Entity Management Service proto definitions
