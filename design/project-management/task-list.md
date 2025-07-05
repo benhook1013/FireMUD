@@ -213,9 +213,10 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
-  - [ ] Use saga orchestrator for game publishing workflow
-  - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
-  - [x] Create gRPC GameDesignService and design-time database models
+- [ ] Use saga orchestrator for game publishing workflow
+- [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
+- [ ] Create `GameDesignController` REST endpoints for design CRUD operations
+- [x] Create gRPC GameDesignService and design-time database models
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
@@ -341,9 +342,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Initialize `TcpProxyServiceApplication` with Netty server
   - [x] Create base Spring Boot application skeleton
 - [ ] **Develop Spring Cloud Gateway**
-  - [ ] Handle API routing and request validation
-  - [ ] Terminate TLS and forward traffic to internal services using mTLS
-  - [ ] Collect connection metrics and throttle abusive clients
+- [ ] Handle API routing and request validation
+- [ ] Terminate TLS and forward traffic to internal services using mTLS
+- [ ] Collect connection metrics and throttle abusive clients
+- [ ] Create gateway route configuration files for all services
+- [ ] Create `GatewayController` endpoints for dynamic route management
 
 - [ ] **Develop Social & Groups Service**
   - [ ] Enable cross-game friend lists and social graph
