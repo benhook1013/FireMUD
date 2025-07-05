@@ -34,7 +34,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Remove legacy Game Management Service and redistribute duties
   - [x] Conduct final review of all design documentation
   - [x] Address any missing diagrams or cross-references discovered during review
-  - [ ] Set up financial contribution links (PayPal, GitHub Sponsors, Patreon)
   - [ ] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [ ] Finalize API schemas
@@ -123,6 +122,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement game instance lifecycle (start, stop, restart)
   - [ ] Support multi-tenancy for hosted games
   - [ ] Implement tick orchestration using Redis for command queues
+  - [ ] Implement Lua-based staging, commit, and rollback scripts for tick transactions
   - [ ] Persist session state in Redis for reconnect recovery
   - [ ] Enforce single-session control per character (session takeover on new login)
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
@@ -265,6 +265,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Integrate Alertmanager for automated alerts
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
+  - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
@@ -284,6 +285,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Support subscriptions, one-time purchases, and donations
   - [ ] Enforce platform fee on transactions
   - [ ] Implement refund & chargeback handling
+  - [ ] Use saga orchestrator for cross-service purchase workflows
   - [ ] Implement virtual currency system (game-specific currencies)
   - [ ] Implement premium hosting tiers & features for game creators
   - [ ] Implement platform-controlled ad system (for free-to-play games)
