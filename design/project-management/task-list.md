@@ -80,6 +80,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Game Design Service: design-time schema entities
   - [x] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
   - [x] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
+  - [ ] Automation & Scripting Service: `ScriptDefinition` entity
   - [x] Create DTO records and MapStruct mappers
 
 
@@ -273,6 +274,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC fleeing/surrender logic
   - [ ] Implement NPC formations & squad AI
   - [ ] Add gRPC AutomationService with script execution API
+  - [ ] Create `ScriptingController` REST endpoints
   - [ ] Create sandboxed script runtime
 
 - [ ] Add gRPC SocialGroupsService with proto contract
@@ -331,6 +333,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Allow players to form and manage guilds
   - [ ] Implement guild ranking & permissions system
   - [ ] Implement shared guild storage and alliance system
+  - [ ] Create `SocialController` REST endpoints
 
 ---
 
@@ -347,6 +350,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
+  - [ ] Create `AdminController` REST endpoints
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
@@ -369,6 +373,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
   - [ ] Add gRPC `PaymentService` endpoints for billing operations
+  - [ ] Create `PaymentController` REST endpoints
   - [ ] Define proto contracts for payment and subscription flows
   - [ ] Add Flyway migration scripts for payment tables
   - [ ] Document monetization design in `account-service/design/README.md`
