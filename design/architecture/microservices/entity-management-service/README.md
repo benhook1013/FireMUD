@@ -18,6 +18,9 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
   this value so character data for different games remains isolated; Redis keys
   mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
   document.
+- gRPC endpoints are secured with JWT tokens validated via the Account Service's
+  JWKS endpoint, and all traffic between services uses mutual TLS certificates as
+  outlined in the [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 
@@ -82,6 +85,8 @@ proto files, run `./gradlew generateProto` to update generated sources.
 - [Database Migrations](../system-architecture-database-migrations.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../system-architecture-authentication.md)
+- [Security Architecture](../system-architecture-security.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

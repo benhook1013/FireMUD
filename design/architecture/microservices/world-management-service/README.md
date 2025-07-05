@@ -18,6 +18,9 @@ The World Management Service stores and manages game world data such as rooms, r
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+- All gRPC operations require JWT authentication validated via the Account
+  Service's JWKS endpoint and use mutual TLS between services, per the
+  [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 
@@ -85,6 +88,8 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 - [Database Migrations](../system-architecture-database-migrations.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../system-architecture-authentication.md)
+- [Security Architecture](../system-architecture-security.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

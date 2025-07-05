@@ -16,6 +16,9 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Chat history and guild data are stored with a `tenantId` so conversations are
   isolated per game. Redis stream keys also include this prefix. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+- APIs require authenticated JWTs from the Account Service and all inter-service
+  communication is encrypted via mutual TLS, following the
+  [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 
@@ -86,6 +89,8 @@ files change.
 - [Database Migrations](../system-architecture-database-migrations.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../system-architecture-authentication.md)
+- [Security Architecture](../system-architecture-security.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

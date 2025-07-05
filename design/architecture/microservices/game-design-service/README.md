@@ -16,6 +16,10 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+- All APIs require JWT authentication and are validated using the Account
+  Service's JWKS endpoint. Service-to-service traffic is protected with mutual
+  TLS certificates managed by cert-manager as described in the
+  [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 
@@ -90,6 +94,8 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [Database Migrations](../system-architecture-database-migrations.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../system-architecture-authentication.md)
+- [Security Architecture](../system-architecture-security.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 

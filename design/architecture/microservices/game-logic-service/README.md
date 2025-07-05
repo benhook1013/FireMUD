@@ -17,6 +17,9 @@ Executes the core gameplay rules and command parsing. It processes player action
 - All commands are scoped by `tenantId` so that rules execute only against data
   for the active game instance. The Game Session Service passes this context on
   every request. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+- gRPC requests are authenticated with JWTs issued by the Account Service and
+  validated via its JWKS endpoint. Communications use mutual TLS certificates as
+  outlined in the [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 
@@ -79,6 +82,9 @@ the generated code with `./gradlew generateProto` after making changes.
 - [Tick System and Runtime Design](../system-architecture-ticks.md)
 - [Redis Architecture](../system-architecture-redis.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [Authentication & Authorization](../system-architecture-authentication.md)
+- [Security Architecture](../system-architecture-security.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Testing Strategy](../system-architecture-testing.md)
