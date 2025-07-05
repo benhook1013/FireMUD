@@ -62,6 +62,10 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
+- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Testing Strategy](../system-architecture-testing.md)
+- [CI/CD Pipeline](../system-architecture-cicd.md)
 
 ## Future Enhancements
 

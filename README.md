@@ -1,4 +1,4 @@
-# FireMUD Game Platform - Documentation and Design
+# FireMUD Game Platform
 
 [![Status: Under Development](https://img.shields.io/badge/Status-Under_Development-yellow)](./design/project-management/task-list.md)
 [![License: Business Source License 1.1](https://img.shields.io/badge/License-Business_Source_License_1.1-blue.svg)](LICENSE.md)
