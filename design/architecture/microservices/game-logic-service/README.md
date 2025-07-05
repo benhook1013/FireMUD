@@ -87,6 +87,7 @@ the generated code with `./gradlew generateProto` after making changes.
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)

@@ -83,7 +83,7 @@ files change.
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys](../user-journeys.md)
+- [User Journeys – Social Interaction](../user-journeys.md#6-social-interaction)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Database Migrations](../system-architecture-database-migrations.md)

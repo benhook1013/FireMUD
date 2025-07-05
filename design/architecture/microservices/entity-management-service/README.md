@@ -80,6 +80,7 @@ proto files, run `./gradlew generateProto` to update generated sources.
 - [Redis Architecture](../system-architecture-redis.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [User Journeys – World and Entity Design](../user-journeys.md#2-world-and-entity-design)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Database Migrations](../system-architecture-database-migrations.md)
