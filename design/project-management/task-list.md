@@ -57,6 +57,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] World Management Service: `Room` and `Region` entities
   - [ ] Game Session Service: `GameInstance` entity
   - [ ] Game Design Service: design-time schema entities
+  - [ ] Create DTO records and MapStruct mappers
+  - [ ] Add baseline Flyway migration scripts
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
