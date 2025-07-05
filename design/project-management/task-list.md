@@ -87,6 +87,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement common request/response DTOs for inter-service communication
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
   - [x] Implement centralized logging utilities
+  - [ ] Implement gRPC interceptors for logging and metrics
   - [ ] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [ ] Implement database connection utilities (PostgreSQL, Redis connectors)
   - [x] Implement base configuration classes for service discovery and shared properties
@@ -166,6 +167,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Add `V1__init.sql` migrations for each service database
     - [ ] Configure Flyway plugin in each service build file
     - [ ] Verify migrations run on startup
+  - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
     - [ ] Summarize controller routes in service `design/README.md`
     - [ ] Include example request/response payloads
