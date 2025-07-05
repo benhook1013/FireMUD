@@ -34,7 +34,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Remove legacy Game Management Service and redistribute duties
   - [x] Conduct final review of all design documentation
   - [ ] Address any missing diagrams or cross-references discovered during review
-  - [ ] Set up financial contribution links (PayPal, GitHub Sponsors, Patreon)
   - [ ] Expand `CONTRIBUTING.md` with onboarding instructions
   - [ ] Populate `FAQ.md` with common questions
   - [ ] Finalize API schemas
