@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package game_session.v1;
 
-option java_package = "net.fire_devops.firemud.gamesession.v1";
+option java_package = "net.firedevops.firemud.gamesession.v1";
 option java_multiple_files = true;
 
 service GameSessionService {
