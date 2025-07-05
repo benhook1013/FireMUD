@@ -68,6 +68,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Implement PostgreSQL and Redis Docker containers for local dev
   - [x] Add `postgres` and `redis` services to `docker-compose.yml`
   - [x] Provide default credentials and mounted volumes for local data
+  - [x] Include `.env.sample` with default environment variables
   - [x] Document connection settings in `DEVELOPER_SETUP.md`
   - [x] Create Docker volumes for persistent databases
   - [ ] Verify services start via `docker compose up`
@@ -343,9 +344,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add advanced AI modules for complex behaviors
   - [ ] Enforce fairness quotas and per-script resource limits
 
-  - [ ] Add gRPC SocialGroupsService with proto contract
-  - [ ] Add gRPC LoggingAdminService with proto contract
-  - [ ] Add gRPC TcpProxyService with proto contract
   - [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
   - [x] Add baseline route configuration for Spring Cloud Gateway
 
