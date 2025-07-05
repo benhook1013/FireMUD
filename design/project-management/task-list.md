@@ -43,7 +43,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
   - [x] Expand `docker-compose.yml` to include all services
   - [x] Create baseline Kubernetes manifests or Helm charts for deployment
-  - [ ] Add "Quickstart" build instructions to `README.md`
 
 ---
 
