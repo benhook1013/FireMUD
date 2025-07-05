@@ -1,6 +1,6 @@
 # 📚 Shared Libraries Overview
 
-FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.fire-devops.firemud.shared` with the **artifact ID** `firemud-common`.
+FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud.shared` with the **artifact ID** `firemud-common`.
 
 ---
 
