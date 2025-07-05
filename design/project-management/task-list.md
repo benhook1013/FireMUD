@@ -54,9 +54,15 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add `postgres` and `redis` services to `docker-compose.yml`
   - [ ] Provide default credentials and mounted volumes for local data
   - [ ] Document connection settings in `DEVELOPER_SETUP.md`
-- [ ] Create ERD diagrams and baseline Flyway scripts for all services
-  - [ ] Produce entity relationship diagrams for initial domain models
-  - [ ] Add `V1__init.sql` migrations for each service database
+
+### Behavior and Orchestration Planning
+- [ ] Define core service responsibilities and runtime behaviors
+  - [ ] Outline tick flow, session management, reconnect logic, and command execution
+- [ ] Write sample gameplay use cases and trace the end-to-end flow
+  - [ ] Example flows: LOGIN, MOVE, CAST_SPELL
+- [ ] Identify the data each service needs to handle those flows
+- [ ] Derive minimal data models and proto schemas based on real usage
+- [ ] Refine shared DTOs and gRPC contracts from concrete examples
 
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
@@ -68,9 +74,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Game Session Service: `GameInstance` entity
   - [ ] Game Design Service: design-time schema entities
   - [ ] Create DTO records and MapStruct mappers
-  - [ ] Add baseline Flyway migration scripts
-    - [ ] Configure Flyway plugin in each service build file
-    - [ ] Verify migrations run on startup
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
@@ -104,7 +107,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
-  - [ ] Add initial protobuf IDL files for all microservices
+  - [ ] Add initial protobuf IDL files for all microservices based on sample flows
     - [ ] Account Service proto definitions
     - [ ] Game Session Service proto definitions
     - [ ] World Management Service proto definitions
@@ -116,10 +119,15 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Configure Kubernetes readiness and liveness probes
   - [ ] Provide Docker image build tasks for each service
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
-  - [ ] Finalize API schemas
+  - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
+  - [ ] Create ERD diagrams and baseline Flyway scripts for all services
+    - [ ] Produce entity relationship diagrams for initial domain models
+    - [ ] Add `V1__init.sql` migrations for each service database
+    - [ ] Configure Flyway plugin in each service build file
+    - [ ] Verify migrations run on startup
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
     - [ ] Summarize controller routes in service `design/README.md`
     - [ ] Include example request/response payloads
