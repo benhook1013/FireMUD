@@ -40,10 +40,18 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 The proxy does not expose its own public gRPC API. Instead it performs two
 internal operations when communicating with other microservices:
 
-- **NotifyDisconnect** – informs the Game Session Service when a Telnet client
-  drops so the session may be suspended.
-- **PushBufferedInput** – forwards any queued commands after a reconnect
-  event.
+  - **NotifyDisconnect** – informs the Game Session Service when a Telnet client
+    drops so the session may be suspended.
+  - **PushBufferedInput** – forwards any queued commands after a reconnect
+    event.
+
+### Telnet Command Handling
+
+The proxy currently forwards Telnet input verbatim so that classic MUD clients
+remain compatible. According to the [Security Architecture](../system-architecture-security.md#%F0%9F%94%8C-telnet-command-handling-and-future-controls),
+future iterations will enforce a whitelisted subset of commands and sanitize
+incoming bytes. These controls are planned to mitigate malformed command
+injection and other legacy protocol edge cases.
 
 ## Dependencies
 
