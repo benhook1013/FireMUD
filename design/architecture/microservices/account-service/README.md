@@ -60,6 +60,10 @@ The gRPC schemas for this service live in
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [User Journeys](../user-journeys.md#9-purchases-and-subscriptions) – payment and subscription workflow.
+- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
+- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Testing Strategy](../system-architecture-testing.md)
+- [CI/CD Pipeline](../system-architecture-cicd.md)
 
 ## Future Enhancements
 

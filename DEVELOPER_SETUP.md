@@ -40,6 +40,22 @@ Build all modules with:
 
 Gradle compiles the services and prepares Docker images using the included Dockerfiles.
 
+## ✅ Markdown Linting via Gradle
+
+This project uses `markdownlint-cli2` to lint Markdown files. The `check` task automatically runs linting in check-only mode:
+
+```bash
+./gradlew check
+```
+
+To manually fix correctable issues, run:
+
+```bash
+./gradlew lintMarkdownFix
+```
+
+Linting rules are defined in `.markdownlint.json` at the project root. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
+
 ## Lombok and MapStruct
 
 The microservices use **Lombok** to cut down on boilerplate and **MapStruct** for DTO mapping. Each service's `build.gradle.kts` already declares these dependencies:

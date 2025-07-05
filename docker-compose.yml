@@ -8,4 +8,39 @@ services:
     build: ./services/spring-cloud-gateway
     ports:
       - "8080:8080"
-  # TODO: Add other services here
+  automation-scripting-service:
+    build: ./services/automation-scripting-service
+    ports:
+      - "8082:8080"
+  entity-management-service:
+    build: ./services/entity-management-service
+    ports:
+      - "8083:8080"
+  game-design-service:
+    build: ./services/game-design-service
+    ports:
+      - "8084:8080"
+  game-logic-service:
+    build: ./services/game-logic-service
+    ports:
+      - "8085:8080"
+  game-session-service:
+    build: ./services/game-session-service
+    ports:
+      - "8086:8080"
+  logging-admin-service:
+    build: ./services/logging-admin-service
+    ports:
+      - "8087:8080"
+  social-groups-service:
+    build: ./services/social-groups-service
+    ports:
+      - "8088:8080"
+  tcp-proxy-service:
+    build: ./services/tcp-proxy-service
+    ports:
+      - "2323:2323"
+  world-management-service:
+    build: ./services/world-management-service
+    ports:
+      - "8089:8080"
