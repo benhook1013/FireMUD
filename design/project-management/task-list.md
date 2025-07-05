@@ -191,6 +191,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create `AccountController` REST endpoints
   - [x] Create JPA repositories for `Account` and `Profile`
   - [ ] Add gRPC AccountService with proto contract
+  - [ ] Expose JWKS endpoint for token verification
   - [ ] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
   - [ ] Add optional 2FA for admin and moderator roles
@@ -339,12 +340,13 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Buffer Telnet input and discard on disconnect to support reconnection
   - [ ] Initialize `TcpProxyServiceApplication` with Netty server
   - [x] Create base Spring Boot application skeleton
+  - [ ] Enforce Telnet command whitelist and input sanitization
 - [ ] **Develop Spring Cloud Gateway**
-- [ ] Handle API routing and request validation
-- [ ] Terminate TLS and forward traffic to internal services using mTLS
-- [ ] Collect connection metrics and throttle abusive clients
-- [ ] Create gateway route configuration files for all services
-- [ ] Create `GatewayController` endpoints for dynamic route management
+  - [ ] Handle API routing and request validation
+  - [ ] Terminate TLS and forward traffic to internal services using mTLS
+  - [ ] Collect connection metrics and throttle abusive clients
+  - [ ] Create gateway route configuration files for all services
+  - [ ] Create `GatewayController` endpoints for dynamic route management
 
 - [ ] **Develop Social & Groups Service**
   - [ ] Enable cross-game friend lists and social graph
