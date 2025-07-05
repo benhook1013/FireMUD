@@ -51,8 +51,8 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] spring-cloud-gateway
     - [x] tcp-proxy-service
     - [x] world-management-service
-  - [ ] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
-    - [ ] Document network policy usage in architecture docs
+  - [x] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
+    - [x] Document network policy usage in architecture docs
 
 ---
 
@@ -94,7 +94,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Game Design Service: design-time schema entities
   - [x] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
   - [x] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
-  - [ ] Automation & Scripting Service: `ScriptDefinition` entity
+  - [x] Automation & Scripting Service: `ScriptDefinition` entity
   - [x] Create DTO records and MapStruct mappers
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication

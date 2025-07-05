@@ -18,6 +18,13 @@ kubectl apply -f base/world-management-service.yaml
 kubectl apply -f base/spring-cloud-gateway.yaml
 ```
 
+After the services are running, apply the default network policies found in
+`network-policies/` to restrict traffic to internal pods only:
+
+```bash
+kubectl apply -f network-policies/internal-services.yaml
+```
+
 Customize these manifests with proper image repositories and resource limits before running in production.
 All Spring Boot services are configured to run with the `prod` profile by default via the `SPRING_PROFILES_ACTIVE` environment variable.
 

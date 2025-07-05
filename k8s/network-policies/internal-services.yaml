@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: internal-services
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values:
+          - spring-cloud-gateway
+          - tcp-proxy-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
