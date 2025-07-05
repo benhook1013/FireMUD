@@ -129,7 +129,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] TCP Proxy Service proto definitions
     - [ ] Spring Cloud Gateway proto definitions
     - [ ] Shared common types
-  - [ ] Integrate proto generation into CI workflow
+  - [x] Integrate proto generation into CI workflow
   - [x] Expose `/actuator/health` endpoints for service monitoring
     - [x] Add `spring-boot-starter-actuator` dependency to each service
     - [x] Enable health endpoint in `application.yml`
@@ -189,6 +189,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Create JPA repositories for `Account` and `Profile`
   - [ ] Add gRPC AccountService with proto contract
   - [ ] Use saga orchestrator for account creation workflow
+  - [ ] Implement self-service account recovery
+  - [ ] Add optional 2FA for admin and moderator roles
 
 - [ ] **Expand Game Session Service**
   - [ ] Implement game instance lifecycle (start, stop, restart)
@@ -229,6 +231,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
   - [ ] Create `WorldController` REST endpoints
   - [ ] Add gRPC WorldManagementService with proto contract
+  - [ ] Provide tools to fine-tune procedural generation rules
+  - [ ] Support multi-server world shards
 
 - [ ] **Develop Entity Management Service**
   - [ ] Implement player character storage
@@ -239,6 +243,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
   - [ ] Create `EntityController` REST endpoints
   - [ ] Add gRPC EntityManagementService with proto contract
+  - [ ] Implement entity graph caching for fast lookups
+  - [ ] Support complex crafting recipes
 
 - [ ] **Implement Persistence Strategy**
   - [ ] Use PostgreSQL for primary storage
@@ -259,6 +265,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement action aliases system (custom command mappings)
   - [ ] Create `GameLogicController` REST endpoints
   - [ ] Add gRPC GameLogicService with proto contract
+  - [ ] Add scripting hooks for custom actions
+  - [ ] Optimize performance for large-scale battles
 
 - [ ] **Develop Automation & Scripting Service**
   - [ ] Implement state-driven & event-driven NPC behaviors
@@ -272,11 +280,14 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC formations & squad AI
   - [ ] Add gRPC AutomationService with script execution API
   - [ ] Create sandboxed script runtime
+  - [ ] Provide web UI for script creation and testing
+  - [ ] Add advanced AI modules for complex behaviors
+  - [ ] Enforce fairness quotas and per-script resource limits
 
-- [ ] Add gRPC SocialGroupsService with proto contract
-- [ ] Add gRPC LoggingAdminService with proto contract
-- [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
-- [x] Add baseline route configuration for Spring Cloud Gateway
+  - [ ] Add gRPC SocialGroupsService with proto contract
+  - [ ] Add gRPC LoggingAdminService with proto contract
+  - [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
+  - [x] Add baseline route configuration for Spring Cloud Gateway
 
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions
@@ -304,6 +315,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement ability & action design tools
   - [ ] Implement item & equipment balancing tools
   - [ ] Track version history and patch notes for published games
+  - [ ] Build a web-based visual design interface
+  - [ ] Integrate version control for design assets
 
 - [ ] **Expand Scripting & Modding**
   - [ ] Implement event-driven scripting API for game creators
@@ -321,6 +334,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
   - [ ] Terminate TLS and forward traffic to internal services using mTLS
+  - [ ] Collect connection metrics and throttle abusive clients
 
 - [ ] **Develop Social & Groups Service**
   - [ ] Enable cross-game friend lists and social graph
@@ -329,6 +343,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Allow players to form and manage guilds
   - [ ] Implement guild ranking & permissions system
   - [ ] Implement shared guild storage and alliance system
+  - [ ] Provide rich moderation tools for chat
+  - [ ] Add optional voice chat integration
 
 ---
 
@@ -345,6 +361,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
+  - [ ] Build role-based admin UI
+  - [ ] Integrate optional 2FA for administrator accounts
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
