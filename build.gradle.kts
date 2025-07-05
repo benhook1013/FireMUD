@@ -43,7 +43,8 @@ tasks.register<NpxTask>("lintMarkdown") {
         "**/*.md",
         "!**/node_modules/**",
         "!**/build/**",
-        "!**/.gradle/**"
+        "!**/.gradle/**",
+        "!**/.git/**"
     ))
 }
 
@@ -54,7 +55,8 @@ tasks.register<NpxTask>("lintMarkdownFix") {
         "**/*.md",
         "!**/node_modules/**",
         "!**/build/**",
-        "!**/.gradle/**"
+        "!**/.gradle/**",
+        "!**/.git/**"
     ))
 }
 

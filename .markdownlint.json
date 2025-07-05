@@ -3,7 +3,8 @@
   "ignores": [
     "**/node_modules/**",
     "**/.gradle/**",
-    "**/build/**"
+    "**/build/**",
+    "**/.git/**"
   ],
   "gitignore": true,
   "MD013": false,
