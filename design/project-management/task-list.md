@@ -67,7 +67,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Example flows: LOGIN, MOVE, CAST_SPELL
 - [x] Identify the data each service needs to handle those flows
 - [x] Derive minimal data models and proto schemas based on real usage
-- [ ] Refine shared DTOs and gRPC contracts from concrete examples
+- [x] Refine shared DTOs and gRPC contracts from concrete examples
 
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
@@ -89,9 +89,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement centralized logging utilities
   - [ ] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [ ] Implement database connection utilities (PostgreSQL, Redis connectors)
-  - [ ] Implement base configuration classes for service discovery and shared properties
+  - [x] Implement base configuration classes for service discovery and shared properties
    - [x] Implement common exception handling & error response structures
-  - [ ] Implement configuration management (centralized properties, environment handling)
+  - [x] Implement configuration management (centralized properties, environment handling)
   - [ ] Publish common package to internal repository (Maven/Gradle)
   - [ ] Extend **firemud-common** with saga orchestration support
     - [ ] Define `saga` schema tables for step tracking and state
@@ -270,7 +270,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Add gRPC SocialGroupsService with proto contract
 - [ ] Add gRPC LoggingAdminService with proto contract
 - [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
-- [ ] Add baseline route configuration for Spring Cloud Gateway
+- [x] Add baseline route configuration for Spring Cloud Gateway
 
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions

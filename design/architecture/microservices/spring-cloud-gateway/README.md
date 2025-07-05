@@ -28,6 +28,8 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 
 The gateway is stateless. Route configurations are stored in
 `application-*.yml` and reloaded on startup. No persistent database is required.
+The default configuration defines routes for the core services so Docker Compose
+environments work out of the box.
 
 ### Filter Chain
 
