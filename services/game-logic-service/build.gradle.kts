@@ -13,5 +13,6 @@ dependencies {
     compileOnly("org.projectlombok:lombok:1.18.30")
     annotationProcessor("org.projectlombok:lombok:1.18.30")
     implementation("org.springframework.boot:spring-boot-starter:3.2.5")
+    implementation("org.springframework.boot:spring-boot-starter-actuator:3.2.5")
     implementation(project(":common-library"))
 }
