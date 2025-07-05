@@ -266,6 +266,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Configure SMTP provider and test templates
   - [ ] Document email and notification design in `account-service/design/README.md`
   - [ ] Add asynchronous NotificationService components with gRPC endpoints
+  - [ ] Create `NotificationController` REST endpoints
+    - [ ] Provide APIs for sending in-game notifications to accounts
 
 ---
 
@@ -470,6 +472,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
   - [ ] Implement integration tests for multi-service interactions
+  - [ ] Add integration tests for each service's create endpoints
   - [ ] Perform API testing with Postman, RestAssured
 
 - [ ] **Conduct Load & Security Testing**
