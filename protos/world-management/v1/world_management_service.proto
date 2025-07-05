@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package world_management.v1;
 
-option java_package = "net.fire_devops.firemud.worldmanagement.v1";
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
 
 service WorldManagementService {
