@@ -196,11 +196,3 @@ Your support can make a significant difference in the development and success of
 
 - **MUD Community**: A heartfelt thank you to the MUD game community and the developers of classic MUD platforms. Your creativity and dedication have inspired us to build upon the rich legacy of text-based gaming.
 - **Open-Source Community**: Inspired by the collaborative spirit of open-source development.
-
----
-
-### Notes and TODOs
-
-- **Financial Contribution Links**: The links for PayPal, GitHub Sponsors, and Patreon are placeholders and need to be set up. Once available, replace the *[Coming Soon]* text and placeholder comments with the actual links.
-- **CONTRIBUTING.md**: Keep the contribution guidelines up to date with current processes.
-- **FAQ.md**: Populate the `FAQ.md` document with common questions and answers.
