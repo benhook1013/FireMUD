@@ -37,8 +37,20 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [x] Add service-level design README links to central architecture docs
-  - [x] Expand `docker-compose.yml` to include all services
-  - [x] Create baseline Kubernetes manifests or Helm charts for deployment
+- [x] Expand `docker-compose.yml` to include all services
+- [x] Create baseline Kubernetes manifests or Helm charts for deployment
+  - [ ] Add Deployment and Service YAML manifests for each microservice
+    - [ ] account-service
+    - [ ] automation-scripting-service
+    - [ ] entity-management-service
+    - [ ] game-design-service
+    - [ ] game-logic-service
+    - [ ] game-session-service
+    - [ ] logging-admin-service
+    - [ ] social-groups-service
+    - [ ] spring-cloud-gateway
+    - [ ] tcp-proxy-service
+    - [ ] world-management-service
 
 ---
 
@@ -116,6 +128,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
+  - [ ] Implement Spring Security configuration for each microservice using common components
   - [ ] Add initial protobuf IDL files for all microservices based on sample flows
     - [x] Account Service proto definitions
     - [x] Game Session Service proto definitions
