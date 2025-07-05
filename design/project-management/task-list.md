@@ -82,8 +82,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
   - [ ] Automation & Scripting Service: `ScriptDefinition` entity
   - [x] Create DTO records and MapStruct mappers
-
-
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
@@ -372,7 +370,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Integrate saga metrics and timeout recovery
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
   - [ ] Build role-based admin UI
-  - [ ] Integrate optional 2FA for administrator accounts
   - [ ] Create `AdminController` REST endpoints
 
 - [ ] **Implement Banning & Restriction System**
@@ -424,7 +421,6 @@ This checklist is structured to **build foundational features first**, followed 
 
 - [ ] **Write Developer Documentation for Game Creators**
   - [ ] Provide API references for scripting & integration
-  - [ ] Develop tutorials for designing custom game worlds
   - [ ] Guide for setting up and configuring hosted games
 
 ---
@@ -441,13 +437,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
   - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
   - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
-
 - [ ] **Iterate on Features & Add More Game Customization**
   - [ ] Expand game customization options for hosted games
   - [ ] Improve scripting capabilities & developer tools
-
 - [ ] **Onboard Game Creators & Improve UX**
-  - [ ] Develop tutorials & guides for game creators
+    - [ ] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
   - [ ] Gather feedback from early users & iterate on UI/UX
   - [ ] Add MCP support for AI assisted game creation
 
