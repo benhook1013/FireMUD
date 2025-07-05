@@ -48,7 +48,10 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 ## Dependencies
 
-- **Internal:** World Management Service for map data, Automation & Scripting Service for scripts.
+- **Internal:**
+  - World Management Service for map data.
+  - Automation & Scripting Service for scripts.
+  - Logging & Admin Service records publishing audits.
 - **External:** PostgreSQL for storing design assets.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

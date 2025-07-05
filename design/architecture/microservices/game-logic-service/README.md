@@ -44,7 +44,11 @@ This service is largely stateless. It relies on:
 
 ## Dependencies
 
-- **Internal:** Entity Management Service for characters and items.
+- **Internal:**
+  - Entity Management Service for characters and items.
+  - World Management Service for room and region data.
+  - Game Session Service supplies tick context and command queues.
+  - Automation & Scripting Service triggers additional effects during rule execution.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),

@@ -10,7 +10,7 @@
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
-Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [Fire-DevOps.net](https://fire-devops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
+Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [FireDevOps.net](https://firedevops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
 
 *This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
 
@@ -157,7 +157,7 @@ Before contributing, we recommend reviewing the following key documents:
 - **Review Pull Requests**: Provide thoughtful, constructive feedback on open pull requests.
 - **Improve Documentation**: Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
 - **Report Bugs or Suggest Features**: Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
-- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net). We take security seriously and will respond promptly.
+- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [Ben.Hook@firedevops.net](mailto:Ben.Hook@firedevops.net). We take security seriously and will respond promptly.
 
 ---
 
@@ -185,9 +185,9 @@ Your support can make a significant difference in the development and success of
 ## Contact
 
 - **Project Lead**: Ben Hook
-  - **Email**: [Ben.Hook@fire-devops.net](mailto:Ben.Hook@fire-devops.net)
+  - **Email**: [Ben.Hook@firedevops.net](mailto:Ben.Hook@firedevops.net)
   - **GitHub**: [github.com/benhook1013](https://github.com/benhook1013)
-- **Fire-DevOps.net**: [fire-devops.net](https://fire-devops.net)
+- **FireDevOps.net**: [firedevops.net](https://firedevops.net)
 
 ---
 

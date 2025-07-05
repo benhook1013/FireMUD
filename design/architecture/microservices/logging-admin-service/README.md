@@ -51,7 +51,10 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ## Dependencies
 
-- **Internal:** Account Service forwards account events and payment notifications.
+- **Internal:**
+  - Account Service forwards account events and payment notifications.
+  - Game Session Service streams session lifecycle metrics.
+  - Social & Groups Service delivers chat logs for moderation.
 - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

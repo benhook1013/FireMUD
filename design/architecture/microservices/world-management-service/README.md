@@ -41,7 +41,10 @@ The World Management Service stores and manages game world data such as rooms, r
 
 ## Dependencies
 
-- **Internal:** Game Design Service for generation rules.
+- **Internal:**
+  - Game Design Service supplies generation rules and versioned world data.
+  - Game Session Service queries rooms and receives world event updates.
+  - Automation & Scripting Service reacts to scheduled world changes.
 - **External:** PostgreSQL for world data, Redis for transient active state.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

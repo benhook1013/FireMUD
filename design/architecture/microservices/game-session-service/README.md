@@ -52,7 +52,9 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ## Dependencies
 
-- **Internal:** Entity Management Service, Game Logic Service, World Management Service.
+- **Internal:**
+  - Entity Management Service, Game Logic Service, World Management Service.
+  - Logging & Admin Service receives session lifecycle events.
 - **External:** Redis for session state.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.

@@ -52,7 +52,9 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 ## Dependencies
 
-- **Internal:** Logging & Admin Service for audit logging.
+- **Internal:**
+  - Logging & Admin Service for audit logging.
+  - Game Session Service consumes tokens to create gameplay sessions.
 - **External:** PostgreSQL for account data, Redis for transient session data.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

@@ -57,6 +57,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Document connection settings in `DEVELOPER_SETUP.md`
   - [x] Create Docker volumes for persistent databases
   - [ ] Verify services start via `docker compose up`
+  - [ ] Confirm each service logs `Started` without errors
 
 ### Behavior and Orchestration Planning
 - [x] Define core service responsibilities and runtime behaviors
@@ -129,6 +130,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create Gradle tasks to build Docker images for each service
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Add MapStruct mappers and DTO records for core domains
+  - [ ] Add MapStruct mappers and DTO records for core domains
   - [ ] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
