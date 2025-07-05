@@ -46,6 +46,6 @@ sourceSets["main"].java.srcDirs(
 
 sourceSets {
     main {
-        proto.srcDir("../../protos/account")
+        proto.srcDir("../../protos")
     }
 }

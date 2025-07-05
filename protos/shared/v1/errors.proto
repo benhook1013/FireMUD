@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package shared.v1;
+
+option java_package = "net.firedevops.firemud.shared.v1";
+option java_multiple_files = true;
+
+message ErrorDetail {
+  string code = 1;
+  string message = 2;
+}

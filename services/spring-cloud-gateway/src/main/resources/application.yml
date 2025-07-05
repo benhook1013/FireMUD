@@ -17,6 +17,21 @@ spring:
   redis:
     host: ${REDIS_HOST:redis}
     port: ${REDIS_PORT:6379}
+  cloud:
+    gateway:
+      routes:
+        - id: session
+          uri: http://game-session-service:8080
+          predicates:
+            - Path=/api/session/**
+        - id: admin
+          uri: http://logging-admin-service:8080
+          predicates:
+            - Path=/api/admin/**
+        - id: design
+          uri: http://game-design-service:8080
+          predicates:
+            - Path=/api/design/**
 
 ---
 
@@ -31,6 +46,21 @@ spring:
   redis:
     host: ${REDIS_HOST}
     port: ${REDIS_PORT}
+  cloud:
+    gateway:
+      routes:
+        - id: session
+          uri: http://game-session-service.default.svc.cluster.local:8080
+          predicates:
+            - Path=/api/session/**
+        - id: admin
+          uri: http://logging-admin-service.default.svc.cluster.local:8080
+          predicates:
+            - Path=/api/admin/**
+        - id: design
+          uri: http://game-design-service.default.svc.cluster.local:8080
+          predicates:
+            - Path=/api/design/**
 
 management:
   endpoints:
