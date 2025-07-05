@@ -20,11 +20,11 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 ## 🔧 Utility Packages
 
 - **Logging Utilities** – SLF4J wrappers and helpers for correlation IDs.
-- **Security Utilities** – JWT creation/verification and role helpers aligned with the [Authentication Design](./system-architecture-authentication.md).
-- **Database Connectors** – Spring Boot configuration helpers for PostgreSQL and Redis, reducing boilerplate setup.
+- **Security Utilities** – `JwtUtil` for token generation/verification and role helpers aligned with the [Authentication Design](./system-architecture-authentication.md).
+- **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
+- **gRPC Interceptors** – `LoggingInterceptor` and `MetricsInterceptor` provide consistent instrumentation for every service.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
-- `ServiceEndpointsProperties` loads the base URLs for each microservice and is
-  enabled by `CommonAutoConfiguration`.
+- `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`.
 - **Spring Boot Starter** – Lightweight autoconfiguration for logging, JWT, Redis and PostgreSQL so services can opt in.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
