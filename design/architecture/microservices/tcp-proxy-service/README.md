@@ -90,6 +90,8 @@ regenerated via `./gradlew generateProto` when the proto files change.
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 
+- [System Architecture Diagram](../system-architecture-diagram.md)
+- [System Context Diagram](../system-context-diagram.md)
 ## Future Enhancements
 
 - Connection throttling and rate limits.

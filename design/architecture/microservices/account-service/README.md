@@ -103,6 +103,8 @@ The gRPC schemas for this service live in
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 
+- [System Architecture Diagram](../system-architecture-diagram.md)
+- [System Context Diagram](../system-context-diagram.md)
 ## Future Enhancements
 
 - OAuth2 support for social logins.
