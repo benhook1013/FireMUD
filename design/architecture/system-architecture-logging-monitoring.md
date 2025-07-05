@@ -9,12 +9,23 @@ This document consolidates the platform's observability architecture. It replace
 - **Fluent Bit** sidecars collect service logs.
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
 - The **Logging & Admin Service** exposes moderation tools and log queries.
+- Logs are emitted in JSON with request tracing fields (e.g., `traceId`, `playerId`)
+  so troubleshooting across services is straightforward.
+- Log retention defaults to **14 days** in development and **90 days** in production,
+  after which indices are archived. These values can be tuned via the
+  [Deployment Environments](./infrastructure/deployment-environments.md) settings.
+- Operators search logs primarily through Kibana, but the Logging & Admin Service
+  offers a focused UI for moderation and audit trails.
 
 ## 📈 Metrics & Tracing
 
 - **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**.
 - **Grafana** dashboards visualize performance data.
 - **OpenTelemetry** spans provide distributed tracing across ticks and requests.
+- Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals
+  are tuned per environment (typically 15s in development and 30s in production).
+- Distributed traces are exported via OTLP and correlated with logs using the same
+  `traceId` value.
 
 ## 🩺 Health Checks
 
