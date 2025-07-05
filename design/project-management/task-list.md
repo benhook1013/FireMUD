@@ -106,6 +106,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement base configuration classes for service discovery and shared properties
    - [x] Implement common exception handling & error response structures
   - [x] Implement configuration management (centralized properties, environment handling)
+  - [ ] Enforce `tenantId` validation for create endpoints across all microservices
   - [ ] Publish common package to internal repository (Maven/Gradle)
   - [ ] Extend **firemud-common** with saga orchestration support
     - [ ] Define `saga` schema tables for step tracking and state
@@ -227,6 +228,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
   - [ ] Create `AccountController` REST endpoints
+    - [ ] Provide POST `/accounts` and `/profiles` for account creation flows
   - [x] Create JPA repositories for `Account` and `Profile`
   - [ ] Add gRPC AccountService with proto contract
   - [ ] Expose JWKS endpoint for token verification
@@ -246,6 +248,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement `game_manifest` table for version coordination
   - [ ] Emit gameplay analytics for operators
   - [ ] Create `GameSessionController` REST endpoints
+    - [ ] Add endpoint to create and start new game sessions
   - [ ] Add gRPC GameSessionService with proto contract
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
@@ -253,6 +256,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Use saga orchestrator for game publishing workflow
 - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
 - [ ] Create `GameDesignController` REST endpoints for design CRUD operations
+    - [ ] Support creation of new games, worlds, and abilities
 - [x] Create gRPC GameDesignService and design-time database models
 
 - [ ] **Develop Email & Notification System**
@@ -275,6 +279,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
   - [ ] Create `WorldController` REST endpoints
+    - [ ] Expose POST `/rooms` and `/regions` for world creation
   - [ ] Add gRPC WorldManagementService with proto contract
   - [ ] Provide tools to fine-tune procedural generation rules
   - [ ] Support multi-server world shards
@@ -287,6 +292,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
   - [ ] Create `EntityController` REST endpoints
+    - [ ] Provide creation APIs for characters, items, and NPCs
   - [ ] Add gRPC EntityManagementService with proto contract
   - [ ] Implement entity graph caching for fast lookups
   - [ ] Support complex crafting recipes
@@ -309,6 +315,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement event-driven logic processing (triggers, world events)
   - [ ] Implement action aliases system (custom command mappings)
   - [ ] Create `GameLogicController` REST endpoints
+    - [ ] Allow creation of custom commands and abilities
   - [ ] Add gRPC GameLogicService with proto contract
   - [ ] Add scripting hooks for custom actions
   - [ ] Optimize performance for large-scale battles
@@ -325,6 +332,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC formations & squad AI
   - [ ] Add gRPC AutomationService with script execution API
   - [ ] Create `ScriptingController` REST endpoints
+    - [ ] Upload and manage script definitions via REST
   - [ ] Create sandboxed script runtime
   - [ ] Provide web UI for script creation and testing
   - [ ] Add advanced AI modules for complex behaviors
@@ -386,6 +394,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Collect connection metrics and throttle abusive clients
   - [ ] Create gateway route configuration files for all services
   - [ ] Create `GatewayController` endpoints for dynamic route management
+    - [ ] Allow creation of custom gateway routes via API
 
 - [ ] **Develop Social & Groups Service**
   - [ ] Enable cross-game friend lists and social graph
@@ -397,6 +406,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Provide rich moderation tools for chat
   - [ ] Add optional voice chat integration
   - [ ] Create `SocialController` REST endpoints
+    - [ ] Add APIs for guild creation and friend requests
 
 ---
 
@@ -415,6 +425,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
   - [ ] Build role-based admin UI
   - [ ] Create `AdminController` REST endpoints
+    - [ ] Expose ban and moderation creation APIs
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
@@ -438,6 +449,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
   - [ ] Add gRPC `PaymentService` endpoints for billing operations
   - [ ] Create `PaymentController` REST endpoints
+    - [ ] Provide endpoints for payment intents and subscriptions
   - [ ] Define proto contracts for payment and subscription flows
   - [ ] Add Flyway migration scripts for payment tables
   - [ ] Document monetization design in `account-service/design/README.md`
