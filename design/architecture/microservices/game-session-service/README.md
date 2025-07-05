@@ -14,6 +14,10 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Crash recovery replays ticks stored in Redis using AOF persistence and `WAIT`
   semantics, ensuring deterministic recovery as described in
   [Tick System and Runtime Design](../system-architecture-ticks.md#crash-recovery-and-replay).
+- Every session record includes a `tenantId` identifying the game instance.
+  Redis keys and database tables prefix this value so sessions from different
+  games remain isolated. Details are in the
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md) document.
 - Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See

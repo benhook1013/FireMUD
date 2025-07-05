@@ -12,6 +12,9 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Fetches contextual world and entity data on demand via gRPC.
 - Integrates with the tick system described in [Tick System and Runtime Design](../system-architecture-ticks.md) to ensure deterministic command ordering.
 - When combat or trade spans multiple services, compensating actions are coordinated via the Saga model in [Transaction Strategies](../system-architecture-transactions.md).
+- All commands are scoped by `tenantId` so that rules execute only against data
+  for the active game instance. The Game Session Service passes this context on
+  every request. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 

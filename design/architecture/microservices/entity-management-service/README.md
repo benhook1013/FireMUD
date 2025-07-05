@@ -14,6 +14,10 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - This design reduces write frequency and contention, making optimistic locking a natural fit — most entities are updated by only one process at a time, and conflicts are rare.
 - Cross-service operations such as item transfers use Saga orchestration so that
   partial failures can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
+- All entity tables include a `tenantId` column. Service methods always filter on
+  this value so character data for different games remains isolated; Redis keys
+  mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  document.
 
 ## Key Features
 

@@ -13,6 +13,9 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Relies on the Game Session Service for gameplay login and session management.
 - Terminates external TLS and forwards traffic to backend services using mutual
   TLS, as described in the [Security Architecture](../system-architecture-security.md).
+- Hostnames or path prefixes map incoming connections to a `tenantId` so the
+  gateway can route players to the correct game instance. See
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 
 ## Key Features
 

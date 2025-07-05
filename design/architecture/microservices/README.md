@@ -20,6 +20,8 @@ This directory contains detailed design documents for each core microservice in 
 | [TCP Proxy Service](./tcp-proxy-service/)                | Bridges Telnet clients into the WebSocket-based backend. |
 | [World Management Service](./world-management-service/)  | Handles world maps, regions, pathfinding data, and procedural generation. |
 | [Service Template](./service-template.md)                | Template for creating new microservice docs. |
+All services share the same cluster and databases. Each table stores a `tenantId` and Redis keys use a matching prefix so data stays isolated between games. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details.
+
 
 ---
 
