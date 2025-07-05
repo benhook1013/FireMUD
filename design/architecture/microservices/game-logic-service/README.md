@@ -93,6 +93,8 @@ the generated code with `./gradlew generateProto` after making changes.
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
+- [System Architecture Diagram](../system-architecture-diagram.md)
+- [System Context Diagram](../system-context-diagram.md)
 ## Future Enhancements
 
 - Scripting hooks for custom actions.

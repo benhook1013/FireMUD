@@ -49,3 +49,5 @@ corresponding versioned proto folders.
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [Infrastructure Overview](../infrastructure/README.md)
+- [System Architecture Diagram](../system-architecture-diagram.md)
+- [System Context Diagram](../system-context-diagram.md)
