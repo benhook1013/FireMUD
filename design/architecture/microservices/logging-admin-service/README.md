@@ -27,6 +27,8 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
+- Captures failed login attempts and suspicious activity reported by the Game
+  Session Service for operator review.
 - Works with Saga workflows to record state changes across services. See
   [Transaction Strategies](../system-architecture-transactions.md).
 

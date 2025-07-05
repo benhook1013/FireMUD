@@ -22,6 +22,9 @@ Manages user accounts and authentication for the platform. Stores profile data a
   [Authentication & Authorization](../system-architecture-authentication.md).
   Session tokens stored in Redis allow seamless reconnection by the Game Session
   Service without re-entering credentials.
+- Sends notification emails when the Game Session Service reports suspicious
+  login activity. See
+  [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Non-gameplay workflows such as account creation or billing updates are
   orchestrated using the Saga pattern outlined in
   [Transaction Strategies](../system-architecture-transactions.md).
