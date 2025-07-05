@@ -63,6 +63,18 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add `postgres` and `redis` services to `docker-compose.yml`
   - [ ] Provide default credentials and mounted volumes for local data
   - [ ] Document connection settings in `DEVELOPER_SETUP.md`
+  - [ ] Create Docker volumes for persistent databases
+  - [ ] Verify services start via `docker compose up`
+
+### Behavior and Orchestration Planning
+- [ ] Define core service responsibilities and runtime behaviors
+  - [ ] Outline tick flow, session management, reconnect logic, and command execution
+  - [ ] Document game instance lifecycle diagrams
+- [ ] Write sample gameplay use cases and trace the end-to-end flow
+  - [ ] Example flows: LOGIN, MOVE, CAST_SPELL
+- [ ] Identify the data each service needs to handle those flows
+- [ ] Derive minimal data models and proto schemas based on real usage
+- [ ] Refine shared DTOs and gRPC contracts from concrete examples
 
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
@@ -113,12 +125,16 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] World Management Service proto definitions
     - [ ] Entity Management Service proto definitions
     - [ ] Shared common types
+  - [ ] Integrate proto generation into CI workflow
   - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
   - [ ] Add base `application.yml` configuration for all services
-  - [x] Expose `/actuator/health` endpoints for service monitoring
+  - [ ] Expose `/actuator/health` endpoints for service monitoring
+    - [ ] Add `spring-boot-starter-actuator` dependency to each service
+    - [ ] Enable health endpoint in `application.yml`
   - [x] Configure Kubernetes readiness and liveness probes
   - [ ] Provide Docker image build tasks for each service
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [ ] Establish base integration test setup using Spring Boot Test
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
