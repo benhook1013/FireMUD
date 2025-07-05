@@ -14,6 +14,8 @@ FireMUD uses Docker Compose for local development and testing:
 - Docker Compose orchestrates container startup, but not readiness.
 - Service discovery is handled by Docker's internal DNS (e.g., `game-session-service:8080`).
 - Route URIs in Spring Cloud Gateway use static hostnames defined in `application-dev.yml`.
+- Connection settings for PostgreSQL and Redis are loaded from a `.env` file.
+  A sample `.env.sample` is provided with default credentials.
 
 ### 🩺 Docker Health Checks
 
