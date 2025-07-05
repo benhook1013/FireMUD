@@ -4,10 +4,11 @@
 # Java build artifacts
 /target/
 /.gradle/
+**/.gradle/
 /build/
 
 # Node.js dependencies
-/node_modules/
+**/node_modules/
 
 # Logs and temporary files
 *.log
