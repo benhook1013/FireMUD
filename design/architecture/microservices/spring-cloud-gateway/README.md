@@ -83,6 +83,8 @@ After edits, run `./gradlew generateProto` to regenerate gateway stubs.
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 
 ## Future Enhancements
 
