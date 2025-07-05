@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: automation-scripting-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: automation-scripting-service
+  template:
+    metadata:
+      labels:
+        app: automation-scripting-service
+    spec:
+      containers:
+        - name: automation-scripting-service
+          image: automation-scripting-service:latest
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: automation-scripting-service
+spec:
+  selector:
+    app: automation-scripting-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP

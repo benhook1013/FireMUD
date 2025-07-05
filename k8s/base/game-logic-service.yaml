@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-logic-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: game-logic-service
+  template:
+    metadata:
+      labels:
+        app: game-logic-service
+    spec:
+      containers:
+        - name: game-logic-service
+          image: game-logic-service:latest
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-logic-service
+spec:
+  selector:
+    app: game-logic-service
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
