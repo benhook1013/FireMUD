@@ -36,11 +36,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Address any missing diagrams or cross-references discovered during review
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
-  - [ ] Finalize API schemas
-    - [ ] gRPC proto definitions for each microservice
-    - [ ] Database schema diagrams for each microservice
-    - [ ] Example Flyway migration scripts
-  - [ ] Document REST endpoints and gRPC method flows in each microservice README
   - [x] Expand `docker-compose.yml` to include all services
   - [x] Create baseline Kubernetes manifests or Helm charts for deployment
 
@@ -102,6 +97,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Expose `/actuator/health` endpoints for service monitoring
   - [ ] Provide Docker image build tasks for each service
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [ ] Finalize API schemas
+    - [ ] gRPC proto definitions for each microservice
+    - [ ] Database schema diagrams for each microservice
+    - [ ] Example Flyway migration scripts
+  - [ ] Document REST endpoints and gRPC method flows in each microservice README
 
 ---
 
