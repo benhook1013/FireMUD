@@ -11,6 +11,8 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Includes a fallback mechanism so players with unstable connections can rejoin seamlessly.
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
+- Terminates external TLS and forwards traffic to backend services using mutual
+  TLS, as described in the [Security Architecture](../system-architecture-security.md).
 
 ## Key Features
 

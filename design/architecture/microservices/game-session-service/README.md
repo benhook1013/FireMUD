@@ -12,6 +12,9 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Provides a single point of truth for current tick and world time.
 - Ensures atomic command execution using Redis transactions and Lua scripts.
 - Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
+- Certain operations such as game startup and shutdown are implemented as Sagas
+  so that all dependent services remain in sync. See
+  [Transaction Strategies](../system-architecture-transactions.md).
 
 ## Key Features
 

@@ -12,6 +12,9 @@ The World Management Service stores and manages game world data such as rooms, r
 - Supports procedural generation with options for dynamic world expansion.
 - Uses a region → zone → room hierarchy for efficient lookups.
 - Publishes world event notifications for NPC scripts and game logic processing.
+- During version publishing the service participates in a Saga that copies design
+  data into its schema, ensuring world data matches the active version. See
+  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 
 ## Key Features
 

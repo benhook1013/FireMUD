@@ -10,6 +10,9 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Works closely with World Management and Automation & Scripting Service to apply changes.
 - Stores versioned configuration data so new game instances can be generated from templates.
 - Maintains history of revisions so designers can roll back to prior versions.
+- Publishing a new game version triggers a Saga that copies data to other
+  services as outlined in
+  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 
 ## Key Features
 
