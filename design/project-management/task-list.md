@@ -78,8 +78,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] World Management Service: `Room` and `Region` entities
   - [x] Game Session Service: `GameInstance` entity
   - [x] Game Design Service: design-time schema entities
-  - [ ] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
-  - [ ] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
+  - [x] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
+  - [x] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
   - [x] Create DTO records and MapStruct mappers
 
 
@@ -123,8 +123,8 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Game Logic Service proto definitions
     - [ ] Automation & Scripting Service proto definitions
     - [x] Game Design Service proto definitions
-    - [ ] Social & Groups Service proto definitions
-    - [ ] Logging & Admin Service proto definitions
+    - [x] Social & Groups Service proto definitions
+    - [x] Logging & Admin Service proto definitions
     - [ ] TCP Proxy Service proto definitions
     - [ ] Spring Cloud Gateway proto definitions
     - [ ] Shared common types
