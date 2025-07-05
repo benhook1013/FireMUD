@@ -11,6 +11,8 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Access to this service is protected by mTLS and JWT validation through the
   JWKS endpoint provided by the Account Service. See
   [Security Architecture](../system-architecture-security.md).
+- The security model relies solely on JWT roles; there is no additional
+  network-layer isolation for admin endpoints.
 - Moderation data and log indices include a `tenantId` field so administrators
   only see information for the games they manage. Cross-tenant queries are
   rejected per the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
@@ -89,3 +91,5 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 - Role-based admin UI.
 - Automated alerting for suspicious activity via Prometheus Alertmanager.
 - Real-time analytics on game performance.
+- Optional 2FA support for administrator accounts, pending
+  [Security Architecture](../system-architecture-security.md) enhancements.
