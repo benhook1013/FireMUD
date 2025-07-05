@@ -105,8 +105,8 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
-- [x] **Configure Flyway-based database migrations for each microservice**
-- [x] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
+- [ ] **Configure Flyway-based database migrations for each microservice**
+- [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
@@ -124,7 +124,13 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Add `spring-boot-starter-actuator` dependency to each service
     - [x] Enable health endpoint in `application.yml`
   - [x] Configure Kubernetes readiness and liveness probes
-  - [ ] Provide Docker image build tasks for each service
+  
+#### Coding Kickoff Checklist
+  - [ ] Create Gradle tasks to build Docker images for each service
+  - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
+  - [ ] Add MapStruct mappers and DTO records for core domains
+  - [ ] Implement basic JPA entities and repositories in Account Service
+  - [ ] Set up protobuf generation with gRPC stubs
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Establish base integration test setup using Spring Boot Test
   - [ ] Finalize API schemas from concrete gameplay flows
