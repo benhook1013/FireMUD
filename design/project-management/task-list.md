@@ -77,7 +77,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Entity Management Service: `Character`, `Item`, `NPC` entities
   - [x] World Management Service: `Room` and `Region` entities
   - [x] Game Session Service: `GameInstance` entity
-  - [ ] Game Design Service: design-time schema entities
+  - [x] Game Design Service: design-time schema entities
   - [ ] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
   - [ ] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
   - [x] Create DTO records and MapStruct mappers
@@ -122,7 +122,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Entity Management Service proto definitions
     - [ ] Game Logic Service proto definitions
     - [ ] Automation & Scripting Service proto definitions
-    - [ ] Game Design Service proto definitions
+    - [x] Game Design Service proto definitions
     - [ ] Social & Groups Service proto definitions
     - [ ] Logging & Admin Service proto definitions
     - [ ] TCP Proxy Service proto definitions
@@ -200,7 +200,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Enable publishing of game versions
   - [ ] Use saga orchestrator for game publishing workflow
   - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
-  - [ ] Create gRPC GameDesignService and design-time database models
+  - [x] Create gRPC GameDesignService and design-time database models
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets

@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package gamedesign.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+service GameDesignService {
+  rpc SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse);
+  rpc PublishVersion(PublishVersionRequest) returns (PublishVersionResponse);
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+}
+
+message SaveRevisionRequest {
+  string data = 1;
+  int64 game_id = 2;
+  int64 author_account_id = 3;
+}
+
+message SaveRevisionResponse {
+  int64 revision_id = 1;
+}
+
+message PublishVersionRequest {
+  int64 game_id = 1;
+  string notes = 2;
+}
+
+message PublishVersionResponse {
+  int64 version_id = 1;
+}
+
+message ListVersionsRequest {
+  int64 game_id = 1;
+}
+
+message ListVersionsResponse {
+  repeated Version versions = 1;
+}
+
+message Version {
+  int64 id = 1;
+  int32 version_number = 2;
+  string notes = 3;
+}
