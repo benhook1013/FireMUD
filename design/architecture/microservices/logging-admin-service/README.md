@@ -86,6 +86,8 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 - [Security Architecture](../system-architecture-security.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [User Journeys – Monitoring and Moderation](../user-journeys.md#7-monitoring-and-moderation)
+- [User Journeys – Purchases and Subscriptions](../user-journeys.md#9-purchases-and-subscriptions)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)

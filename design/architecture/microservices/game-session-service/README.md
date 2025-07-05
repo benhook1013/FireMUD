@@ -90,6 +90,8 @@ Service definitions reside in
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [User Journeys – Publish and Start a Game Instance](../user-journeys.md#4-publish-and-start-a-game-instance)
+- [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
 
 ## Future Enhancements
 

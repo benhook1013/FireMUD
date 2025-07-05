@@ -87,6 +87,7 @@ stubs.
 - [Redis Architecture](../system-architecture-redis.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [User Journeys – Add Automation & Scripting](../user-journeys.md#3-add-automation--scripting)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
