@@ -47,6 +47,17 @@ The gateway is stateless. Route configurations are stored in
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a stateless gateway Deployment in Kubernetes, typically exposed via a
+  load balancer service.
+- `/actuator/health` endpoints are used for readiness and liveness probes.
+- Prometheus scrapes metrics such as connection counts while Fluent Bit forwards
+  structured logs to Elasticsearch; tracing integrates with OpenTelemetry.
+- [Deployment Environments](../../infrastructure/deployment-environments.md)
+  explains how routes and certificates differ between Docker Compose and
+  production clusters.
+
 ## Proto Files
 
 Gateway-related proto definitions are stored in

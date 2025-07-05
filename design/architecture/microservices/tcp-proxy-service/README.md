@@ -54,6 +54,15 @@ to the gateway.
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on how Telnet connections are integrated into the platform.
 
+## Operational Notes
+
+- Deployed alongside the gateway in the DMZ as a lightweight container.
+- Health is checked using a custom TCP probe defined in the Kubernetes manifest.
+- Logs are forwarded via Fluent Bit and metrics are exported for Prometheus via
+  a minimal collector endpoint.
+- Configuration for local Docker Compose versus production clusters is described
+  in [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 Even though the proxy has no public API, supporting event messages are defined

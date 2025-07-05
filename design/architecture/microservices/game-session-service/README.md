@@ -50,6 +50,13 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.
 
+## Operational Notes
+
+- Deployed in Kubernetes with multiple replicas; Redis provides the shared state needed for sticky sessions.
+- Exposes `/actuator/health` for readiness and liveness probes used by the cluster.
+- Metrics and traces flow to Prometheus and OpenTelemetry, and logs are shipped via Fluent Bit to Elasticsearch.
+- Refer to [Deployment Environments](../../infrastructure/deployment-environments.md) for differences between Docker Compose and production setups.
+
 ## Proto Files
 
 Service definitions reside in

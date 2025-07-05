@@ -51,6 +51,16 @@ Provides chat, guild, and social networking features across games. Enables playe
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a Kubernetes Deployment. WebSocket chat traffic scales horizontally
+  with multiple replicas.
+- The service publishes metrics scraped by Prometheus and forwards logs through
+  Fluent Bit to Elasticsearch with trace IDs from OpenTelemetry.
+- Health is monitored via `/actuator/health`; see
+  [Deployment Environments](../../infrastructure/deployment-environments.md) for
+  differences between local Docker Compose and production.
+
 ## Proto Files
 
 The social APIs are defined in
