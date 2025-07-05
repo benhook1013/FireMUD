@@ -78,7 +78,10 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] World Management Service: `Room` and `Region` entities
   - [x] Game Session Service: `GameInstance` entity
   - [ ] Game Design Service: design-time schema entities
+  - [ ] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
+  - [ ] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
   - [x] Create DTO records and MapStruct mappers
+
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
@@ -117,6 +120,13 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Game Session Service proto definitions
     - [x] World Management Service proto definitions
     - [x] Entity Management Service proto definitions
+    - [ ] Game Logic Service proto definitions
+    - [ ] Automation & Scripting Service proto definitions
+    - [ ] Game Design Service proto definitions
+    - [ ] Social & Groups Service proto definitions
+    - [ ] Logging & Admin Service proto definitions
+    - [ ] TCP Proxy Service proto definitions
+    - [ ] Spring Cloud Gateway proto definitions
     - [ ] Shared common types
   - [ ] Integrate proto generation into CI workflow
   - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
@@ -248,6 +258,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement NPC formations & squad AI
   - [ ] Add gRPC AutomationService with script execution API
   - [ ] Create sandboxed script runtime
+
+- [ ] Add gRPC SocialGroupsService with proto contract
+- [ ] Add gRPC LoggingAdminService with proto contract
+- [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
+- [ ] Add baseline route configuration for Spring Cloud Gateway
 
 - [ ] **Develop Trading & Economy System**
   - [ ] Support in-game currency and player transactions
