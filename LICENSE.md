@@ -4,7 +4,7 @@
 
 ### Parameters
 
-Licensor: fire-devops.net
+Licensor: firedevops.net
 
 Licensed Work: FireMUD, including all components of the repository.
 
@@ -30,4 +30,4 @@ Until the Change Date, any use of the Licensed Work outside of the Additional Us
 
 This License is based on the Business Source License version 1.1 available at: <https://mariadb.com/bsl11>
 
-For inquiries regarding commercial licensing, contact: <licensing@fire-devops.net>
+For inquiries regarding commercial licensing, contact: <licensing@firedevops.net>
