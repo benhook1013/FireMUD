@@ -182,11 +182,33 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create ERD diagrams and baseline Flyway scripts for all services
     - [ ] Produce entity relationship diagrams for initial domain models
     - [ ] Add `V1__init.sql` migrations for each service database
+      - [ ] account-service
+      - [ ] automation-scripting-service
+      - [ ] entity-management-service
+      - [ ] game-design-service
+      - [ ] game-logic-service
+      - [ ] game-session-service
+      - [ ] logging-admin-service
+      - [ ] social-groups-service
+      - [ ] spring-cloud-gateway
+      - [ ] tcp-proxy-service
+      - [ ] world-management-service
     - [ ] Configure Flyway plugin in each service build file
     - [ ] Verify migrations run on startup
   - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
-    - [ ] Summarize controller routes in service `design/README.md`
+    - [ ] account-service/design/README.md
+    - [ ] automation-scripting-service/design/README.md
+    - [ ] entity-management-service/design/README.md
+    - [ ] game-design-service/design/README.md
+    - [ ] game-logic-service/design/README.md
+    - [ ] game-session-service/design/README.md
+    - [ ] logging-admin-service/design/README.md
+    - [ ] social-groups-service/design/README.md
+    - [ ] spring-cloud-gateway/design/README.md
+    - [ ] tcp-proxy-service/design/README.md
+    - [ ] world-management-service/design/README.md
+    - [ ] Summarize controller routes in each service `design/README.md`
     - [ ] Include example request/response payloads
     - [ ] Link to corresponding proto files
     - [ ] Generate OpenAPI specs and publish Swagger UI
