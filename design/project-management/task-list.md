@@ -141,6 +141,8 @@ This checklist is structured to **build foundational features first**, followed 
 #### Coding Kickoff Checklist
   - [x] Add baseline `Dockerfile` for each service
   - [ ] Create Gradle tasks to build Docker images for each service
+  - [ ] Verify `./gradlew :<service>:build` succeeds for every module
+  - [ ] Add a minimal `README.md` in each service with local run instructions
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
