@@ -19,6 +19,11 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+            - secretRef:
+                name: firemud-secret
           resources:
             requests:
               cpu: "100m"

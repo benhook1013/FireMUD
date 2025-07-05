@@ -19,15 +19,11 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "128Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
-          ports:
-            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+            - secretRef:
+                name: firemud-secret
           readinessProbe:
             httpGet:
               path: /actuator/health

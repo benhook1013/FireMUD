@@ -29,3 +29,22 @@ Ports align with the design documents:
 All deployments include basic readiness and liveness probes that hit the `/actuator/health` endpoint (or open a TCP socket for the proxy service) as described in the design docs.
 
 Spring Boot services run with the `prod` Spring profile by default. This is set via the `SPRING_PROFILES_ACTIVE` environment variable in each deployment manifest.
+
+## Database Settings
+
+All Spring Boot services expect PostgreSQL and Redis connection details via
+environment variables. A `firemud-config` `ConfigMap` and `firemud-secret`
+`Secret` are provided to supply these values:
+
+```
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_DB=firemud
+POSTGRES_USER=firemud
+POSTGRES_PASSWORD=firemud
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+Each deployment loads these variables using `envFrom`. Replace the sample
+credentials or mount your own Secrets for production environments.
