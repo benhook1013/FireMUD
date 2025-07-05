@@ -8,6 +8,7 @@ x-service-environment: &service-env
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-firemud}
   REDIS_HOST: ${REDIS_HOST:-redis}
   REDIS_PORT: ${REDIS_PORT:-6379}
+  SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
 
 x-service-healthcheck: &service-health
   test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
