@@ -40,7 +40,6 @@ See [Repository Structure](design/architecture/repository-structure.md) for modu
 - [Support Us](#support-us)
 - [Contact](#contact)
 - [Acknowledgments](#acknowledgments)
-- [Notes and TODOs](#notes-and-todos)
 
 ---
 
