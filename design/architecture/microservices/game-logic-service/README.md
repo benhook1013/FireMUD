@@ -58,6 +58,10 @@ the generated code with `./gradlew generateProto` after making changes.
 - [Tick System and Runtime Design](../system-architecture-ticks.md)
 - [Redis Architecture](../system-architecture-redis.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
+- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Testing Strategy](../system-architecture-testing.md)
+- [CI/CD Pipeline](../system-architecture-cicd.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 ## Future Enhancements

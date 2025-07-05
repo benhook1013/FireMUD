@@ -64,6 +64,10 @@ regenerated via `./gradlew generateProto` when the proto files change.
 - [Security Architecture](../system-architecture-security.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
+- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
+- [Testing Strategy](../system-architecture-testing.md)
+- [CI/CD Pipeline](../system-architecture-cicd.md)
 
 ## Future Enhancements
 
