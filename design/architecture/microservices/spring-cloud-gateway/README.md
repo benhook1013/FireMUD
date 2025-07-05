@@ -15,6 +15,8 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
 - Event-driven updates synchronize game state across connected players.
 - Includes a fallback mechanism so players with unstable connections can rejoin seamlessly.
+- Gateway restarts are transparent thanks to the layered reconnection model
+  outlined in [Reconnection Strategy](../system-architecture-reconnection.md).
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
 - Terminates external TLS and forwards traffic to backend services using mutual
@@ -32,8 +34,9 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 
 ### Data Model
 
-The gateway is stateless. Route configurations are stored in
-`application-*.yml` and reloaded on startup. No persistent database is required.
+The gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
+Route configurations are stored in `application-*.yml` and reloaded on startup.
+No persistent database is required.
 The default configuration defines routes for the core services so Docker Compose
 environments work out of the box.
 
