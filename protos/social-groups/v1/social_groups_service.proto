@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package social_groups.v1;
+
+option java_package = "net.firedevops.firemud.socialgroups.v1";
+option java_multiple_files = true;
+
+service SocialGroupsService {
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc CreateGuild(CreateGuildRequest) returns (CreateGuildResponse);
+  rpc AddFriend(AddFriendRequest) returns (AddFriendResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
+}
+
+message SendMessageRequest {
+  string tenant_id = 1;
+  string sender_id = 2;
+  string channel_id = 3;
+  string content = 4;
+}
+
+message SendMessageResponse {
+  bool success = 1;
+}
+
+message CreateGuildRequest {
+  string tenant_id = 1;
+  string owner_account_id = 2;
+  string name = 3;
+}
+
+message CreateGuildResponse {
+  string guild_id = 1;
+}
+
+message AddFriendRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string friend_account_id = 3;
+}
+
+message AddFriendResponse {
+  bool success = 1;
+}

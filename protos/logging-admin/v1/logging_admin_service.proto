@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package logging_admin.v1;
+
+option java_package = "net.firedevops.firemud.loggingadmin.v1";
+option java_multiple_files = true;
+
+service LoggingAdminService {
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc QueryLogs(QueryLogsRequest) returns (QueryLogsResponse);
+  rpc ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
+}
+
+message QueryLogsRequest {
+  string tenant_id = 1;
+  string filter = 2;
+}
+
+message QueryLogsResponse {
+  repeated string entries = 1;
+}
+
+message ApplyModerationActionRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string action = 3;
+  string reason = 4;
+}
+
+message ApplyModerationActionResponse {
+  bool success = 1;
+}
