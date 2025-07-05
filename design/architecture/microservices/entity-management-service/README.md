@@ -56,7 +56,7 @@ details on shared infrastructure components.
 ## Proto Files
 
 Service interface definitions are stored in
-[../../../../protos/entity/v1](../../../../protos/entity/v1). After editing the
+[../../../../protos/entity-management/v1](../../../../protos/entity-management/v1). After editing the
 proto files, run `./gradlew generateProto` to update generated sources.
 
 ## 📚 Related Documentation
