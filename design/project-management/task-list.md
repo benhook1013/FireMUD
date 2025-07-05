@@ -104,7 +104,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [x] Implement database connection utilities (PostgreSQL, Redis connectors)
   - [x] Implement base configuration classes for service discovery and shared properties
-   - [x] Implement common exception handling & error response structures
+  - [x] Implement common exception handling & error response structures
   - [x] Implement configuration management (centralized properties, environment handling)
   - [ ] Enforce `tenantId` validation for create endpoints across all microservices
   - [ ] Publish common package to internal repository (Maven/Gradle)
@@ -386,7 +386,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop TCP Proxy Service**
   - [ ] Implement Telnet networking and WebSocket bridging
   - [ ] Buffer Telnet input and discard on disconnect to support reconnection
-  - [ ] Initialize `TcpProxyServiceApplication` with Netty server
+  - [ ] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
   - [x] Create base Spring Boot application skeleton
   - [ ] Enforce Telnet command whitelist and input sanitization
   - [ ] Implement connection throttling and rate limits
