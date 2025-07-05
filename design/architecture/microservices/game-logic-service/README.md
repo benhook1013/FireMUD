@@ -48,6 +48,16 @@ This service is largely stateless. It relies on:
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Deployed as a stateless Kubernetes Deployment with horizontal scaling enabled
+  for high concurrency.
+- `/actuator/health` is used for readiness and liveness probes in the cluster.
+- Prometheus collects command execution metrics while Fluent Bit forwards logs
+  to Elasticsearch with trace context from OpenTelemetry.
+- For environment-specific configuration see
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 gRPC service definitions can be found in

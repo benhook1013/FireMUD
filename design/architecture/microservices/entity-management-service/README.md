@@ -43,6 +43,16 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a scalable Deployment in Kubernetes, exposing `/actuator/health` for
+  readiness and liveness checks.
+- Prometheus scrapes service metrics while Fluent Bit ships logs to
+  Elasticsearch; tracing integrates with OpenTelemetry.
+- Local Docker Compose uses the same Spring profiles to mimic production, as
+  documented in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 Service interface definitions are stored in

@@ -46,6 +46,17 @@ The World Management Service stores and manages game world data such as rooms, r
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a Kubernetes Deployment with horizontal scaling to serve large world
+  datasets.
+- Health endpoints (`/actuator/health`) are used for readiness and liveness
+  checks.
+- Metrics and traces are collected by Prometheus and OpenTelemetry, and logs are
+  shipped via Fluent Bit to Elasticsearch.
+- Environment-specific configuration values are described in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 The gRPC contract for world operations is located in

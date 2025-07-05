@@ -55,6 +55,16 @@ For details on how scripts are authored and executed safely, see [System Archite
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Deployed as a Kubernetes Deployment with optional horizontal scaling.
+- Exposes Spring Boot health endpoints for readiness and liveness probing.
+- Prometheus and Fluent Bit collect metrics and logs for Elasticsearch analysis,
+  with traces emitted via OpenTelemetry.
+- Development under Docker Compose mirrors this setup using the same Spring
+  profiles as described in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 API definitions are located in

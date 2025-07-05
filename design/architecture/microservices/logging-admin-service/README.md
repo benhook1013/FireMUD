@@ -53,6 +53,16 @@ All admin APIs are secured via role-based access control integrated with the Acc
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Deployed as a Kubernetes Deployment with horizontal scaling for log-processing
+  workloads.
+- Health endpoints under `/actuator/health` feed readiness and liveness probes.
+- Metrics and OpenTelemetry traces are scraped by Prometheus; Fluent Bit ships
+  structured logs to Elasticsearch for search.
+- Environment differences are outlined in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 API schemas are kept in

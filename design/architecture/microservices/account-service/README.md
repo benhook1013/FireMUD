@@ -52,6 +52,17 @@ Manages user accounts and authentication for the platform. Stores profile data a
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Deployed via Kubernetes as a horizontally scalable Deployment. Local
+  development uses Docker Compose with the same Spring profiles.
+- Exposes `/actuator/health` for readiness and liveness probes consumed by the
+  cluster.
+- Metrics are scraped by Prometheus and logs shipped through Fluent Bit to
+  Elasticsearch, with traces captured via OpenTelemetry.
+- Configuration differences between environments are described in
+  [Deployment Environments](../../infrastructure/deployment-environments.md).
+
 ## Proto Files
 
 The gRPC schemas for this service live in

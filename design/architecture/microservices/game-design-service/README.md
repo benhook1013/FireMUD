@@ -53,6 +53,18 @@ Offers tools for building worlds, items, actions, and events that make up each g
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
 details on shared infrastructure components.
 
+## Operational Notes
+
+- Runs as a Kubernetes Deployment with optional horizontal scaling controlled by
+  HPA.
+- Health and readiness are exposed via `/actuator/health` and monitored by the
+  cluster.
+- Metrics and traces integrate with Prometheus and OpenTelemetry, while logs are
+  forwarded through Fluent Bit to Elasticsearch.
+- Local Docker Compose uses the same Spring profiles; see
+  [Deployment Environments](../../infrastructure/deployment-environments.md) for
+  details.
+
 ## Proto Files
 
 The service API contract resides in
