@@ -1,3 +1,4 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -50,4 +51,5 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+      protocol: TCP
   type: ClusterIP
