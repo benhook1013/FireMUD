@@ -126,6 +126,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Game Design Service proto definitions
     - [x] Social & Groups Service proto definitions
     - [x] Logging & Admin Service proto definitions
+    - [ ] Payment & Monetization proto definitions (Account Service)
     - [ ] TCP Proxy Service proto definitions
     - [ ] Spring Cloud Gateway proto definitions
     - [ ] Shared common types
@@ -293,6 +294,7 @@ This checklist is structured to **build foundational features first**, followed 
 
   - [ ] Add gRPC SocialGroupsService with proto contract
   - [ ] Add gRPC LoggingAdminService with proto contract
+  - [ ] Add gRPC TcpProxyService with proto contract
   - [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
   - [x] Add baseline route configuration for Spring Cloud Gateway
 
