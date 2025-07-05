@@ -119,10 +119,10 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Shared common types
   - [ ] Integrate proto generation into CI workflow
   - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
-  - [ ] Add base `application.yml` configuration for all services
-  - [ ] Expose `/actuator/health` endpoints for service monitoring
-    - [ ] Add `spring-boot-starter-actuator` dependency to each service
-    - [ ] Enable health endpoint in `application.yml`
+  - [x] Add base `application.yml` configuration for all services
+  - [x] Expose `/actuator/health` endpoints for service monitoring
+    - [x] Add `spring-boot-starter-actuator` dependency to each service
+    - [x] Enable health endpoint in `application.yml`
   - [x] Configure Kubernetes readiness and liveness probes
   - [ ] Provide Docker image build tasks for each service
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
