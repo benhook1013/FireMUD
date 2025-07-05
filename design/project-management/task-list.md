@@ -148,6 +148,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [ ] Add gRPC `PingService` stub in each service to validate connectivity
+  - [ ] Update each service `README.md` with links to design docs and proto definitions
+  - [ ] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [ ] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow for build and format checks
   - [ ] Configure static analysis tools
