@@ -66,19 +66,19 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Write sample gameplay use cases and trace the end-to-end flow
   - [x] Example flows: LOGIN, MOVE, CAST_SPELL
 - [x] Identify the data each service needs to handle those flows
-- [ ] Derive minimal data models and proto schemas based on real usage
+- [x] Derive minimal data models and proto schemas based on real usage
 - [ ] Refine shared DTOs and gRPC contracts from concrete examples
 
 - [x] Create Gradle modules for all services with placeholder sources
  - [x] Add base Spring Boot Application classes for each service
 - [x] Generate skeleton controllers and service classes for each microservice
-- [ ] Define base entity and repository classes for core domains
+- [x] Define base entity and repository classes for core domains
   - [x] Account Service: `Account` and `Profile` entities with JPA repositories
-  - [ ] Entity Management Service: `Character`, `Item`, `NPC` entities
-  - [ ] World Management Service: `Room` and `Region` entities
-  - [ ] Game Session Service: `GameInstance` entity
+  - [x] Entity Management Service: `Character`, `Item`, `NPC` entities
+  - [x] World Management Service: `Room` and `Region` entities
+  - [x] Game Session Service: `GameInstance` entity
   - [ ] Game Design Service: design-time schema entities
-  - [ ] Create DTO records and MapStruct mappers
+  - [x] Create DTO records and MapStruct mappers
 
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
@@ -114,9 +114,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Ensure authentication utilities from common package integrate seamlessly
   - [ ] Add initial protobuf IDL files for all microservices based on sample flows
     - [x] Account Service proto definitions
-    - [ ] Game Session Service proto definitions
-    - [ ] World Management Service proto definitions
-    - [ ] Entity Management Service proto definitions
+    - [x] Game Session Service proto definitions
+    - [x] World Management Service proto definitions
+    - [x] Entity Management Service proto definitions
     - [ ] Shared common types
   - [ ] Integrate proto generation into CI workflow
   - [ ] Configure Gradle protobuf plugin and generate Java gRPC stubs in each module
@@ -129,10 +129,10 @@ This checklist is structured to **build foundational features first**, followed 
 #### Coding Kickoff Checklist
   - [ ] Create Gradle tasks to build Docker images for each service
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
+  - [x] Add MapStruct mappers and DTO records for core domains
   - [ ] Add MapStruct mappers and DTO records for core domains
-  - [ ] Run `./gradlew build` to ensure all modules compile
   - [ ] Implement basic JPA entities and repositories in Account Service
-  - [ ] Set up protobuf generation with gRPC stubs
+  - [x] Set up protobuf generation with gRPC stubs
   - [ ] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Establish base integration test setup using Spring Boot Test
   - [ ] Finalize API schemas from concrete gameplay flows

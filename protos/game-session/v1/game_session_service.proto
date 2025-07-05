@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+option java_package = "net.fire_devops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+service GameSessionService {
+  rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
+  rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
+  rpc QueryState(QueryStateRequest) returns (QueryStateResponse);
+}
+
+message StartSessionRequest {
+  string tenant_id = 1;
+  string version_id = 2;
+}
+
+message StartSessionResponse {
+  string session_id = 1;
+}
+
+message EnqueueCommandRequest {
+  string session_id = 1;
+  string command = 2;
+}
+
+message EnqueueCommandResponse {
+  bool accepted = 1;
+}
+
+message QueryStateRequest {
+  string session_id = 1;
+}
+
+message QueryStateResponse {
+  string state_json = 1;
+}
