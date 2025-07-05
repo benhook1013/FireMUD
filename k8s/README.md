@@ -19,3 +19,4 @@ kubectl apply -f base/spring-cloud-gateway.yaml
 ```
 
 Customize these manifests with proper image repositories and resource limits before running in production.
+All Spring Boot services are configured to run with the `prod` profile by default via the `SPRING_PROFILES_ACTIVE` environment variable.

@@ -15,6 +15,9 @@ spec:
       containers:
         - name: game-design-service
           image: game-design-service:latest
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
           resources:
             requests:
               cpu: "100m"
