@@ -28,6 +28,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - All gRPC operations require JWT authentication validated via the Account
   Service's JWKS endpoint and use mutual TLS between services, per the
   [Security Architecture](../system-architecture-security.md).
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 

@@ -34,6 +34,7 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - Non-gameplay workflows such as account creation or billing updates are
   orchestrated using the Saga pattern outlined in
   [Transaction Strategies](../system-architecture-transactions.md).
+- Leverages the [Shared Libraries](../system-architecture-shared-libraries.md) for common DTOs, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 

@@ -27,6 +27,7 @@ Executes the core gameplay rules and command parsing. It processes player action
   validated via its JWKS endpoint. Communications use mutual TLS certificates as
   outlined in the [Security Architecture](../system-architecture-security.md).
 
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 ## Key Features
 
 - Command parsing and alias system.

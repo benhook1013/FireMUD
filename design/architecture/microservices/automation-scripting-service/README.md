@@ -27,7 +27,7 @@ For details on how scripts are authored and executed safely, see [System Archite
 - Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
   one game cannot access another's data. Redis queues also include the tenant
   prefix; see [Multi-Tenancy](../system-architecture-multi-tenancy.md).
-
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 ## Key Features
 
 - Scriptable quests and event triggers.

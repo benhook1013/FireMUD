@@ -33,6 +33,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   notification emails to the account holder. See
   [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Session objects are created as soon as a client connects. They remain unauthenticated until the Account Service verifies credentials and issues a token.
+- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
