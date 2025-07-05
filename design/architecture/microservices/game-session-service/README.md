@@ -26,6 +26,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   Global spikes introduce small delays and suspicious activity triggers
   notification emails to the account holder. See
   [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
+- Session objects are created as soon as a client connects. They remain unauthenticated until the Account Service verifies credentials and issues a token.
 
 ## Key Features
 
