@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: social-groups-service
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: social-groups-service
@@ -15,6 +15,13 @@ spec:
       containers:
         - name: social-groups-service
           image: social-groups-service:latest
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
           ports:
             - containerPort: 8080
           readinessProbe:

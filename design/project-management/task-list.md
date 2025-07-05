@@ -43,6 +43,15 @@ This checklist is structured to **build foundational features first**, followed 
 ---
 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
+### Behavior and Orchestration Planning
+- [ ] Define core service responsibilities and runtime behaviors
+  - [ ] Outline tick flow, session management, reconnect logic, and command execution
+- [ ] Write sample gameplay use cases and trace the end-to-end flow
+  - [ ] Example flows: LOGIN, MOVE, CAST_SPELL
+- [ ] Identify the data each service needs to handle those flows
+- [ ] Derive minimal data models and proto schemas based on real usage
+- [ ] Refine shared DTOs and gRPC contracts from concrete examples
+
 ### Immediate Next Steps
 - [ ] Configure Gradle protobuf plugin and generate gRPC stubs
   - [ ] Apply `com.google.protobuf` Gradle plugin in each service module

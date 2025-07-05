@@ -1,4 +1,4 @@
-package net.fire_devops.firemud.placeholder;
+package unit.net.fire_devops.firemud.placeholder;
 
 import org.junit.jupiter.api.Test;
 
