@@ -61,7 +61,7 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
 ### Characteristics:
 
 - **Orchestration**:
-  - Centralized in the existing **firemud-common** library (saga package)
+  - Centralized in the **firemud-common** library (saga package)
   - Hosts define saga flows declaratively using a fluent API
   - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
   
