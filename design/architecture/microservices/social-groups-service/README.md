@@ -4,6 +4,12 @@
 
 Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time.
 
+### Responsibilities
+- Deliver real-time chat and presence notifications
+- Manage guild creation, membership, and roles
+- Maintain friend lists and cross-game social graphs
+- Feed chat logs to the Logging & Admin Service for moderation
+
 ## Architecture / Design Notes
 
 - Uses WebSocket channels for chat delivery.

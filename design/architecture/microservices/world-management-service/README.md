@@ -4,6 +4,12 @@
 
 The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events, notifying other services over gRPC when the environment changes.
 
+### Responsibilities
+- Persist region, zone, and room data with tenant isolation
+- Execute scheduled world events and procedural generation
+- Provide pathfinding and navmesh information
+- Notify Game Session and Automation services when the world changes
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.

@@ -4,6 +4,12 @@
 
 Executes the core gameplay rules and command parsing. It processes player actions and determines outcomes.
 
+### Responsibilities
+- Parse player commands and resolve actions
+- Apply combat rules, cooldowns, and environmental effects
+- Interact with entity and world services for context data
+- Push results back to the Game Session Service for distribution
+
 ## Architecture / Design Notes
 
 - Stateless service accessed over gRPC by other microservices.

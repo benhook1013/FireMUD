@@ -4,6 +4,12 @@
 
 Centralized logging and administration tools for the platform. Collects log data from all services and provides moderation capabilities for game operators.
 
+### Responsibilities
+- Aggregate logs and metrics from every microservice
+- Offer dashboards and search for operators and moderators
+- Enforce moderation actions such as bans via secured APIs
+- Record audit trails for feature flag changes and account events
+
 ## Architecture / Design Notes
 
 Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.

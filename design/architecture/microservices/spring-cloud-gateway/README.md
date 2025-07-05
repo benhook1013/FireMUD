@@ -4,6 +4,12 @@
 
 This service exposes WebSocket and HTTP endpoints for all clients. It routes requests to backend services and integrates with the TCP Proxy Service for Telnet clients.
 
+### Responsibilities
+- Terminate TLS and enforce authentication for admin routes
+- Upgrade WebSocket connections and route to the correct tenant
+- Apply rate limits and basic abuse protections
+- Relay traffic to the Game Session Service and other backends
+
 ## Architecture / Design Notes
 
 - Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
