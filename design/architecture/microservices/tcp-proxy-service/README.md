@@ -47,7 +47,7 @@ internal operations when communicating with other microservices:
 ### Data Model
 
 The proxy is stateless. Any buffered input lives only in memory until forwarded
-to the gateway.
+to the Spring Cloud Gateway.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),

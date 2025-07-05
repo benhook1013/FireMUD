@@ -31,7 +31,7 @@ Provides chat, guild, and social networking features across games. Enables playe
 ### Chat Pipeline
 
 - Messages are published to Redis streams and fanned out to WebSocket channels
-  through the gateway.
+  through the Spring Cloud Gateway.
 - Guild and direct messages share a common persistence model for history.
 
 ### gRPC/REST APIs
