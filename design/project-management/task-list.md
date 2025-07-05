@@ -87,6 +87,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement common request/response DTOs for inter-service communication
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
   - [x] Implement centralized logging utilities
+  - [ ] Implement gRPC interceptors for logging and metrics
   - [ ] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [ ] Implement database connection utilities (PostgreSQL, Redis connectors)
   - [x] Implement base configuration classes for service discovery and shared properties
@@ -141,7 +142,7 @@ This checklist is structured to **build foundational features first**, followed 
 #### Coding Kickoff Checklist
   - [x] Add baseline `Dockerfile` for each service
   - [ ] Create Gradle tasks to build Docker images for each service
-  - [ ] Verify `./gradlew :<service>:build` succeeds for every module
+  - [x] Verify `./gradlew :<service>:build` succeeds for every module
   - [x] Add a minimal `README.md` in each service with local run instructions
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Implement basic JPA entities and repositories in Account Service
@@ -152,12 +153,13 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Update each service `README.md` with links to design docs and proto definitions
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [ ] Enable Spotless plugin for code formatting
-  - [ ] Add GitHub Actions workflow for build and format checks
+  - [ ] Add GitHub Actions workflow to build and publish Docker images for each service
+  - [ ] Integrate `markdownlint` in CI build
   - [ ] Configure static analysis tools
     - [ ] Add Checkstyle rules for code style enforcement
     - [ ] Integrate SpotBugs for static bug detection
     - [ ] Generate JaCoCo coverage reports in CI
-  - [ ] Establish base integration test setup using Spring Boot Test
+  - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
@@ -166,6 +168,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Add `V1__init.sql` migrations for each service database
     - [ ] Configure Flyway plugin in each service build file
     - [ ] Verify migrations run on startup
+  - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
     - [ ] Summarize controller routes in service `design/README.md`
     - [ ] Include example request/response payloads
@@ -211,6 +214,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages
   - [ ] Configure SMTP provider and test templates
+  - [ ] Document email and notification design in `account-service/design/README.md`
+  - [ ] Add asynchronous NotificationService components with gRPC endpoints
 
 ---
 

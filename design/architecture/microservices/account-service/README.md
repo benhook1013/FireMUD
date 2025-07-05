@@ -2,7 +2,7 @@
 
 ## Overview
 
-Manages user accounts and authentication for the platform. Stores profile data and controls session creation and validation.
+Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections.
 
 ## Architecture / Design Notes
 
