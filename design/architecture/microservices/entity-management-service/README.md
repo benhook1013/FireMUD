@@ -40,6 +40,9 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 ## Dependencies
 
+- **Internal:**
+  - Game Design Service supplies character templates and item definitions.
+  - Game Session Service coordinates runtime updates via Redis queues.
 - **External:** PostgreSQL for entity data.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

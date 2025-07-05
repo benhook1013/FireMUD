@@ -50,7 +50,10 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 ## Dependencies
 
-- **Internal:** Game Logic Service for rule evaluation.
+- **Internal:**
+  - Game Session Service sends events that trigger scripts.
+  - Game Logic Service for rule evaluation.
+  - World Management Service receives world-state updates from scripts.
 - **External:** PostgreSQL for script storage and Redis for queuing automation tasks.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),

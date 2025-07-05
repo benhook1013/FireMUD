@@ -42,7 +42,9 @@ The gateway is stateless. Route configurations are stored in
 
 ## Dependencies
 
-- **Internal:** Game Session Service and other microservices over gRPC.
+- **Internal:**
+  - Game Session Service and other microservices over gRPC.
+  - TCP Proxy Service forwards Telnet traffic into the gateway.
 - **External:** Spring Cloud Gateway infrastructure.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
