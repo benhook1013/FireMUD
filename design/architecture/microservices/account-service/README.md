@@ -95,6 +95,7 @@ The gRPC schemas for this service live in
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [User Journeys – Sign Up and Game Creation](../user-journeys.md#1-sign-up-and-game-creation)
 - [User Journeys](../user-journeys.md#9-purchases-and-subscriptions) – payment and subscription workflow.
+- [Redis Architecture](../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Database Migrations](../system-architecture-database-migrations.md)
