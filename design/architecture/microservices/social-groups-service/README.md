@@ -23,6 +23,8 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Private messaging and presence indicators.
 - Guild creation and membership management.
 - Friend lists scoped both to individual games and to overall accounts.
+- Cross-game presence lets players know when friends are online in any hosted
+  game.
 - In-game social chat plus account-to-account direct messaging.
 
 ### Data Model

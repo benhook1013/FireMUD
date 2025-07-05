@@ -22,6 +22,8 @@ The World Management Service stores and manages game world data such as rooms, r
 ## Key Features
 
 - Region and location management with shard support.
+- Instance-based zones allow temporary dungeons or housing separate from the
+  shared world map.
 - Persistent world state with incremental saves.
 - Procedural generation tools for rooms and terrain.
 - Pathfinding algorithms and navmesh data for movement calculations.
@@ -32,6 +34,7 @@ The World Management Service stores and manages game world data such as rooms, r
 
 - Tables for `region`, `zone`, and `room` define the world hierarchy.
 - `terrain` and `object_spawn` tables support procedural generation.
+- `instance` table tracks temporary copies of zones for instanced gameplay.
 - Redis caches hot rooms for active sessions to speed up lookups.
 
 ### gRPC APIs
