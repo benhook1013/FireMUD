@@ -15,7 +15,7 @@ kubectl apply -f base/logging-admin-service.yaml
 kubectl apply -f base/social-groups-service.yaml
 kubectl apply -f base/tcp-proxy-service.yaml
 kubectl apply -f base/world-management-service.yaml
-kubectl apply -f base/gateway.yaml
+kubectl apply -f base/spring-cloud-gateway.yaml
 ```
 
 Customize these manifests with proper image repositories and resource limits before running in production.
