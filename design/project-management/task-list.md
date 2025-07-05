@@ -24,7 +24,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Investigate transaction support for microservices
     - See [Transaction Strategies](../architecture/system-architecture-transactions.md)
     - [x] Document gRPC endpoints and compensating actions
-    - [x] Describe lightweight Saga orchestrator service
+    - [x] Describe Saga orchestration components in the shared library
     - [x] Provide example workflows (e.g., user registration)
   - [x] Implement dedicated **TCP Proxy Service** bridging Telnet clients to the Gateway
   - [x] Finalize [Spring Cloud Gateway design](../architecture/infrastructure/gateway-architecture.md)
@@ -63,6 +63,11 @@ This checklist is structured to **build foundational features first**, followed 
    - [x] Implement common exception handling & error response structures
   - [ ] Implement configuration management (centralized properties, environment handling)
   - [ ] Publish common package to internal repository (Maven/Gradle)
+  - [ ] Extend **firemud-common** with saga orchestration support
+    - [ ] Define `saga` schema tables for step tracking and state
+    - [ ] Implement fluent API for saga orchestration
+    - [ ] Add gRPC call helpers with retry and compensation hooks
+    - [ ] Document example saga usage
 
 - [x] **Set up Git repository and development workflow**
 - [x] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
@@ -102,6 +107,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create `AccountController` REST endpoints
   - [ ] Create JPA repositories for `Account` and `Profile`
   - [ ] Add gRPC AccountService with proto contract
+  - [ ] Use saga orchestrator for account creation workflow
 
 - [ ] **Expand Game Session Service**
   - [ ] Implement game instance lifecycle (start, stop, restart)
@@ -117,6 +123,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
+  - [ ] Use saga orchestrator for game publishing workflow
   - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
   - [ ] Create gRPC GameDesignService and design-time database models
 
@@ -246,6 +253,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Provide analytics dashboards for operators
   - [ ] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts
+  - [ ] Create **Saga Dashboard** to inspect workflow states and failures
+  - [ ] Integrate saga metrics and timeout recovery
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
@@ -315,3 +324,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Develop tutorials & guides for game creators
   - [ ] Gather feedback from early users & iterate on UI/UX
   - [ ] Add MCP support for AI assisted game creation
+
+- [ ] **Enhance Saga Orchestration**
+  - [ ] Add timeout detection and automatic recovery
+  - [ ] Support declarative saga definitions via YAML or annotations
+  - [ ] Integrate saga events with logging and metrics
