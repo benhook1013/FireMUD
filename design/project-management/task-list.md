@@ -34,15 +34,15 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Remove legacy Game Management Service and redistribute duties
   - [x] Conduct final review of all design documentation
   - [ ] Address any missing diagrams or cross-references discovered during review
-  - [ ] Expand `CONTRIBUTING.md` with onboarding instructions
-  - [ ] Populate `FAQ.md` with common questions
+  - [x] Expand `CONTRIBUTING.md` with onboarding instructions
+  - [x] Populate `FAQ.md` with common questions
   - [ ] Finalize API schemas
     - [ ] gRPC proto definitions for each microservice
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
-  - [ ] Expand `docker-compose.yml` to include all services
-  - [ ] Create baseline Kubernetes manifests or Helm charts for deployment
+  - [x] Expand `docker-compose.yml` to include all services
+  - [x] Create baseline Kubernetes manifests or Helm charts for deployment
 
 ---
 

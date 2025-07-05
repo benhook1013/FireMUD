@@ -31,6 +31,18 @@ This document collects common questions and answers about the FireMUD Game Platf
 
 - **Where do I find design resources?**
   The `design/` directory contains architecture diagrams, service descriptions, and planning documents that explain how the system fits together.
+- **How do I get a development environment running?**
+  Follow the steps in [**Developer Setup**](DEVELOPER_SETUP.md) to install prerequisites and run `docker compose up --build`.
+
+- **Where are the API schemas defined?**
+  gRPC protobuf files live under the [`protos/`](protos) directory. Each microservice README links to its versioned schemas.
+
+- **Where can I find the roadmap?**
+  The active task list is in [design/project-management/task-list.md](design/project-management/task-list.md).
+
+- **How do I report bugs or request features?**
+  Open an issue on GitHub with as much detail as possible. Please search existing issues first to avoid duplicates.
+
 
 ---
 
