@@ -74,13 +74,25 @@ Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so 
 
 ## Running with Docker Compose
 
-The `docker-compose.yml` file (to be added in a future update) orchestrates all services for local development. Launch the stack with:
+The `docker-compose.yml` file orchestrates all services, including PostgreSQL and Redis, for local development. Launch the stack with:
 
 ```bash
 docker compose up --build
 ```
 
-This command builds any missing images and starts the gateway, microservices, and supporting containers like PostgreSQL and Redis. Environment variables are defined in `.env` files referenced by the compose configuration.
+This command builds any missing images and starts the gateway, microservices, and supporting containers like PostgreSQL and Redis. Connection settings are read from an optional `.env` file. A sample file named `.env.sample` is provided with default credentials:
+
+```env
+POSTGRES_USER=firemud
+POSTGRES_PASSWORD=firemud
+POSTGRES_DB=firemud
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+Copy this to `.env` and adjust values as needed before running the stack.
 
 To stop the stack:
 
@@ -90,10 +102,11 @@ docker compose down
 
 ## Configuration Files
 
-Environment‑specific settings live in Spring Boot profile files:
+Environment‑specific settings live in Spring Boot profile files contained within each service's `src/main/resources` directory.
 
-- `application-dev.yml` – used when running with Docker Compose.
-- `application-prod.yml` – used in Kubernetes deployments.
+- `application.yml` – base configuration with `dev` and `prod` profiles.
+- `application-dev.yml` – legacy name; now included as a profile section in `application.yml`.
+- `application-prod.yml` – legacy name; also included as a profile section.
 
 More details on deployment environments and gateway routing can be found in the following design documents:
 
