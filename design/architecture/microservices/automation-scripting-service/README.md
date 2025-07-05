@@ -92,3 +92,5 @@ stubs.
 
 - Web UI for creating and testing scripts.
 - Additional AI modules for advanced behaviors.
+- Fairness quotas and per-script resource limits to prevent abuse, as outlined
+  in [System Architecture: Scripting & Automation](../system-architecture-scripting.md#fairness--abuse-prevention-planned).
