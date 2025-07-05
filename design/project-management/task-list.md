@@ -108,6 +108,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement configuration management (centralized properties, environment handling)
   - [ ] Enforce `tenantId` validation for create endpoints across all microservices
   - [ ] Publish common package to internal repository (Maven/Gradle)
+  - [ ] Add `common-library` README with usage examples
   - [ ] Extend **firemud-common** with saga orchestration support
     - [ ] Define `saga` schema tables for step tracking and state
     - [ ] Implement fluent API for saga orchestration
@@ -390,6 +391,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Enforce Telnet command whitelist and input sanitization
   - [ ] Implement connection throttling and rate limits
   - [ ] Support TLS termination for secure Telnet clients
+  - [ ] Add gRPC `TelnetSessionService` for handshake and session creation
 - [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
   - [ ] Terminate TLS and forward traffic to internal services using mTLS
@@ -397,6 +399,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create gateway route configuration files for all services
   - [ ] Create `GatewayController` endpoints for dynamic route management
     - [ ] Allow creation of custom gateway routes via API
+  - [ ] Add gRPC `GatewayManagementService` for remote route configuration
 
 - [ ] **Develop Social & Groups Service**
   - [ ] Enable cross-game friend lists and social graph
