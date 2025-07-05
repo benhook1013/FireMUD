@@ -429,6 +429,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Provide analytics dashboards for operators
   - [ ] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts
+  - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
+  - [ ] Create `LoggingController` REST endpoints for searching logs via Elasticsearch
   - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
