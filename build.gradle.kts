@@ -34,9 +34,9 @@ subprojects {
     dependencies {
         testImplementation("org.junit.jupiter:junit-jupiter:5.9.3")
         testImplementation("org.springframework.boot:spring-boot-starter-test:3.2.5")
-        implementation("io.grpc:grpc-stub:1.61.0")
-        implementation("io.grpc:grpc-protobuf:1.61.0")
-        implementation("io.grpc:grpc-netty-shaded:1.61.0")
+        implementation("io.grpc:grpc-stub:1.73.0")
+        implementation("io.grpc:grpc-protobuf:1.73.0")
+        implementation("io.grpc:grpc-netty-shaded:1.73.0")
         implementation("com.google.protobuf:protobuf-java:3.25.3")
         implementation("javax.annotation:javax.annotation-api:1.3.2")
     }
