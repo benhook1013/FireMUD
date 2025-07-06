@@ -32,4 +32,7 @@ These files describe style, architecture, and best practices for Java/Spring pro
 
 - Keep documentation organized within `design/`.
 - Use clear commit messages summarizing changes.
-- There are currently no automated tests in this repository.
+- Format and lint code with `./gradlew spotlessApply lintMarkdownFix` before committing.
+- Unit tests run via `./gradlew test` and are executed in CI through the `check` task.
+- Code quality tools (Checkstyle and SpotBugs) run during the `check` task, and JaCoCo produces coverage reports.
+- CI also performs a Trivy security scan.
