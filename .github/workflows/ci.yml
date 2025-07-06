@@ -57,12 +57,13 @@ jobs:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
           restore-keys: trivy-db-${{ runner.os }}-
+      - name: 🔓 Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
       - name: 🎨 Apply Spotless Formatting
         run: |
           echo "::group::Run Spotless"
           ./gradlew spotlessApply
           echo "::endgroup::"
-
       - name: 🧹 Fix Markdown Lint
         run: |
           echo "::group::Lint Markdown"
