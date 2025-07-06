@@ -269,6 +269,8 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Configure ESLint and Prettier for consistent formatting
 - [ ] Add pre-commit hooks for frontend linting
 - [ ] Add accessibility checks (Axe or Lighthouse) to CI
+- [ ] Convert React frontend to TypeScript for type safety
+- [ ] Run ESLint and Prettier checks in GitHub Actions
 
 ---
 
@@ -428,6 +430,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Track version history and patch notes for published games
   - [ ] Build a web-based visual design interface
   - [ ] Integrate version control for design assets
+  - [ ] Configure S3-compatible object storage for game assets
+    - [ ] Provide asset upload API in Game Design Service
+    - [ ] Document asset storage setup and configuration
 
 - [ ] **Expand Scripting & Modding**
   - [ ] Implement event-driven scripting API for game creators
@@ -539,6 +544,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add integration tests for each service's create endpoints
   - [ ] Validate saga workflows for account and world creation
   - [ ] Perform API testing with Postman, RestAssured
+  - [ ] Introduce contract testing for gRPC and REST APIs (Spring Cloud Contract or Pact)
 
 - [ ] **Conduct Load & Security Testing**
   - [ ] Simulate high-concurrency scenarios to identify bottlenecks
