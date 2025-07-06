@@ -37,6 +37,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [x] Add service-level design README links to central architecture docs
+  - [ ] Create GitHub issue templates and pull request template
+  - [ ] Add `CODEOWNERS` and `CODE_OF_CONDUCT.md` files
 - [x] Expand `docker-compose.yml` to include all services
 - [x] Create baseline Kubernetes manifests or Helm charts for deployment
   - [x] Add Deployment and Service YAML manifests for each microservice
@@ -71,8 +73,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Include `.env.sample` with default environment variables
   - [x] Document connection settings in `DEVELOPER_SETUP.md`
   - [x] Create Docker volumes for persistent databases
-  - [ ] Verify services start via `docker compose up`
-  - [ ] Confirm each service logs `Started` without errors
+  - [x] Verify services start via `docker compose up`
+  - [x] Confirm each service logs `Started` without errors
 
 ### Behavior and Orchestration Planning
 - [x] Define core service responsibilities and runtime behaviors
