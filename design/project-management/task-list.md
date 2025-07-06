@@ -37,9 +37,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [x] Add service-level design README links to central architecture docs
-  - [ ] Create issue template and maintain backlog for tasks and bugs
-  - [ ] Provide contributor guide with local setup commands and code review expectations
-  - [ ] Document environment variables and secrets management strategy
+  - [x] Create issue template and maintain backlog for tasks and bugs
+  - [x] Provide contributor guide with local setup commands and code review expectations
+  - [x] Document environment variables and secrets management strategy
 - [x] Expand `docker-compose.yml` to include all services
 - [x] Create baseline Kubernetes manifests or Helm charts for deployment
   - [x] Add Deployment and Service YAML manifests for each microservice

@@ -12,6 +12,7 @@ This directory contains core documentation for the shared infrastructure that po
 | [System Architecture Diagram](../system-architecture-diagram.md) | Visual representation of component relationships and client flows. |
 | [System Context Diagram](../system-context-diagram.md) | Shows clients, DMZ components, internal services, and datastores. |
 | [Deployment Environments](./deployment-environments.md) | Describes how Docker Compose and Kubernetes are used in dev/prod setups.   |
+| [Environment & Secrets Management](./environment-and-secrets.md) | How services receive configuration values and handle sensitive data. |
 | [Gateway Architecture](./gateway-architecture.md)       | Details on Spring Cloud Gateway routing, WebSocket support, and service access. |
 | [Protocol Bridging](./protocol-bridging.md)             | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |
 | [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md) | Conventions for service APIs. |
