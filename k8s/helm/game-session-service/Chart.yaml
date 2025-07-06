@@ -1,0 +1,5 @@
+apiVersion: v2
+name: game-session-service
+version: 0.1.0
+appVersion: "1.0"
+description: Minimal chart for the Game Session Service
