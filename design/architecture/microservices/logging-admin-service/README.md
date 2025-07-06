@@ -27,10 +27,10 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ## Key Features
 
-- Central log collection and search.
-- Basic analytics dashboards for operators.
-- Tools for banning or restricting accounts.
-- Moderation policy definitions including profanity filters.
+ - Central log collection and search.
+ - [Analytics dashboards](./analytics-dashboards.md) for operators.
+ - Tools for banning or restricting accounts.
+ - [Moderation policies](./moderation-policies.md) including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
