@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        java-version: [17]
+        java-version: [21]
         node-version: [20]
 
     steps:

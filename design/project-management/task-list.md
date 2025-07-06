@@ -177,7 +177,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Game Design Service proto definitions
     - [x] Social & Groups Service proto definitions
     - [x] Logging & Admin Service proto definitions
-    - [ ] Payment & Monetization proto definitions (Account Service)
+    - [ ] Payment & Monetization proto definitions (account proto namespace)
     - [x] TCP Proxy Service proto definitions
     - [x] Spring Cloud Gateway proto definitions
     - [x] Shared common types
@@ -639,17 +639,17 @@ _Applies to the following services:_
 
 ## 🛠️ Phase 8: Monetization & Payment System
 
-- [ ] **Develop Monetization & Payment System**
+- [ ] **Develop Monetization & Payment Module (Account Service)**
   - [ ] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
   - [ ] Enforce platform fee on transactions
   - [ ] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
-  - [x] Add gRPC `PaymentService` endpoints for billing operations
-  - [ ] Create `PaymentController` REST endpoints
+  - [x] Add gRPC methods in `AccountService` for payments
+  - [ ] Add payment-related endpoints in `AccountController`
     - [ ] Provide endpoints for payment intents and subscriptions
-  - [x] Define proto contracts for payment and subscription flows
+  - [x] Define proto contracts for payment and subscription flows in the account proto namespace
   - [x] Add Flyway migration scripts for payment tables
   - [x] Document monetization design in `account-service/design/README.md`
   - [ ] Implement virtual currency system (game-specific currencies)

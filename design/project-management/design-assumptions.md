@@ -6,7 +6,7 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ### Core Technologies
 
-- **Language**: Java 17+
+- **Language**: Java 21+
 - **Framework**: Spring Boot 3.x
 - **Architecture**: Microservices
 - **Boilerplate Reduction**: Lombok
