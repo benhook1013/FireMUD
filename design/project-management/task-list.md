@@ -161,7 +161,7 @@ This checklist is structured to **build foundational features first**, followed 
 
 #### Coding Kickoff Checklist
   - [x] Add baseline `Dockerfile` for each service
-  - [ ] Create Gradle tasks to build Docker images for each service
+  - [x] Create Gradle tasks to build Docker images for each service
   - [x] Verify `./gradlew :<service>:build` succeeds for every module
   - [x] Add a minimal `README.md` in each service with local run instructions
   - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
@@ -173,8 +173,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Update each service `README.md` with links to design docs and proto definitions
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [x] Enable Spotless plugin for code formatting
-  - [ ] Add GitHub Actions workflow to build and publish Docker images for each service
-  - [ ] Integrate `markdownlint` in CI build
+  - [x] Add GitHub Actions workflow to build and publish Docker images for each service
+  - [x] Integrate `markdownlint` in CI build
   - [ ] Add pre-commit hooks for Spotless, Checkstyle, and markdownlint
   - [ ] Configure static analysis tools
     - [ ] Add Checkstyle rules for code style enforcement

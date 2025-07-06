@@ -40,6 +40,16 @@ Build all modules with:
 
 Gradle compiles the services and prepares Docker images using the included Dockerfiles.
 
+## 🐳 Building Docker Images
+
+Use the aggregated task to build container images for all services:
+
+```bash
+./gradlew buildDockerImages
+```
+
+Each invocation runs Spring Boot's `bootBuildImage` for every module and tags the images with `latest`.
+
 ## ✅ Markdown Linting via Gradle
 
 This project uses `markdownlint-cli2` to lint Markdown files. The `check` task automatically runs linting in check-only mode:
