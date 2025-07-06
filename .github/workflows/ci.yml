@@ -120,6 +120,7 @@ jobs:
         uses: aquasecurity/setup-trivy@v0.2.1
 
       - name: 🔍 Run Trivy and Save Report
+        if: always()
         continue-on-error: false
         run: |
           echo "::group::Run Trivy"
@@ -127,6 +128,7 @@ jobs:
           echo "::endgroup::"
 
       - name: 📤 Upload Trivy Report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-report-${{ github.sha }}
@@ -138,7 +140,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('trivy-report.txt', 'utf8');
+            const path = 'trivy-report.txt';
+            const report = fs.existsSync(path)
+              ? fs.readFileSync(path, 'utf8')
+              : 'Trivy report not available.';
 
             const hasVulnerabilities =
               /Total:\s+[1-9]/.test(report) || /CRITICAL|HIGH/.test(report);
