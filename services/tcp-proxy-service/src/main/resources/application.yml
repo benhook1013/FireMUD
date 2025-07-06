@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: tcp-proxy-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:

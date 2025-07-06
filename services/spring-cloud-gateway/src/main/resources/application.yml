@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: spring-cloud-gateway
+  flyway:
+    enabled: true
 
 ---
 
