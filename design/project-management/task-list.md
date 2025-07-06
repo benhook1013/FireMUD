@@ -192,8 +192,8 @@ _Applies to:_
 - [ ] Implement basic `PingController` and gRPC `PingService`
 - [ ] Define Dockerfile and Gradle image build
 - [ ] Add `.env.sample` and Docker Compose integration (PostgreSQL, Redis)
+- [ ] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
 - [ ] Add minimal `README.md` with local setup instructions and design links
-- [ ] Configure Docker Compose health checks for all services
 - [ ] Define Kubernetes `Deployment` and `Service` manifests
 - [ ] Add Kubernetes readiness and liveness probes
 - [ ] Expose `/actuator/health` endpoint with Spring Boot Actuator
@@ -201,23 +201,31 @@ _Applies to:_
 ---
 
 #### 🧱 Domain Modeling & API Exposure
-- [ ] Define JPA entities and repositories using Spring Data
+- [ ] Define JPA entities and repositories using Spring Data for core domain objects
+- [ ] Implement initial JPA entities and repositories
+- [ ] Configure Flyway migrations for the initial schema
 - [ ] Add MapStruct mappers for DTO conversion
-- [ ] Generate initial REST controllers (CRUD or domain-specific)
+- [ ] Use shared DTOs and mappers from `firemud-common`
+- [ ] Generate initial REST controllers (CRUD or domain-specific endpoints)
 - [ ] Define and implement gRPC service stubs with explicit `Request`/`Response` messages
 - [ ] Version all `.proto` files (`package service.v1`) and place under `protos/{service}/v1`
 - [ ] Use shared types (e.g., `ErrorDetail`, `EntityId`) from `protos/shared/`
-- [ ] Lint `.proto` files with `buf` and enforce schema compatibility in CI
+- [ ] Lint `.proto` files with `buf` and enforce schema compatibility and versioning in CI
+- [ ] Validate requests and map gRPC errors to appropriate status codes
+- [ ] Add structured error responses using `shared/ErrorDetail.proto`
 - [ ] Add contract smoke tests for gRPC (`grpcurl`) and REST (`curl`)
+- [ ] Generate gRPC stubs via Gradle and include in CI pipeline
 
 ---
 
 #### 🔒 Security & Authentication
 - [ ] Integrate JWT-based authentication using helpers from `firemud-common`
 - [ ] Validate `globalRoles` and `scopedRoles` where applicable
-- [ ] Skip token validation in gameplay services — trust Game Session Service instead
+- [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
+- [ ] Rely on Game Session Service for gameplay session enforcement
 - [ ] Configure mutual TLS (mTLS) for gRPC between internal services
 - [ ] Manage certificates via Kubernetes `cert-manager`
+- [ ] Use shared security utilities from `firemud-common` for JWT and role validation
 - [ ] Add integration test for mid-session role refresh via Game Session Service
 
 ---
@@ -229,6 +237,7 @@ _Applies to:_
 - [ ] Include generated sources in build and CI
 - [ ] Implement structured error mapping with `ErrorDetail`
 - [ ] Include `buf breaking` tests in CI for backward compatibility
+- [ ] Integrate proto generation and schema validation into CI workflow
 
 ---
 
@@ -237,9 +246,11 @@ _Applies to:_
 - [ ] Use shared classes for:
   - DTOs (`ApiResponse<T>`, `ResultStatus`)
   - Error handling (`ErrorDetail`, `GlobalExceptionHandler`)
-  - PostgreSQL and Redis config
+  - PostgreSQL and Redis config (base Spring config classes)
   - Logging and correlation ID propagation
   - gRPC interceptors for tracing and auth
+  - Security utilities (JWT helpers, role validation)
+  - Service discovery and environment config
 - [ ] Replace boilerplate config with autoconfig starters from common lib
 - [ ] Add examples of `firemud-common` usage in service README
 
@@ -248,7 +259,7 @@ _Applies to:_
 #### 🔄 Saga Participation (Optional)
 - [ ] Use `firemud-common` saga orchestration helpers for workflow steps
 - [ ] Handle retries, rollback, and compensation via provided API
-- [ ] Emit saga metrics and correlation IDs
+- [ ] Emit saga metrics, correlation IDs, and observability logs
 - [ ] Annotate saga participation in `design/README.md`
 
 ---
@@ -257,21 +268,24 @@ _Applies to:_
 - [ ] Use Redis exclusively for transient, gameplay-related state
 - [ ] Use `firemud-common` Redis connector utilities
 - [ ] Follow tick-safe key conventions: `tick:*`, `timer:*`, `session:*`
+- [ ] Validate Redis key usage for shard-local safety and naming discipline
 - [ ] Avoid in-service caching for state handled by Redis
-- [ ] Emit service-level tick and Redis command metrics
+- [ ] Add Redis connectivity tests to catch misconfigurations early
+- [ ] Emit service-level tick participation and Redis command metrics (if applicable)
 
 ---
 
 #### 🧪 Testing & Quality Gates
-- [ ] Add unit tests for REST, gRPC, and startup behavior
+- [ ] Add unit tests for REST, gRPC, and startup behavior (e.g. `PingController`)
+- [ ] Plan integration tests (via Testcontainers) for service collaboration
 - [ ] Use Spring Boot Test and Testcontainers for integration testing
 - [ ] Include optional dev data seeding for local workflows
-- [ ] Add Redis connection tests to catch misconfigurations early
 - [ ] Enable static analysis:
   - Spotless for formatting
   - Checkstyle for style rules
   - SpotBugs for runtime defects
 - [ ] Enable code coverage (e.g., JaCoCo)
+- [ ] Validate gRPC and REST contracts with smoke tests using `grpcurl` and `curl`
 
 ---
 
@@ -280,6 +294,7 @@ _Applies to:_
 - [ ] Add CI steps for:
   - Protobuf generation and schema checking
   - Proto linting and compatibility (`buf`)
+  - OpenAPI consistency
   - Static analysis
 - [ ] Add pre-commit hooks for:
   - Spotless
@@ -287,7 +302,7 @@ _Applies to:_
   - markdownlint
   - Buf or proto consistency
 - [ ] Use Trivy for container and dependency vulnerability scanning
-- [ ] Schedule recurring security scans in CI
+- [ ] Schedule recurring security scans (including base image and dependency scans)
 - [ ] Auto-generate release notes and semantic version bumps
 
 ---
@@ -297,6 +312,8 @@ _Applies to:_
 - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
 - [ ] Use shared gRPC interceptor to inject `traceId` and `correlationId`
 - [ ] Propagate tracing context across service boundaries
+- [ ] Emit service-level tick and Redis command metrics (if applicable)
+- [ ] Use shared logging interceptor to ensure trace/correlation propagation
 
 ---
 
@@ -307,6 +324,8 @@ _Applies to:_
   - Sample `curl` and `grpcurl` invocations
   - Redis key usage (if applicable)
   - Saga participation details (if applicable)
+- [ ] Summarize controller routes with sample request/response payloads
+- [ ] Document endpoints and proto contracts in each service README
 - [ ] Generate and publish OpenAPI specs (if REST used)
 - [ ] Optionally provide Swagger UI or interactive API explorer
 - [ ] Document required environment variables and config structure
@@ -319,6 +338,9 @@ _Applies to:_
   - Expose `/actuator/health`
   - Bridge traffic via gRPC or WebSocket
   - Use shared gRPC interceptors and Redis helpers where relevant
+  - Use gRPC for route management and Telnet bridging (TCP Proxy)
+  - Are included in Docker Compose, Kubernetes, and Helm setup
+  - Follow CI, tracing, and health check conventions
 
 ---
 
