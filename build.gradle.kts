@@ -124,3 +124,12 @@ tasks.register("buildDockerImages") {
         ":world-management-service:bootBuildImage"
     )
 }
+
+tasks.register<Exec>("devUp") {
+    dependsOn("buildDockerImages")
+    commandLine("docker", "compose", "up", "--build")
+}
+
+tasks.register<Exec>("devDown") {
+    commandLine("docker", "compose", "down")
+}

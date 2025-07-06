@@ -16,7 +16,7 @@ If you're setting up the project for the first time, follow these steps:
 1. Review prerequisites in [**Developer Setup**](DEVELOPER_SETUP.md) and install Java 17, Docker, Node.js, and other tools.
 2. Clone the repository and generate Gradle wrappers if needed with `./gradlew wrapper` (or the PowerShell script on Windows).
 3. Build all modules using `./gradlew build`.
-4. Start the local stack with `docker compose up --build`.
+4. Start the local stack with `./gradlew devUp`.
 5. Explore the docs under `design/` to understand the architecture.
 
 Once your environment is running you can create a feature branch and submit a PR as described below.

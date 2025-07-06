@@ -71,7 +71,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Include `.env.sample` with default environment variables
   - [x] Document connection settings in `DEVELOPER_SETUP.md`
   - [x] Create Docker volumes for persistent databases
-  - [x] Verify services start via `docker compose up`
+  - [x] Verify services start via `./gradlew devUp`
   - [x] Confirm each service logs `Started` without errors
 
 ### Behavior and Orchestration Planning
@@ -158,7 +158,8 @@ This checklist is structured to **build foundational features first**, followed 
 
   - [ ] Add metrics and tracing instrumentation for all services
     - [ ] Configure Micrometer with Prometheus registry
-    - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
+      - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
+      - [ ] Propagate tracing context across gRPC and REST calls
 
 #### Coding Kickoff Checklist
   - [x] Add baseline `Dockerfile` for each service
@@ -182,6 +183,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Integrate SpotBugs for static bug detection
     - [ ] Generate JaCoCo coverage reports in CI
   - [ ] Integrate container and dependency scanning (Trivy) in CI
+  - [ ] Schedule continuous security scanning for dependencies and container images
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
@@ -203,6 +205,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Configure Flyway plugin in each service build file
     - [ ] Verify migrations run on startup
   - [ ] Provide optional dev data seeding scripts for each service
+  - [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
     - [x] account-service/design/README.md
     - [ ] automation-scripting-service/design/README.md
@@ -220,7 +223,8 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Provide sample cURL commands for REST create endpoints
     - [ ] Provide example `grpcurl` commands for gRPC create methods
     - [ ] Link to corresponding proto files
-    - [ ] Generate OpenAPI specs and publish Swagger UI
+      - [ ] Generate OpenAPI specs and publish Swagger UI
+      - [ ] Publish API documentation automatically in the CI pipeline
 
 ---
 

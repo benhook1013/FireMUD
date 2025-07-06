@@ -87,10 +87,10 @@ Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so 
 The `docker-compose.yml` file orchestrates all services, including PostgreSQL and Redis, for local development. Launch the stack with:
 
 ```bash
-docker compose up --build
+./gradlew devUp
 ```
 
-This command builds any missing images and starts the gateway, microservices, and supporting containers like PostgreSQL and Redis. Connection settings are read from an optional `.env` file. A sample file named `.env.sample` is provided with default credentials:
+This task builds all service images and starts the Docker Compose stack with PostgreSQL and Redis. Connection settings are read from an optional `.env` file. A sample file named `.env.sample` is provided with default credentials:
 
 ```env
 POSTGRES_USER=firemud
@@ -107,7 +107,7 @@ Copy this to `.env` and adjust values as needed before running the stack.
 To stop the stack:
 
 ```bash
-docker compose down
+./gradlew devDown
 ```
 
 ## Configuration Files

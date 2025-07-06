@@ -14,6 +14,6 @@ Refer to [design/README.md](design/README.md) for architecture details.
 To run the entire stack:
 
 ```bash
-docker compose up --build
+./gradlew devUp
 ```
 

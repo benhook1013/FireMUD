@@ -168,17 +168,16 @@ The CI pipeline runs `./gradlew check`, which compiles and tests all modules whi
 
 ## Running Locally
 
-Build all services and start the Docker compose stack:
+Build all services and start the Docker stack:
 
 ```bash
-./gradlew build
-docker compose up --build
+./gradlew devUp
 ```
 
 Stop the stack with:
 
 ```bash
-docker compose down
+./gradlew devDown
 ```
 
 ---
