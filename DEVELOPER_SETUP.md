@@ -6,7 +6,7 @@ This guide explains how to configure a local development environment for the Fir
 
 Install the following tools before building the services:
 
-- **Java 17+** – required for all Spring Boot microservices.
+- **Java 21+** – required for all Spring Boot microservices.
 - **Gradle** – used to build and test each service.
 - **Node.js** (latest LTS) – needed if you plan to build the React frontend.
 - **Docker** and **Docker Compose** – run the full stack locally.
