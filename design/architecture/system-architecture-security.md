@@ -2,6 +2,10 @@
 
 This document outlines how FireMUD secures service communication, manages authentication keys, protects network traffic, and tracks abuse attempts. It complements the [Authentication & Authorization](./system-architecture-authentication.md) document by focusing on secret management, TLS usage, abuse resistance, and operational trust guarantees.
 
+Kubernetes Secrets has been selected as the platform's unified secret
+storage solution. This keeps credential management simple while working
+seamlessly with cert-manager for automatic rotation.
+
 ---
 
 ## 🔑 Token Issuance & Secret Storage

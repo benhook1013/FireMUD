@@ -586,4 +586,15 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Set up financial contribution options
   - [ ] Add PayPal donation link
   - [ ] Configure GitHub Sponsors profile
-  - [ ] Create Patreon page
+- [ ] Create Patreon page
+
+---
+
+## ➕ Additional Tasks
+
+- [ ] Integrate **Kubernetes Secrets** for storing all credentials across services
+  - External secret stores are not planned at this stage
+- [ ] Provide command-line tooling for local game and session management
+- [ ] Plan for **end-to-end UI testing** using Cypress or Playwright once the
+  web UI is stable
+- [ ] Evaluate localization and internationalization support for the React client

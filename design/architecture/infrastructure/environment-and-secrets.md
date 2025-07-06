@@ -17,6 +17,9 @@ This document explains how configuration values and sensitive secrets are suppli
 - Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
 - Secrets are provisioned by **cert-manager** and rotated automatically.
+- **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
+  credentials. External secret stores like Vault are not planned at this
+  stage.
 
 ## 🔄 Variable Prefixes
 
