@@ -8,10 +8,10 @@ updates:
       time: "04:00"
       timezone: "Pacific/Auckland"
 
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-      day: "sunday"
-      time: "04:00"
-      timezone: "Pacific/Auckland"
+  # - package-ecosystem: "npm"
+  #   directory: "/frontend"
+  #   schedule:
+  #     interval: "weekly"
+  #     day: "sunday"
+  #     time: "04:00"
+  #     timezone: "Pacific/Auckland"
