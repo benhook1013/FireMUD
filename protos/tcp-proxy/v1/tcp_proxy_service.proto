@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package tcp_proxy.v1;
+
+option java_package = "net.firedevops.firemud.tcpproxy.v1";
+option java_multiple_files = true;
+
+service TcpProxyService {
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
+}

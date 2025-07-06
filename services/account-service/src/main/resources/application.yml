@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: account-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:

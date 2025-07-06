@@ -6,6 +6,7 @@ option java_package = "net.firedevops.firemud.entitymanagement.v1";
 option java_multiple_files = true;
 
 service EntityManagementService {
+  rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
   rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
@@ -35,4 +36,10 @@ message QueryInventoryRequest {
 
 message QueryInventoryResponse {
   repeated string item_ids = 1;
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
 }

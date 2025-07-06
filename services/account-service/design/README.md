@@ -9,3 +9,27 @@ This stub exists to make the design easy to find from the service source tree.
 ## Monetization Design
 
 The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../design/project-management/core-requirements.md#2.8-moderation-administration--monetization). Planned entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers will expose operations for creating payment intents and managing subscriptions.
+
+## REST & gRPC Endpoints
+
+### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+
+### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`account_service.proto`](../../../protos/account/v1/account_service.proto).
+
+Call the gRPC method with:
+
+```bash
+grpcurl -plaintext localhost:6565 account.v1.AccountService/Ping
+```
+
+Expected response:
+
+```json
+{
+  "message": "pong"
+}
+```

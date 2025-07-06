@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package automation_scripting.v1;
+
+option java_package = "net.firedevops.firemud.automationscripting.v1";
+option java_multiple_files = true;
+
+service AutomationScriptingService {
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
+}

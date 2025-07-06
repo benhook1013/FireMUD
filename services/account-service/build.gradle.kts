@@ -3,6 +3,7 @@ plugins {
     java
     id("org.springframework.boot") version "3.2.5"
     id("com.google.protobuf")
+    id("org.flywaydb.flyway") version "9.22.3"
 }
 
 repositories {
@@ -18,6 +19,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.2.5")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa:3.2.5")
     runtimeOnly("org.postgresql:postgresql:42.7.2")
+    implementation("org.flywaydb:flyway-core:9.22.3")
     implementation(project(":common-library"))
 }
 

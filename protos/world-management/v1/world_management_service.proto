@@ -6,6 +6,7 @@ option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
 
 service WorldManagementService {
+  rpc Ping(PingRequest) returns (PingResponse);
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse);
 }
@@ -25,4 +26,10 @@ message UpdateWorldStateRequest {
 
 message UpdateWorldStateResponse {
   bool success = 1;
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
 }

@@ -9,6 +9,7 @@ option java_multiple_files = true;
 
 // GatewayManagementService allows remote configuration of Spring Cloud Gateway routes.
 service GatewayManagementService {
+  rpc Ping(PingRequest) returns (PingResponse);
   // Adds or updates a custom route for the gateway.
   rpc UpsertRoute(RouteDefinition) returns (RouteResponse);
   // Removes a route by ID.
@@ -32,4 +33,10 @@ message RouteRequest {
 message RouteResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
 }

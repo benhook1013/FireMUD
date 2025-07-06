@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package game_logic.v1;
+
+option java_package = "net.firedevops.firemud.gamelogic.v1";
+option java_multiple_files = true;
+
+service GameLogicService {
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string message = 1;
+}

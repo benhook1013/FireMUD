@@ -101,6 +101,13 @@ All Lua scripts are:
 
 > 🔗 For use during tick execution, see [Distributed Locking](./system-architecture-ticks.md#🔐-distributed-locking)
 
+### Example Lock Workflow
+
+1. Acquire `tick:lock:{entityId}` using `SET NX PX` with a TTL equal to the tick duration.
+2. Stage updates under `tick:pending:{regionId}` via Lua script while the lock is held.
+3. On successful commit the lock is released and staged data is flushed.
+4. If the lock expires, the next tick replays `tick:pending:{regionId}` and attempts the workflow again.
+
 ---
 
 ## ⏱️ Tick Integration (Resilience, Locking, Staging)

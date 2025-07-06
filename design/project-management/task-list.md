@@ -83,7 +83,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Identify the data each service needs to handle those flows
 - [x] Derive minimal data models and proto schemas based on real usage
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
-- [ ] Document Redis key naming conventions and locking scheme
+- [x] Document Redis key naming conventions and locking scheme
 
 - [x] Create Gradle modules for all services with placeholder sources
 - [x] Add base Spring Boot Application classes for each service
@@ -170,7 +170,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
   - [x] Add unit tests for `PingController` endpoints to verify service startup
-  - [ ] Add gRPC `PingService` stub in each service to validate connectivity
+  - [x] Add gRPC `PingService` stub in each service to validate connectivity
   - [x] Update each service `README.md` with links to design docs and proto definitions
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [x] Enable Spotless plugin for code formatting
@@ -189,7 +189,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create ERD diagrams and baseline Flyway scripts for all services
     - [ ] Produce entity relationship diagrams for initial domain models
     - [ ] Add `V1__init.sql` migrations for each service database
-      - [ ] account-service
+      - [x] account-service
       - [ ] automation-scripting-service
       - [ ] entity-management-service
       - [ ] game-design-service
@@ -204,7 +204,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Verify migrations run on startup
   - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
-    - [ ] account-service/design/README.md
+    - [x] account-service/design/README.md
     - [ ] automation-scripting-service/design/README.md
     - [ ] entity-management-service/design/README.md
     - [ ] game-design-service/design/README.md
