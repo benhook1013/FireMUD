@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: world-management-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:

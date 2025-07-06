@@ -1,0 +1,12 @@
+CREATE TABLE moderation_action (
+    id BIGSERIAL PRIMARY KEY,
+    account_id BIGINT NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE feature_flag (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE
+);

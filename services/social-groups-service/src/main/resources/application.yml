@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: social-groups-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:

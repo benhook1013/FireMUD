@@ -129,7 +129,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
-- [ ] **Configure Flyway-based database migrations for each microservice**
+  - [x] **Configure Flyway-based database migrations for each microservice**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
@@ -165,7 +165,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Create Gradle tasks to build Docker images for each service
   - [x] Verify `./gradlew :<service>:build` succeeds for every module
   - [x] Add a minimal `README.md` in each service with local run instructions
-  - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
+  - [x] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
@@ -188,19 +188,19 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Example Flyway migration scripts
   - [ ] Create ERD diagrams and baseline Flyway scripts for all services
     - [ ] Produce entity relationship diagrams for initial domain models
-    - [ ] Add `V1__init.sql` migrations for each service database
+    - [x] Add `V1__init.sql` migrations for each service database
       - [x] account-service
-      - [ ] automation-scripting-service
-      - [ ] entity-management-service
-      - [ ] game-design-service
-      - [ ] game-logic-service
-      - [ ] game-session-service
-      - [ ] logging-admin-service
-      - [ ] social-groups-service
-      - [ ] spring-cloud-gateway
-      - [ ] tcp-proxy-service
-      - [ ] world-management-service
-    - [ ] Configure Flyway plugin in each service build file
+      - [x] automation-scripting-service
+      - [x] entity-management-service
+      - [x] game-design-service
+      - [x] game-logic-service
+      - [x] game-session-service
+      - [x] logging-admin-service
+      - [x] social-groups-service
+      - [x] spring-cloud-gateway
+      - [x] tcp-proxy-service
+      - [x] world-management-service
+    - [x] Configure Flyway plugin in each service build file
     - [ ] Verify migrations run on startup
   - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Document REST endpoints and gRPC method flows in each microservice README

@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: entity-management-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:
