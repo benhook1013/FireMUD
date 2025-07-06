@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+import "shared/v1/errors.proto";
+
+option java_package = "net.firedevops.firemud.gateway.v1";
+option java_multiple_files = true;
+
+// GatewayManagementService allows remote configuration of Spring Cloud Gateway routes.
+service GatewayManagementService {
+  // Adds or updates a custom route for the gateway.
+  rpc UpsertRoute(RouteDefinition) returns (RouteResponse);
+  // Removes a route by ID.
+  rpc RemoveRoute(RouteRequest) returns (RouteResponse);
+}
+
+// Route configuration details for dynamic updates.
+message RouteDefinition {
+  string route_id = 1; // Unique identifier for the route
+  string uri = 2;      // Target service URI
+  repeated string predicates = 3; // Spring Cloud Gateway predicates
+  repeated string filters = 4;    // Additional filters to apply
+}
+
+// Request to operate on a specific route.
+message RouteRequest {
+  string route_id = 1; // Identifier of the route to remove
+}
+
+// Standard response wrapper.
+message RouteResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
