@@ -33,7 +33,7 @@ subprojects {
 
     dependencies {
         testImplementation("org.springframework.boot:spring-boot-starter-test:3.5.3")
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.12.2")
+        testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.3")
         implementation("io.grpc:grpc-stub:1.73.0")
         implementation("io.grpc:grpc-protobuf:1.73.0")
         implementation("io.grpc:grpc-netty-shaded:1.73.0")
