@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package logging_admin.v1;
+
+option java_package = "net.firedevops.firemud.loggingadmin.v1";
+option java_multiple_files = true;
+
+service ReportService {
+  rpc CreateReport(CreateReportRequest) returns (CreateReportResponse);
+}
+
+message CreateReportRequest {
+  string tenant_id = 1;
+  string reporter_account_id = 2;
+  string target_account_id = 3;
+  string type = 4;
+  string description = 5;
+}
+
+message CreateReportResponse {
+  string report_id = 1;
+}

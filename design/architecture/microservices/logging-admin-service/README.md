@@ -57,6 +57,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - `QueryLogs` – streams filtered log entries for analysis.
 - `ApplyModerationAction` – bans or restricts an account based on policy.
 - `ToggleFeatureFlag` – updates runtime configuration values.
+- `CreateReport` – records a player-submitted abuse or bug report.
 
 ## Dependencies
 
