@@ -4,4 +4,6 @@ This directory contains version 1 protocol buffer definitions for the spring clo
 They describe the gRPC API exposed by the service.
 
 Generate Java stubs with `./gradlew generateProto` from the repository root.
-For details see the [design docs](../../../design/architecture/microservices/spring-cloud-gateway-service/README.md).
+For details see the [design docs](../../../design/architecture/microservices/spring-cloud-gateway/README.md).
+
+New: gateway_management_service.proto defines remote route APIs.

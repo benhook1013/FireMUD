@@ -32,6 +32,7 @@ This service exposes WebSocket and HTTP endpoints for all clients. It routes req
 - Real-time state synchronization for multiplayer actions.
 - Reconnection support for dropped clients.
 - Routes REST and gRPC traffic to appropriate backend services.
+- Supports dynamic route management via the `GatewayManagementService` gRPC API.
 
 ### Data Model
 
@@ -80,6 +81,8 @@ details on shared infrastructure components.
 Gateway-related proto definitions are stored in
 [../../../../protos/spring-cloud-gateway/v1](../../../../protos/spring-cloud-gateway/v1).
 After edits, run `./gradlew generateProto` to regenerate gateway stubs.
+The `gateway_management_service.proto` file defines gRPC endpoints for remotely
+adding or removing routes at runtime.
 
 ## 📚 Related Documentation
 
@@ -102,3 +105,4 @@ After edits, run `./gradlew generateProto` to regenerate gateway stubs.
 
 - Connection metrics and throttling.
 - Horizontal scaling for high concurrency.
+- Remote route configuration over gRPC.

@@ -401,7 +401,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create gateway route configuration files for all services
   - [ ] Create `GatewayController` endpoints for dynamic route management
     - [ ] Allow creation of custom gateway routes via API
-  - [ ] Add gRPC `GatewayManagementService` for remote route configuration
+  - [x] Add gRPC `GatewayManagementService` for remote route configuration
 
 - [ ] **Develop Social & Groups Service**
   - [ ] Enable cross-game friend lists and social graph
