@@ -205,16 +205,16 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
     - [x] account-service/design/README.md
-    - [ ] automation-scripting-service/design/README.md
+    - [x] automation-scripting-service/design/README.md
     - [ ] entity-management-service/design/README.md
     - [ ] game-design-service/design/README.md
-    - [ ] game-logic-service/design/README.md
+    - [x] game-logic-service/design/README.md
     - [ ] game-session-service/design/README.md
     - [ ] logging-admin-service/design/README.md
     - [ ] social-groups-service/design/README.md
     - [ ] spring-cloud-gateway/design/README.md
     - [ ] tcp-proxy-service/design/README.md
-    - [ ] world-management-service/design/README.md
+    - [x] world-management-service/design/README.md
     - [ ] Summarize controller routes in each service `design/README.md`
     - [ ] Include example request/response payloads
     - [ ] Provide sample cURL commands for REST create endpoints
