@@ -483,8 +483,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add gRPC `ReportService` for ingesting player reports
   - [ ] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
-  - [ ] Provide analytics dashboards for operators
-  - [ ] Define moderation policies including profanity filters
+   - [x] Provide analytics dashboards for operators
+   - [x] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts
   - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
   - [ ] Create `LoggingController` REST endpoints for searching logs via Elasticsearch

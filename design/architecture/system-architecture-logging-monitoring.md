@@ -38,3 +38,4 @@ This document consolidates the platform's observability architecture. It replace
 - [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability)
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [Infrastructure Overview](./infrastructure/README.md)
+- [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
