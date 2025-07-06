@@ -1,10 +1,14 @@
 import com.github.gradle.node.npm.task.NpxTask
+import com.github.spotbugs.snom.SpotBugsTask
 
 plugins {
     java
     id("com.github.node-gradle.node") version "7.1.0"
     id("com.google.protobuf") version "0.9.4" apply false
     id("com.diffplug.spotless") version "6.25.0"
+    id("checkstyle")
+    id("com.github.spotbugs") version "6.2.1"
+    jacoco
 }
 
 node {
@@ -22,6 +26,9 @@ subprojects {
     apply(plugin = "java")
     apply(plugin = "com.google.protobuf")
     apply(plugin = "com.diffplug.spotless")
+    apply(plugin = "checkstyle")
+    apply(plugin = "com.github.spotbugs")
+    apply(plugin = "jacoco")
     group = "net.firedevops.firemud"
     version = "0.1.0-SNAPSHOT"
 
@@ -42,8 +49,31 @@ subprojects {
         }
     }
 
+    checkstyle {
+        configFile = rootProject.file("config/checkstyle/checkstyle.xml")
+        toolVersion = "10.12.1"
+    }
+
+    spotbugs {
+        toolVersion.set("4.9.3")
+    }
+
+    tasks.withType<SpotBugsTask>().configureEach {
+        setIgnoreFailures(true)
+    }
+
     tasks.test {
         useJUnitPlatform()
+        finalizedBy("jacocoTestReport")
+    }
+
+    tasks.jacocoTestReport {
+        dependsOn(tasks.test)
+        reports {
+            xml.required.set(true)
+            csv.required.set(false)
+            html.required.set(true)
+        }
     }
 }
 
@@ -71,7 +101,12 @@ tasks.register<NpxTask>("lintMarkdownFix") {
 }
 
 tasks.named("check") {
-    dependsOn("lintMarkdown")
+    dependsOn(
+        "lintMarkdown",
+        "checkstyleMain",
+        "spotbugsMain",
+        "jacocoTestReport"
+    )
 }
 
 tasks.register("buildDockerImages") {

@@ -19,7 +19,13 @@ jobs:
           node-version: '20'
       - name: Generate Wrapper
         run: gradle wrapper --gradle-version 8.5 --distribution-type bin
-      - name: Build and Test
-        run: ./gradlew build
-      - name: Markdown Lint
-        run: ./gradlew lintMarkdown
+      - name: Format Code
+        run: ./gradlew spotlessApply
+      - name: Lint Markdown
+        run: ./gradlew lintMarkdownFix
+      - name: Run Checks
+        run: ./gradlew check
+      - name: Code Coverage
+        run: ./gradlew jacocoTestReport
+      - name: Security Scan
+        run: trivy image ghcr.io/my-org/my-service:latest

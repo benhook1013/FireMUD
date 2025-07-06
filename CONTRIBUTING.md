@@ -28,6 +28,7 @@ Once your environment is running you can create a feature branch and submit a PR
 - Favor immutable data structures, clear method names, and concise classes.
 - Backend code targets Java 17+ with Spring Boot 3.x; frontend code follows standard React/TypeScript conventions.
 - Document public methods and classes with brief Javadoc comments.
+- Install the git hook in `config/git-hooks/pre-commit` to automatically format and lint your commits.
 
 ## Pre-commit Hooks
 
