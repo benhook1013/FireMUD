@@ -430,6 +430,9 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Develop Logging & Admin Service**
   - [ ] Collect logs from all services and provide search dashboards
   - [ ] Allow players to report others for abuse/violations
+  - [ ] Create `ReportController` REST endpoints
+    - [ ] Provide POST `/reports` for abuse or bug submissions
+  - [ ] Add gRPC `ReportService` for ingesting player reports
   - [ ] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [ ] Provide analytics dashboards for operators
