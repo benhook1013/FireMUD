@@ -37,4 +37,7 @@ jobs:
         with:
           context: ./services/${{ matrix.service }}
           push: true
-          tags: ghcr.io/firemud/${{ matrix.service }}:${{ github.sha }}
+          tags: |
+            ghcr.io/firemud/${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/firemud/${{ matrix.service }}:latest
+            ghcr.io/firemud/${{ matrix.service }}:${{ github.ref_name }}

@@ -85,13 +85,19 @@ jobs:
       - name: 📈 Parse Coverage %
         id: coverage
         run: |
-          COVERAGE_LINE=$(grep -A 1 "<counter type=\"LINE\"" build/reports/jacoco/test/jacocoTestReport.xml | tail -n 1)
-          MISSED=$(echo "$COVERAGE_LINE" | sed -n 's/.*missed="\([0-9]*\)".*/\1/p')
-          COVERED=$(echo "$COVERAGE_LINE" | sed -n 's/.*covered="\([0-9]*\)".*/\1/p')
-          TOTAL=$((MISSED + COVERED))
-          if [ "$TOTAL" -gt 0 ]; then
-            PERCENT=$((100 * COVERED / TOTAL))
+          COVERAGE_FILE=build/reports/jacoco/test/jacocoTestReport.xml
+          if [ -f "$COVERAGE_FILE" ]; then
+            COVERAGE_LINE=$(grep -A 1 "<counter type=\"LINE\"" "$COVERAGE_FILE" | tail -n 1 || true)
+            MISSED=$(echo "$COVERAGE_LINE" | sed -n 's/.*missed="\([0-9]*\)".*/\1/p')
+            COVERED=$(echo "$COVERAGE_LINE" | sed -n 's/.*covered="\([0-9]*\)".*/\1/p')
+            TOTAL=$((MISSED + COVERED))
+            if [ "$TOTAL" -gt 0 ]; then
+              PERCENT=$((100 * COVERED / TOTAL))
+            else
+              PERCENT=0
+            fi
           else
+            echo "Coverage file not found" >&2
             PERCENT=0
           fi
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
