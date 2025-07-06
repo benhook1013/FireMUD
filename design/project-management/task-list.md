@@ -272,6 +272,14 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Convert React frontend to TypeScript for type safety
 - [ ] Run ESLint and Prettier checks in GitHub Actions
 
+### Common Steps for All Microservices
+- [x] Provide baseline `Dockerfile` and Gradle image build tasks
+- [x] Create Spring Boot skeleton with `PingController` and gRPC `PingService`
+- [x] Configure Flyway with initial `V1__init.sql` migration
+- [x] Add Kubernetes Deployment and Service manifests
+- [x] Document REST and gRPC endpoints in each service `design/README.md`
+- [x] Supply minimal `README.md` linking to design docs and proto files
+
 ---
 
 ## 🛠️ Phase 2: Account & Game Operations
