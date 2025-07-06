@@ -22,3 +22,33 @@ dependencies {
     implementation("org.springframework.cloud:spring-cloud-starter-gateway:4.3.0")
     implementation(project(":common-library"))
 }
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.25.3"
+    }
+    plugins {
+        id("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.61.0"
+        }
+    }
+    generateProtoTasks {
+        ofSourceSet("main").forEach {
+            it.plugins {
+                id("grpc")
+            }
+        }
+    }
+}
+
+sourceSets["main"].java.srcDirs(
+    "build/generated/source/proto/main/java",
+    "build/generated/source/proto/main/grpc"
+)
+
+sourceSets {
+    main {
+        proto.srcDir("../../protos")
+    }
+}
+
