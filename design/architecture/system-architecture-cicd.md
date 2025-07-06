@@ -10,8 +10,9 @@ This document describes the basic continuous integration and deployment strategy
 - **Build Docker images** and push them to a container registry.
 - **Deploy to Kubernetes** when changes are merged into designated branches (e.g., `main` or `release/*`).
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
+- **Generate release notes automatically** whenever version tags are pushed.
 
-To save on cloud costs, this pipeline only builds and deploys services. Contributors run all unit, integration, and cross-service tests locally as part of manual code review. See [System Architecture Testing](./system-architecture-testing.md) for details.
+The main workflow runs formatting and lint checks followed by the Gradle `check` task, which compiles and tests all modules while running Spotless, Checkstyle, and SpotBugs. It then generates JaCoCo coverage reports and performs a Trivy security scan. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
 
 ---
 
@@ -31,7 +32,7 @@ defaults:
     shell: bash
 
 jobs:
-  build-test:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -39,8 +40,12 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-      - name: Build and Test
-        run: ./gradlew build
+      - name: Format Code
+        run: ./gradlew spotlessApply
+      - name: Lint Markdown
+        run: ./gradlew lintMarkdownFix
+      - name: Run Checks
+        run: ./gradlew check
 ```
 
 The example above checks out the repository, sets up Java 17, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel.
@@ -53,7 +58,7 @@ After tests pass, each service is packaged into a Docker image:
 
 ```yaml
   docker-build:
-    needs: build-test
+    needs: build-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -102,6 +107,15 @@ Cluster credentials and registry secrets are stored as encrypted repository secr
 ### Rollback Strategy
 
 New service versions are deployed alongside existing ones. If issues appear after a rollout, prior releases can be reinstated and the newer copies scaled down or removed.
+
+---
+
+## 📝 Automated Release Notes
+
+When a version tag like `v1.2.3` is pushed, the `release-notes.yml` workflow
+creates a GitHub release and uses the `generate_release_notes` option to produce
+change logs automatically. This keeps release documentation consistent without
+manual steps.
 
 ---
 

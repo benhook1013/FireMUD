@@ -110,6 +110,57 @@ To stop the stack:
 ./gradlew devDown
 ```
 
+## Manual Testing Tools
+
+### Insomnia for REST and WebSocket
+
+An Insomnia project is included under `dev-tools/insomnia/`. From the
+**Import/Export** menu choose **Import From File** and select
+`firemud-insomnia.json` to quickly test login, registration, and gateway admin
+routes. The project defines a **Base Environment** with `base_url` and `jwt`
+variables so that you can reuse a JWT bearer token between requests. Open the
+environment editor and set the `jwt` value, then Insomnia will inject
+`Authorization: Bearer {{ jwt }}` on requests that require authentication.
+
+WebSocket testing is also configured. Use the `WebSocket Login` request to send
+raw commands like:
+
+```text
+LOGIN user pass
+MOVE north
+CAST "fireball"
+```
+
+Add or modify requests directly in Insomnia and re-export the workspace if you
+need to share updates.
+
+### Kreya for gRPC APIs
+
+The `dev-tools/kreya/.kreya-project.yaml` file configures Kreya to load all
+protos from `./protos/` and targets `localhost:6565` by default. Services such
+as `AccountService`, `EntityService`, and `PlayerService` are preconfigured. For
+endpoints that need authorization, JWT metadata is enabled. Open Kreya, choose
+**Open Project** and select the project file to invoke gRPC methods. When proto
+definitions change, update the project by pointing Kreya to the modified
+`.proto` files.
+
+### Redis Debugging
+
+Use the Redis CLI (`redis-cli -h localhost -p 6379`) to inspect transient game state. Useful commands include:
+
+```bash
+SCAN 0 MATCH session:*
+GET tick:lock:entity-xyz
+SCAN 0 MATCH timer:player-123:*
+```
+
+For a graphical view, a RedisInsight container runs in development via
+`docker-compose.override.yml`. Bring up the stack with `docker compose -f
+docker-compose.yml -f docker-compose.override.yml up -d`. RedisInsight is then
+available at <http://localhost:8001> and connects to the default Redis instance
+on `localhost:6379`. Typical key patterns are `session:*`, `tick:*`, and
+`timer:*`.
+
 ## Configuration Files
 
 Environment‑specific settings live in Spring Boot profile files contained within each service's `src/main/resources` directory.

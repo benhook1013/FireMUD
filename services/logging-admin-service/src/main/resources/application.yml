@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: logging-admin-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:

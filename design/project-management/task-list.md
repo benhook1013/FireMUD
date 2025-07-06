@@ -129,7 +129,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
-- [ ] **Configure Flyway-based database migrations for each microservice**
+  - [x] **Configure Flyway-based database migrations for each microservice**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
@@ -141,15 +141,15 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Game Session Service proto definitions
     - [x] World Management Service proto definitions
     - [x] Entity Management Service proto definitions
-    - [ ] Game Logic Service proto definitions
-    - [ ] Automation & Scripting Service proto definitions
+    - [x] Game Logic Service proto definitions
+    - [x] Automation & Scripting Service proto definitions
     - [x] Game Design Service proto definitions
     - [x] Social & Groups Service proto definitions
     - [x] Logging & Admin Service proto definitions
     - [ ] Payment & Monetization proto definitions (Account Service)
-    - [ ] TCP Proxy Service proto definitions
-    - [ ] Spring Cloud Gateway proto definitions
-    - [ ] Shared common types
+    - [x] TCP Proxy Service proto definitions
+    - [x] Spring Cloud Gateway proto definitions
+    - [x] Shared common types
   - [x] Integrate proto generation into CI workflow
   - [x] Expose `/actuator/health` endpoints for service monitoring
     - [x] Add `spring-boot-starter-actuator` dependency to each service
@@ -166,7 +166,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Create Gradle tasks to build Docker images for each service
   - [x] Verify `./gradlew :<service>:build` succeeds for every module
   - [x] Add a minimal `README.md` in each service with local run instructions
-  - [ ] Configure Flyway and add initial `V1__init.sql` for all microservices
+  - [x] Configure Flyway and add initial `V1__init.sql` for all microservices
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
@@ -183,6 +183,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Integrate SpotBugs for static bug detection
     - [ ] Generate JaCoCo coverage reports in CI
   - [ ] Integrate container and dependency scanning (Trivy) in CI
+  - [ ] Automate release notes generation with GitHub Actions
   - [ ] Schedule continuous security scanning for dependencies and container images
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
@@ -190,34 +191,34 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Example Flyway migration scripts
   - [ ] Create ERD diagrams and baseline Flyway scripts for all services
     - [ ] Produce entity relationship diagrams for initial domain models
-    - [ ] Add `V1__init.sql` migrations for each service database
+    - [x] Add `V1__init.sql` migrations for each service database
       - [x] account-service
-      - [ ] automation-scripting-service
-      - [ ] entity-management-service
-      - [ ] game-design-service
-      - [ ] game-logic-service
-      - [ ] game-session-service
-      - [ ] logging-admin-service
-      - [ ] social-groups-service
-      - [ ] spring-cloud-gateway
-      - [ ] tcp-proxy-service
-      - [ ] world-management-service
-    - [ ] Configure Flyway plugin in each service build file
+      - [x] automation-scripting-service
+      - [x] entity-management-service
+      - [x] game-design-service
+      - [x] game-logic-service
+      - [x] game-session-service
+      - [x] logging-admin-service
+      - [x] social-groups-service
+      - [x] spring-cloud-gateway
+      - [x] tcp-proxy-service
+      - [x] world-management-service
+    - [x] Configure Flyway plugin in each service build file
     - [ ] Verify migrations run on startup
   - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
     - [x] account-service/design/README.md
-    - [ ] automation-scripting-service/design/README.md
-    - [ ] entity-management-service/design/README.md
-    - [ ] game-design-service/design/README.md
-    - [ ] game-logic-service/design/README.md
-    - [ ] game-session-service/design/README.md
-    - [ ] logging-admin-service/design/README.md
-    - [ ] social-groups-service/design/README.md
-    - [ ] spring-cloud-gateway/design/README.md
-    - [ ] tcp-proxy-service/design/README.md
-    - [ ] world-management-service/design/README.md
+    - [x] automation-scripting-service/design/README.md
+    - [x] entity-management-service/design/README.md
+    - [x] game-design-service/design/README.md
+    - [x] game-logic-service/design/README.md
+    - [x] game-session-service/design/README.md
+    - [x] logging-admin-service/design/README.md
+    - [x] social-groups-service/design/README.md
+    - [x] spring-cloud-gateway/design/README.md
+    - [x] tcp-proxy-service/design/README.md
+    - [x] world-management-service/design/README.md
     - [ ] Summarize controller routes in each service `design/README.md`
     - [ ] Include example request/response payloads
     - [ ] Provide sample cURL commands for REST create endpoints
@@ -474,12 +475,12 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
-  - [ ] Add gRPC `PaymentService` endpoints for billing operations
+  - [x] Add gRPC `PaymentService` endpoints for billing operations
   - [ ] Create `PaymentController` REST endpoints
     - [ ] Provide endpoints for payment intents and subscriptions
-  - [ ] Define proto contracts for payment and subscription flows
-  - [ ] Add Flyway migration scripts for payment tables
-  - [ ] Document monetization design in `account-service/design/README.md`
+  - [x] Define proto contracts for payment and subscription flows
+  - [x] Add Flyway migration scripts for payment tables
+  - [x] Document monetization design in `account-service/design/README.md`
   - [ ] Implement virtual currency system (game-specific currencies)
   - [ ] Implement premium hosting tiers & features for game creators
   - [ ] Implement platform-controlled ad system (for free-to-play games)

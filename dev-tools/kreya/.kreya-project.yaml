@@ -1,0 +1,22 @@
+version: 1
+name: FireMUD
+protoRoots:
+  - ../../protos
+endpoints:
+  - name: Local
+    host: localhost
+    port: 6565
+services:
+  - name: AccountService
+    protoFile: account/v1/account_service.proto
+    package: account.v1
+    endpoint: Local
+    jwtMetadata: true
+  - name: EntityService
+    protoFile: entity-management/v1/entity_management_service.proto
+    package: entity_management.v1
+    endpoint: Local
+  - name: PlayerService
+    protoFile: game-session/v1/game_session_service.proto
+    package: game_session.v1
+    endpoint: Local

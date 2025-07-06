@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: game-logic-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:

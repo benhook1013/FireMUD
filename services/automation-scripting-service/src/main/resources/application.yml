@@ -3,6 +3,8 @@ spring:
     active: dev
   application:
     name: automation-scripting-service
+  flyway:
+    enabled: true
 
 management:
   endpoints:
