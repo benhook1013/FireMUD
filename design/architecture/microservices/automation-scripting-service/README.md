@@ -30,10 +30,10 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 ## Key Features
 
-- Scriptable quests and event triggers.
-- Persistent NPC memory and dynamic reactions.
-- Timers and delayed actions for asynchronous events.
-- On-demand AI execution to reduce CPU load.
+- Scriptable quests and event triggers  
+- Persistent NPC memory and dynamic reactions  
+- Timers and delayed actions for asynchronous events  
+- Tick-based AI execution for efficient CPU usage and fair scheduling — AI logic runs during tick cycles only when triggered by events, avoiding constant background processing
 
 ### Data Model
 
@@ -105,6 +105,7 @@ stubs.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Web UI for creating and testing scripts.
