@@ -166,11 +166,11 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Convert React frontend to TypeScript for type safety
 - [ ] Run ESLint and Prettier checks in GitHub Actions
 
-### ✅ Common Tasks Across All Microservices (Non-Infrastructure)
+### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
-The following tasks are applicable to all microservices (be aware some may not apply to Spring Cloud Gateway and TCP Proxy Service).
+The following tasks are shared across most microservices. Gateway and TCP Proxy follow a reduced subset but still implement several of these steps.
 
-_Applies to the following services:_
+_Applies to:_
 
 - Account Service  
 - Game Session Service  
@@ -181,113 +181,144 @@ _Applies to the following services:_
 - Game Design Service  
 - Social & Groups Service  
 - Logging & Admin Service  
-- Spring Cloud Gateway  
-- TCP Proxy Service
+- Spring Cloud Gateway (⚠️ partial)  
+- TCP Proxy Service (⚠️ partial)
 
-#### 🎯 Project Setup and Structure
-- Provide baseline `Dockerfile` and Gradle image build tasks
-- Create Gradle modules with placeholder source
-- Add Spring Boot skeleton with `PingController` and gRPC `PingService`
-- Add base Spring Boot application and `application.yml`
-- Configure `.env.sample`, Redis, and PostgreSQL in `docker-compose.yml`
-- Include minimal `README.md` with local setup and design links
-- Define Kubernetes Deployment and Service manifests
-- Configure Docker Compose health checks for PostgreSQL, Redis, and all services
+---
 
-#### 🛠️ Application and Domain Setup
-- Define JPA entities, repositories, and MapStruct mappers
-- Implement basic JPA entities and repositories for core domain objects
-- Generate skeleton REST controllers and gRPC service stubs
-- Provide REST endpoints (CRUD or domain-specific)
-- Define and expose gRPC proto contracts
-- Use shared DTOs and mappers (e.g. MapStruct)
-- Configure Flyway migrations for the initial schema
-- Enable `/actuator/health` endpoints using `spring-boot-starter-actuator`
-- Configure Kubernetes readiness and liveness probes
-- Validate Redis usage aligns with tick-safe key naming (`tick:*`, `timer:*`, etc.)
-- Use Redis utilities from `firemud-common` for all ephemeral state access
-- Avoid in-service caching for gameplay state; Redis should be the sole coordination layer
+#### 📦 Project Setup & Bootstrapping
+- [ ] Create Gradle module with `java` or `java-library` plugin
+- [ ] Add baseline source structure and Spring Boot entrypoint
+- [ ] Implement basic `PingController` and gRPC `PingService`
+- [ ] Define Dockerfile and Gradle image build
+- [ ] Add `.env.sample` and Docker Compose integration (PostgreSQL, Redis)
+- [ ] Add minimal `README.md` with local setup instructions and design links
+- [ ] Configure Docker Compose health checks for all services
+- [ ] Define Kubernetes `Deployment` and `Service` manifests
+- [ ] Add Kubernetes readiness and liveness probes
+- [ ] Expose `/actuator/health` endpoint with Spring Boot Actuator
 
-#### 🔒 Authentication & Authorization
-- Integrate JWT-based authentication and scoped role validation (if applicable)
-- Use shared security utilities from `firemud-common`
-- Configure gRPC with mTLS certificates for inter-service calls
-- Use Kubernetes `cert-manager` for cert management
-- Rely on Game Session Service for gameplay session enforcement
-- Ensure meta/control services validate roles; gameplay services skip JWT validation
-- Add integration test for role refresh and mid-session updates via Game Session
+---
+
+#### 🧱 Domain Modeling & API Exposure
+- [ ] Define JPA entities and repositories using Spring Data
+- [ ] Add MapStruct mappers for DTO conversion
+- [ ] Generate initial REST controllers (CRUD or domain-specific)
+- [ ] Define and implement gRPC service stubs with explicit `Request`/`Response` messages
+- [ ] Version all `.proto` files (`package service.v1`) and place under `protos/{service}/v1`
+- [ ] Use shared types (e.g., `ErrorDetail`, `EntityId`) from `protos/shared/`
+- [ ] Lint `.proto` files with `buf` and enforce schema compatibility in CI
+- [ ] Add contract smoke tests for gRPC (`grpcurl`) and REST (`curl`)
+
+---
+
+#### 🔒 Security & Authentication
+- [ ] Integrate JWT-based authentication using helpers from `firemud-common`
+- [ ] Validate `globalRoles` and `scopedRoles` where applicable
+- [ ] Skip token validation in gameplay services — trust Game Session Service instead
+- [ ] Configure mutual TLS (mTLS) for gRPC between internal services
+- [ ] Manage certificates via Kubernetes `cert-manager`
+- [ ] Add integration test for mid-session role refresh via Game Session Service
+
+---
 
 #### 🔁 Inter-Service Communication
-- Define gRPC interfaces and message contracts
-- Use shared protobufs for common types
-- Validate requests and map errors to gRPC status codes
-- Generate gRPC stubs via Gradle and include in CI
-- Integrate proto generation into CI workflow
-- Add structured error responses using `shared/ErrorDetail.proto`
-- Lint proto files with `buf` and enforce versioning (`package account.v1`, etc.)
+- [ ] Define clean gRPC service contracts and avoid vague method names
+- [ ] Use `firemud-common` protobuf types for shared contracts
+- [ ] Generate gRPC stubs using Gradle plugin and wire into source set
+- [ ] Include generated sources in build and CI
+- [ ] Implement structured error mapping with `ErrorDetail`
+- [ ] Include `buf breaking` tests in CI for backward compatibility
 
-#### 📦 Common Library Usage
-- Depend on `firemud-common` for:
-  - DTOs and error wrappers (`ApiResponse`, `ErrorDetail`)
-  - Logging, security, and configuration utilities
-  - Centralized exception handling and service discovery helpers
-  - Base Spring config classes for PostgreSQL/Redis
-- Replace inline config or boilerplate with `firemud-common` starter classes
-- Add usage examples to `README`
+---
 
-#### 🔁 Saga and Workflow Participation
-- Participate in Saga orchestration where required
-- Handle retries, compensations, and workflow coordination
-- Use `firemud-common` Saga helpers for registration, retry logic, and compensation
-- Emit saga metrics and log identifiers for observability
-- Annotate `design/README.md` with saga workflows each service participates in
+#### 📚 Common Library Integration
+- [ ] Depend on `firemud-common` via Gradle
+- [ ] Use shared classes for:
+  - DTOs (`ApiResponse<T>`, `ResultStatus`)
+  - Error handling (`ErrorDetail`, `GlobalExceptionHandler`)
+  - PostgreSQL and Redis config
+  - Logging and correlation ID propagation
+  - gRPC interceptors for tracing and auth
+- [ ] Replace boilerplate config with autoconfig starters from common lib
+- [ ] Add examples of `firemud-common` usage in service README
 
-#### 🧪 Testing and Validation
-- Add unit tests for `PingController` startup check and health checks
-- Plan integration tests (via Testcontainers) for service collaboration
-- Establish base integration test setup using Spring Boot Test and Testcontainers
-- Add optional dev data seeding scripts for local testing
-- Include static analysis with Spotless, Checkstyle, and SpotBugs
-- Add code coverage (e.g., JaCoCo)
-- Validate gRPC and REST contracts with `grpcurl` and `curl` smoke tests
-- Add Redis connectivity tests to detect config issues early
+---
 
-#### 🚀 CI/CD and Automation
-- Automate Docker image builds and publish in CI
-- Lint proto files and check OpenAPI consistency
-- Integrate with markdownlint and pre-commit hooks
-- Add pre-commit hooks for Spotless, Checkstyle, markdownlint, and static analysis tools
-- Configure Trivy for container and dependency scanning
-- Auto-generate release notes and version bumps
-- Schedule continuous security scans for dependencies and base images
-- Include proto compatibility tests in CI (e.g., `buf breaking`)
+#### 🔄 Saga Participation (Optional)
+- [ ] Use `firemud-common` saga orchestration helpers for workflow steps
+- [ ] Handle retries, rollback, and compensation via provided API
+- [ ] Emit saga metrics and correlation IDs
+- [ ] Annotate saga participation in `design/README.md`
 
-#### 📈 Observability and Monitoring
-- Configure Micrometer with Prometheus registry
-- Enable OpenTelemetry tracing via `spring-boot-starter-otel`
-- Propagate tracing context across gRPC and REST calls
-- Use shared logging interceptor to inject trace IDs and correlation IDs
-- Emit service-level tick participation and Redis command metrics (where applicable)
+---
 
-#### 📚 Documentation and API References
-- Add `design/README.md`:
-  - List REST endpoints and gRPC methods
-  - Include sample cURL and `grpcurl` commands
-  - Link to `.proto` files and design notes
-- Summarize controller routes and include sample request/response payloads
-- Document endpoints and proto contracts in each service README
-- Generate OpenAPI specs and publish Swagger UI
-- Provide interactive API explorer (optional)
-- Note Redis keys and usage patterns per service (if applicable)
-- List saga workflows the service participates in
-- Document environment variable requirements and configuration structure
+#### 🔑 Redis Integration (If Applicable)
+- [ ] Use Redis exclusively for transient, gameplay-related state
+- [ ] Use `firemud-common` Redis connector utilities
+- [ ] Follow tick-safe key conventions: `tick:*`, `timer:*`, `session:*`
+- [ ] Avoid in-service caching for state handled by Redis
+- [ ] Emit service-level tick and Redis command metrics
 
-#### 🔧 Notes
-- Game-specific services may define extra endpoints or logic, but all share the common bootstrapping, config, proto, CI, and API doc structure.
-- Spring Cloud Gateway and TCP Proxy Service are infrastructure layers and follow modified rules, though they still:
-  - Use gRPC for route management / Telnet bridging
-  - Expose basic health checks
-  - Are defined in `docker-compose`, Kubernetes, and Helm setup
+---
+
+#### 🧪 Testing & Quality Gates
+- [ ] Add unit tests for REST, gRPC, and startup behavior
+- [ ] Use Spring Boot Test and Testcontainers for integration testing
+- [ ] Include optional dev data seeding for local workflows
+- [ ] Add Redis connection tests to catch misconfigurations early
+- [ ] Enable static analysis:
+  - Spotless for formatting
+  - Checkstyle for style rules
+  - SpotBugs for runtime defects
+- [ ] Enable code coverage (e.g., JaCoCo)
+
+---
+
+#### 🚀 CI/CD & Developer Automation
+- [ ] Automate Docker image builds and registry pushes
+- [ ] Add CI steps for:
+  - Protobuf generation and schema checking
+  - Proto linting and compatibility (`buf`)
+  - Static analysis
+- [ ] Add pre-commit hooks for:
+  - Spotless
+  - Checkstyle
+  - markdownlint
+  - Buf or proto consistency
+- [ ] Use Trivy for container and dependency vulnerability scanning
+- [ ] Schedule recurring security scans in CI
+- [ ] Auto-generate release notes and semantic version bumps
+
+---
+
+#### 📈 Observability & Tracing
+- [ ] Use Micrometer for Prometheus-compatible metrics
+- [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
+- [ ] Use shared gRPC interceptor to inject `traceId` and `correlationId`
+- [ ] Propagate tracing context across service boundaries
+
+---
+
+#### 📖 Documentation & API Visibility
+- [ ] Create `design/README.md` with:
+  - gRPC method list
+  - REST endpoint summaries
+  - Sample `curl` and `grpcurl` invocations
+  - Redis key usage (if applicable)
+  - Saga participation details (if applicable)
+- [ ] Generate and publish OpenAPI specs (if REST used)
+- [ ] Optionally provide Swagger UI or interactive API explorer
+- [ ] Document required environment variables and config structure
+
+---
+
+#### 🧩 Notes
+- Game-specific services may define additional commands or entity behavior, but all follow the same project layout, config model, and deployment conventions.
+- Spring Cloud Gateway and TCP Proxy implement a reduced subset:
+  - Expose `/actuator/health`
+  - Bridge traffic via gRPC or WebSocket
+  - Use shared gRPC interceptors and Redis helpers where relevant
 
 ---
 
