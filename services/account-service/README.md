@@ -16,6 +16,6 @@ Run the service only:
 Or start all services:
 
 ```bash
-docker compose up --build
+./gradlew devUp
 ```
 
