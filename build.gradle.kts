@@ -24,7 +24,6 @@ allprojects {
 
 subprojects {
     apply(plugin = "java")
-    apply(plugin = "com.google.protobuf")
     apply(plugin = "com.diffplug.spotless")
     apply(plugin = "checkstyle")
     apply(plugin = "com.github.spotbugs")
