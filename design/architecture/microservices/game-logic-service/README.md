@@ -19,7 +19,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Gameplay rules are imported from the Game Design Service when a version is
   published; the runtime service does not query design databases.
 - Integrates with the tick system described in [Tick System and Runtime Design](../system-architecture-ticks.md) to ensure deterministic command ordering.
-- When combat or trade spans multiple services, compensating actions are coordinated via the Saga model in [Transaction Strategies](../system-architecture-transactions.md).
+- Cross-service combat or trade operations run within ticks and rely on Redis-based rollback, not sagas. See [Transaction Strategies](../system-architecture-transactions.md).
 - All commands are scoped by `tenantId` so that rules execute only against data
   for the active game instance. The Game Session Service passes this context on
   every request. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).

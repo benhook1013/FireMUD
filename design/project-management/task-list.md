@@ -291,6 +291,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create `WorldController` REST endpoints
     - [ ] Expose POST `/rooms` and `/regions` for world creation
   - [ ] Add gRPC WorldManagementService with proto contract
+  - [ ] Use saga orchestrator for world creation workflow
   - [ ] Provide tools to fine-tune procedural generation rules
   - [ ] Support multi-server world shards
 
@@ -420,6 +421,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Create `SocialController` REST endpoints
     - [ ] Add APIs for guild creation and friend requests
   - [ ] Add gRPC `SocialService` for guild and friend management
+  - [ ] Use saga orchestrator for guild creation workflow
 
 ---
 
@@ -484,6 +486,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
   - [ ] Implement integration tests for multi-service interactions
   - [ ] Add integration tests for each service's create endpoints
+  - [ ] Validate saga workflows for account and world creation
   - [ ] Perform API testing with Postman, RestAssured
 
 - [ ] **Conduct Load & Security Testing**
