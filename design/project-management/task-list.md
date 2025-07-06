@@ -216,6 +216,8 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] world-management-service/design/README.md
     - [ ] Summarize controller routes in each service `design/README.md`
     - [ ] Include example request/response payloads
+    - [ ] Provide sample cURL commands for REST create endpoints
+    - [ ] Provide example `grpcurl` commands for gRPC create methods
     - [ ] Link to corresponding proto files
     - [ ] Generate OpenAPI specs and publish Swagger UI
 
