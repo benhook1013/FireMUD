@@ -37,6 +37,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [x] Add service-level design README links to central architecture docs
+  - [ ] Publish a `CODE_OF_CONDUCT.md` outlining community expectations
   - [ ] Create issue template and maintain backlog for tasks and bugs
   - [ ] Provide contributor guide with local setup commands and code review expectations
   - [ ] Document environment variables and secrets management strategy
@@ -56,6 +57,24 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] world-management-service
   - [x] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
     - [x] Document network policy usage in architecture docs
+- [ ] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)  
+  > ⚠️ Note: These Terraform files are **for reference only** and **will not be used yet**
+- [ ] Write sample Terraform code to:
+  - [ ] Define `firemud` namespace and basic RBAC
+  - [ ] Optionally configure local Redis or Helm releases
+- [ ] Prepare Helm charts for FireMUD services:
+  - [ ] Game Session Service
+  - [ ] Redis (clustered, tick-safe config)
+  - [ ] Account, Entity, and World services
+  - [ ] TCP Proxy and Spring Gateway
+- [ ] Add example `values.yaml` files for local and dev environments
+- [ ] Support Helm-based config overrides for:
+  - [ ] Redis connection info
+  - [ ] Tick interval
+  - [ ] Runtime feature flags
+- [ ] Document deployment steps:
+  - [ ] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
+  - [ ] Reference Terraform files as optional future cloud setup
 
 ---
 
@@ -181,6 +200,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [x] Enable Spotless plugin for code formatting
   - [x] Add GitHub Actions workflow to build and publish Docker images for each service
+  - [ ] Provision ephemeral preview environments for pull requests
   - [x] Integrate `markdownlint` in CI build
   - [x] Add pre-commit hooks for Spotless and markdownlint
   - [ ] Add pre-commit hooks for static analysis tools (Checkstyle, SpotBugs)
@@ -192,11 +212,13 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Automate release notes generation with GitHub Actions
   - [x] Schedule continuous security scanning for dependencies and container images
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
+  - [ ] Expand integration tests to cover cross-service workflows using Testcontainers
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
   - [ ] Create ERD diagrams and baseline Flyway scripts for all services
     - [ ] Produce entity relationship diagrams for initial domain models
+  - [ ] Automate architecture and ERD diagram generation in CI
     - [x] Add `V1__init.sql` migrations for each service database
       - [x] account-service
       - [x] automation-scripting-service
