@@ -7,8 +7,10 @@ import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
 public interface RevisionMapper {
-    @Mapping(target = "gameId", expression = "java(entity.getGame() != null ? entity.getGame().getId() : null)")
-    RevisionDto toDto(Revision entity);
+  @Mapping(
+      target = "gameId",
+      expression = "java(entity.getGame() != null ? entity.getGame().getId() : null)")
+  RevisionDto toDto(Revision entity);
 
-    Revision toEntity(RevisionDto dto);
+  Revision toEntity(RevisionDto dto);
 }

@@ -6,6 +6,7 @@ import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
 public interface NpcMapper {
-    NpcDto toDto(Npc entity);
-    Npc toEntity(NpcDto dto);
+  NpcDto toDto(Npc entity);
+
+  Npc toEntity(NpcDto dto);
 }

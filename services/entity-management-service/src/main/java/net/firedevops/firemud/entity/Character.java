@@ -7,18 +7,18 @@ import lombok.Data;
 @Entity
 @Table(name = "characters")
 public class Character {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(nullable = false)
-    private Long tenantId;
+  @Column(nullable = false)
+  private Long tenantId;
 
-    @Column(nullable = false)
-    private Long accountId;
+  @Column(nullable = false)
+  private Long accountId;
 
-    @Column(nullable = false, length = 100)
-    private String name;
+  @Column(nullable = false, length = 100)
+  private String name;
 
-    private int level;
+  private int level;
 }

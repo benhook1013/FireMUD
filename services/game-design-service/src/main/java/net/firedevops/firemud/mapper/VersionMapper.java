@@ -7,8 +7,10 @@ import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
 public interface VersionMapper {
-    @Mapping(target = "gameId", expression = "java(entity.getGame() != null ? entity.getGame().getId() : null)")
-    VersionDto toDto(Version entity);
+  @Mapping(
+      target = "gameId",
+      expression = "java(entity.getGame() != null ? entity.getGame().getId() : null)")
+  VersionDto toDto(Version entity);
 
-    Version toEntity(VersionDto dto);
+  Version toEntity(VersionDto dto);
 }

@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 public class AutomationScriptingServiceApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(AutomationScriptingServiceApplication.class, args);
-    }
+  public static void main(String[] args) {
+    SpringApplication.run(AutomationScriptingServiceApplication.class, args);
+  }
 }

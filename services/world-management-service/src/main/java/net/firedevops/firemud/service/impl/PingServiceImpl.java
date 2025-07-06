@@ -7,11 +7,11 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class PingServiceImpl implements PingService {
-    private static final Logger logger = LoggingUtil.getLogger(PingServiceImpl.class);
+  private static final Logger logger = LoggingUtil.getLogger(PingServiceImpl.class);
 
-    @Override
-    public String ping() {
-        logger.info("Ping called");
-        return "pong";
-    }
+  @Override
+  public String ping() {
+    logger.info("Ping called");
+    return "pong";
+  }
 }

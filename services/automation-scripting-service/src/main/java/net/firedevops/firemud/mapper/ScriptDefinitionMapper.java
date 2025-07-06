@@ -6,6 +6,7 @@ import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
 public interface ScriptDefinitionMapper {
-    ScriptDefinitionDto toDto(ScriptDefinition entity);
-    ScriptDefinition toEntity(ScriptDefinitionDto dto);
+  ScriptDefinitionDto toDto(ScriptDefinition entity);
+
+  ScriptDefinition toEntity(ScriptDefinitionDto dto);
 }
