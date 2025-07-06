@@ -1,0 +1,12 @@
+severity:
+  - CRITICAL
+  - HIGH
+ignore-unfixed: true
+format: table
+skip-dirs:
+  - node_modules
+  - build
+  - dist
+  - .gradle
+  - .git
+exit-code: 1
