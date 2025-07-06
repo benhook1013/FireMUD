@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: "gradle"
-    directory: "/"  # root where build.gradle exists
+    directory: "/"
     schedule:
       interval: "weekly"
       day: "sunday"
@@ -9,7 +9,7 @@ updates:
       timezone: "Pacific/Auckland"
 
   - package-ecosystem: "npm"
-    directory: "/frontend"  # adjust if your package.json is elsewhere
+    directory: "/frontend"
     schedule:
       interval: "weekly"
       day: "sunday"
