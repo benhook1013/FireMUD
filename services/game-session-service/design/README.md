@@ -11,9 +11,18 @@ This stub exists to make the design easy to find from the service source tree.
 ### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
+- `POST /sessions` – create a new game session from a published version.
 
 ```bash
 curl http://localhost:8080/ping
+```
+
+To start a session via REST:
+
+```bash
+curl -X POST http://localhost:8080/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":"demo","versionId":1}'
 ```
 
 ### gRPC
@@ -25,4 +34,11 @@ curl http://localhost:8080/ping
 
 ```bash
 grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping
+```
+
+Start a session via gRPC:
+
+```bash
+grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
+  localhost:6565 game_session.v1.GameSessionService/StartSession
 ```

@@ -122,7 +122,8 @@ manual steps.
 ## ➕ Optional Add-Ons
 
 - **Nightly builds or scheduled jobs** for integration testing.
-- **Security scanning** using tools like Trivy.
+- **Security scanning** using tools like Trivy. A scheduled workflow runs
+  weekly to scan dependencies and container images for vulnerabilities.
 - **Notifications** to Slack or email when workflows fail.
 
 These can be added as separate workflows or additional jobs in the main pipeline.

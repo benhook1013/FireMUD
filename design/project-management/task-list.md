@@ -189,9 +189,8 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Integrate SpotBugs for static bug detection
     - [x] Generate JaCoCo coverage reports in CI
   - [x] Integrate container and dependency scanning (Trivy) in CI
-  - [ ] Automate release notes generation with GitHub Actions
-  - [ ] Schedule continuous security scanning for dependencies and container images
-  - [ ] Define schedule for dependency updates and routine security scans
+  - [x] Automate release notes generation with GitHub Actions
+  - [x] Schedule continuous security scanning for dependencies and container images
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
@@ -211,7 +210,7 @@ This checklist is structured to **build foundational features first**, followed 
       - [x] tcp-proxy-service
       - [x] world-management-service
     - [x] Configure Flyway plugin in each service build file
-    - [ ] Verify migrations run on startup
+    - [x] Verify migrations run on startup
   - [ ] Provide optional dev data seeding scripts for each service
   - [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
