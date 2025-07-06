@@ -353,11 +353,6 @@ _Applies to:_
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
-  - [ ] Create `AccountController` REST endpoints
-    - [ ] Provide POST `/accounts` and `/profiles` for account creation flows
-  - [x] Create JPA repositories for `Account` and `Profile`
-  - [ ] Add gRPC AccountService with proto contract
-  - [ ] Expose JWKS endpoint for token verification
   - [ ] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
   - [ ] Add optional 2FA for admin and moderator roles
@@ -375,17 +370,12 @@ _Applies to:_
   - [ ] Plan for cross-region sharding and session handoff
   - [ ] Implement `game_manifest` table for version coordination
   - [ ] Emit gameplay analytics for operators
-  - [ ] Create `GameSessionController` REST endpoints
-    - [ ] Add endpoint to create and start new game sessions
-  - [ ] Add gRPC GameSessionService with proto contract
+
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
-- [ ] Use saga orchestrator for game publishing workflow
-- [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
-- [ ] Create `GameDesignController` REST endpoints for design CRUD operations
-    - [ ] Support creation of new games, worlds, and abilities
-- [x] Create gRPC GameDesignService and design-time database models
+  - [ ] Use saga orchestrator for game publishing workflow
+  - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
@@ -393,8 +383,6 @@ _Applies to:_
   - [ ] Configure SMTP provider and test templates
   - [ ] Document email and notification design in `account-service/design/README.md`
   - [ ] Add asynchronous NotificationService components with gRPC endpoints
-  - [ ] Create `NotificationController` REST endpoints
-    - [ ] Provide APIs for sending in-game notifications to accounts
 
 ---
 
@@ -408,9 +396,6 @@ _Applies to:_
   - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
-  - [ ] Create `WorldController` REST endpoints
-    - [ ] Expose POST `/rooms` and `/regions` for world creation
-  - [ ] Add gRPC WorldManagementService with proto contract
   - [ ] Use saga orchestrator for world creation workflow
   - [ ] Provide tools to fine-tune procedural generation rules
   - [ ] Support multi-server world shards
@@ -422,9 +407,6 @@ _Applies to:_
   - [ ] Implement entity stats and progression tracking
   - [ ] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
-  - [ ] Create `EntityController` REST endpoints
-    - [ ] Provide creation APIs for characters, items, and NPCs
-  - [ ] Add gRPC EntityManagementService with proto contract
   - [ ] Implement entity graph caching for fast lookups
   - [ ] Support complex crafting recipes
 
@@ -445,9 +427,6 @@ _Applies to:_
   - [ ] Implement roleplay actions & emotes
   - [ ] Implement event-driven logic processing (triggers, world events)
   - [ ] Implement action aliases system (custom command mappings)
-  - [ ] Create `GameLogicController` REST endpoints
-    - [ ] Allow creation of custom commands and abilities
-  - [ ] Add gRPC GameLogicService with proto contract
   - [ ] Add scripting hooks for custom actions
   - [ ] Optimize performance for large-scale battles
 
@@ -461,15 +440,11 @@ _Applies to:_
   - [ ] Implement NPC aggression states (hostile, neutral, passive)
   - [ ] Implement NPC fleeing/surrender logic
   - [ ] Implement NPC formations & squad AI
-  - [ ] Add gRPC AutomationService with script execution API
-  - [ ] Create `ScriptingController` REST endpoints
-    - [ ] Upload and manage script definitions via REST
   - [ ] Create sandboxed script runtime
   - [ ] Support hot reloading of scripts published by the Game Design Service
   - [ ] Provide web UI for script creation and testing
   - [ ] Add advanced AI modules for complex behaviors
   - [ ] Enforce fairness quotas and per-script resource limits
-
   - [ ] Define Telnet bridge gRPC APIs for TCP Proxy Service
 
 - [ ] **Develop Trading & Economy System**
