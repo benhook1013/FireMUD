@@ -71,8 +71,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Include `.env.sample` with default environment variables
   - [x] Document connection settings in `DEVELOPER_SETUP.md`
   - [x] Create Docker volumes for persistent databases
-  - [ ] Verify services start via `docker compose up`
-  - [ ] Confirm each service logs `Started` without errors
+  - [x] Verify services start via `docker compose up`
+  - [x] Confirm each service logs `Started` without errors
 
 ### Behavior and Orchestration Planning
 - [x] Define core service responsibilities and runtime behaviors
