@@ -37,6 +37,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [x] Add service-level design README links to central architecture docs
+  - [ ] Create issue template and maintain backlog for tasks and bugs
+  - [ ] Provide contributor guide with local setup commands and code review expectations
+  - [ ] Document environment variables and secrets management strategy
 - [x] Expand `docker-compose.yml` to include all services
 - [x] Create baseline Kubernetes manifests or Helm charts for deployment
   - [x] Add Deployment and Service YAML manifests for each microservice
@@ -133,6 +136,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
+  - [ ] Configure centralized log aggregation dashboards early
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
   - [ ] Implement Spring Security configuration for each microservice using common components
@@ -157,6 +161,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Configure Kubernetes readiness and liveness probes
 
   - [ ] Add metrics and tracing instrumentation for all services
+    - [ ] Add distributed tracing to track requests across services
     - [ ] Configure Micrometer with Prometheus registry
       - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
       - [ ] Propagate tracing context across gRPC and REST calls
@@ -178,6 +183,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add GitHub Actions workflow to build and publish Docker images for each service
   - [x] Integrate `markdownlint` in CI build
   - [x] Add pre-commit hooks for Spotless and markdownlint
+  - [ ] Add pre-commit hooks for static analysis tools (Checkstyle, SpotBugs)
   - [x] Configure static analysis tools
     - [x] Add Checkstyle rules for code style enforcement
     - [x] Integrate SpotBugs for static bug detection
@@ -185,6 +191,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Integrate container and dependency scanning (Trivy) in CI
   - [ ] Automate release notes generation with GitHub Actions
   - [ ] Schedule continuous security scanning for dependencies and container images
+  - [ ] Define schedule for dependency updates and routine security scans
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
