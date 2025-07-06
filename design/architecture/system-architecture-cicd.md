@@ -17,7 +17,7 @@ To save on cloud costs, this pipeline only builds and deploys services. Contribu
 
 ## 🛠️ Workflow Structure
 
-Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch:
+Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch. A separate `docker-images.yml` workflow builds and publishes Docker images for all services using the `buildDockerImages` Gradle task:
 
 ```yaml
 name: CI

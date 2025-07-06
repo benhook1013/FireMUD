@@ -14,7 +14,12 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '20'
       - name: Generate Wrapper
         run: gradle wrapper --gradle-version 8.5 --distribution-type bin
       - name: Build and Test
         run: ./gradlew build
+      - name: Markdown Lint
+        run: ./gradlew lintMarkdown

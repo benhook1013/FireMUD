@@ -73,3 +73,19 @@ tasks.register<NpxTask>("lintMarkdownFix") {
 tasks.named("check") {
     dependsOn("lintMarkdown")
 }
+
+tasks.register("buildDockerImages") {
+    dependsOn(
+        ":account-service:bootBuildImage",
+        ":automation-scripting-service:bootBuildImage",
+        ":entity-management-service:bootBuildImage",
+        ":game-design-service:bootBuildImage",
+        ":game-logic-service:bootBuildImage",
+        ":game-session-service:bootBuildImage",
+        ":logging-admin-service:bootBuildImage",
+        ":social-groups-service:bootBuildImage",
+        ":spring-cloud-gateway:bootBuildImage",
+        ":tcp-proxy-service:bootBuildImage",
+        ":world-management-service:bootBuildImage"
+    )
+}
