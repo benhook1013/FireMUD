@@ -1,0 +1,6 @@
+redis:
+  host: redis.dev
+  port: 6379
+tickInterval: 200
+features:
+  enableFoo: false

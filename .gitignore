@@ -19,3 +19,6 @@ gradlew
 gradlew.bat
 gradle/wrapper/gradle-wrapper.jar
 **/build/
+# Terraform
+**/.terraform/
+*.tfstate

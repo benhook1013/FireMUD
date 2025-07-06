@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-session-service
+spec:
+  selector:
+    matchLabels:
+      app: game-session-service
+  template:
+    metadata:
+      labels:
+        app: game-session-service
+    spec:
+      containers:
+        - name: game-session-service
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: 8080
+          env:
+            {{- range $key, $value := .Values.extraEnv }}
+            - name: {{ $key }}
+              value: "{{ $value }}"
+            {{- end }}

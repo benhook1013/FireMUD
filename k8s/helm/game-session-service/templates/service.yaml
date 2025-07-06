@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-session-service
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: game-session-service
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 8080
