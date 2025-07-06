@@ -183,6 +183,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Integrate SpotBugs for static bug detection
     - [x] Generate JaCoCo coverage reports in CI
   - [x] Integrate container and dependency scanning (Trivy) in CI
+  - [ ] Automate release notes generation with GitHub Actions
   - [ ] Schedule continuous security scanning for dependencies and container images
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
   - [ ] Finalize API schemas from concrete gameplay flows
