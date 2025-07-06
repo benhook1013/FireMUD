@@ -141,15 +141,15 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] Game Session Service proto definitions
     - [x] World Management Service proto definitions
     - [x] Entity Management Service proto definitions
-    - [ ] Game Logic Service proto definitions
-    - [ ] Automation & Scripting Service proto definitions
+    - [x] Game Logic Service proto definitions
+    - [x] Automation & Scripting Service proto definitions
     - [x] Game Design Service proto definitions
     - [x] Social & Groups Service proto definitions
     - [x] Logging & Admin Service proto definitions
     - [ ] Payment & Monetization proto definitions (Account Service)
-    - [ ] TCP Proxy Service proto definitions
-    - [ ] Spring Cloud Gateway proto definitions
-    - [ ] Shared common types
+    - [x] TCP Proxy Service proto definitions
+    - [x] Spring Cloud Gateway proto definitions
+    - [x] Shared common types
   - [x] Integrate proto generation into CI workflow
   - [x] Expose `/actuator/health` endpoints for service monitoring
     - [x] Add `spring-boot-starter-actuator` dependency to each service
@@ -206,14 +206,14 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Document REST endpoints and gRPC method flows in each microservice README
     - [x] account-service/design/README.md
     - [x] automation-scripting-service/design/README.md
-    - [ ] entity-management-service/design/README.md
-    - [ ] game-design-service/design/README.md
+    - [x] entity-management-service/design/README.md
+    - [x] game-design-service/design/README.md
     - [x] game-logic-service/design/README.md
-    - [ ] game-session-service/design/README.md
-    - [ ] logging-admin-service/design/README.md
-    - [ ] social-groups-service/design/README.md
-    - [ ] spring-cloud-gateway/design/README.md
-    - [ ] tcp-proxy-service/design/README.md
+    - [x] game-session-service/design/README.md
+    - [x] logging-admin-service/design/README.md
+    - [x] social-groups-service/design/README.md
+    - [x] spring-cloud-gateway/design/README.md
+    - [x] tcp-proxy-service/design/README.md
     - [x] world-management-service/design/README.md
     - [ ] Summarize controller routes in each service `design/README.md`
     - [ ] Include example request/response payloads
