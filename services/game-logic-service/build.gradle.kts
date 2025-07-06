@@ -1,14 +1,9 @@
 import com.google.protobuf.gradle.*
 
 plugins {
-    java
     id("org.springframework.boot") version "3.5.3"
     id("org.flywaydb.flyway") version "11.10.1"
     id("com.google.protobuf")
-}
-
-repositories {
-    mavenCentral()
 }
 
 dependencies {
@@ -23,7 +18,7 @@ dependencies {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.25.3"
+        artifact = "com.google.protobuf:protoc:4.31.1"
     }
     plugins {
         id("grpc") {

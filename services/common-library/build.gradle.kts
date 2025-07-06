@@ -3,9 +3,6 @@ plugins {
     id("org.springframework.boot") version "3.5.3" apply false
 }
 
-repositories {
-    mavenCentral()
-}
 
 dependencies {
     implementation("org.mapstruct:mapstruct:1.5.5.Final")
