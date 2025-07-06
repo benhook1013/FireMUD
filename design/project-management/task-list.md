@@ -57,7 +57,24 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] world-management-service
   - [x] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
     - [x] Document network policy usage in architecture docs
-  - [ ] Provide infrastructure-as-code (Terraform or Helm) for replicating Kubernetes environments
+- [ ] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)  
+  > ⚠️ Note: These Terraform files are **for reference only** and **will not be used yet**
+- [ ] Write sample Terraform code to:
+  - [ ] Define `firemud` namespace and basic RBAC
+  - [ ] Optionally configure local Redis or Helm releases
+- [ ] Prepare Helm charts for FireMUD services:
+  - [ ] Game Session Service
+  - [ ] Redis (clustered, tick-safe config)
+  - [ ] Account, Entity, and World services
+  - [ ] TCP Proxy and Spring Gateway
+- [ ] Add example `values.yaml` files for local and dev environments
+- [ ] Support Helm-based config overrides for:
+  - [ ] Redis connection info
+  - [ ] Tick interval
+  - [ ] Runtime feature flags
+- [ ] Document deployment steps:
+  - [ ] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
+  - [ ] Reference Terraform files as optional future cloud setup
 
 ---
 
