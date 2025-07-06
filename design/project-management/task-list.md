@@ -83,6 +83,7 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Identify the data each service needs to handle those flows
 - [x] Derive minimal data models and proto schemas based on real usage
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
+- [ ] Document Redis key naming conventions and locking scheme
 
 - [x] Create Gradle modules for all services with placeholder sources
 - [x] Add base Spring Boot Application classes for each service
@@ -244,6 +245,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Support multi-tenancy for hosted games
   - [ ] Implement tick orchestration using Redis for command queues
   - [ ] Implement Lua-based staging, commit, and rollback scripts for tick transactions
+  - [ ] Implement distributed lock acquisition in Redis for tick updates
+  - [ ] Implement tick replay and crash recovery logic
   - [ ] Persist session state in Redis for reconnect recovery
   - [ ] Enforce single-session control per character (session takeover on new login)
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
