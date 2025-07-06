@@ -10,6 +10,7 @@ This document describes the basic continuous integration and deployment strategy
 - **Build Docker images** and push them to a container registry.
 - **Deploy to Kubernetes** when changes are merged into designated branches (e.g., `main` or `release/*`).
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
+- **Generate release notes automatically** whenever version tags are pushed.
 
 The main workflow runs formatting and lint checks followed by the Gradle `check` task, which compiles and tests all modules while running Spotless, Checkstyle, and SpotBugs. It then generates JaCoCo coverage reports and performs a Trivy security scan. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
 
@@ -106,6 +107,15 @@ Cluster credentials and registry secrets are stored as encrypted repository secr
 ### Rollback Strategy
 
 New service versions are deployed alongside existing ones. If issues appear after a rollout, prior releases can be reinstated and the newer copies scaled down or removed.
+
+---
+
+## 📝 Automated Release Notes
+
+When a version tag like `v1.2.3` is pushed, the `release-notes.yml` workflow
+creates a GitHub release and uses the `generate_release_notes` option to produce
+change logs automatically. This keeps release documentation consistent without
+manual steps.
 
 ---
 
