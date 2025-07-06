@@ -7,10 +7,24 @@ on:
 jobs:
   trivy-scan:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - account-service
+          - automation-scripting-service
+          - entity-management-service
+          - game-design-service
+          - game-logic-service
+          - game-session-service
+          - logging-admin-service
+          - social-groups-service
+          - spring-cloud-gateway
+          - tcp-proxy-service
+          - world-management-service
     steps:
       - uses: actions/checkout@v3
       - name: Trivy container and dependency scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ghcr.io/my-org/my-service:latest
+          image-ref: ghcr.io/firemud/${{ matrix.service }}:latest
           exit-code: '1'

@@ -57,10 +57,6 @@ jobs:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
           restore-keys: trivy-db-${{ runner.os }}-
-
-      - name: ⚙️ Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.5 --distribution-type bin
-
       - name: 🎨 Apply Spotless Formatting
         run: |
           echo "::group::Run Spotless"
