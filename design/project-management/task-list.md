@@ -89,12 +89,6 @@ This checklist is structured to **build foundational features first**, followed 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
 
 ### Immediate Next Steps
-- [x] Configure Gradle protobuf plugin and generate gRPC stubs
-  - [x] Apply `com.google.protobuf` Gradle plugin in each service module
-  - [x] Verify Java sources are generated under `build/generated` after `./gradlew build`
-- [x] Add base `application.yml` configuration and profiles
-  - [x] Create default `application.yml` with dev and prod profiles
-  - [x] Externalize database and Redis settings via environment variables
 - [x] Implement PostgreSQL and Redis Docker containers for local dev
   - [x] Add `postgres` and `redis` services to `docker-compose.yml`
   - [x] Provide default credentials and mounted volumes for local data
@@ -115,19 +109,6 @@ This checklist is structured to **build foundational features first**, followed 
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
 - [x] Document Redis key naming conventions and locking scheme
 
-- [x] Create Gradle modules for all services with placeholder sources
-- [x] Add base Spring Boot Application classes for each service
-- [x] Generate skeleton controllers and service classes for each microservice
-- [x] Define base entity and repository classes for core domains
-  - [x] Account Service: `Account` and `Profile` entities with JPA repositories
-  - [x] Entity Management Service: `Character`, `Item`, `NPC` entities
-  - [x] World Management Service: `Room` and `Region` entities
-  - [x] Game Session Service: `GameInstance` entity
-  - [x] Game Design Service: design-time schema entities
-  - [x] Social & Groups Service: `ChatMessage`, `Guild`, `FriendLink` entities
-  - [x] Logging & Admin Service: `LogEvent` and `ModerationAction` entities
-  - [x] Automation & Scripting Service: `ScriptDefinition` entity
-  - [x] Create DTO records and MapStruct mappers
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
@@ -166,32 +147,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Configure centralized log aggregation dashboards early
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
   - [ ] Ensure authentication utilities from common package integrate seamlessly
-  - [ ] Implement Spring Security configuration for each microservice using common components
-  - [ ] Add initial protobuf IDL files for all microservices based on sample flows
-    - [x] Account Service proto definitions
-    - [x] Game Session Service proto definitions
-    - [x] World Management Service proto definitions
-    - [x] Entity Management Service proto definitions
-    - [x] Game Logic Service proto definitions
-    - [x] Automation & Scripting Service proto definitions
-    - [x] Game Design Service proto definitions
-    - [x] Social & Groups Service proto definitions
-    - [x] Logging & Admin Service proto definitions
-    - [ ] Payment & Monetization proto definitions (account proto namespace)
-    - [x] TCP Proxy Service proto definitions
-    - [x] Spring Cloud Gateway proto definitions
-    - [x] Shared common types
-  - [x] Integrate proto generation into CI workflow
-  - [x] Expose `/actuator/health` endpoints for service monitoring
-    - [x] Add `spring-boot-starter-actuator` dependency to each service
-    - [x] Enable health endpoint in `application.yml`
-  - [x] Configure Kubernetes readiness and liveness probes
-
-  - [ ] Add metrics and tracing instrumentation for all services
-    - [ ] Add distributed tracing to track requests across services
-    - [ ] Configure Micrometer with Prometheus registry
-      - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
-      - [ ] Propagate tracing context across gRPC and REST calls
 
 #### Coding Kickoff Checklist
   - [ ] Provision ephemeral preview environments for pull requests
@@ -509,7 +464,6 @@ _Applies to the following services:_
   - [ ] Implement Telnet networking and WebSocket bridging
   - [ ] Buffer Telnet input and discard on disconnect to support reconnection
   - [ ] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
-  - [x] Create base Spring Boot application skeleton
   - [ ] Enforce Telnet command whitelist and input sanitization
   - [ ] Implement connection throttling and rate limits
   - [ ] Support TLS termination for secure Telnet clients
