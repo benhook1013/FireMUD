@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: spotless
+        name: Spotless
+        entry: ./gradlew spotlessCheck
+        language: system
+        pass_filenames: false
+      - id: markdownlint
+        name: markdownlint
+        entry: ./gradlew lintMarkdown
+        language: system
+        pass_filenames: false

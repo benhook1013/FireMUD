@@ -176,7 +176,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Enable Spotless plugin for code formatting
   - [x] Add GitHub Actions workflow to build and publish Docker images for each service
   - [x] Integrate `markdownlint` in CI build
-  - [ ] Add pre-commit hooks for Spotless, Checkstyle, and markdownlint
+  - [x] Add pre-commit hooks for Spotless and markdownlint
   - [ ] Configure static analysis tools
     - [ ] Add Checkstyle rules for code style enforcement
     - [ ] Integrate SpotBugs for static bug detection

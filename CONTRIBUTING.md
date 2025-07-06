@@ -29,6 +29,19 @@ Once your environment is running you can create a feature branch and submit a PR
 - Backend code targets Java 17+ with Spring Boot 3.x; frontend code follows standard React/TypeScript conventions.
 - Document public methods and classes with brief Javadoc comments.
 
+## Pre-commit Hooks
+
+The repository includes a `.pre-commit-config.yaml` that runs Spotless and
+markdownlint. Install the pre-commit tool and set up the hooks
+with:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Hooks automatically format code and lint Markdown before each commit.
+
 ## Testing Requirements
 
 - All functionality must be covered by unit tests.
