@@ -414,6 +414,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add optional voice chat integration
   - [ ] Create `SocialController` REST endpoints
     - [ ] Add APIs for guild creation and friend requests
+  - [ ] Add gRPC `SocialService` for guild and friend management
 
 ---
 
@@ -429,6 +430,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Integrate Alertmanager for automated alerts
   - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
   - [ ] Create `LoggingController` REST endpoints for searching logs via Elasticsearch
+  - [ ] Add gRPC `LoggingService` for log search operations
   - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
@@ -436,6 +438,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Build role-based admin UI
   - [ ] Create `AdminController` REST endpoints
     - [ ] Expose ban and moderation creation APIs
+  - [ ] Add gRPC `AdminService` for moderation actions
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
