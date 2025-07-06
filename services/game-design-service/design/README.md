@@ -1,7 +1,7 @@
-# \U0001F517 Design Document for Game Design Service
+# 🔗 Design Document for Game Design Service
 
 The design for this service is located here:
 
-[\U0001F4C4 Central Architecture: Game Design Service Design](../../../design/architecture/microservices/game-design-service/README.md)
+[📄 Central Architecture: Game Design Service Design](../../../design/architecture/microservices/game-design-service/README.md)
 
 This stub exists to make the design easy to find from the service source tree.

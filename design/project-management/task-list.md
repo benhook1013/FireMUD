@@ -168,11 +168,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Implement basic JPA entities and repositories in Account Service
   - [x] Set up protobuf generation with gRPC stubs
   - [x] Implement `PingController` endpoint in each service for basic health check
-  - [ ] Add unit tests for `PingController` endpoints to verify service startup
+  - [x] Add unit tests for `PingController` endpoints to verify service startup
   - [ ] Add gRPC `PingService` stub in each service to validate connectivity
   - [x] Update each service `README.md` with links to design docs and proto definitions
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
-  - [ ] Enable Spotless plugin for code formatting
+  - [x] Enable Spotless plugin for code formatting
   - [ ] Add GitHub Actions workflow to build and publish Docker images for each service
   - [ ] Integrate `markdownlint` in CI build
   - [ ] Add pre-commit hooks for Spotless, Checkstyle, and markdownlint
@@ -427,6 +427,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Provide analytics dashboards for operators
   - [ ] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts
+  - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
+  - [ ] Create `LoggingController` REST endpoints for searching logs via Elasticsearch
   - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
