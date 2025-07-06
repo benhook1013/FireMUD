@@ -162,6 +162,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] **Configure Flyway-based database migrations for each microservice**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
+  - [ ] Establish asynchronous messaging for cross-service events (Kafka or RabbitMQ)
+    - [ ] Define standard event formats and topics/queues
+    - [ ] Provide common event publishing utilities in `firemud-common`
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [ ] Configure centralized log aggregation dashboards early
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
@@ -269,6 +272,8 @@ This checklist is structured to **build foundational features first**, followed 
 - [ ] Configure ESLint and Prettier for consistent formatting
 - [ ] Add pre-commit hooks for frontend linting
 - [ ] Add accessibility checks (Axe or Lighthouse) to CI
+- [ ] Convert React frontend to TypeScript for type safety
+- [ ] Run ESLint and Prettier checks in GitHub Actions
 
 ---
 
@@ -428,6 +433,9 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Track version history and patch notes for published games
   - [ ] Build a web-based visual design interface
   - [ ] Integrate version control for design assets
+  - [ ] Configure S3-compatible object storage for game assets
+    - [ ] Provide asset upload API in Game Design Service
+    - [ ] Document asset storage setup and configuration
 
 - [ ] **Expand Scripting & Modding**
   - [ ] Implement event-driven scripting API for game creators
@@ -539,6 +547,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Add integration tests for each service's create endpoints
   - [ ] Validate saga workflows for account and world creation
   - [ ] Perform API testing with Postman, RestAssured
+  - [ ] Introduce contract testing for gRPC and REST APIs (Spring Cloud Contract or Pact)
 
 - [ ] **Conduct Load & Security Testing**
   - [ ] Simulate high-concurrency scenarios to identify bottlenecks
