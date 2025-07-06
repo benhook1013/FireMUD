@@ -37,6 +37,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Expand `CONTRIBUTING.md` with onboarding instructions
   - [x] Populate `FAQ.md` with common questions
   - [x] Add service-level design README links to central architecture docs
+  - [ ] Publish a `CODE_OF_CONDUCT.md` outlining community expectations
   - [ ] Create issue template and maintain backlog for tasks and bugs
   - [ ] Provide contributor guide with local setup commands and code review expectations
   - [ ] Document environment variables and secrets management strategy
@@ -56,6 +57,7 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] world-management-service
   - [x] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
     - [x] Document network policy usage in architecture docs
+  - [ ] Provide infrastructure-as-code (Terraform or Helm) for replicating Kubernetes environments
 
 ---
 
@@ -181,6 +183,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add Docker Compose health checks for PostgreSQL, Redis, and all services
   - [x] Enable Spotless plugin for code formatting
   - [x] Add GitHub Actions workflow to build and publish Docker images for each service
+  - [ ] Provision ephemeral preview environments for pull requests
   - [x] Integrate `markdownlint` in CI build
   - [x] Add pre-commit hooks for Spotless and markdownlint
   - [ ] Add pre-commit hooks for static analysis tools (Checkstyle, SpotBugs)
@@ -193,11 +196,13 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Schedule continuous security scanning for dependencies and container images
   - [ ] Define schedule for dependency updates and routine security scans
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
+  - [ ] Expand integration tests to cover cross-service workflows using Testcontainers
   - [ ] Finalize API schemas from concrete gameplay flows
     - [ ] Database schema diagrams for each microservice
     - [ ] Example Flyway migration scripts
   - [ ] Create ERD diagrams and baseline Flyway scripts for all services
     - [ ] Produce entity relationship diagrams for initial domain models
+  - [ ] Automate architecture and ERD diagram generation in CI
     - [x] Add `V1__init.sql` migrations for each service database
       - [x] account-service
       - [x] automation-scripting-service
