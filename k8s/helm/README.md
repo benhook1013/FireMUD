@@ -1,7 +1,7 @@
 # Helm Charts
 
 This directory contains placeholder Helm charts for deploying FireMUD services.
-Only the **Game Session Service** chart is currently provided as an example.
+Charts are provided for the **Account Service** and **Game Session Service** as examples.
 
 The files `values-local.yaml` and `values-dev.yaml` demonstrate how runtime
 settings such as Redis connection info, tick interval, and feature flags can be
@@ -15,3 +15,11 @@ helm install game-session ./game-session-service \
 ```
 
 Use the Terraform module in `../terraform` to create a test cluster if desired.
+
+To deploy the Account Service:
+
+```bash
+helm install account-service ./account-service \
+  -f values-local.yaml
+```
+

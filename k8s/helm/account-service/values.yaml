@@ -1,0 +1,7 @@
+image:
+  repository: firemud/account-service
+  tag: latest
+service:
+  type: ClusterIP
+  port: 8080
+extraEnv: {}

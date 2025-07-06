@@ -15,6 +15,9 @@ public class Profile {
   @JoinColumn(name = "account_id", nullable = false)
   private Account account;
 
+  @Column(nullable = false)
+  private Long tenantId;
+
   @Column(length = 100)
   private String displayName;
 

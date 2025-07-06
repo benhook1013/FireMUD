@@ -31,7 +31,9 @@ Example response:
 ```json
 {
   "id": 123,
-  "username": "demo"
+  "tenantId": 1,
+  "username": "demo",
+  "email": "demo@example.com"
 }
 ```
 
@@ -49,7 +51,7 @@ grpcurl -plaintext localhost:6565 account.v1.AccountService/Ping
 Create an account via gRPC:
 
 ```bash
-grpcurl -plaintext -d '{"tenantId":"demo","username":"demo","email":"demo@example.com","password":"secret"}' \
+grpcurl -plaintext -d '{"tenant_id":1,"username":"demo","email":"demo@example.com","password":"secret"}' \
   localhost:6565 account.v1.AccountService/CreateAccount
 ```
 
@@ -57,6 +59,6 @@ Expected response:
 
 ```json
 {
-  "message": "pong"
+  "accountId": "123"
 }
 ```
