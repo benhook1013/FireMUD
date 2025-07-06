@@ -16,8 +16,9 @@ If you're setting up the project for the first time, follow these steps:
 1. Review prerequisites in [**Developer Setup**](DEVELOPER_SETUP.md) and install Java 17, Docker, Node.js, and other tools.
 2. Clone the repository and generate Gradle wrappers if needed with `./gradlew wrapper` (or the PowerShell script on Windows).
 3. Build all modules using `./gradlew build`.
-4. Start the local stack with `./gradlew devUp`.
-5. Explore the docs under `design/` to understand the architecture.
+4. Copy `.env.sample` to `.env` and adjust values if necessary.
+5. Start the local stack with `./gradlew devUp`.
+6. Explore the docs under `design/` to understand the architecture.
 
 Once your environment is running you can create a feature branch and submit a PR as described below.
 
@@ -61,5 +62,12 @@ Hooks automatically format code and lint Markdown before each commit.
 6. Open a pull request against the `main` branch of this repository.
 7. Fill out the PR template, describing your changes and referencing any related issues.
 8. Participate in the review process by addressing feedback promptly.
+
+## Code Review Expectations
+
+- Run `./gradlew check` before pushing to ensure formatting and tests pass.
+- Reference related issue numbers in your PR description.
+- Link to relevant design documents when adding new features.
+- Keep commits focused and descriptive so reviewers can understand the intent.
 
 Following these guidelines helps keep the project consistent and makes the review process smoother. We appreciate your contributions!
