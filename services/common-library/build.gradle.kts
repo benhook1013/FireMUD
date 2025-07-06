@@ -1,6 +1,6 @@
 plugins {
     `java-library`
-    id("org.springframework.boot") version "3.2.5" apply false
+    id("org.springframework.boot") version "3.5.3" apply false
 }
 
 repositories {
