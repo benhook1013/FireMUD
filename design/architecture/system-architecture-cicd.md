@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
       - name: Format Code
         run: ./gradlew spotlessApply
       - name: Lint Markdown
@@ -48,7 +48,7 @@ jobs:
         run: ./gradlew check
 ```
 
-The example above checks out the repository, sets up Java 17, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel.
+The example above checks out the repository, sets up Java 21, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel.
 
 ---
 

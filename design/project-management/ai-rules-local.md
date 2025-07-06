@@ -23,7 +23,7 @@ Framework:
 
 Backend:
 
-- Java 17+
+- Java 21+
 - Spring Data JPA
 - Lombok
 - MapStruct

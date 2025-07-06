@@ -13,7 +13,7 @@ Thank you for your interest in improving the FireMUD Game Platform! This documen
 
 If you're setting up the project for the first time, follow these steps:
 
-1. Review prerequisites in [**Developer Setup**](DEVELOPER_SETUP.md) and install Java 17, Docker, Node.js, and other tools.
+1. Review prerequisites in [**Developer Setup**](DEVELOPER_SETUP.md) and install Java 21, Docker, Node.js, and other tools.
 2. Clone the repository and generate Gradle wrappers if needed with `./gradlew wrapper` (or the PowerShell script on Windows).
 3. Build all modules using `./gradlew build`.
 4. Copy `.env.sample` to `.env` and adjust values if necessary.
@@ -27,7 +27,7 @@ Once your environment is running you can create a feature branch and submit a PR
 - Follow the patterns described in the repository's `.windsurfrules` file for Java Spring projects.
 - Use four spaces for indentation and avoid trailing whitespace.
 - Favor immutable data structures, clear method names, and concise classes.
-- Backend code targets Java 17+ with Spring Boot 3.x; frontend code follows standard React/TypeScript conventions.
+- Backend code targets Java 21+ with Spring Boot 3.x; frontend code follows standard React/TypeScript conventions.
 - Document public methods and classes with brief Javadoc comments.
 - Install the git hook in `config/git-hooks/pre-commit` to automatically format and lint your commits.
 
