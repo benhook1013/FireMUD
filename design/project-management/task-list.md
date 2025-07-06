@@ -162,9 +162,6 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] **Configure Flyway-based database migrations for each microservice**
 - [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
   - [ ] Ensure common package includes service discovery utilities
-  - [ ] Establish asynchronous messaging for cross-service events (Kafka or RabbitMQ)
-    - [ ] Define standard event formats and topics/queues
-    - [ ] Provide common event publishing utilities in `firemud-common`
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [ ] Configure centralized log aggregation dashboards early
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
