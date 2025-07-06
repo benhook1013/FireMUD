@@ -1,7 +1,7 @@
 import com.google.protobuf.gradle.*
 plugins {
     java
-    id("org.springframework.boot") version "3.2.5"
+    id("org.springframework.boot") version "3.5.3"
     id("org.flywaydb.flyway") version "9.22.3"
     id("com.google.protobuf")
 }
