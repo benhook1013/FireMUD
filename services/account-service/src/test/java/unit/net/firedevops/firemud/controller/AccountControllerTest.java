@@ -1,0 +1,43 @@
+package net.firedevops.firemud.controller;
+
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import net.firedevops.firemud.dto.AccountDto;
+import net.firedevops.firemud.dto.CreateAccountRequest;
+import net.firedevops.firemud.service.AccountService;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+@WebMvcTest(AccountController.class)
+class AccountControllerTest {
+
+  @Autowired private MockMvc mockMvc;
+  private final ObjectMapper objectMapper = new ObjectMapper();
+
+  @MockBean private AccountService accountService;
+
+  @Test
+  void createAccountReturnsDto() throws Exception {
+    CreateAccountRequest request =
+        new CreateAccountRequest(1L, "demo", "demo@example.com", "password");
+    AccountDto response = new AccountDto(1L, 1L, "demo", "demo@example.com");
+    when(accountService.createAccount(request)).thenReturn(response);
+
+    mockMvc
+        .perform(
+            post("/accounts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.username").value("demo"));
+  }
+}

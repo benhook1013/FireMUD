@@ -64,7 +64,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Optionally configure local Redis or Helm releases
 - [ ] Prepare Helm charts for FireMUD services:
   - [x] Game Session Service
-  - [ ] Account Service
+  - [x] Account Service
   - [ ] Automation & Scripting Service
   - [ ] Entity Management Service
   - [ ] Game Design Service
@@ -257,9 +257,9 @@ This checklist is structured to **build foundational features first**, followed 
     - [x] world-management-service/design/README.md
     - [ ] Summarize controller routes in each service `design/README.md`
     - [ ] Include example request/response payloads
-    - [ ] Provide sample cURL commands for REST create endpoints
-    - [ ] Provide example `grpcurl` commands for gRPC create methods
-    - [ ] Link to corresponding proto files
+    - [x] Provide sample cURL commands for REST create endpoints
+    - [x] Provide example `grpcurl` commands for gRPC create methods
+    - [x] Link to corresponding proto files
       - [ ] Generate OpenAPI specs and publish Swagger UI
       - [ ] Publish API documentation automatically in the CI pipeline
       - [ ] Provide interactive API explorer for manual testing
