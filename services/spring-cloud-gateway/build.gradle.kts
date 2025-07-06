@@ -16,5 +16,6 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter:3.2.5")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.2.5")
     implementation("org.flywaydb:flyway-core:9.22.3")
+    implementation("org.springframework.cloud:spring-cloud-starter-gateway:4.3.0")
     implementation(project(":common-library"))
 }
