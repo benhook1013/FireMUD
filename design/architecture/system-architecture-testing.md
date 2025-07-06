@@ -31,13 +31,13 @@ The repository uses a hierarchical Gradle setup. The root `build.gradle` delegat
 ./gradlew crossServiceTest
 ```
 
-Separate jobs exist for unit, integration, and cross-service tests during manual merge review, but they are not executed in CI.
+Unit and integration tests run automatically in GitHub Actions through the Gradle `check` task. Cross-service tests can be triggered manually when preparing a release.
 
 ---
 
 ## 🚦 CI/CD Integration
 
-To keep cloud usage minimal, GitHub Actions only builds and deploys services. Developers run the full test suite locally before merging. The [CI/CD Pipeline](./system-architecture-cicd.md) document references this manual step.
+GitHub Actions executes formatting and lint checks, builds the code, and runs all unit and integration tests via `./gradlew check`. Coverage reports are generated and a Trivy security scan is executed. See the [CI/CD Pipeline](./system-architecture-cicd.md) document for the workflow definition.
 
 Load testing is executed on demand outside of CI and does not block deployments.
 
