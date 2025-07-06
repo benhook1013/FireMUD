@@ -15,7 +15,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa:3.5.3")
     runtimeOnly("org.postgresql:postgresql:42.7.7")
-    implementation("org.flywaydb:flyway-core:9.22.3")
+    implementation("org.flywaydb:flyway-core:11.10.1")
     implementation(project(":common-library"))
 }
 

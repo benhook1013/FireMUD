@@ -13,7 +13,7 @@ dependencies {
     annotationProcessor("org.projectlombok:lombok:1.18.38")
     implementation("org.springframework.boot:spring-boot-starter:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
-    implementation("org.flywaydb:flyway-core:9.22.3")
+    implementation("org.flywaydb:flyway-core:11.10.1")
     implementation("org.springframework.cloud:spring-cloud-starter-gateway:4.3.0")
     implementation(project(":common-library"))
 }
