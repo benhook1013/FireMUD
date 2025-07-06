@@ -11,9 +11,25 @@ This stub exists to make the design easy to find from the service source tree.
 ### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
+- `POST /routes` – add or update a custom gateway route.
+- `DELETE /routes/{routeId}` – remove a gateway route.
 
 ```bash
 curl http://localhost:8080/ping
+```
+
+Add a route via REST:
+
+```bash
+curl -X POST http://localhost:8080/routes \
+  -H 'Content-Type: application/json' \
+  -d '{"routeId":"demo","uri":"http://example.com","predicates":[],"filters":[]}'
+```
+
+Remove it:
+
+```bash
+curl -X DELETE http://localhost:8080/routes/demo
 ```
 
 ### gRPC

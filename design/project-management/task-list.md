@@ -178,11 +178,11 @@ This checklist is structured to **build foundational features first**, followed 
   - [x] Add GitHub Actions workflow to build and publish Docker images for each service
   - [x] Integrate `markdownlint` in CI build
   - [x] Add pre-commit hooks for Spotless and markdownlint
-  - [ ] Configure static analysis tools
-    - [ ] Add Checkstyle rules for code style enforcement
-    - [ ] Integrate SpotBugs for static bug detection
-    - [ ] Generate JaCoCo coverage reports in CI
-  - [ ] Integrate container and dependency scanning (Trivy) in CI
+  - [x] Configure static analysis tools
+    - [x] Add Checkstyle rules for code style enforcement
+    - [x] Integrate SpotBugs for static bug detection
+    - [x] Generate JaCoCo coverage reports in CI
+  - [x] Integrate container and dependency scanning (Trivy) in CI
   - [ ] Automate release notes generation with GitHub Actions
   - [ ] Schedule continuous security scanning for dependencies and container images
   - [ ] Establish base integration test setup using Spring Boot Test with Testcontainers for PostgreSQL and Redis
@@ -410,8 +410,8 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Collect connection metrics and throttle abusive clients
   - [ ] Create gateway route configuration files for all services
   - [x] Add baseline route configuration for Spring Cloud Gateway
-  - [ ] Create `GatewayController` endpoints for dynamic route management
-    - [ ] Allow creation of custom gateway routes via API
+  - [x] Create `GatewayController` endpoints for dynamic route management
+    - [x] Allow creation of custom gateway routes via API
   - [x] Add gRPC `GatewayManagementService` for remote route configuration
 
 - [ ] **Develop Social & Groups Service**
