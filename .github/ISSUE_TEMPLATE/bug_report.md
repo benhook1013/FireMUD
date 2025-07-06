@@ -21,15 +21,18 @@ A clear and concise description of what the bug is.
 
 What did you expect to happen?
 
-## Logs/Screenshots
+## Logs/Screenshots (optional)
 
-If applicable, add logs or screenshots to help explain your problem.
+If you have any logs or screenshots, please include them. Players can skip this section if none are available.
 
-## Environment
+## Environment (optional)
+
+If you're self-hosting FireMUD, please provide the following details. Players connecting to a public server can simply note how they accessed the game (web client, telnet client, etc.).
 
 - OS: <e.g., Ubuntu 22.04>
 - Java version: `java -version`
 - Docker version: `docker --version`
+- Client/Browser: <e.g., Chrome, Mudlet>
 
 ## Additional Context
 

@@ -19,6 +19,10 @@ Why should this be implemented? What problem does it solve?
 
 How do you imagine this feature working? Include examples or diagrams if helpful.
 
+## Who is requesting?
+
+Are you a player or a developer? Let us know so we can understand the perspective of this request.
+
 ## Additional Context
 
 Add any other context or screenshots about the feature request here.
