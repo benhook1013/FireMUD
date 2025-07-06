@@ -300,10 +300,6 @@ _Applies to the following services:_
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
-  - [ ] Create `AccountController` REST endpoints
-    - [ ] Provide POST `/accounts` and `/profiles` for account creation flows
-  - [x] Create JPA repositories for `Account` and `Profile`
-  - [ ] Add gRPC AccountService with proto contract
   - [ ] Expose JWKS endpoint for token verification
   - [ ] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
@@ -322,17 +318,12 @@ _Applies to the following services:_
   - [ ] Plan for cross-region sharding and session handoff
   - [ ] Implement `game_manifest` table for version coordination
   - [ ] Emit gameplay analytics for operators
-  - [ ] Create `GameSessionController` REST endpoints
-    - [ ] Add endpoint to create and start new game sessions
-  - [ ] Add gRPC GameSessionService with proto contract
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
 - [ ] Use saga orchestrator for game publishing workflow
 - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
-- [ ] Create `GameDesignController` REST endpoints for design CRUD operations
-    - [ ] Support creation of new games, worlds, and abilities
-- [x] Create gRPC GameDesignService and design-time database models
+- [x] Create design-time database models
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
@@ -340,8 +331,6 @@ _Applies to the following services:_
   - [ ] Configure SMTP provider and test templates
   - [ ] Document email and notification design in `account-service/design/README.md`
   - [ ] Add asynchronous NotificationService components with gRPC endpoints
-  - [ ] Create `NotificationController` REST endpoints
-    - [ ] Provide APIs for sending in-game notifications to accounts
 
 ---
 
@@ -355,9 +344,6 @@ _Applies to the following services:_
   - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
-  - [ ] Create `WorldController` REST endpoints
-    - [ ] Expose POST `/rooms` and `/regions` for world creation
-  - [ ] Add gRPC WorldManagementService with proto contract
   - [ ] Use saga orchestrator for world creation workflow
   - [ ] Provide tools to fine-tune procedural generation rules
   - [ ] Support multi-server world shards
@@ -369,9 +355,6 @@ _Applies to the following services:_
   - [ ] Implement entity stats and progression tracking
   - [ ] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
-  - [ ] Create `EntityController` REST endpoints
-    - [ ] Provide creation APIs for characters, items, and NPCs
-  - [ ] Add gRPC EntityManagementService with proto contract
   - [ ] Implement entity graph caching for fast lookups
   - [ ] Support complex crafting recipes
 
@@ -392,9 +375,6 @@ _Applies to the following services:_
   - [ ] Implement roleplay actions & emotes
   - [ ] Implement event-driven logic processing (triggers, world events)
   - [ ] Implement action aliases system (custom command mappings)
-  - [ ] Create `GameLogicController` REST endpoints
-    - [ ] Allow creation of custom commands and abilities
-  - [ ] Add gRPC GameLogicService with proto contract
   - [ ] Add scripting hooks for custom actions
   - [ ] Optimize performance for large-scale battles
 
@@ -408,9 +388,6 @@ _Applies to the following services:_
   - [ ] Implement NPC aggression states (hostile, neutral, passive)
   - [ ] Implement NPC fleeing/surrender logic
   - [ ] Implement NPC formations & squad AI
-  - [ ] Add gRPC AutomationService with script execution API
-  - [ ] Create `ScriptingController` REST endpoints
-    - [ ] Upload and manage script definitions via REST
   - [ ] Create sandboxed script runtime
   - [ ] Support hot reloading of scripts published by the Game Design Service
   - [ ] Provide web UI for script creation and testing
@@ -467,7 +444,6 @@ _Applies to the following services:_
   - [ ] Enforce Telnet command whitelist and input sanitization
   - [ ] Implement connection throttling and rate limits
   - [ ] Support TLS termination for secure Telnet clients
-  - [ ] Add gRPC `TelnetSessionService` for handshake and session creation
 - [ ] **Develop Spring Cloud Gateway**
   - [ ] Handle API routing and request validation
   - [ ] Terminate TLS and forward traffic to internal services using mTLS
@@ -487,9 +463,6 @@ _Applies to the following services:_
   - [ ] Implement shared guild storage and alliance system
   - [ ] Provide rich moderation tools for chat
   - [ ] Add optional voice chat integration
-  - [ ] Create `SocialController` REST endpoints
-    - [ ] Add APIs for guild creation and friend requests
-  - [ ] Add gRPC `SocialService` for guild and friend management
   - [ ] Use saga orchestrator for guild creation workflow
 
 ---
@@ -499,25 +472,17 @@ _Applies to the following services:_
 - [ ] **Develop Logging & Admin Service**
   - [ ] Collect logs from all services and provide search dashboards
   - [x] Allow players to report others for abuse/violations
-  - [x] Create `ReportController` REST endpoints
-    - [x] Provide POST `/reports` for abuse or bug submissions
-  - [x] Add gRPC `ReportService` for ingesting player reports
   - [ ] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
    - [x] Provide analytics dashboards for operators
    - [x] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts
   - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
-  - [ ] Create `LoggingController` REST endpoints for searching logs via Elasticsearch
-  - [ ] Add gRPC `LoggingService` for log search operations
   - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
   - [ ] Build role-based admin UI
-  - [ ] Create `AdminController` REST endpoints
-    - [ ] Expose ban and moderation creation APIs
-  - [ ] Add gRPC `AdminService` for moderation actions
 
 - [ ] **Implement Banning & Restriction System**
   - [ ] Implement IP bans, temporary suspensions, and game-specific restrictions
@@ -540,8 +505,6 @@ _Applies to the following services:_
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
   - [x] Add gRPC methods in `AccountService` for payments
-  - [ ] Add payment-related endpoints in `AccountController`
-    - [ ] Provide endpoints for payment intents and subscriptions
   - [x] Define proto contracts for payment and subscription flows in the account proto namespace
   - [x] Add Flyway migration scripts for payment tables
   - [x] Document monetization design in `account-service/design/README.md`
