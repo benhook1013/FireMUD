@@ -262,6 +262,13 @@ This checklist is structured to **build foundational features first**, followed 
     - [ ] Link to corresponding proto files
       - [ ] Generate OpenAPI specs and publish Swagger UI
       - [ ] Publish API documentation automatically in the CI pipeline
+      - [ ] Provide interactive API explorer for manual testing
+### Web Frontend
+- [ ] Scaffold React-based MUD client with Vite and Material-UI
+- [ ] Build web-based game editor for game creators
+- [ ] Configure ESLint and Prettier for consistent formatting
+- [ ] Add pre-commit hooks for frontend linting
+- [ ] Add accessibility checks (Axe or Lighthouse) to CI
 
 ---
 
