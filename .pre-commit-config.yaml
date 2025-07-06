@@ -11,3 +11,13 @@ repos:
         entry: ./gradlew lintMarkdown
         language: system
         pass_filenames: false
+      - id: checkstyle
+        name: Checkstyle
+        entry: ./gradlew checkstyleMain
+        language: system
+        pass_filenames: false
+      - id: spotbugs
+        name: SpotBugs
+        entry: ./gradlew spotbugsMain
+        language: system
+        pass_filenames: false

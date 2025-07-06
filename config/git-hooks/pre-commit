@@ -1,2 +1,2 @@
 #!/bin/sh
-./gradlew spotlessApply lintMarkdownFix
+./gradlew spotlessApply lintMarkdownFix checkstyleMain spotbugsMain

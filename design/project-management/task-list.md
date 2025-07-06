@@ -211,7 +211,7 @@ This checklist is structured to **build foundational features first**, followed 
   - [ ] Provision ephemeral preview environments for pull requests
   - [x] Integrate `markdownlint` in CI build
   - [x] Add pre-commit hooks for Spotless and markdownlint
-  - [ ] Add pre-commit hooks for static analysis tools (Checkstyle, SpotBugs)
+  - [x] Add pre-commit hooks for static analysis tools (Checkstyle, SpotBugs)
   - [x] Configure static analysis tools
     - [x] Add Checkstyle rules for code style enforcement
     - [x] Integrate SpotBugs for static bug detection
