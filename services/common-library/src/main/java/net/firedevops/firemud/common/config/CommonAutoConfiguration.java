@@ -5,5 +5,4 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @EnableConfigurationProperties(ServiceEndpointsProperties.class)
-public class CommonAutoConfiguration {
-}
+public class CommonAutoConfiguration {}

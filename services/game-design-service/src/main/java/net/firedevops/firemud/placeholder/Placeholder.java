@@ -1,4 +1,3 @@
 package net.firedevops.firemud.placeholder;
 
-public class Placeholder {
-}
+public class Placeholder {}

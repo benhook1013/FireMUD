@@ -6,6 +6,7 @@ import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
 public interface CharacterMapper {
-    CharacterDto toDto(Character entity);
-    Character toEntity(CharacterDto dto);
+  CharacterDto toDto(Character entity);
+
+  Character toEntity(CharacterDto dto);
 }

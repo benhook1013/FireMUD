@@ -5,5 +5,4 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface ModerationActionRepository extends JpaRepository<ModerationAction, Long> {
-}
+public interface ModerationActionRepository extends JpaRepository<ModerationAction, Long> {}

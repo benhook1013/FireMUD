@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 public class GameLogicServiceApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(GameLogicServiceApplication.class, args);
-    }
+  public static void main(String[] args) {
+    SpringApplication.run(GameLogicServiceApplication.class, args);
+  }
 }

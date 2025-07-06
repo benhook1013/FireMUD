@@ -7,16 +7,16 @@ import lombok.Data;
 @Entity
 @Table(name = "accounts")
 public class Account {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-    @Column(nullable = false, unique = true, length = 50)
-    private String username;
+  @Column(nullable = false, unique = true, length = 50)
+  private String username;
 
-    @Column(nullable = false, unique = true, length = 100)
-    private String email;
+  @Column(nullable = false, unique = true, length = 100)
+  private String email;
 
-    @Column(nullable = false, length = 255)
-    private String passwordHash;
+  @Column(nullable = false, length = 255)
+  private String passwordHash;
 }

@@ -6,6 +6,7 @@ import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
 public interface GameMapper {
-    GameDto toDto(Game entity);
-    Game toEntity(GameDto dto);
+  GameDto toDto(Game entity);
+
+  Game toEntity(GameDto dto);
 }
