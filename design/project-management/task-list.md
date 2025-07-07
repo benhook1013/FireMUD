@@ -85,24 +85,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
 - [x] Document Redis key naming conventions and locking scheme
 
-- [ ] **Create a Common Package for Shared Microservice Code**
-  - [x] Implement common request/response DTOs for inter-service communication
-  - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
-  - [x] Implement centralized logging utilities
-  - [x] Implement gRPC interceptors for logging and metrics
-  - [x] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
-  - [x] Implement database connection utilities (PostgreSQL, Redis connectors)
-  - [x] Implement base configuration classes for service discovery and shared properties
-  - [x] Implement common exception handling & error response structures
-  - [x] Implement configuration management (centralized properties, environment handling)
-  - [ ] Publish common package to internal repository (Maven/Gradle)
-  - [x] Add `common-library` README with usage examples
-  - [ ] Extend **firemud-common** with saga orchestration support
-    - [ ] Define `saga` schema tables for step tracking and state
-    - [ ] Implement fluent API for saga orchestration
-    - [ ] Add gRPC call helpers with retry and compensation hooks
-    - [ ] Document example saga usage
-  - [ ] Replace placeholder classes with real implementations
 
 - [x] **Set up Git repository and development workflow**
 - [x] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
@@ -124,23 +106,29 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
-The following tasks are shared across most microservices. Gateway and TCP Proxy follow a reduced subset but still implement several of these steps.
-
-_Applies to:_
-
-- Account Service  
-- Game Session Service  
-- Game Logic Service  
-- World Management Service  
-- Entity Management Service  
-- Automation & Scripting Service  
-- Game Design Service  
-- Social & Groups Service  
-- Logging & Admin Service  
-- Spring Cloud Gateway (⚠️ partial)  
-- TCP Proxy Service (⚠️ partial)
+These tasks apply to every service module. Gateway and TCP Proxy implement only a partial subset.
 
 ---
+
+#### 🛠 Build `firemud-common` Library
+- [ ] **Create a Common Package for Shared Microservice Code**
+  - [x] Implement common request/response DTOs for inter-service communication
+  - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
+  - [x] Implement centralized logging utilities
+  - [x] Implement gRPC interceptors for logging and metrics
+  - [x] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
+  - [x] Implement database connection utilities (PostgreSQL, Redis connectors)
+  - [x] Implement base configuration classes for service discovery and shared properties
+  - [x] Implement common exception handling & error response structures
+  - [x] Implement configuration management (centralized properties, environment handling)
+  - [ ] Publish common package to internal repository (Maven/Gradle)
+  - [x] Add `common-library` README with usage examples
+  - [ ] Extend **firemud-common** with saga orchestration support
+    - [ ] Define `saga` schema tables for step tracking and state
+    - [ ] Implement fluent API for saga orchestration
+    - [ ] Add gRPC call helpers with retry and compensation hooks
+    - [ ] Document example saga usage
+  - [ ] Replace placeholder classes with real implementations
 
 #### 📦 Project Setup & Bootstrapping
 - [ ] Create Gradle module with `java` or `java-library` plugin
@@ -309,14 +297,8 @@ _Applies to:_
 ---
 
 #### 🧩 Notes
-- Game-specific services may define additional commands or entity behavior, but all follow the same project layout, config model, and deployment conventions.
-- Spring Cloud Gateway and TCP Proxy implement a reduced subset:
-  - Expose `/actuator/health`
-  - Bridge traffic via gRPC or WebSocket
-  - Use shared gRPC interceptors and Redis helpers where relevant
-  - Use gRPC for route management and Telnet bridging (TCP Proxy)
-  - Are included in Docker Compose, Kubernetes, and Helm setup
-  - Follow CI, tracing, and health check conventions
+- Game-specific services may define additional commands or entity behavior, but share the same project layout and deployment conventions.
+- Gateway and TCP Proxy implement only the core health checks, gRPC bridging, and tracing pieces.
 
 ---
 
