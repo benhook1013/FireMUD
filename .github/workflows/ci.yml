@@ -18,14 +18,26 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build and Test (Java ${{ matrix.java-version }}, Node ${{ matrix.node-version }})
+    name: Build and Test (Java ${{ matrix.java-version }}, Node ${{ matrix.node-version }}, ${{ matrix.service }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         java-version: [21]
         node-version: [20]
+        service:
+          - account-service
+          - automation-scripting-service
+          - entity-management-service
+          - game-design-service
+          - game-logic-service
+          - game-session-service
+          - logging-admin-service
+          - social-groups-service
+          - spring-cloud-gateway
+          - tcp-proxy-service
+          - world-management-service
 
     steps:
       - name: ⬇️ Checkout Code
@@ -52,7 +64,9 @@ jobs:
           restore-keys: node-${{ runner.os }}-
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/gradle-build-action@v2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
 
       - name: 🎨 Apply Spotless Formatting
         run: |
@@ -69,12 +83,12 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Tests"
-          ./gradlew check
+          ./gradlew :${{ matrix.service }}:check
           echo "::endgroup::"
       - name: 📈 Parse Coverage %
         id: coverage
         run: |
-          COVERAGE_FILE=build/reports/jacoco/test/jacocoTestReport.xml
+          COVERAGE_FILE=services/${{ matrix.service }}/build/reports/jacoco/test/jacocoTestReport.xml
           if [ -f "$COVERAGE_FILE" ]; then
             COVERAGE_LINE=$(grep -A 1 "<counter type=\"LINE\"" "$COVERAGE_FILE" | tail -n 1 || true)
             MISSED=$(echo "$COVERAGE_LINE" | sed -n 's/.*missed="\([0-9]*\)".*/\1/p')
@@ -95,15 +109,15 @@ jobs:
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@v4
         with:
-          name: jacoco-coverage-report-${{ github.sha }}
-          path: build/reports/jacoco/test/
+          name: jacoco-${{ matrix.service }}-report-${{ github.sha }}
+          path: services/${{ matrix.service }}/build/reports/jacoco/test/
 
       - name: 📤 Upload Test Logs if Failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-${{ github.sha }}
-          path: build/reports/tests/test/
+          name: test-logs-${{ matrix.service }}-${{ github.sha }}
+          path: services/${{ matrix.service }}/build/reports/tests/test/
 
 
       - name: 💬 Upload Build Summary Comment
