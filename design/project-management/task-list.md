@@ -79,6 +79,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Derive minimal data models and proto schemas based on real usage
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
   - [x] Document Redis key naming conventions and locking scheme
+- [ ] Finalize API schemas from concrete gameplay flows
 
 ### Build `firemud-common` Library
 
@@ -120,6 +121,17 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [ ] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
   - [ ] Reference Terraform files as optional future cloud setup
 
+### Security & Authentication
+
+- [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
+- [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
+- [ ] Rely on Game Session Service for gameplay session enforcement
+- [ ] Configure mutual TLS (mTLS) for gRPC between internal services
+- [ ] Manage certificates via Kubernetes `cert-manager`
+- [ ] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
+- [ ] Add integration test for mid-session role refresh via Game Session Service
+- [ ] Implement hot reload for TLS certificates and JWKS keys
+
 ### Web Frontend
 
 - [ ] Scaffold React-based MUD client with Vite and Material-UI
@@ -129,6 +141,37 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Add accessibility checks (Axe or Lighthouse) to CI
 - [ ] Convert React frontend to TypeScript for type safety
 - [ ] Run ESLint and Prettier checks in GitHub Actions
+
+### CI/CD & Developer Automation
+
+- [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
+- [ ] Provision ephemeral preview environments for pull requests
+- [ ] Automate Docker image builds and registry pushes
+- [ ] Add CI steps for:
+  - Protobuf generation and schema checking
+  - Proto linting and compatibility (`buf`)
+  - Include `buf breaking` tests in CI for backward compatibility
+  - Integrate proto generation and schema validation into CI workflow
+  - Include generated sources in build and CI
+  - OpenAPI consistency
+  - Static analysis
+- [ ] Add pre-commit hooks for:
+  - Spotless
+  - Checkstyle
+  - markdownlint
+  - Buf or proto consistency
+- [ ] Use Trivy for container and dependency vulnerability scanning
+- [ ] Schedule recurring security scans (including base image and dependency scans)
+- [ ] Auto-generate release notes and semantic version bumps
+- [ ] Enable static analysis:
+  - Spotless for formatting
+  - Checkstyle for style rules
+  - SpotBugs for runtime defects
+- [ ] Enable code coverage (e.g., JaCoCo)
+
+### Observability & Tracing
+
+- [ ] Configure centralized log aggregation dashboards early
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
@@ -153,6 +196,24 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
   - [ ] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
   - [ ] Gather feedback from early users & iterate on UI/UX
   - [ ] Add MCP support for AI assisted game creation
+
+### ⚙️ Load Testing, Operations & Scaling
+
+- [ ] **Conduct Load & Security Testing**
+  - [ ] Simulate high-concurrency scenarios to identify bottlenecks
+  - [ ] Run load tests using JMeter, Gatling, or Locust
+  - [ ] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
+- [ ] **Deploy Staging Environments for Playtesting**
+  - [ ] Perform multi-user playtests and gather feedback
+- [ ] **Monitor Logs & Fix Issues in Production**
+  - [ ] Track errors, crashes, and performance issues
+  - [ ] Implement hotfixes for immediate problems
+- [ ] **Scale & Optimize Performance**
+  - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
+  - [ ] Optimize database queries & network traffic handling
+  - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
+  - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
+  - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
 
 ## 🛠️ Phase 4: Community & Funding
 
