@@ -61,7 +61,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Write sample Terraform code to:
   - [x] Define `firemud` namespace and basic RBAC
   - [x] Optionally configure local Redis or Helm releases
-- [ ] Prepare Helm charts for FireMUD services (see service-specific task lists)
 - [x] Add example `values.yaml` files for local and dev environments
 - [x] Support Helm-based config overrides for:
   - [x] Redis connection info
@@ -82,8 +81,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Include `.env.sample` with default environment variables
   - [x] Document connection settings in `DEVELOPER_SETUP.md`
   - [x] Create Docker volumes for persistent databases
-  - [x] Verify services start via `./gradlew devUp`
-  - [x] Confirm each service logs `Started` without errors
 
 ### Behavior and Orchestration Planning
 - [x] Define core service responsibilities and runtime behaviors
@@ -125,7 +122,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
-  - [x] **Configure Flyway-based database migrations for each microservice**
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [ ] Configure centralized log aggregation dashboards early
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
@@ -173,6 +169,8 @@ _Applies to:_
 - [ ] Add minimal `README.md` with local setup instructions and design links
 - [ ] Define Kubernetes `Deployment` and `Service` manifests
 - [ ] Add Kubernetes readiness and liveness probes
+- [ ] Prepare Helm charts for each service
+- [ ] Verify service startup via `./gradlew devUp` and confirm `Started` logs
 - [ ] Expose `/actuator/health` endpoint with Spring Boot Actuator
 
 ---
@@ -180,7 +178,7 @@ _Applies to:_
 #### 🧱 Domain Modeling & API Exposure
 - [ ] Define JPA entities and repositories using Spring Data for core domain objects
 - [ ] Implement initial JPA entities and repositories
-- [ ] Configure Flyway migrations for the initial schema
+- [ ] Configure Flyway migrations for each service's initial schema
 - [ ] Add MapStruct mappers for DTO conversion
 - [ ] Use shared DTOs and mappers from `firemud-common`
 - [ ] Generate initial REST controllers (CRUD or domain-specific endpoints)
