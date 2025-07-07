@@ -1,13 +1,14 @@
 {
-  "default": true,
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD026": false
+  },
   "ignores": [
     "**/node_modules/**",
     "**/.gradle/**",
     "**/build/**",
     "**/.git/**"
   ],
-  "gitignore": true,
-
-  "MD013": false,
-  "MD026": false
+  "gitignore": true
 }
