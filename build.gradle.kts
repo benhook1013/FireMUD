@@ -13,7 +13,8 @@ plugins {
 
 node {
     version.set("20.11.0")
-    download.set(true)
+    // Don't download Node in CI; use the version provided by the environment
+    download.set(System.getenv("CI") == null)
 }
 
 allprojects {
