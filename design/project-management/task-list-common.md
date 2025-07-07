@@ -24,7 +24,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 
 ## 🧱 Domain Modeling & API Exposure
 
-- [ ] Finalize API schemas from concrete gameplay flows
 - [ ] Define JPA entities and repositories using Spring Data for core domain objects
 - [ ] Implement initial JPA entities and repositories
 - [ ] Configure Flyway migrations for each service's initial schema
@@ -46,17 +45,9 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 
 ## 🔒 Security & Authentication
 
-- [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 - [ ] Integrate JWT-based authentication using helpers from `firemud-common`
 - [ ] Validate `globalRoles` and `scopedRoles` where applicable
-- [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
-- [ ] Rely on Game Session Service for gameplay session enforcement
-- [ ] Configure mutual TLS (mTLS) for gRPC between internal services
-- [ ] Manage certificates via Kubernetes `cert-manager`
-- [ ] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
 - [ ] Use shared security utilities from `firemud-common` for JWT and role validation
-- [ ] Add integration test for mid-session role refresh via Game Session Service
-- [ ] Implement hot reload for TLS certificates and JWKS keys
 - [ ] Ensure authentication utilities from `firemud-common` integrate seamlessly
 
 ---
@@ -66,10 +57,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Define clean gRPC service contracts and avoid vague method names
 - [ ] Use `firemud-common` protobuf types for shared contracts
 - [ ] Generate gRPC stubs using Gradle plugin and wire into source set
-- [ ] Include generated sources in build and CI
 - [ ] Implement structured error mapping with `ErrorDetail`
-- [ ] Include `buf breaking` tests in CI for backward compatibility
-- [ ] Integrate proto generation and schema validation into CI workflow
 - [ ] Integrate service discovery via Eureka or Kubernetes and register each service using `firemud-common` utilities
 
 ---
@@ -125,34 +113,8 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Introduce contract testing for gRPC and REST APIs (Spring Cloud Contract or Pact)
 - [ ] Use Spring Boot Test and Testcontainers for integration testing
 - [ ] Include optional dev data seeding for local workflows
-- [ ] Enable static analysis:
-  - Spotless for formatting
-  - Checkstyle for style rules
-  - SpotBugs for runtime defects
-- [ ] Enable code coverage (e.g., JaCoCo)
 - [ ] Validate gRPC and REST contracts with smoke tests using `grpcurl` and `curl`
 - [ ] Add integration tests for each service's create endpoints
-
----
-
-## 🚀 CI/CD & Developer Automation
-
-- [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
-- [ ] Provision ephemeral preview environments for pull requests
-- [ ] Automate Docker image builds and registry pushes
-- [ ] Add CI steps for:
-  - Protobuf generation and schema checking
-  - Proto linting and compatibility (`buf`)
-  - OpenAPI consistency
-  - Static analysis
-- [ ] Add pre-commit hooks for:
-  - Spotless
-  - Checkstyle
-  - markdownlint
-  - Buf or proto consistency
-- [ ] Use Trivy for container and dependency vulnerability scanning
-- [ ] Schedule recurring security scans (including base image and dependency scans)
-- [ ] Auto-generate release notes and semantic version bumps
 
 ---
 
@@ -163,7 +125,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Use shared gRPC interceptor to inject `traceId` and `correlationId`
 - [ ] Propagate tracing context across service boundaries
 - [ ] Emit service-level tick and Redis command metrics (if applicable)
-- [ ] Configure centralized log aggregation dashboards early
 - [ ] Use shared logging interceptor to ensure trace/correlation propagation
 
 ---
@@ -181,26 +142,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Generate and publish OpenAPI specs (if REST used)
 - [ ] Optionally provide Swagger UI or interactive API explorer
 - [ ] Document required environment variables and config structure
-
-## ⚙️ Load Testing, Operations & Scaling
-
-- [ ] **Conduct Load & Security Testing**
-  - [ ] Simulate high-concurrency scenarios to identify bottlenecks
-  - [ ] Run load tests using JMeter, Gatling, or Locust
-  - [ ] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
-- [ ] **Deploy Staging Environments for Playtesting**
-  - [ ] Perform multi-user playtests and gather feedback
-- [ ] **Monitor Logs & Fix Issues in Production**
-  - [ ] Track errors, crashes, and performance issues
-  - [ ] Implement hotfixes for immediate problems
-- [ ] **Scale & Optimize Performance**
-  - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
-  - [ ] Optimize database queries & network traffic handling
-  - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
-  - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
-  - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
-
----
 
 ## 🧩 Notes
 
