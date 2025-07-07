@@ -113,11 +113,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
-
-#### Coding Kickoff Checklist
-  - [ ] Provision ephemeral preview environments for pull requests
-  - [ ] Finalize API schemas from concrete gameplay flows
-  - [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
 ### Web Frontend
 - [ ] Scaffold React-based MUD client with Vite and Material-UI
 - [ ] Build web-based game editor for game creators
@@ -165,6 +160,7 @@ _Applies to:_
 ---
 
 #### 🧱 Domain Modeling & API Exposure
+- [ ] Finalize API schemas from concrete gameplay flows
 - [ ] Define JPA entities and repositories using Spring Data for core domain objects
 - [ ] Implement initial JPA entities and repositories
 - [ ] Configure Flyway migrations for each service's initial schema
@@ -267,6 +263,8 @@ _Applies to:_
 ---
 
 #### 🚀 CI/CD & Developer Automation
+- [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
+- [ ] Provision ephemeral preview environments for pull requests
 - [ ] Automate Docker image builds and registry pushes
 - [ ] Add CI steps for:
   - Protobuf generation and schema checking
