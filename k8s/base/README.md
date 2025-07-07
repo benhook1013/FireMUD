@@ -36,7 +36,7 @@ All Spring Boot services expect PostgreSQL and Redis connection details via
 environment variables. A `firemud-config` `ConfigMap` and `firemud-secret`
 `Secret` are provided to supply these values:
 
-```
+```bash
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 POSTGRES_DB=firemud
