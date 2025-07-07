@@ -13,11 +13,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Add minimal `README.md` with local setup instructions and design links
 - [ ] Define Kubernetes `Deployment` and `Service` manifests
 - [ ] Add Kubernetes readiness and liveness probes
-- [ ] Prepare Helm charts for each service
-- [ ] Verify service startup via `./gradlew devUp` and confirm `Started` logs
 - [ ] Expose `/actuator/health` endpoint with Spring Boot Actuator
-- [ ] Create baseline Kubernetes manifests or Helm charts for deployment
-  - [ ] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
 
 ---
 
@@ -38,7 +34,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Add contract smoke tests for gRPC (`grpcurl`) and REST (`curl`)
 - [ ] Generate gRPC stubs via Gradle and include in CI pipeline
 - [ ] Enforce `tenantId` validation for create endpoints
-- [ ] Generate ERD diagrams and baseline Flyway scripts for each service (automated in CI)
 
 ---
 
