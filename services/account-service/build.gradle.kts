@@ -6,17 +6,17 @@ plugins {
 }
 
 dependencies {
-    implementation("org.mapstruct:mapstruct:1.6.3")
     annotationProcessor("org.mapstruct:mapstruct-processor:1.6.3")
-    compileOnly("org.projectlombok:lombok:1.18.38")
     annotationProcessor("org.projectlombok:lombok:1.18.38")
     annotationProcessor("org.projectlombok:lombok-mapstruct-binding:0.2.0")
+    compileOnly("org.projectlombok:lombok:1.18.38")
+    implementation("org.flywaydb:flyway-core:11.10.1")
+    implementation("org.mapstruct:mapstruct:1.6.3")
     implementation("org.springframework.boot:spring-boot-starter:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa:3.5.3")
-    runtimeOnly("org.postgresql:postgresql:42.7.7")
-    implementation("org.flywaydb:flyway-core:11.10.1")
     implementation(project(":common-library"))
+    runtimeOnly("org.postgresql:postgresql:42.7.7")
 }
 
 protobuf {
