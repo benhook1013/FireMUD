@@ -1,5 +1,6 @@
 import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
+import java.io.File
 
 plugins {
     java
@@ -60,6 +61,10 @@ subprojects {
     tasks.withType<SpotBugsTask>().configureEach {
         excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
         setIgnoreFailures(true)
+        // Exclude generated sources such as Protobuf classes from analysis
+        val generatedDir = "${File.separator}generated${File.separator}"
+        classDirs.setFrom(classDirs.files.filterNot { it.path.contains(generatedDir) })
+        sourceDirs.setFrom(sourceDirs.files.filterNot { it.path.contains(generatedDir) })
     }
 
     tasks.test {
