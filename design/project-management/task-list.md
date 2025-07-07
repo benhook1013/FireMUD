@@ -112,6 +112,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Write sample Terraform code to:
   - [ ] Define `firemud` namespace and basic RBAC
   - [ ] Optionally configure local Redis or Helm releases
+  - [ ] Prepare Helm charts and baseline Kubernetes manifests for each service
+    - [ ] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
 - [ ] Add example `values.yaml` files for local and dev environments
 - [ ] Support Helm-based config overrides for:
   - [ ] Redis connection info
@@ -146,6 +148,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 ### CI/CD & Developer Automation
 
 - [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
+- [ ] Verify each service starts via `./gradlew devUp` and shows `Started` logs
 - [ ] Provision ephemeral preview environments for pull requests
 - [ ] Automate Docker image builds and registry pushes
 - [ ] Add CI steps for:
@@ -153,10 +156,11 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - Proto linting and compatibility (`buf`)
   - Include `buf breaking` tests in CI for backward compatibility
   - Integrate proto generation and schema validation into CI workflow
-  - Include generated sources in build and CI
-  - OpenAPI consistency
-  - Static analysis
-- [ ] Add pre-commit hooks for:
+    - Include generated sources in build and CI
+    - OpenAPI consistency
+    - Static analysis
+  - [ ] Generate ERD diagrams and baseline Flyway scripts for each service in CI
+  - [ ] Add pre-commit hooks for:
   - Spotless
   - Checkstyle
   - markdownlint
