@@ -216,6 +216,9 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Handle retries, rollback, and compensation via provided API
 - [ ] Emit saga metrics, correlation IDs, and observability logs
 - [ ] Annotate saga participation in `design/README.md`
+- [ ] Add timeout detection and automatic recovery
+- [ ] Support declarative saga definitions via YAML or annotations
+- [ ] Integrate saga events with logging and metrics
 
 ---
 
@@ -338,12 +341,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
   - [ ] Gather feedback from early users & iterate on UI/UX
   - [ ] Add MCP support for AI assisted game creation
 
-- [ ] **Enhance Saga Orchestration**
-  - [ ] Add timeout detection and automatic recovery
-  - [ ] Support declarative saga definitions via YAML or annotations
-  - [ ] Integrate saga events with logging and metrics
-
----
 
 ## 🛠️ Phase 4: Community & Funding
 
