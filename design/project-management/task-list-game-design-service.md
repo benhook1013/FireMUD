@@ -1,0 +1,26 @@
+# Game Design Service Task List
+
+- **Prepare Helm chart for Game Design Service**
+- **Expand Game Design Service**
+  - Provide game templates and configuration tools
+  - Enable publishing of game versions
+  - Use saga orchestrator for game publishing workflow
+  - Ensure domain services copy data by `version_id` and never query the design database at runtime
+  - Create design-time database models
+- **Develop Game Design Service**
+  - Implement world editing & customization tools
+  - Implement scripting & event design tools
+  - Build a **visual scripting editor** using a **component-based DSL**
+  - Sandbox script execution with quotas via the Automation & Scripting Service
+  - Implement ability & action design tools
+  - Implement item & equipment balancing tools
+  - Track version history and patch notes for published games
+  - Build a web-based visual design interface
+  - Integrate version control for design assets
+  - Configure S3-compatible object storage for game assets
+    - Provide asset upload API in Game Design Service
+    - Document asset storage setup and configuration
+- **Expand Scripting & Modding**
+  - Implement event-driven scripting API for game creators
+  - Implement in-game modding/plugin framework
+  - Implement scripted AI behaviors for NPCs
