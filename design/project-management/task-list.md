@@ -58,6 +58,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
 
 ### Behavior and Orchestration Planning
+
 - [x] Define core service responsibilities and runtime behaviors
   - [x] Outline tick flow, session management, reconnect logic, and command execution
   - [x] Document game instance lifecycle diagrams
@@ -68,17 +69,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
 - [x] Document Redis key naming conventions and locking scheme
 
-
-- [x] **Set up Git repository and development workflow**
-- [x] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
-  - [x] Ensure CI/CD includes the common package build process
-- [x] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
-  - [x] Ensure API contracts include standard error handling and request validation
-- [x] **Define high-level architecture & microservices boundaries**
-- [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
-- [x] **Set up Docker and Kubernetes for containerized deployment**
-- [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
 ### Web Frontend
+
 - [ ] Scaffold React-based MUD client with Vite and Material-UI
 - [ ] Build web-based game editor for game creators
 - [ ] Configure ESLint and Prettier for consistent formatting
@@ -92,6 +84,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 See [task-list-common.md](task-list-common.md) for tasks shared across all services.
 
 ---
+
 ## 🛠️ Phase 2: Testing & Pre-Launch Preparations
 
 - [ ] **Conduct Load & Security Testing**
@@ -124,10 +117,9 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
   - [ ] Expand game customization options for hosted games
   - [ ] Improve scripting capabilities & developer tools
 - [ ] **Onboard Game Creators & Improve UX**
-    - [ ] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
+  - [ ] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
   - [ ] Gather feedback from early users & iterate on UI/UX
   - [ ] Add MCP support for AI assisted game creation
-
 
 ## 🛠️ Phase 4: Community & Funding
 
@@ -139,6 +131,7 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
 ---
 
 ## ➕ Additional Tasks
+
 - [ ] Provide command-line tooling for local game and session management
 - [ ] Plan for **end-to-end UI testing** using Cypress or Playwright once the
   web UI is stable

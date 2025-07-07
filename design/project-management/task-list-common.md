@@ -4,7 +4,20 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 
 ---
 
+## 🗂️ Repository & Workflow Setup
+
+- [x] **Set up Git repository and development workflow**
+- [x] **Implement CI/CD pipeline for automated builds, testing, and deployment** (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
+  - [x] Ensure CI/CD includes the common package build process
+- [x] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
+  - [x] Ensure API contracts include standard error handling and request validation
+- [x] **Define high-level architecture & microservices boundaries**
+- [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
+- [x] **Set up Docker and Kubernetes for containerized deployment**
+- [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
+
 ## 🛠 Build `firemud-common` Library
+
 - [ ] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
@@ -25,6 +38,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
   - [ ] Replace placeholder classes with real implementations
 
 ## 📦 Project Setup & Bootstrapping
+
 - [ ] Create Gradle module with `java` or `java-library` plugin
 - [ ] Add baseline source structure and Spring Boot entrypoint
 - [ ] Implement basic `PingController` and gRPC `PingService`
@@ -59,6 +73,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🧱 Domain Modeling & API Exposure
+
 - [ ] Finalize API schemas from concrete gameplay flows
 - [ ] Define JPA entities and repositories using Spring Data for core domain objects
 - [ ] Implement initial JPA entities and repositories
@@ -80,6 +95,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🔒 Security & Authentication
+
 - [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 - [ ] Integrate JWT-based authentication using helpers from `firemud-common`
 - [ ] Validate `globalRoles` and `scopedRoles` where applicable
@@ -96,6 +112,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🔁 Inter-Service Communication
+
 - [ ] Define clean gRPC service contracts and avoid vague method names
 - [ ] Use `firemud-common` protobuf types for shared contracts
 - [ ] Generate gRPC stubs using Gradle plugin and wire into source set
@@ -108,6 +125,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 📚 Common Library Integration
+
 - [ ] Depend on `firemud-common` via Gradle
 - [ ] Use shared classes for:
   - DTOs (`ApiResponse<T>`, `ResultStatus`)
@@ -123,6 +141,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🔄 Saga Participation (Optional)
+
 - [ ] Use `firemud-common` saga orchestration helpers for workflow steps
 - [ ] Handle retries, rollback, and compensation via provided API
 - [ ] Emit saga metrics, correlation IDs, and observability logs
@@ -134,6 +153,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🔑 Redis Integration (If Applicable)
+
 - [ ] Use Redis exclusively for transient, gameplay-related state
 - [ ] Use `firemud-common` Redis connector utilities
 - [ ] Follow tick-safe key conventions: `tick:*`, `timer:*`, `session:*`
@@ -145,6 +165,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🧪 Testing & Quality Gates
+
 - [ ] Add unit tests for REST, gRPC, and startup behavior (e.g. `PingController`)
 - [ ] Develop unit tests for core service logic (command parsing, actions, world updates)
 - [ ] Plan integration tests (via Testcontainers) for service collaboration
@@ -165,6 +186,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🚀 CI/CD & Developer Automation
+
 - [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
 - [ ] Provision ephemeral preview environments for pull requests
 - [ ] Automate Docker image builds and registry pushes
@@ -185,6 +207,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 📈 Observability & Tracing
+
 - [ ] Use Micrometer for Prometheus-compatible metrics
 - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
 - [ ] Use shared gRPC interceptor to inject `traceId` and `correlationId`
@@ -196,6 +219,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 📖 Documentation & API Visibility
+
 - [ ] Create `design/README.md` with:
   - gRPC method list
   - REST endpoint summaries
@@ -211,5 +235,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 ---
 
 ## 🧩 Notes
+
 - Game-specific services may define additional commands or entity behavior, but share the same project layout and deployment conventions.
 - Gateway and TCP Proxy implement only the core health checks, gRPC bridging, and tracing pieces.
