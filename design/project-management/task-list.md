@@ -153,8 +153,9 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Automate Docker image builds and registry pushes
 - [ ] Add CI steps for:
   - Protobuf generation and schema checking
-  - Proto linting and compatibility (`buf`)
+  - Lint `.proto` files with `buf` and enforce schema versioning
   - Include `buf breaking` tests in CI for backward compatibility
+  - Generate gRPC stubs for each service via Gradle plugin
   - Integrate proto generation and schema validation into CI workflow
     - Include generated sources in build and CI
     - OpenAPI consistency

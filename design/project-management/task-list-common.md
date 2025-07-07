@@ -28,11 +28,9 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Define and implement gRPC service stubs with explicit `Request`/`Response` messages
 - [ ] Version all `.proto` files (`package service.v1`) and place under `protos/{service}/v1`
 - [ ] Use shared types (e.g., `ErrorDetail`, `EntityId`) from `protos/shared/`
-- [ ] Lint `.proto` files with `buf` and enforce schema compatibility and versioning in CI
 - [ ] Validate requests and map gRPC errors to appropriate status codes
 - [ ] Add structured error responses using `shared/ErrorDetail.proto`
 - [ ] Add contract smoke tests for gRPC (`grpcurl`) and REST (`curl`)
-- [ ] Generate gRPC stubs via Gradle and include in CI pipeline
 - [ ] Enforce `tenantId` validation for create endpoints
 
 ---
