@@ -30,6 +30,9 @@ public class JwtUtil {
   }
 
   public Jws<Claims> parseToken(String token) {
-    return Jwts.parser().setSigningKey(Keys.hmacShaKeyFor(key)).build().parseClaimsJws(token);
+    return Jwts.parserBuilder()
+        .setSigningKey(Keys.hmacShaKeyFor(key))
+        .build()
+        .parseClaimsJws(token);
   }
 }
