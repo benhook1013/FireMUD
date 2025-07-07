@@ -1,4 +1,5 @@
 import com.google.protobuf.gradle.*
+import com.github.spotbugs.snom.SpotBugsTask
 
 plugins {
     id("org.springframework.boot") version "3.5.3"
@@ -47,5 +48,9 @@ sourceSets {
     main {
         proto.srcDir("../../protos/automation-scripting")
     }
+}
+
+tasks.named<SpotBugsTask>("spotbugsMain") {
+    dependsOn(tasks.named("compileJava"))
 }
 

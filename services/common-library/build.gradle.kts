@@ -1,3 +1,5 @@
+import com.github.spotbugs.snom.SpotBugsTask
+
 plugins {
     `java-library`
     id("org.springframework.boot") version "3.5.3" apply false
@@ -22,4 +24,8 @@ dependencies {
 
     api("org.springframework.boot:spring-boot-starter-web:3.5.3")
     api("org.springframework.boot:spring-boot-starter-validation:3.5.3")
+}
+
+tasks.named<SpotBugsTask>("spotbugsMain") {
+    dependsOn(tasks.named("compileJava"))
 }
