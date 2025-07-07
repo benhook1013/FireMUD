@@ -341,6 +341,10 @@ _Applies to:_
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
+<<<<<<< HEAD
+=======
+  - [ ] Expose JWKS endpoint for token verification
+>>>>>>> c58c8b27b1cc17fb2ec1c9c4db7953e1e04ce9b6
   - [ ] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
   - [ ] Add optional 2FA for admin and moderator roles
@@ -358,12 +362,21 @@ _Applies to:_
   - [ ] Plan for cross-region sharding and session handoff
   - [ ] Implement `game_manifest` table for version coordination
   - [ ] Emit gameplay analytics for operators
+<<<<<<< HEAD
 
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
   - [ ] Enable publishing of game versions
   - [ ] Use saga orchestrator for game publishing workflow
   - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
+=======
+- [ ] **Expand Game Design Service**
+  - [ ] Provide game templates and configuration tools
+  - [ ] Enable publishing of game versions
+- [ ] Use saga orchestrator for game publishing workflow
+- [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
+- [x] Create design-time database models
+>>>>>>> c58c8b27b1cc17fb2ec1c9c4db7953e1e04ce9b6
 
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
