@@ -77,6 +77,7 @@ subprojects {
 }
 
 tasks.register<NpxTask>("lintMarkdown") {
+    dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
         "**/*.md",
@@ -88,6 +89,7 @@ tasks.register<NpxTask>("lintMarkdown") {
 }
 
 tasks.register<NpxTask>("lintMarkdownFix") {
+    dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
         "--fix",

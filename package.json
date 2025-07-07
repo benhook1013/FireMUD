@@ -1,0 +1,7 @@
+{
+  "name": "firemud-root",
+  "private": true,
+  "devDependencies": {
+    "markdownlint-cli2": "^0.18.1"
+  }
+}
