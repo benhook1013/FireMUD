@@ -1,4 +1,5 @@
 import com.google.protobuf.gradle.*
+import com.github.spotbugs.snom.SpotBugsTask
 plugins {
     id("org.springframework.boot") version "3.5.3"
     id("org.flywaydb.flyway") version "11.10.1"
@@ -46,4 +47,8 @@ sourceSets {
     main {
         proto.srcDir("../../protos")
     }
+}
+
+tasks.named<SpotBugsTask>("spotbugsMain") {
+    dependsOn(tasks.named("compileJava"))
 }

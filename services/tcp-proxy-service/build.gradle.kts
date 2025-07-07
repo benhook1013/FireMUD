@@ -1,3 +1,5 @@
+import com.github.spotbugs.snom.SpotBugsTask
+
 plugins {
     id("org.springframework.boot") version "3.5.3" apply false
     id("org.flywaydb.flyway") version "11.10.1"
@@ -11,4 +13,8 @@ dependencies {
     implementation("org.flywaydb:flyway-core:11.10.1")
     implementation("org.mapstruct:mapstruct:1.6.3")
     implementation(project(":common-library"))
+}
+
+tasks.named<SpotBugsTask>("spotbugsMain") {
+    dependsOn(tasks.named("compileJava"))
 }
