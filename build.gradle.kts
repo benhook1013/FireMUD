@@ -58,6 +58,7 @@ subprojects {
     }
 
     tasks.withType<SpotBugsTask>().configureEach {
+        excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
         setIgnoreFailures(true)
     }
 
