@@ -52,23 +52,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Create issue template and maintain backlog for tasks and bugs
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
-- [x] Expand `docker-compose.yml` to include all services
-- [x] Create baseline Kubernetes manifests or Helm charts for deployment
-  - [x] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
-    - [x] Document network policy usage in architecture docs
-- [x] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
-  > ⚠️ Note: These Terraform files are **for reference only** and **will not be used yet**
-- [x] Write sample Terraform code to:
-  - [x] Define `firemud` namespace and basic RBAC
-  - [x] Optionally configure local Redis or Helm releases
-- [x] Add example `values.yaml` files for local and dev environments
-- [x] Support Helm-based config overrides for:
-  - [x] Redis connection info
-  - [x] Tick interval
-  - [x] Runtime feature flags
-- [x] Document deployment steps:
-  - [x] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
-  - [x] Reference Terraform files as optional future cloud setup
 
 ---
 
@@ -144,6 +127,23 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Prepare Helm charts for each service
 - [ ] Verify service startup via `./gradlew devUp` and confirm `Started` logs
 - [ ] Expose `/actuator/health` endpoint with Spring Boot Actuator
+- [ ] Expand `docker-compose.yml` to include all services
+- [ ] Create baseline Kubernetes manifests or Helm charts for deployment
+  - [ ] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
+    - [ ] Document network policy usage in architecture docs
+- [ ] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
+  > ⚠️ Note: These Terraform files are **for reference only** and **will not be used yet**
+- [ ] Write sample Terraform code to:
+  - [ ] Define `firemud` namespace and basic RBAC
+  - [ ] Optionally configure local Redis or Helm releases
+- [ ] Add example `values.yaml` files for local and dev environments
+- [ ] Support Helm-based config overrides for:
+  - [ ] Redis connection info
+  - [ ] Tick interval
+  - [ ] Runtime feature flags
+- [ ] Document deployment steps:
+  - [ ] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
+  - [ ] Reference Terraform files as optional future cloud setup
 
 ---
 
