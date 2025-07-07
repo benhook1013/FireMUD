@@ -74,14 +74,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ## 🛠️ Phase 1: Core Infrastructure & Basic Services
 
-### Immediate Next Steps
-- [x] Implement PostgreSQL and Redis Docker containers for local dev
-  - [x] Add `postgres` and `redis` services to `docker-compose.yml`
-  - [x] Provide default credentials and mounted volumes for local data
-  - [x] Include `.env.sample` with default environment variables
-  - [x] Document connection settings in `DEVELOPER_SETUP.md`
-  - [x] Create Docker volumes for persistent databases
-
 ### Behavior and Orchestration Planning
 - [x] Define core service responsibilities and runtime behaviors
   - [x] Outline tick flow, session management, reconnect logic, and command execution
@@ -160,7 +152,8 @@ _Applies to:_
 - [ ] Add baseline source structure and Spring Boot entrypoint
 - [ ] Implement basic `PingController` and gRPC `PingService`
 - [ ] Define Dockerfile and Gradle image build
-- [ ] Add `.env.sample` and Docker Compose integration (PostgreSQL, Redis)
+- [ ] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
+- [ ] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
 - [ ] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
 - [ ] Add minimal `README.md` with local setup instructions and design links
 - [ ] Define Kubernetes `Deployment` and `Service` manifests
