@@ -18,7 +18,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Expose `/actuator/health` endpoint with Spring Boot Actuator
 - [ ] Create baseline Kubernetes manifests or Helm charts for deployment
   - [ ] Create Kubernetes `NetworkPolicy` manifests to restrict service communication
-    - [ ] Document network policy usage in architecture docs
 
 ---
 
@@ -106,9 +105,6 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 
 - [ ] Add unit tests for REST, gRPC, and startup behavior (e.g. `PingController`)
 - [ ] Develop unit tests for core service logic (command parsing, actions, world updates)
-- [ ] Plan integration tests (via Testcontainers) for service collaboration
-- [ ] Implement integration tests for multi-service interactions
-- [ ] Validate saga workflows for account and world creation
 - [ ] Perform API testing with Postman or RestAssured
 - [ ] Introduce contract testing for gRPC and REST APIs (Spring Cloud Contract or Pact)
 - [ ] Use Spring Boot Test and Testcontainers for integration testing

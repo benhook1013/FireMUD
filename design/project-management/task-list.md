@@ -120,6 +120,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Document deployment steps:
   - [ ] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
   - [ ] Reference Terraform files as optional future cloud setup
+- [ ] Document network policy usage in architecture docs
 
 ### Security & Authentication
 
@@ -184,6 +185,12 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
 - [ ] **Write Developer Documentation for Game Creators**
   - [ ] Provide API references for scripting & integration
   - [ ] Guide for setting up and configuring hosted games
+
+### Integration & Saga Testing
+
+- [ ] Plan integration tests (via Testcontainers) for service collaboration
+- [ ] Implement integration tests for multi-service interactions
+- [ ] Validate saga workflows for account and world creation
 
 ---
 
