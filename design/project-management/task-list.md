@@ -117,14 +117,10 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Ensure CI/CD includes the common package build process
 - [x] **Define API contracts & inter-service communication (REST, gRPC, WebSockets)**
   - [x] Ensure API contracts include standard error handling and request validation
-  - [x] Configure gRPC infrastructure with **mTLS** certificates for internal calls
-  - [x] Install **cert-manager** and store certificates as Kubernetes Secrets
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
-  - [ ] Configure centralized log aggregation dashboards early
-  - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 
 #### Coding Kickoff Checklist
   - [ ] Provision ephemeral preview environments for pull requests
@@ -196,6 +192,7 @@ _Applies to:_
 ---
 
 #### 🔒 Security & Authentication
+- [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 - [ ] Integrate JWT-based authentication using helpers from `firemud-common`
 - [ ] Validate `globalRoles` and `scopedRoles` where applicable
 - [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
@@ -294,6 +291,7 @@ _Applies to:_
 - [ ] Use shared gRPC interceptor to inject `traceId` and `correlationId`
 - [ ] Propagate tracing context across service boundaries
 - [ ] Emit service-level tick and Redis command metrics (if applicable)
+- [ ] Configure centralized log aggregation dashboards early
 - [ ] Use shared logging interceptor to ensure trace/correlation propagation
 
 ---
