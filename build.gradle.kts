@@ -32,13 +32,13 @@ subprojects {
     version = "0.1.0-SNAPSHOT"
 
     dependencies {
+        implementation("com.google.protobuf:protobuf-java:4.31.1")
+        implementation("io.grpc:grpc-netty-shaded:1.73.0")
+        implementation("io.grpc:grpc-protobuf:1.73.0")
+        implementation("io.grpc:grpc-stub:1.73.0")
+        implementation("javax.annotation:javax.annotation-api:1.3.2")
         testImplementation("org.springframework.boot:spring-boot-starter-test:3.5.3")
         testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.3")
-        implementation("io.grpc:grpc-stub:1.73.0")
-        implementation("io.grpc:grpc-protobuf:1.73.0")
-        implementation("io.grpc:grpc-netty-shaded:1.73.0")
-        implementation("com.google.protobuf:protobuf-java:4.31.1")
-        implementation("javax.annotation:javax.annotation-api:1.3.2")
     }
 
     spotless {
