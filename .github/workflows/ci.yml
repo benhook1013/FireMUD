@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build and Test (Java ${{ matrix.java-version }}, Node ${{ matrix.node-version }}, ${{ matrix.service }})
+    name: Build and Test (${{ matrix.service }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
