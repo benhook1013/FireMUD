@@ -2,7 +2,7 @@
 
 This repository uses a hierarchical Gradle layout. All microservices and the shared `common-library` now live under a top-level `services/` folder to keep the root tidy.
 
-```
+```text
 root
 ├── services/
 │   ├── common-library

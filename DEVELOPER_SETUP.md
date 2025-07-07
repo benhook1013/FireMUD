@@ -64,7 +64,7 @@ To manually fix correctable issues, run:
 ./gradlew lintMarkdownFix
 ```
 
-Linting rules are defined in `.markdownlint.json` at the project root. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
+Linting rules are defined in `.markdownlint-cli2.jsonc` at the project root. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
 
 ## Lombok and MapStruct
 
