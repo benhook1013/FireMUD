@@ -15,9 +15,9 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-redis:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-jdbc:3.5.3")
     implementation("io.micrometer:micrometer-core:1.15.1")
-    implementation("io.jsonwebtoken:jjwt-api:0.12.6")
-    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
-    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+    implementation("io.jsonwebtoken:jjwt-api:0.11.5")
+    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.11.5")
+    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.11.5")
 
     api("org.springframework.boot:spring-boot-starter-web:3.5.3")
     api("org.springframework.boot:spring-boot-starter-validation:3.5.3")
