@@ -232,6 +232,24 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 - [ ] Optionally provide Swagger UI or interactive API explorer
 - [ ] Document required environment variables and config structure
 
+## ⚙️ Load Testing, Operations & Scaling
+
+- [ ] **Conduct Load & Security Testing**
+  - [ ] Simulate high-concurrency scenarios to identify bottlenecks
+  - [ ] Run load tests using JMeter, Gatling, or Locust
+  - [ ] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
+- [ ] **Deploy Staging Environments for Playtesting**
+  - [ ] Perform multi-user playtests and gather feedback
+- [ ] **Monitor Logs & Fix Issues in Production**
+  - [ ] Track errors, crashes, and performance issues
+  - [ ] Implement hotfixes for immediate problems
+- [ ] **Scale & Optimize Performance**
+  - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
+  - [ ] Optimize database queries & network traffic handling
+  - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
+  - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
+  - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
+
 ---
 
 ## 🧩 Notes

@@ -87,14 +87,6 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
 
 ## 🛠️ Phase 2: Testing & Pre-Launch Preparations
 
-- [ ] **Conduct Load & Security Testing**
-  - [ ] Simulate high-concurrency scenarios to identify bottlenecks
-  - [ ] Run load tests using JMeter, Gatling, or Locust
-  - [ ] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
-
-- [ ] **Deploy Staging Environments for Playtesting**
-  - [ ] Perform multi-user playtests and gather feedback
-
 - [ ] **Write Developer Documentation for Game Creators**
   - [ ] Provide API references for scripting & integration
   - [ ] Guide for setting up and configuring hosted games
@@ -103,16 +95,6 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
 
 ## 🛠️ Phase 3: Deployment & Post-Launch Iteration
 
-- [ ] **Monitor Logs & Fix Issues in Production**
-  - [ ] Track errors, crashes, and performance issues
-  - [ ] Implement hotfixes for immediate problems
-
-- [ ] **Scale & Optimize Performance**
-  - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
-  - [ ] Optimize database queries & network traffic handling
-  - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
-  - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
-  - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
 - [ ] **Iterate on Features & Add More Game Customization**
   - [ ] Expand game customization options for hosted games
   - [ ] Improve scripting capabilities & developer tools
