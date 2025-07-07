@@ -192,6 +192,7 @@ _Applies to:_
 - [ ] Rely on Game Session Service for gameplay session enforcement
 - [ ] Configure mutual TLS (mTLS) for gRPC between internal services
 - [ ] Manage certificates via Kubernetes `cert-manager`
+- [ ] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
 - [ ] Use shared security utilities from `firemud-common` for JWT and role validation
 - [ ] Add integration test for mid-session role refresh via Game Session Service
 - [ ] Implement hot reload for TLS certificates and JWKS keys
@@ -247,7 +248,12 @@ _Applies to:_
 
 #### 🧪 Testing & Quality Gates
 - [ ] Add unit tests for REST, gRPC, and startup behavior (e.g. `PingController`)
+- [ ] Develop unit tests for core service logic (command parsing, actions, world updates)
 - [ ] Plan integration tests (via Testcontainers) for service collaboration
+- [ ] Implement integration tests for multi-service interactions
+- [ ] Validate saga workflows for account and world creation
+- [ ] Perform API testing with Postman or RestAssured
+- [ ] Introduce contract testing for gRPC and REST APIs (Spring Cloud Contract or Pact)
 - [ ] Use Spring Boot Test and Testcontainers for integration testing
 - [ ] Include optional dev data seeding for local workflows
 - [ ] Enable static analysis:
@@ -318,13 +324,6 @@ _Applies to:_
 
 ## 🛠️ Phase 2: Testing & Pre-Launch Preparations
 
-- [ ] **Implement Automated Unit & Integration Tests**
-  - [ ] Develop unit tests for core services (command parsing, actions, world updates)
-  - [ ] Implement integration tests for multi-service interactions
-  - [ ] Validate saga workflows for account and world creation
-  - [ ] Perform API testing with Postman, RestAssured
-  - [ ] Introduce contract testing for gRPC and REST APIs (Spring Cloud Contract or Pact)
-
 - [ ] **Conduct Load & Security Testing**
   - [ ] Simulate high-concurrency scenarios to identify bottlenecks
   - [ ] Run load tests using JMeter, Gatling, or Locust
@@ -376,9 +375,6 @@ _Applies to:_
 ---
 
 ## ➕ Additional Tasks
-
-- [ ] Integrate **Kubernetes Secrets** for storing all credentials across services
-  - External secret stores are not planned at this stage
 - [ ] Provide command-line tooling for local game and session management
 - [ ] Plan for **end-to-end UI testing** using Cypress or Playwright once the
   web UI is stable
