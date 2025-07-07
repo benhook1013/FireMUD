@@ -106,7 +106,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Implement base configuration classes for service discovery and shared properties
   - [x] Implement common exception handling & error response structures
   - [x] Implement configuration management (centralized properties, environment handling)
-  - [ ] Enforce `tenantId` validation for create endpoints across all microservices
   - [ ] Publish common package to internal repository (Maven/Gradle)
   - [x] Add `common-library` README with usage examples
   - [ ] Extend **firemud-common** with saga orchestration support
@@ -123,26 +122,17 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Ensure API contracts include standard error handling and request validation
   - [x] Configure gRPC infrastructure with **mTLS** certificates for internal calls
   - [x] Install **cert-manager** and store certificates as Kubernetes Secrets
-  - [ ] Implement hot reload for TLS certificates and JWKS keys across services
 - [x] **Define high-level architecture & microservices boundaries**
 - [x] **Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)**
 - [x] **Set up Docker and Kubernetes for containerized deployment**
   - [x] **Configure Flyway-based database migrations for each microservice**
-- [ ] **Implement service discovery for internal microservices (Spring Cloud, Eureka, Consul, or Kubernetes-native)**
-  - [ ] Ensure common package includes service discovery utilities
 - [x] **Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)**
   - [ ] Configure centralized log aggregation dashboards early
   - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
-  - [ ] Ensure authentication utilities from common package integrate seamlessly
 
 #### Coding Kickoff Checklist
   - [ ] Provision ephemeral preview environments for pull requests
   - [ ] Finalize API schemas from concrete gameplay flows
-    - [ ] Database schema diagrams for each microservice
-    - [ ] Example Flyway migration scripts
-  - [ ] Create ERD diagrams and baseline Flyway scripts for all services
-    - [ ] Produce entity relationship diagrams for initial domain models
-  - [ ] Automate architecture and ERD diagram generation in CI
   - [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
 ### Web Frontend
 - [ ] Scaffold React-based MUD client with Vite and Material-UI
@@ -202,6 +192,8 @@ _Applies to:_
 - [ ] Add structured error responses using `shared/ErrorDetail.proto`
 - [ ] Add contract smoke tests for gRPC (`grpcurl`) and REST (`curl`)
 - [ ] Generate gRPC stubs via Gradle and include in CI pipeline
+- [ ] Enforce `tenantId` validation for create endpoints
+- [ ] Generate ERD diagrams and baseline Flyway scripts for each service (automated in CI)
 
 ---
 
@@ -214,6 +206,8 @@ _Applies to:_
 - [ ] Manage certificates via Kubernetes `cert-manager`
 - [ ] Use shared security utilities from `firemud-common` for JWT and role validation
 - [ ] Add integration test for mid-session role refresh via Game Session Service
+- [ ] Implement hot reload for TLS certificates and JWKS keys
+- [ ] Ensure authentication utilities from `firemud-common` integrate seamlessly
 
 ---
 
@@ -225,6 +219,7 @@ _Applies to:_
 - [ ] Implement structured error mapping with `ErrorDetail`
 - [ ] Include `buf breaking` tests in CI for backward compatibility
 - [ ] Integrate proto generation and schema validation into CI workflow
+- [ ] Integrate service discovery via Eureka or Kubernetes and register each service using `firemud-common` utilities
 
 ---
 
@@ -273,6 +268,7 @@ _Applies to:_
   - SpotBugs for runtime defects
 - [ ] Enable code coverage (e.g., JaCoCo)
 - [ ] Validate gRPC and REST contracts with smoke tests using `grpcurl` and `curl`
+- [ ] Add integration tests for each service's create endpoints
 
 ---
 
@@ -336,7 +332,6 @@ _Applies to:_
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
   - [ ] Implement integration tests for multi-service interactions
-  - [ ] Add integration tests for each service's create endpoints
   - [ ] Validate saga workflows for account and world creation
   - [ ] Perform API testing with Postman, RestAssured
   - [ ] Introduce contract testing for gRPC and REST APIs (Spring Cloud Contract or Pact)
