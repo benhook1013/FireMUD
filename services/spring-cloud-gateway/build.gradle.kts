@@ -51,16 +51,20 @@ sourceSets {
 
 tasks.named<SpotBugsTask>("spotbugsMain") {
     dependsOn(tasks.named("compileJava"))
-    (classes as org.gradle.api.file.ConfigurableFileCollection).setFrom(fileTree("$buildDir/classes/java/main") {
-        exclude("**/proto/**")
-    })
+    classes = files(
+        fileTree("$buildDir/classes/java/main") {
+            exclude("**/proto/**")
+        }
+    )
 }
 
 tasks.named<SpotBugsTask>("spotbugsTest") {
     dependsOn(tasks.named("compileTestJava"))
-    (classes as org.gradle.api.file.ConfigurableFileCollection).setFrom(fileTree("$buildDir/classes/java/test") {
-        exclude("**/proto/**")
-    })
+    classes = files(
+        fileTree("$buildDir/classes/java/test") {
+            exclude("**/proto/**")
+        }
+    )
 }
 
 
