@@ -71,13 +71,6 @@ jobs:
           echo "::group::Run Tests"
           ./gradlew check
           echo "::endgroup::"
-
-      - name: 📊 Generate Code Coverage
-        run: |
-          echo "::group::Generate Coverage"
-          ./gradlew jacocoTestReport
-          echo "::endgroup::"
-
       - name: 📈 Parse Coverage %
         id: coverage
         run: |
