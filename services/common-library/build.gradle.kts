@@ -9,6 +9,7 @@ dependencies {
     annotationProcessor("org.mapstruct:mapstruct-processor:1.6.3")
     compileOnly("org.projectlombok:lombok:1.18.38")
     annotationProcessor("org.projectlombok:lombok:1.18.38")
+    annotationProcessor("org.projectlombok:lombok-mapstruct-binding:0.2.0")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-web:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-validation:3.5.3")
