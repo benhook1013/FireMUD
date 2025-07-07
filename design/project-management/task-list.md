@@ -1,7 +1,19 @@
 # 🚀 MUD Game Platform Development To-Do List
 
 This checklist is structured to **build foundational features first**, followed by **gameplay mechanics, multiplayer, administration, and optimizations**.
-Service-specific tasks are tracked in separate files within this folder (e.g., `task-list-account-service.md`).
+Service-specific tasks are tracked in separate files within this folder. Quick links:
+
+- [Account Service](task-list-account-service.md)
+- [Automation & Scripting Service](task-list-automation-scripting-service.md)
+- [Entity Management Service](task-list-entity-management-service.md)
+- [Game Design Service](task-list-game-design-service.md)
+- [Game Logic Service](task-list-game-logic-service.md)
+- [Game Session Service](task-list-game-session-service.md)
+- [Logging & Admin Service](task-list-logging-admin-service.md)
+- [Social & Groups Service](task-list-social-groups-service.md)
+- [Spring Cloud Gateway](task-list-spring-cloud-gateway.md)
+- [TCP Proxy Service](task-list-tcp-proxy-service.md)
+- [World Management Service](task-list-world-management-service.md)
 
 ---
 
@@ -319,7 +331,7 @@ _Applies to:_
 
 ---
 
-## 🛠️ Phase 9: Testing & Pre-Launch Preparations
+## 🛠️ Phase 2: Testing & Pre-Launch Preparations
 
 - [ ] **Implement Automated Unit & Integration Tests**
   - [ ] Develop unit tests for core services (command parsing, actions, world updates)
@@ -343,7 +355,7 @@ _Applies to:_
 
 ---
 
-## 🛠️ Phase 10: Deployment & Post-Launch Iteration
+## 🛠️ Phase 3: Deployment & Post-Launch Iteration
 
 - [ ] **Monitor Logs & Fix Issues in Production**
   - [ ] Track errors, crashes, and performance issues
@@ -370,7 +382,7 @@ _Applies to:_
 
 ---
 
-## 🛠️ Phase 11: Community & Funding
+## 🛠️ Phase 4: Community & Funding
 
 - [ ] Set up financial contribution options
   - [ ] Add PayPal donation link
