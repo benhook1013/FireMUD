@@ -47,6 +47,11 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Add `.markdownlint-cli2.jsonc` with repository rules
     - [x] Provide `.pre-commit-config.yaml` and git hook script
   - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation
+  - [x] Add `.windsurfrules` with AI coding guidelines
+  - [x] Add `.trivy.yaml` for Trivy security scans
+  - [x] Provide `.vscode` workspace settings
+  - [x] Enable Gradle configuration cache and parallel builds
+  - [x] Add GitHub workflow to build Docker images
 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
