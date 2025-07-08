@@ -70,7 +70,7 @@ These reusable tasks apply to every service module unless otherwise noted. The T
 
 ---
 
-## 🔄 Saga Participation (Optional, not implemented by TCP Proxy Service or Spring Cloud Gateway)
+## 🔄 Saga Participation (Optional)
 
 - [ ] Use `firemud-common` saga orchestration helpers for workflow steps
 - [ ] Handle retries, rollback, and compensation via provided API
@@ -82,7 +82,7 @@ These reusable tasks apply to every service module unless otherwise noted. The T
 
 ---
 
-## 🔑 Redis Integration (If Applicable, not implemented by TCP Proxy Service or Spring Cloud Gateway)
+## 🔑 Redis Integration (If Applicable)
 
 - [ ] Use Redis exclusively for transient, gameplay-related state
 - [ ] Use `firemud-common` Redis connector utilities
