@@ -1,6 +1,7 @@
 # Common Steps for All Microservices
 
-These tasks apply to every service unless a note indicates otherwise. Gateway and TCP Proxy only implement the networking and health check pieces.
+These checklist items apply to every microservice unless a note indicates otherwise.
+Gateway and TCP Proxy only implement the networking and health-check pieces.
 
 ---
 
@@ -11,6 +12,7 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Provide a Dockerfile and Gradle task for building the image
 - [ ] Create `README.md` with local setup instructions and links to design docs
 - [ ] Add the service to the GitHub Actions build matrix and Buf lint step
+- [ ] Include the service in the Docker image workflow (`buildDockerImages`)
 - [ ] Define Kubernetes `Deployment` and `Service` manifests
 - [ ] Configure readiness and liveness probes using `/actuator/health`
 
@@ -22,9 +24,11 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Version proto files under `protos/{service}/v1` with `package service.v1`
 - [ ] Use shared proto types (e.g., `ErrorDetail`) from `protos/shared/`
 - [ ] Generate gRPC stubs via Gradle and include them in the source set
+- [ ] Add the proto directory to `buf.yaml` for linting and breaking-change checks
 - [ ] Provide contract smoke tests using `grpcurl`
 - [ ] *(If the service exposes REST APIs)* implement controllers and generate OpenAPI specs
 - [ ] *(If the service persists data)* define JPA entities, repositories, and Flyway migrations
+- [ ] *(If the service stores data)* include a `tenantId` column and enforce tenant filtering
 
 ---
 
@@ -33,6 +37,7 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Integrate JWT validation using helpers from `firemud-common` *(meta/control services only)*
 - [ ] Validate `globalRoles` and `scopedRoles` when relevant
 - [ ] Use shared security utilities for JWT parsing and role checks
+- [ ] Gameplay services defer session validation to the Game Session Service (no direct JWT check)
 
 ---
 
@@ -42,6 +47,7 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Map errors to `ErrorDetail` and appropriate gRPC status codes
 - [ ] Register with service discovery (Eureka or Kubernetes) via helpers in `firemud-common`
 - [ ] Ensure gRPC calls use mTLS certificates managed by cert-manager
+- [ ] Communicate directly over gRPC (traffic does not route through the Gateway)
 
 ---
 
@@ -50,6 +56,7 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Depend on `firemud-common` via Gradle
 - [ ] Apply logging, tracing, and security interceptors from the library
 - [ ] Replace boilerplate configuration with provided autoconfiguration classes
+- [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
 ---
 
@@ -69,6 +76,7 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Validate shard-local key usage and avoid in-service caching
 - [ ] Add connectivity tests and emit Redis metrics
 - [ ] *(If participating in ticks)* follow the locking and staging flow described in the Tick System docs
+- [ ] Prefix all keys with `tenantId` to isolate game data
 
 ---
 
@@ -78,6 +86,8 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate gRPC and REST contracts with smoke tests
 - [ ] Seed minimal test data for local workflows
+- [ ] Run `./gradlew check` in CI to execute all unit and integration tests
+- [ ] *(When workflows span services)* add cross-service integration tests
 
 ---
 
@@ -87,6 +97,7 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Enable OpenTelemetry tracing via `spring-boot-starter-otel`
 - [ ] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
+- [ ] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
 
@@ -95,6 +106,7 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 - [ ] Create `design/README.md` summarizing APIs and sample requests
 - [ ] Document proto contracts and any Redis keys in the service README
 - [ ] Document required environment variables and configuration
+- [ ] Note `tenantId` handling and cross-service dependencies
 
 ---
 
