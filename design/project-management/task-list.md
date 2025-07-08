@@ -46,6 +46,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Configure Gradle Node plugin and markdownlint tasks
     - [x] Add `.markdownlint-cli2.jsonc` with repository rules
     - [x] Provide `.pre-commit-config.yaml` and git hook script
+  - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation
 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
@@ -116,7 +117,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 ### Infrastructure Setup
 
 - [ ] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
-- [ ] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
+- [x] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
 - [ ] Standardize `FIREMUD_` environment variable prefix across all services
 - [ ] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
 - [ ] Expand `docker-compose.yml` to include all services
@@ -164,8 +165,11 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [x] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
 - [x] Verify each service starts via `./gradlew devUp` and shows `Started` logs
+- [x] Create Gradle `devDown` task to stop the Docker Compose stack
+- [x] Create Gradle `buildDockerImages` task to build all service images
 - [ ] Provision ephemeral preview environments for pull requests
 - [x] Automate Docker image builds and registry pushes
+- [x] Cache Gradle and Node dependencies in CI for faster builds
 - [ ] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
 - [ ] Add CI steps for:
   - Protobuf generation and schema checking
@@ -185,7 +189,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [ ] Buf or proto consistency
 - [x] Use Trivy for container and dependency vulnerability scanning
 - [x] Schedule recurring security scans (including base image and dependency scans)
-- [ ] Auto-generate release notes and semantic version bumps
+- [x] Add GitHub workflow to generate release notes on tag push
+- [ ] Automate semantic version bumps
 - [x] Enable Dependabot for automated dependency updates
 - [x] Enable static analysis:
   - [x] Spotless for formatting
