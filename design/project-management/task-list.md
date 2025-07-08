@@ -43,6 +43,9 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)
   - [x] Set up Docker and Kubernetes for containerized deployment
   - [x] Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)
+  - [x] Configure Gradle Node plugin and markdownlint tasks
+    - [x] Add `.markdownlint-cli2.jsonc` with repository rules
+    - [x] Provide `.pre-commit-config.yaml` and git hook script
 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
@@ -97,6 +100,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Implement base configuration classes for service discovery and shared properties
   - [x] Implement common exception handling & error response structures
   - [x] Implement configuration management (centralized properties, environment handling)
+  - [x] Include Lombok and MapStruct dependencies for annotation-based code generation
   - [ ] Publish common package to internal repository (Maven/Gradle)
   - [ ] Publish **firemud-protos** artifact with shared gRPC definitions
   - [x] Add `common-library` README with usage examples
