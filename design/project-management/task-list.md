@@ -66,6 +66,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [ ] Establish Architecture Decision Record (ADR) process
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
+  - [ ] Document multi-tenancy enforcement guidelines across all services (see [Multi-Tenancy](../architecture/system-architecture-multi-tenancy.md))
+  - [ ] Finalize gRPC API style guidelines and Buf configuration (see [gRPC Guidelines](../architecture/system-architecture-grpc.md))
 
 ---
 
@@ -160,6 +162,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Verify each service starts via `./gradlew devUp` and shows `Started` logs
 - [ ] Provision ephemeral preview environments for pull requests
 - [x] Automate Docker image builds and registry pushes
+- [ ] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
 - [ ] Add CI steps for:
   - Protobuf generation and schema checking
   - Lint `.proto` files with `buf` and enforce schema versioning
@@ -187,6 +190,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Enable code coverage (e.g., JaCoCo)
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia and Kreya project files for manual API testing
+- [ ] Configure Slack or email notifications for failed workflows
 
 ### Observability & Tracing
 
