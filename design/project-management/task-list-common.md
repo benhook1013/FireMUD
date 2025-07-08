@@ -1,19 +1,19 @@
-# Common Steps for All Microservices (Non-Infrastructure)
+# Common Steps for All Microservices
 
-These tasks apply to every service module. Gateway and TCP Proxy implement only a partial subset.
+These reusable tasks apply to every service module unless otherwise noted. The TCP Proxy Service and Spring Cloud Gateway implement a reduced subset as annotated.
 
 ---
 
 ## 📦 Project Setup & Bootstrapping
 
-- [ ] Create Gradle module with `java` or `java-library` plugin
-- [ ] Add baseline source structure and Spring Boot entrypoint
-- [ ] Implement basic `PingController` and gRPC `PingService`
-- [ ] Define Dockerfile and Gradle image build
-- [ ] Add minimal `README.md` with local setup instructions and design links
+- [ ] Register the Gradle module in `settings.gradle.kts` and apply the `java` or `java-library` plugin
+- [ ] Add a Spring Boot entrypoint with a minimal `PingController` and gRPC `PingService`
+- [ ] Provide a Dockerfile and Gradle task for building the image
+- [ ] Create `README.md` with local setup instructions and design links
+- [ ] Add the service to the GitHub Actions build matrix
 - [ ] Define Kubernetes `Deployment` and `Service` manifests
 - [ ] Add Kubernetes readiness and liveness probes
-- [ ] Expose `/actuator/health` endpoint with Spring Boot Actuator
+- [ ] Expose `/actuator/health` with readiness and liveness probes
 
 ---
 
@@ -35,7 +35,7 @@ These tasks apply to every service module. Gateway and TCP Proxy implement only 
 
 ---
 
-## 🔒 Security & Authentication
+## 🔒 Authentication & Authorization *(not required for TCP Proxy Service or Spring Cloud Gateway)*
 
 - [ ] Integrate JWT-based authentication using helpers from `firemud-common`
 - [ ] Validate `globalRoles` and `scopedRoles` where applicable
