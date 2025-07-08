@@ -36,7 +36,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Set up Git repository and development workflow
   - [x] Add `.gitignore` covering build artifacts and environment files
   - [x] Add `LICENSE.md` and `NOTICE.md` with licensing information
-  - [ ] Add `.gitattributes` for consistent line endings across platforms
+  - [x] Add `.gitattributes` for consistent line endings across platforms
   - [x] Add `gradle.properties` enabling build caching and parallelism
   - [x] Provide baseline `config/redis.conf` for Docker Compose
   - [x] Provide script to generate Gradle wrappers for all services (`init-gradle-wrappers.ps1`)
@@ -63,7 +63,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add `.trivy.yaml` for Trivy security scans
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` for static analysis configuration
   - [x] Provide `.vscode` workspace settings
-  - [ ] Add `.editorconfig` for consistent indentation and whitespace rules
+  - [x] Add `.editorconfig` for consistent indentation and whitespace rules
   - [x] Enable Gradle configuration cache and parallel builds
   - [x] Add GitHub workflow to build Docker images
   - [ ] Add GitHub workflow to publish documentation to GitHub Pages
@@ -89,7 +89,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add feature request issue template for contributors
   - [x] Publish `LICENSE.md` and `NOTICE.md` with licensing details
   - [x] Provide `DEVELOPER_SETUP.md` with local setup instructions
-  - [ ] Add pull request template for contributors
+  - [x] Add pull request template for contributors
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
   - [x] Document multi-tenancy enforcement guidelines across all services (see [Multi-Tenancy](../architecture/system-architecture-multi-tenancy.md))
@@ -200,7 +200,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Automate Docker image builds and registry pushes
 - [x] Publish Docker images to GitHub Container Registry (GHCR)
 - [x] Cache Gradle and Node dependencies in CI for faster builds
-- [ ] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
+  - [x] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
 - [ ] Add CI steps for:
   - Protobuf generation and schema checking
   - Lint `.proto` files with `buf` and enforce schema versioning
@@ -216,7 +216,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Checkstyle
     - [x] markdownlint
     - [x] SpotBugs
-    - [ ] Buf or proto consistency
+    - [x] Buf or proto consistency
 - [x] Use Trivy for container and dependency vulnerability scanning
 - [x] Post Trivy scan report as pull request comment
 - [x] Cache Trivy vulnerability database in CI for faster scans
