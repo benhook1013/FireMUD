@@ -76,6 +76,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Publish a `CODE_OF_CONDUCT.md` outlining community expectations
   - [x] Create issue template and maintain backlog for tasks and bugs
   - [ ] Add pull request template for contributors
+  - [ ] Add `CODEOWNERS` file and enforce branch protection rules
+  - [ ] Publish documentation site via GitHub Pages (MkDocs or Docusaurus)
   - [ ] Establish Architecture Decision Record (ADR) process
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
@@ -149,6 +151,10 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
     - [x] Reference Terraform files as optional future cloud setup
   - [x] Document network policy usage in architecture docs
+  - [ ] Apply Kubernetes `NetworkPolicy` manifests across environments
+  - [ ] Provide Helm umbrella chart for deploying all services together
+  - [ ] Develop production Terraform modules for Kubernetes, PostgreSQL, and Redis
+  - [ ] Build shared base Docker image for microservices
 
 ### Security & Authentication
 
@@ -202,6 +208,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Schedule recurring security scans (including base image and dependency scans)
 - [x] Add GitHub workflow to generate release notes on tag push
 - [ ] Automate semantic version bumps
+- [ ] Integrate open source license scanning into CI
 - [x] Enable Dependabot for automated dependency updates
 - [x] Enable static analysis:
   - [x] Spotless for formatting
