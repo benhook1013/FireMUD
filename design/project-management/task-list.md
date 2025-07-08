@@ -82,6 +82,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add service-level design README links to central architecture docs
   - [x] Publish a `CODE_OF_CONDUCT.md` outlining community expectations
   - [x] Create issue template and maintain backlog for tasks and bugs
+  - [x] Add feature request issue template for contributors
   - [ ] Add pull request template for contributors
   - [ ] Add `CODEOWNERS` file and enforce branch protection rules
   - [ ] Publish documentation site via GitHub Pages (MkDocs or Docusaurus)
