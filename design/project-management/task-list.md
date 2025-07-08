@@ -116,6 +116,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Write sample Terraform code to:
   - [ ] Define `firemud` namespace and basic RBAC
   - [ ] Optionally configure local Redis or Helm releases
+  - [ ] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
+  - [ ] Install redis-exporter for Prometheus metrics
   - [ ] Prepare Helm charts and baseline Kubernetes manifests for each service
     - [ ] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
 - [ ] Add example `values.yaml` files for local and dev environments
@@ -185,6 +187,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Configure centralized log aggregation dashboards early
 - [ ] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
 - [ ] Deploy OpenTelemetry Collector for distributed tracing
+- [ ] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
+- [ ] Commit default Grafana and Kibana dashboard templates
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
