@@ -207,6 +207,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [ ] Buf or proto consistency
 - [x] Use Trivy for container and dependency vulnerability scanning
 - [x] Post Trivy scan report as pull request comment
+- [x] Cache Trivy vulnerability database in CI for faster scans
 - [x] Schedule recurring security scans (including base image and dependency scans)
 - [x] Add GitHub workflow to generate release notes on tag push
 - [ ] Automate semantic version bumps
@@ -218,6 +219,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] SpotBugs for runtime defects
 - [x] Enable code coverage (e.g., JaCoCo)
 - [x] Post build summary and coverage percent as pull request comment
+- [x] Upload coverage reports and failing test logs as CI artifacts
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia and Kreya project files for manual API testing
 - [ ] Configure Slack or email notifications for failed workflows
