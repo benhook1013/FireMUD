@@ -61,6 +61,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add service-level design README links to central architecture docs
   - [x] Publish a `CODE_OF_CONDUCT.md` outlining community expectations
   - [x] Create issue template and maintain backlog for tasks and bugs
+  - [ ] Establish Architecture Decision Record (ADR) process
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
 
@@ -88,6 +89,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
   - [x] Implement centralized logging utilities
   - [x] Implement gRPC interceptors for logging and metrics
+  - [ ] Integrate OpenTelemetry tracing helpers into `firemud-common`
   - [x] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [x] Implement database connection utilities (PostgreSQL, Redis connectors)
   - [x] Implement base configuration classes for service discovery and shared properties
@@ -107,6 +109,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [ ] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
 - [ ] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
+- [ ] Standardize `FIREMUD_` environment variable prefix across all services
 - [ ] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
 - [ ] Expand `docker-compose.yml` to include all services
 - [ ] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
@@ -170,6 +173,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Use Trivy for container and dependency vulnerability scanning
 - [ ] Schedule recurring security scans (including base image and dependency scans)
 - [ ] Auto-generate release notes and semantic version bumps
+- [ ] Enable Dependabot for automated dependency updates
 - [ ] Enable static analysis:
   - Spotless for formatting
   - Checkstyle for style rules
@@ -224,6 +228,7 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
 - [ ] **Monitor Logs & Fix Issues in Production**
   - [ ] Track errors, crashes, and performance issues
   - [ ] Implement hotfixes for immediate problems
+  - [ ] Document operational runbooks for deployment, scaling, and recovery
 - [ ] **Scale & Optimize Performance**
   - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
   - [ ] Optimize database queries & network traffic handling
