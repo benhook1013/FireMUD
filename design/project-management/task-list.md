@@ -208,6 +208,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [ ] Buf or proto consistency
 - [x] Use Trivy for container and dependency vulnerability scanning
 - [x] Post Trivy scan report as pull request comment
+- [x] Cache Trivy vulnerability database in CI for faster scans
 - [x] Schedule recurring security scans (including base image and dependency scans)
 - [x] Add GitHub workflow to generate release notes on tag push
 - [ ] Automate semantic version bumps
