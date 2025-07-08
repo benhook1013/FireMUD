@@ -94,6 +94,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Implement common exception handling & error response structures
   - [x] Implement configuration management (centralized properties, environment handling)
   - [ ] Publish common package to internal repository (Maven/Gradle)
+  - [ ] Publish **firemud-protos** artifact with shared gRPC definitions
   - [x] Add `common-library` README with usage examples
   - [ ] Extend **firemud-common** with saga orchestration support
     - [ ] Define `saga` schema tables for step tracking and state
@@ -178,6 +179,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 ### Observability & Tracing
 
 - [ ] Configure centralized log aggregation dashboards early
+- [ ] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
+- [ ] Deploy OpenTelemetry Collector for distributed tracing
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
@@ -196,6 +199,7 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
 - [ ] Plan integration tests (via Testcontainers) for service collaboration
 - [ ] Implement integration tests for multi-service interactions
 - [ ] Validate saga workflows for account and world creation
+- [ ] Create cross-service integration example scripts (account creation, game session startup)
 
 ---
 
