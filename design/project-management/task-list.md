@@ -86,13 +86,9 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Create issue template and maintain backlog for tasks and bugs
   - [x] Add feature request issue template for contributors
   - [ ] Add pull request template for contributors
-  - [ ] Add `CODEOWNERS` file and enforce branch protection rules
-  - [ ] Publish documentation site via GitHub Pages (MkDocs or Docusaurus)
-  - [ ] Establish Architecture Decision Record (ADR) process
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
   - [x] Document multi-tenancy enforcement guidelines across all services (see [Multi-Tenancy](../architecture/system-architecture-multi-tenancy.md))
-  - [ ] Finalize gRPC API style guidelines and Buf configuration (see [gRPC Guidelines](../architecture/system-architecture-grpc.md))
 
 ---
 
@@ -172,7 +168,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 - [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
-- [ ] Rely on Game Session Service for gameplay session enforcement
 - [ ] Configure mutual TLS (mTLS) for gRPC between internal services
 - [ ] Install and configure `cert-manager` in the Kubernetes cluster
 - [ ] Manage certificates via Kubernetes `cert-manager`
