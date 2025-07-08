@@ -46,6 +46,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Configure Gradle Node plugin and markdownlint tasks
     - [x] Add `.markdownlint-cli2.jsonc` with repository rules
     - [x] Provide `.pre-commit-config.yaml` and git hook script
+    - [x] Add `package.json` with `markdownlint-cli2` for lint tasks
+  - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` configuration files
   - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation
   - [x] Apply `org.flywaydb.flyway` plugin across services for database migrations
     - [x] Add baseline migration scripts in each service's `db/migration` directory
@@ -129,6 +131,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [x] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
 - [x] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
+- [x] Include `redis.conf` for local Redis with AOF persistence
 - [ ] Standardize `FIREMUD_` environment variable prefix across all services
   - [x] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
   - [x] Expand `docker-compose.yml` to include all services
