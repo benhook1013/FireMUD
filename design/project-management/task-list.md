@@ -55,6 +55,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation
   - [x] Apply `org.flywaydb.flyway` plugin across services for database migrations
     - [x] Add baseline migration scripts in each service's `db/migration` directory
+  - [x] Apply `org.springframework.boot` plugin across services for building and container image packaging (`bootBuildImage`)
   - [x] Add `.windsurfrules` with AI coding guidelines
   - [x] Add `.trivy.yaml` for Trivy security scans
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` for static analysis configuration
@@ -234,7 +235,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Upload JaCoCo coverage report artifacts in CI
 - [x] Upload test logs when unit tests fail
 - [x] Enable CodeQL code scanning
-- [x] Provide Insomnia and Kreya project files for manual API testing
+- [x] Provide Insomnia project file for manual API testing
+- [ ] Provide Kreya project file for manual API testing
 - [ ] Configure Slack or email notifications for failed workflows
 
 ### Observability & Tracing
