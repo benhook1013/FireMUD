@@ -56,6 +56,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Apply `org.flywaydb.flyway` plugin across services for database migrations
     - [x] Add baseline migration scripts in each service's `db/migration` directory
   - [x] Apply `org.springframework.boot` plugin across services for building and container image packaging (`bootBuildImage`)
+  - [x] Add JUnit 5 and Mockito dependencies for unit tests
   - [x] Add `.windsurfrules` with AI coding guidelines
   - [x] Add `.trivy.yaml` for Trivy security scans
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` for static analysis configuration
