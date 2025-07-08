@@ -34,6 +34,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [x] **Repository & Workflow Setup**
   - [x] Set up Git repository and development workflow
+  - [x] Provide script to generate Gradle wrappers for all services (`init-gradle-wrappers.ps1`)
   - [x] Implement CI/CD pipeline for automated builds, testing, and deployment (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
     - [x] Ensure CI/CD includes the common package build process
   - [x] Define API contracts & inter-service communication (REST, gRPC, WebSockets)
@@ -61,6 +62,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add service-level design README links to central architecture docs
   - [x] Publish a `CODE_OF_CONDUCT.md` outlining community expectations
   - [x] Create issue template and maintain backlog for tasks and bugs
+  - [ ] Add pull request template for contributors
   - [ ] Establish Architecture Decision Record (ADR) process
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
@@ -112,6 +114,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Standardize `FIREMUD_` environment variable prefix across all services
 - [ ] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
 - [ ] Expand `docker-compose.yml` to include all services
+- [x] Include RedisInsight container in `docker-compose.override.yml` for debugging
 - [ ] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
 - [ ] Write sample Terraform code to:
   - [ ] Define `firemud` namespace and basic RBAC
