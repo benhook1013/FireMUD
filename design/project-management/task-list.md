@@ -218,6 +218,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] SpotBugs for runtime defects
 - [x] Enable code coverage (e.g., JaCoCo)
 - [x] Post build summary and coverage percent as pull request comment
+- [x] Upload JaCoCo coverage report artifacts in CI
+- [x] Upload test logs when unit tests fail
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia and Kreya project files for manual API testing
 - [ ] Configure Slack or email notifications for failed workflows
