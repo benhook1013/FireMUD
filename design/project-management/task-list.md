@@ -42,6 +42,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Define high-level architecture & microservices boundaries
   - [x] Choose technology stack (Spring Boot, PostgreSQL, Redis, WebSockets, Kubernetes, etc.)
   - [x] Set up Docker and Kubernetes for containerized deployment
+  - [x] Add Dockerfiles for each microservice
   - [x] Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)
   - [x] Configure Gradle Node plugin and markdownlint tasks
     - [x] Add `.markdownlint-cli2.jsonc` with repository rules
@@ -51,6 +52,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Add baseline migration scripts in each service's `db/migration` directory
   - [x] Add `.windsurfrules` with AI coding guidelines
   - [x] Add `.trivy.yaml` for Trivy security scans
+  - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` for static analysis configuration
   - [x] Provide `.vscode` workspace settings
   - [ ] Add `.editorconfig` for consistent indentation and whitespace rules
   - [x] Enable Gradle configuration cache and parallel builds
@@ -128,6 +130,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 ### Infrastructure Setup
 
 - [x] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
+- [x] Provide `config/redis.conf` with AOF settings for local development
 - [x] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
 - [ ] Standardize `FIREMUD_` environment variable prefix across all services
   - [x] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
