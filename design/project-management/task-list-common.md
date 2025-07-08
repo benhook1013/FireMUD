@@ -17,7 +17,7 @@ These reusable tasks apply to every service module unless otherwise noted. The T
 
 ---
 
-## 🧱 Domain Modeling & API Exposure
+## 🧱 Domain Modeling & API Exposure (not implemented by TCP Proxy Service or Spring Cloud Gateway)
 
 - [ ] Define JPA entities and repositories using Spring Data for core domain objects
 - [ ] Implement initial JPA entities and repositories
