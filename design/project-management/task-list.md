@@ -85,6 +85,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Publish a `CODE_OF_CONDUCT.md` outlining community expectations
   - [x] Create issue template and maintain backlog for tasks and bugs
   - [x] Add feature request issue template for contributors
+  - [x] Publish `LICENSE.md` and `NOTICE.md` with licensing details
+  - [x] Provide `DEVELOPER_SETUP.md` with local setup instructions
   - [ ] Add pull request template for contributors
   - [ ] Add `CODEOWNERS` file and enforce branch protection rules
   - [ ] Publish documentation site via GitHub Pages (MkDocs or Docusaurus)
@@ -296,7 +298,7 @@ See [task-list-common.md](task-list-common.md) for tasks shared across all servi
 - [ ] **Scale & Optimize Performance**
   - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
   - [ ] Optimize database queries & network traffic handling
-  - [ ] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
+  - [x] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
   - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
   - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
 
