@@ -24,3 +24,11 @@
   - Implement event-driven scripting API for game creators
   - Implement in-game modding/plugin framework
   - Implement scripted AI behaviors for NPCs
+
+## Versioning & Runtime Configuration
+
+- [ ] Implement cross-service game version publishing workflow
+  - [ ] Store immutable versions in the Game Design Service
+  - [ ] Copy published data to domain services using the `version_id`
+  - [ ] Activate versions and runtime flags via the Game Session Service
+  - [ ] Expose admin APIs for runtime flag toggles through the Logging & Admin Service
