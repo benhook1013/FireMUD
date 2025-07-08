@@ -237,7 +237,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Upload test logs when unit tests fail
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia project file for manual API testing
-- [ ] Provide Kreya project file for manual API testing
+- [x] Provide Kreya project file for manual API testing
 - [ ] Configure Slack or email notifications for failed workflows
 
 ### Observability & Tracing
