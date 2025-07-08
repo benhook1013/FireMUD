@@ -34,6 +34,9 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [x] **Repository & Workflow Setup**
   - [x] Set up Git repository and development workflow
+  - [x] Add `.gitignore` covering build artifacts and environment files
+  - [x] Add `gradle.properties` enabling build caching and parallelism
+  - [x] Provide baseline `config/redis.conf` for Docker Compose
   - [x] Provide script to generate Gradle wrappers for all services (`init-gradle-wrappers.ps1`)
   - [x] Implement CI/CD pipeline for automated builds, testing, and deployment (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
     - [x] Ensure CI/CD includes the common package build process
