@@ -52,8 +52,10 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add `.windsurfrules` with AI coding guidelines
   - [x] Add `.trivy.yaml` for Trivy security scans
   - [x] Provide `.vscode` workspace settings
+  - [ ] Add `.editorconfig` for consistent indentation and whitespace rules
   - [x] Enable Gradle configuration cache and parallel builds
   - [x] Add GitHub workflow to build Docker images
+  - [ ] Add GitHub workflow to publish documentation to GitHub Pages
 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
@@ -134,6 +136,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Define `firemud` namespace and basic RBAC
     - [x] Optionally configure local Redis or Helm releases
   - [ ] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
+  - [ ] Deploy PostgreSQL cluster with replication and persistent volumes
   - [ ] Install redis-exporter for Prometheus metrics
     - [x] Prepare Helm charts and baseline Kubernetes manifests for each service
       - [x] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
@@ -153,6 +156,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
 - [ ] Rely on Game Session Service for gameplay session enforcement
 - [ ] Configure mutual TLS (mTLS) for gRPC between internal services
+- [ ] Install and configure `cert-manager` in the Kubernetes cluster
 - [ ] Manage certificates via Kubernetes `cert-manager`
 - [ ] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
 - [ ] Add integration test for mid-session role refresh via Game Session Service
@@ -213,6 +217,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Configure centralized log aggregation dashboards early
 - [ ] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
 - [ ] Deploy OpenTelemetry Collector for distributed tracing
+- [ ] Deploy Jaeger or equivalent trace UI for visualizing spans
 - [ ] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
 - [ ] Commit default Grafana and Kibana dashboard templates
 
