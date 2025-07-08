@@ -47,11 +47,15 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Add `.markdownlint-cli2.jsonc` with repository rules
     - [x] Provide `.pre-commit-config.yaml` and git hook script
   - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation
+  - [x] Apply `org.flywaydb.flyway` plugin across services for database migrations
+    - [x] Add baseline migration scripts in each service's `db/migration` directory
   - [x] Add `.windsurfrules` with AI coding guidelines
   - [x] Add `.trivy.yaml` for Trivy security scans
   - [x] Provide `.vscode` workspace settings
+  - [ ] Add `.editorconfig` for consistent indentation and whitespace rules
   - [x] Enable Gradle configuration cache and parallel builds
   - [x] Add GitHub workflow to build Docker images
+  - [ ] Add GitHub workflow to publish documentation to GitHub Pages
 
 - [x] **Miscellaneous**
   - [x] Write initial design for each microservice
@@ -123,29 +127,30 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### Infrastructure Setup
 
-- [ ] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
+- [x] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
 - [x] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
 - [ ] Standardize `FIREMUD_` environment variable prefix across all services
-- [ ] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
-- [ ] Expand `docker-compose.yml` to include all services
+  - [x] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
+  - [x] Expand `docker-compose.yml` to include all services
 - [x] Include RedisInsight container in `docker-compose.override.yml` for debugging
-- [ ] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
-- [ ] Write sample Terraform code to:
-  - [ ] Define `firemud` namespace and basic RBAC
-  - [ ] Optionally configure local Redis or Helm releases
+  - [x] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
+  - [ ] Write sample Terraform code to:
+    - [x] Define `firemud` namespace and basic RBAC
+    - [x] Optionally configure local Redis or Helm releases
   - [ ] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
+  - [ ] Deploy PostgreSQL cluster with replication and persistent volumes
   - [ ] Install redis-exporter for Prometheus metrics
-  - [ ] Prepare Helm charts and baseline Kubernetes manifests for each service
-    - [ ] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
-- [ ] Add example `values.yaml` files for local and dev environments
-- [ ] Support Helm-based config overrides for:
-  - [ ] Redis connection info
-  - [ ] Tick interval
-  - [ ] Runtime feature flags
-  - [ ] Document deployment steps:
-    - [ ] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
-    - [ ] Reference Terraform files as optional future cloud setup
-  - [ ] Document network policy usage in architecture docs
+    - [x] Prepare Helm charts and baseline Kubernetes manifests for each service
+      - [x] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
+  - [x] Add example `values.yaml` files for local and dev environments
+  - [x] Support Helm-based config overrides for:
+    - [x] Redis connection info
+    - [x] Tick interval
+    - [x] Runtime feature flags
+  - [x] Document deployment steps:
+    - [x] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
+    - [x] Reference Terraform files as optional future cloud setup
+  - [x] Document network policy usage in architecture docs
   - [ ] Apply Kubernetes `NetworkPolicy` manifests across environments
   - [ ] Provide Helm umbrella chart for deploying all services together
   - [ ] Develop production Terraform modules for Kubernetes, PostgreSQL, and Redis
@@ -157,6 +162,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
 - [ ] Rely on Game Session Service for gameplay session enforcement
 - [ ] Configure mutual TLS (mTLS) for gRPC between internal services
+- [ ] Install and configure `cert-manager` in the Kubernetes cluster
 - [ ] Manage certificates via Kubernetes `cert-manager`
 - [ ] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
 - [ ] Add integration test for mid-session role refresh via Game Session Service
@@ -218,6 +224,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Configure centralized log aggregation dashboards early
 - [ ] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
 - [ ] Deploy OpenTelemetry Collector for distributed tracing
+- [ ] Deploy Jaeger or equivalent trace UI for visualizing spans
 - [ ] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
 - [ ] Commit default Grafana and Kibana dashboard templates
 
