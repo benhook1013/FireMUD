@@ -151,10 +151,10 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### CI/CD & Developer Automation
 
-- [ ] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
-- [ ] Verify each service starts via `./gradlew devUp` and shows `Started` logs
+- [x] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
+- [x] Verify each service starts via `./gradlew devUp` and shows `Started` logs
 - [ ] Provision ephemeral preview environments for pull requests
-- [ ] Automate Docker image builds and registry pushes
+- [x] Automate Docker image builds and registry pushes
 - [ ] Add CI steps for:
   - Protobuf generation and schema checking
   - Lint `.proto` files with `buf` and enforce schema versioning
@@ -165,20 +165,23 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - OpenAPI consistency
     - Static analysis
   - [ ] Generate ERD diagrams and baseline Flyway scripts for each service in CI
-  - [ ] Add pre-commit hooks for:
-  - Spotless
-  - Checkstyle
-  - markdownlint
-  - Buf or proto consistency
-- [ ] Use Trivy for container and dependency vulnerability scanning
-- [ ] Schedule recurring security scans (including base image and dependency scans)
+  - [x] Add pre-commit hooks for:
+    - [x] Spotless
+    - [x] Checkstyle
+    - [x] markdownlint
+    - [x] SpotBugs
+    - [ ] Buf or proto consistency
+- [x] Use Trivy for container and dependency vulnerability scanning
+- [x] Schedule recurring security scans (including base image and dependency scans)
 - [ ] Auto-generate release notes and semantic version bumps
-- [ ] Enable Dependabot for automated dependency updates
-- [ ] Enable static analysis:
-  - Spotless for formatting
-  - Checkstyle for style rules
-  - SpotBugs for runtime defects
-- [ ] Enable code coverage (e.g., JaCoCo)
+- [x] Enable Dependabot for automated dependency updates
+- [x] Enable static analysis:
+  - [x] Spotless for formatting
+  - [x] Checkstyle for style rules
+  - [x] SpotBugs for runtime defects
+- [x] Enable code coverage (e.g., JaCoCo)
+- [x] Enable CodeQL code scanning
+- [x] Provide Insomnia and Kreya project files for manual API testing
 
 ### Observability & Tracing
 
