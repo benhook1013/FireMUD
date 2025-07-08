@@ -81,7 +81,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [ ] Establish Architecture Decision Record (ADR) process
   - [x] Provide contributor guide with local setup commands and code review expectations
   - [x] Document environment variables and secrets management strategy
-  - [ ] Document multi-tenancy enforcement guidelines across all services (see [Multi-Tenancy](../architecture/system-architecture-multi-tenancy.md))
+  - [x] Document multi-tenancy enforcement guidelines across all services (see [Multi-Tenancy](../architecture/system-architecture-multi-tenancy.md))
   - [ ] Finalize gRPC API style guidelines and Buf configuration (see [gRPC Guidelines](../architecture/system-architecture-grpc.md))
 
 ---
@@ -103,7 +103,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### Build `firemud-common` Library
 
-- [ ] **Create a Common Package for Shared Microservice Code**
+- [x] **Create a Common Package for Shared Microservice Code**
   - [x] Implement common request/response DTOs for inter-service communication
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
   - [x] Implement centralized logging utilities
@@ -134,7 +134,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Expand `docker-compose.yml` to include all services
 - [x] Include RedisInsight container in `docker-compose.override.yml` for debugging
   - [x] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
-  - [ ] Write sample Terraform code to:
+  - [x] Write sample Terraform code to:
     - [x] Define `firemud` namespace and basic RBAC
     - [x] Optionally configure local Redis or Helm releases
   - [ ] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
