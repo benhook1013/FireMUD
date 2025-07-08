@@ -47,6 +47,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Add `.markdownlint-cli2.jsonc` with repository rules
     - [x] Provide `.pre-commit-config.yaml` and git hook script
   - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation
+  - [x] Apply `org.flywaydb.flyway` plugin across services for database migrations
+    - [x] Add baseline migration scripts in each service's `db/migration` directory
   - [x] Add `.windsurfrules` with AI coding guidelines
   - [x] Add `.trivy.yaml` for Trivy security scans
   - [x] Provide `.vscode` workspace settings
