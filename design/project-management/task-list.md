@@ -167,7 +167,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### Security & Authentication
 
-- [ ] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
+- [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
 - [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
 - [ ] Rely on Game Session Service for gameplay session enforcement
 - [ ] Configure mutual TLS (mTLS) for gRPC between internal services
