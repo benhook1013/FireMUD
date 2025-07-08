@@ -123,29 +123,29 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### Infrastructure Setup
 
-- [ ] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
+- [x] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
 - [x] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
 - [ ] Standardize `FIREMUD_` environment variable prefix across all services
-- [ ] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
-- [ ] Expand `docker-compose.yml` to include all services
+  - [x] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
+  - [x] Expand `docker-compose.yml` to include all services
 - [x] Include RedisInsight container in `docker-compose.override.yml` for debugging
-- [ ] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
-- [ ] Write sample Terraform code to:
-  - [ ] Define `firemud` namespace and basic RBAC
-  - [ ] Optionally configure local Redis or Helm releases
+  - [x] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
+  - [ ] Write sample Terraform code to:
+    - [x] Define `firemud` namespace and basic RBAC
+    - [x] Optionally configure local Redis or Helm releases
   - [ ] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
   - [ ] Install redis-exporter for Prometheus metrics
-  - [ ] Prepare Helm charts and baseline Kubernetes manifests for each service
-    - [ ] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
-- [ ] Add example `values.yaml` files for local and dev environments
-- [ ] Support Helm-based config overrides for:
-  - [ ] Redis connection info
-  - [ ] Tick interval
-  - [ ] Runtime feature flags
-- [ ] Document deployment steps:
-  - [ ] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
-  - [ ] Reference Terraform files as optional future cloud setup
-- [ ] Document network policy usage in architecture docs
+    - [x] Prepare Helm charts and baseline Kubernetes manifests for each service
+      - [x] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
+  - [x] Add example `values.yaml` files for local and dev environments
+  - [x] Support Helm-based config overrides for:
+    - [x] Redis connection info
+    - [x] Tick interval
+    - [x] Runtime feature flags
+  - [x] Document deployment steps:
+    - [x] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
+    - [x] Reference Terraform files as optional future cloud setup
+  - [x] Document network policy usage in architecture docs
 
 ### Security & Authentication
 
