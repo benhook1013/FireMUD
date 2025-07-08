@@ -176,6 +176,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Create Gradle `buildDockerImages` task to build all service images
 - [ ] Provision ephemeral preview environments for pull requests
 - [x] Automate Docker image builds and registry pushes
+- [x] Publish Docker images to GitHub Container Registry (GHCR)
 - [x] Cache Gradle and Node dependencies in CI for faster builds
 - [ ] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
 - [ ] Add CI steps for:
@@ -195,6 +196,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] SpotBugs
     - [ ] Buf or proto consistency
 - [x] Use Trivy for container and dependency vulnerability scanning
+- [x] Post Trivy scan report as pull request comment
 - [x] Schedule recurring security scans (including base image and dependency scans)
 - [x] Add GitHub workflow to generate release notes on tag push
 - [ ] Automate semantic version bumps
@@ -204,6 +206,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Checkstyle for style rules
   - [x] SpotBugs for runtime defects
 - [x] Enable code coverage (e.g., JaCoCo)
+- [x] Post build summary and coverage percent as pull request comment
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia and Kreya project files for manual API testing
 - [ ] Configure Slack or email notifications for failed workflows
