@@ -219,6 +219,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Post Trivy scan report as pull request comment
 - [x] Cache Trivy vulnerability database in CI for faster scans
 - [x] Schedule recurring security scans (including base image and dependency scans)
+- [x] Add `weekly-security-scan.yml` workflow to scan published images weekly
 - [x] Add GitHub workflow to generate release notes on tag push
 - [ ] Automate semantic version bumps
 - [ ] Integrate open source license scanning into CI
