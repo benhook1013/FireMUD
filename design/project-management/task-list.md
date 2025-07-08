@@ -35,6 +35,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] **Repository & Workflow Setup**
   - [x] Set up Git repository and development workflow
   - [x] Add `.gitignore` covering build artifacts and environment files
+  - [x] Add `LICENSE.md` and `NOTICE.md` with licensing information
+  - [ ] Add `.gitattributes` for consistent line endings across platforms
   - [x] Add `gradle.properties` enabling build caching and parallelism
   - [x] Provide baseline `config/redis.conf` for Docker Compose
   - [x] Provide script to generate Gradle wrappers for all services (`init-gradle-wrappers.ps1`)
