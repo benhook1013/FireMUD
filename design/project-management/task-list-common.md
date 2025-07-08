@@ -17,7 +17,7 @@ These reusable tasks apply to every service module unless otherwise noted. The T
 
 ---
 
-## 🧱 Domain Modeling & API Exposure
+## 🧱 Domain Modeling & API Exposure (not implemented by TCP Proxy Service or Spring Cloud Gateway)
 
 - [ ] Define JPA entities and repositories using Spring Data for core domain objects
 - [ ] Implement initial JPA entities and repositories
@@ -70,7 +70,7 @@ These reusable tasks apply to every service module unless otherwise noted. The T
 
 ---
 
-## 🔄 Saga Participation (Optional)
+## 🔄 Saga Participation (Optional, not implemented by TCP Proxy Service or Spring Cloud Gateway)
 
 - [ ] Use `firemud-common` saga orchestration helpers for workflow steps
 - [ ] Handle retries, rollback, and compensation via provided API
@@ -82,7 +82,7 @@ These reusable tasks apply to every service module unless otherwise noted. The T
 
 ---
 
-## 🔑 Redis Integration (If Applicable)
+## 🔑 Redis Integration (If Applicable, not implemented by TCP Proxy Service or Spring Cloud Gateway)
 
 - [ ] Use Redis exclusively for transient, gameplay-related state
 - [ ] Use `firemud-common` Redis connector utilities
