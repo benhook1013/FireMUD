@@ -167,6 +167,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
 - [ ] Add integration test for mid-session role refresh via Game Session Service
 - [ ] Implement hot reload for TLS certificates and JWKS keys
+- [ ] Implement connection rate limiting in Spring Cloud Gateway
 
 ### Web Frontend
 
@@ -219,7 +220,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] SpotBugs for runtime defects
 - [x] Enable code coverage (e.g., JaCoCo)
 - [x] Post build summary and coverage percent as pull request comment
-- [x] Upload coverage reports and failing test logs as CI artifacts
+- [x] Upload JaCoCo coverage report artifacts in CI
+- [x] Upload test logs when unit tests fail
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia and Kreya project files for manual API testing
 - [ ] Configure Slack or email notifications for failed workflows
@@ -232,6 +234,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Deploy Jaeger or equivalent trace UI for visualizing spans
 - [ ] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
 - [ ] Commit default Grafana and Kibana dashboard templates
+- [ ] Configure Elasticsearch index retention (14 days dev, 90 days prod)
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
