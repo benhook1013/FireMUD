@@ -53,6 +53,14 @@ These tasks apply to every service unless a note indicates otherwise. Gateway an
 
 ---
 
+## 🔄 Saga Participation (Optional)
+
+- [ ] Use saga helpers from `firemud-common` for workflow steps
+- [ ] Emit metrics and correlation IDs for compensation and retries
+- [ ] Document saga participation in `design/README.md`
+
+---
+
 ## 🔑 Redis Integration *(if used)*
 
 - [ ] Use Redis only for transient gameplay state
