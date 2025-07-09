@@ -1,4 +1,9 @@
-version: v1
-build:
-  roots:
-    - protos
+version: v2
+modules:
+  - path: protos
+lint:
+  use:
+    - DEFAULT
+breaking:
+  use:
+    - FILE

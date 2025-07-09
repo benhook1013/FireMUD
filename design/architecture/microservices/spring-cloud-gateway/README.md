@@ -5,6 +5,7 @@
 This service exposes WebSocket and HTTP endpoints for all clients. It routes requests to backend services and integrates with the TCP Proxy Service for Telnet clients.
 
 ### Responsibilities
+
 - Terminate TLS and enforce authentication for admin routes
 - Upgrade WebSocket connections and route to the correct tenant
 - Apply rate limits and basic abuse protections
@@ -101,6 +102,7 @@ adding or removing routes at runtime.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Connection metrics and throttling.

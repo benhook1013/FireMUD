@@ -43,7 +43,7 @@ participate in CI.
 ## 📦 Project Setup & CI
 
 - [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
-- [ ] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
+- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
 - [x] Provide a `Dockerfile` and Gradle task to build the image
 - [x] Create `README.md` with local setup instructions and design links
 - [x] Add the service to the GitHub Actions build matrix and Buf lint step
@@ -60,7 +60,7 @@ participate in CI.
 - [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
-- [x] Provide contract smoke tests using `grpcurl`
+- [ ] Provide contract smoke tests using `grpcurl`
 - [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 

@@ -2,13 +2,13 @@
 
 - [ ] **Develop Logging & Admin Service**
   - [ ] Collect logs from all services and provide search dashboards
-  - [ ] Allow players to report others for abuse/violations
-  - [ ] Store logs for admin moderation and auditing
+  - [x] Allow players to report others for abuse/violations
+  - [x] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
-    - Provide analytics dashboards for operators
-    - Define moderation policies including profanity filters
-  - [ ] Integrate Alertmanager for automated alerts
-  - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
+    - [x] Provide analytics dashboards for operators
+    - [x] Define moderation policies including profanity filters
+  - [x] Integrate Alertmanager for automated alerts
+  - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
   - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
@@ -25,27 +25,27 @@ participate in CI.
 
 ## 📦 Project Setup & CI
 
-- [ ] Register the module in `settings.gradle.kts` and apply the `java` plugin
+- [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
 - [ ] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
-- [ ] Provide a `Dockerfile` and Gradle task to build the image
-- [ ] Create `README.md` with local setup instructions and design links
-- [ ] Add the service to the GitHub Actions build matrix and Buf lint step
-- [ ] Include the service in the Docker image workflow (`buildDockerImages`)
-- [ ] Define Kubernetes `Deployment` and `Service` manifests
-- [ ] Expose `/actuator/health` for readiness and liveness probes
+- [x] Provide a `Dockerfile` and Gradle task to build the image
+- [x] Create `README.md` with local setup instructions and design links
+- [x] Add the service to the GitHub Actions build matrix and Buf lint step
+- [x] Include the service in the Docker image workflow (`buildDockerImages`)
+- [x] Define Kubernetes `Deployment` and `Service` manifests
+- [x] Expose `/actuator/health` for readiness and liveness probes
 
 ---
 
 ## 🧱 API Definition
 
-- [ ] Define gRPC service stubs with explicit `Request`/`Response` messages
-- [ ] Version proto files under `protos/{service}/v1` with `package {service}.v1`
+- [x] Define gRPC service stubs with explicit `Request`/`Response` messages
+- [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
 - [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
-- [ ] Generate gRPC stubs via Gradle and include them in the source set
-- [ ] Add the proto directory to `buf.yaml` for lint and breaking change checks
+- [x] Generate gRPC stubs via Gradle and include them in the source set
+- [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [ ] Provide contract smoke tests using `grpcurl`
 - [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
-- [ ] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
+- [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
 
@@ -69,7 +69,7 @@ participate in CI.
 
 ## 📚 Shared Library Integration
 
-- [ ] Depend on `firemud-common` via Gradle
+- [x] Depend on `firemud-common` via Gradle
 - [ ] Apply logging, tracing, and security interceptors from the library
 - [ ] Use provided autoconfiguration classes to reduce boilerplate
 - [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
@@ -102,7 +102,7 @@ participate in CI.
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
-- [ ] Run `./gradlew check` in CI to execute all tests
+- [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests
 
 ---
@@ -119,11 +119,11 @@ participate in CI.
 
 ## 📖 Documentation
 
-- [ ] Create `design/README.md` summarizing APIs and sample requests
-- [ ] Document proto contracts and any Redis keys in the service README
+- [x] Create `design/README.md` summarizing APIs and sample requests
+- [x] Document proto contracts and any Redis keys in the service README
 - [ ] Document required environment variables and configuration
 - [ ] Note `tenantId` handling and cross-service dependencies
-- [ ] Add a design document under `design/architecture/microservices/<service>/README.md`
+- [x] Add a design document under `design/architecture/microservices/<service>/README.md`
 
 ---
 

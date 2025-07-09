@@ -5,6 +5,7 @@
 Handles player characters, NPCs, items, and inventory. Provides CRUD operations for entities and exposes them to other services.
 
 ### Responsibilities
+
 - Persist characters, NPCs, and items with optimistic locking
 - Provide CRUD and query APIs for other services
 - Manage inventories and instanced zones
@@ -102,6 +103,7 @@ proto files, run `./gradlew generateProto` to update generated sources.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Entity graph caching for faster lookups.
