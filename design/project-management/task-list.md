@@ -183,7 +183,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 ### Web Frontend
 
 - [x] Scaffold React-based MUD client with Vite and Material-UI
-- [ ] Build web-based game editor for game creators
+- [x] Build web-based game editor for game creators
 - [x] Configure ESLint and Prettier for consistent formatting
 - [x] Add pre-commit hooks for frontend linting
 - [x] Add accessibility checks (Axe or Lighthouse) to CI
@@ -208,7 +208,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Generate gRPC stubs for each service via Gradle plugin
   - [x] Integrate proto generation and schema validation into CI workflow
     - [x] Include generated sources in build and CI
-    - [ ] OpenAPI consistency
+    - [x] OpenAPI consistency
     - [x] Static analysis
   - [ ] Generate ERD diagrams and baseline Flyway scripts for each service in CI
   - [x] Add pre-commit hooks for:
@@ -278,7 +278,7 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] **Onboard Game Creators & Improve UX**
   - [x] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
   - [ ] Gather feedback from early users & iterate on UI/UX
-  - [ ] Add MCP support for AI assisted game creation
+  - [x] Add MCP support for AI assisted game creation
 
 ### ⚙️ Load Testing, Operations & Scaling
 

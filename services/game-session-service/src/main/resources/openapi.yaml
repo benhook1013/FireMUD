@@ -1,0 +1,28 @@
+openapi: 3.0.3
+info:
+  title: Game Session Service API
+  description: API for managing active game sessions
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: http://localhost:8080
+paths:
+  /ping:
+    get:
+      summary: Health check endpoint
+      operationId: ping
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                    example: pong
+        '400':
+          description: Invalid request
