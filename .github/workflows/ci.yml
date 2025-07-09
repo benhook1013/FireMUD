@@ -107,6 +107,9 @@ jobs:
           cd web-client
           npm run accessibility
 
+      - name: ♻️ Clean Gradle Cache Directory
+        run: rm -rf ~/.gradle
+
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
