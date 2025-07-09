@@ -117,8 +117,21 @@ tasks.named("check") {
     )
 }
 
+tasks.register<Exec>("buildBaseImage") {
+    commandLine(
+        "docker",
+        "build",
+        "-f",
+        "docker/base.Dockerfile",
+        "-t",
+        "ghcr.io/firedevops/firemud-base:latest",
+        "."
+    )
+}
+
 tasks.register("buildDockerImages") {
     dependsOn(
+        "buildBaseImage",
         ":account-service:bootBuildImage",
         ":automation-scripting-service:bootBuildImage",
         ":entity-management-service:bootBuildImage",
