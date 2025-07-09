@@ -27,7 +27,7 @@ participate in CI.
 - [x] Add the service to the GitHub Actions build matrix and Buf lint step
 - [x] Include the service in the Docker image workflow (`buildDockerImages`)
 - [x] Define Kubernetes `Deployment` and `Service` manifests
-- [ ] Expose `/actuator/health` for readiness and liveness probes
+- [x] Expose `/actuator/health` for readiness and liveness probes
 
 ---
 
@@ -93,7 +93,7 @@ participate in CI.
 
 ## 🧪 Testing & Quality Gates
 
-- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
