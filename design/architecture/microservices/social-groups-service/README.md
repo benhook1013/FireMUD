@@ -5,6 +5,7 @@
 Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time.
 
 ### Responsibilities
+
 - Deliver real-time chat and presence notifications
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
@@ -104,6 +105,7 @@ files change.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Rich moderation tools for chat.

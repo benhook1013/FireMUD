@@ -5,6 +5,7 @@
 Executes the core gameplay rules and command parsing. It processes player actions and determines outcomes.
 
 ### Responsibilities
+
 - Parse player commands and resolve actions
 - Apply combat rules, cooldowns, and environmental effects
 - Interact with entity and world services for context data
@@ -40,6 +41,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 ### Data Model
 
 This service is largely stateless. It relies on:
+
 - Contextual entity and world data fetched from other services via gRPC.
 - Temporary command queues stored in Redis by the Game Session Service.
 
@@ -102,6 +104,7 @@ the generated code with `./gradlew generateProto` after making changes.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Scripting hooks for custom actions.

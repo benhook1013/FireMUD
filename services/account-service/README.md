@@ -18,4 +18,3 @@ Or start all services:
 ```bash
 ./gradlew devUp
 ```
-

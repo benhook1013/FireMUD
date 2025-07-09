@@ -48,6 +48,7 @@ Sagas are only used for **non-tick, multi-service workflows** involving persiste
 | **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
 
 These workflows:
+
 - Happen **outside the tick loop**
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require durable coordination and rollback capabilities
@@ -94,6 +95,7 @@ This design centralizes logic, improves visibility, and avoids coupling orchestr
 ## 🔁 When Not to Use Sagas
 
 Do **not** use sagas for:
+
 - Gameplay commands (combat, move, cast spell, AI)
 - Anything inside a tick
 - Transient state managed via Redis

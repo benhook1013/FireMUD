@@ -5,6 +5,7 @@
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
 
 ### Responsibilities
+
 - Accept Telnet connections and perform protocol negotiation
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames
 - Tag connections with tenant information for accurate routing
@@ -47,9 +48,9 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 The proxy does not expose its own public gRPC API. Instead it performs two
 internal operations when communicating with other microservices:
 
-  - **NotifyDisconnect** – informs the Game Session Service when a Telnet client
+- **NotifyDisconnect** – informs the Game Session Service when a Telnet client
     drops so the session may be suspended.
-  - **PushBufferedInput** – forwards any queued commands after a reconnect
+- **PushBufferedInput** – forwards any queued commands after a reconnect
     event.
 
 ### Telnet Command Handling
@@ -107,6 +108,7 @@ regenerated via `./gradlew generateProto` when the proto files change.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Connection throttling and rate limits.

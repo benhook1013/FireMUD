@@ -5,6 +5,7 @@
 The Automation & Scripting Service drives non-player character (NPC) behavior and world automation. It executes custom scripts and AI routines so worlds stay alive even when no players are online.
 
 ### Responsibilities
+
 - Executes sandboxed scripts triggered by world and player events
 - Provides a visual DSL for designers to build behaviors
 - Stores persistent NPC memory and automation queues

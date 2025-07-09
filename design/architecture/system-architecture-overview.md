@@ -92,7 +92,6 @@ FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 - **Region-scoped ticks** execute independently for parallelism
 - **Tick state** (locks, queues, timers) is stored and coordinated via Redis
 
-
 > 🔗 Tick execution, staging/rollback, retry policies, and crash recovery are detailed in [Tick System and Runtime Design](./system-architecture-ticks.md)
 
 ---
@@ -153,10 +152,12 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 ## 📚 Related Documentation
 
 ### Diagrams
+
 - [System Architecture Diagram](./system-architecture-diagram.md)
 - [System Context Diagram](./system-context-diagram.md)
 
 ### Infrastructure & Deployment
+
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Gateway Architecture](./infrastructure/gateway-architecture.md)
@@ -164,6 +165,7 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 - [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
 
 ### Runtime & Security
+
 - [Redis Architecture](./system-architecture-redis.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
@@ -174,4 +176,5 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 - [Testing Strategy](./system-architecture-testing.md)
 
 ### Responsibilities
+
 - [Microservices Responsibility Matrix](./service-responsibility-matrix.md)
