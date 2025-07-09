@@ -89,6 +89,9 @@ sagaBuilder("accountCreation")
 ```
 
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
+The `firemud-common` library provides a `SagaBuilder` class implementing this pattern.
+Services include the library and the accompanying Flyway migrations to persist
+saga state in the `saga_instance` and `saga_step` tables.
 
 ---
 

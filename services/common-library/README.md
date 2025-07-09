@@ -41,3 +41,19 @@ private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
 `JwtUtil` offers helper methods for creating and verifying JWT tokens.
 
 See the [design document](../../design/architecture/system-architecture-shared-libraries.md) for more details and additional utilities.
+
+## Saga Orchestration
+
+The library includes a lightweight saga engine for multi-step workflows across services.
+Define flows using `SagaBuilder` and provide optional compensation actions:
+
+```java
+new SagaBuilder()
+    .step("createAccount", accountClient::createAccount,
+        () -> accountClient.deleteAccount(id))
+    .step("provisionCharacter", entityClient::createPlayer)
+    .run();
+```
+
+Saga state is stored in the `saga_instance` and `saga_step` tables provided in the
+library's Flyway migrations.

@@ -1,0 +1,49 @@
+package net.firedevops.firemud.common.saga;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * Executes a list of {@link SagaStep} instances sequentially. On failure the already executed steps
+ * are compensated in reverse order.
+ */
+public class Saga {
+  private final List<SagaStep> steps;
+
+  Saga(List<SagaStep> steps) {
+    this.steps = new ArrayList<>(steps);
+  }
+
+  /** Executes the saga. */
+  public void run() throws SagaException {
+    List<SagaStep> executed = new ArrayList<>();
+    try {
+      for (SagaStep step : steps) {
+        step.execute();
+        executed.add(step);
+      }
+    } catch (Exception e) {
+      Collections.reverse(executed);
+      // compensate failing step first if it wasn't successful
+      for (SagaStep step : steps) {
+        if (!executed.contains(step)) {
+          try {
+            step.compensate();
+          } catch (Exception ex) {
+            // ignore
+          }
+          break;
+        }
+      }
+      for (SagaStep step : executed) {
+        try {
+          step.compensate();
+        } catch (Exception ex) {
+          // Log and continue, compensation must not stop rollback
+        }
+      }
+      throw new SagaException("Saga failed at step: " + executed.size(), e);
+    }
+  }
+}
