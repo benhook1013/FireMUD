@@ -22,7 +22,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 - **Logging Utilities** – SLF4J wrappers and helpers for correlation IDs.
 - **Security Utilities** – `JwtUtil` for token generation/verification and role helpers aligned with the [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
-- **gRPC Interceptors** – `LoggingInterceptor` and `MetricsInterceptor` provide consistent instrumentation for every service.
+- **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
 - `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`.
 - **Spring Boot Starter** – Lightweight autoconfiguration for logging, JWT, Redis and PostgreSQL so services can opt in.
@@ -36,6 +36,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
 
 1. Define a Gradle module (e.g., `common-library`) with the `java-library` plugin.
 2. Configure publishing to GitHub Packages using `maven-publish`:
+
    ```kotlin
    publishing {
        repositories {
@@ -50,6 +51,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
        }
    }
    ```
+
 3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
 4. Automate tagging and version bumps using `semantic-release`.
 5. Deploy artifacts to GitHub Packages via CI/CD. If needed, publish a separate `firemud-protos` artifact containing only the shared gRPC definitions.

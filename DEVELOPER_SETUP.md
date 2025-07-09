@@ -110,6 +110,16 @@ To stop the stack:
 ./gradlew devDown
 ```
 
+### Optional CLI Helper
+
+Run `dev-tools/firemud-cli.sh` for shortcuts:
+
+```bash
+./dev-tools/firemud-cli.sh up   # start services
+./dev-tools/firemud-cli.sh down # stop services
+./dev-tools/firemud-cli.sh ping # test a running service
+```
+
 ## Manual Testing Tools
 
 ### Insomnia for REST and WebSocket
