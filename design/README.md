@@ -4,6 +4,7 @@ This directory contains all architecture and project-management documentation fo
 
 - **architecture/** – Infrastructure, microservice designs, and system overviews.
 - **project-management/** – Requirements, task lists, and AI rule sets.
+- **user-guides/** – Documentation for game creators and integration testing.
 
 Additional generated documentation lives in:
 
