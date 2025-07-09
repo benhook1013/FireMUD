@@ -1,6 +1,5 @@
 # Game Session Service Task List
 
-- **Prepare Helm chart for Game Session Service**
 - **Expand Game Session Service**
   - Implement game instance lifecycle (start, stop, restart)
   - Support multi-tenancy for hosted games

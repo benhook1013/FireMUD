@@ -1,6 +1,5 @@
 # Logging & Admin Service Task List
 
-- **Prepare Helm chart for Logging & Admin Service**
 - **Develop Logging & Admin Service**
   - Collect logs from all services and provide search dashboards
   - Allow players to report others for abuse/violations

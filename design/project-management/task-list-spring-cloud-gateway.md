@@ -1,6 +1,5 @@
 # Spring Cloud Gateway Task List
 
-- **Prepare Helm chart for Spring Cloud Gateway**
 - **Finalize Spring Cloud Gateway design**
 - **Develop Spring Cloud Gateway**
   - Handle API routing and request validation
