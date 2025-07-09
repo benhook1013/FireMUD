@@ -102,6 +102,10 @@ Spring Boot services use environment-specific profiles:
   - DNS-based routing to Kubernetes Services
   - Integration with persistent infrastructure such as the PostgreSQL cluster
 
+## 🎮 Staging Environment for Playtesting
+
+A minimal staging cluster mirrors production but uses smaller node sizes. Pull requests can deploy preview versions so playtesters can experiment without affecting live games. Test data resets nightly.
+
 ---
 
 ## 📚 Related Documentation
