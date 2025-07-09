@@ -3,12 +3,12 @@
 - [ ] **Develop Logging & Admin Service**
   - [x] Collect logs from all services and provide search dashboards
   - [x] Allow players to report others for abuse/violations
-  - [x] Store logs for admin moderation and auditing
+  - [ ] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
     - [x] Provide analytics dashboards for operators
     - [x] Define moderation policies including profanity filters
-  - [x] Integrate Alertmanager for automated alerts
-  - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
+  - [ ] Integrate Alertmanager for automated alerts
+  - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
   - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
