@@ -1,6 +1,5 @@
 # Automation & Scripting Service Task List
 
-- **Prepare Helm chart for Automation & Scripting Service**
 - **Develop Automation & Scripting Service**
   - Implement state-driven & event-driven NPC behaviors
   - Implement procedural world generation

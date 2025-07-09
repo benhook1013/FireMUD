@@ -1,6 +1,5 @@
 # Game Design Service Task List
 
-- **Prepare Helm chart for Game Design Service**
 - **Expand Game Design Service**
   - Provide game templates and configuration tools
   - Enable publishing of game versions

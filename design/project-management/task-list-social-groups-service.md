@@ -1,6 +1,5 @@
 # Social & Groups Service Task List
 
-- **Prepare Helm chart for Social & Groups Service**
 - **Develop Social & Groups Service**
   - Enable cross-game friend lists and social graph
   - Support private messages, global chat, and guild channels

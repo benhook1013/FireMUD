@@ -1,6 +1,5 @@
 # World Management Service Task List
 
-- **Prepare Helm chart for World Management Service**
 - **Develop World Management Service**
   - Implement world map storage (rooms, regions)
   - Implement instance-based game spaces (e.g., dungeons, player housing)

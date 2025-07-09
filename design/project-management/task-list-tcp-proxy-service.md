@@ -1,6 +1,5 @@
 # TCP Proxy Service Task List
 
-- **Prepare Helm chart for TCP Proxy Service**
 - **Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway**
 - **Define Telnet bridge gRPC APIs for TCP Proxy Service**
 - **Develop TCP Proxy Service**
