@@ -149,7 +149,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Write sample Terraform code to:
     - [x] Define `firemud` namespace and basic RBAC
     - [x] Optionally configure local Redis or Helm releases
-  - [ ] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
+  - [x] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
   - [ ] Deploy PostgreSQL cluster with replication and persistent volumes
   - [ ] Install redis-exporter for Prometheus metrics
     - [x] Prepare Helm charts and baseline Kubernetes manifests for each service
@@ -171,14 +171,14 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 ### Security & Authentication
 
 - [x] **Define security best practices (OAuth2, JWT, RBAC, input validation, rate-limiting)**
-- [ ] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
-- [ ] Configure mutual TLS (mTLS) for gRPC between internal services
-- [ ] Install and configure `cert-manager` in the Kubernetes cluster
-- [ ] Manage certificates via Kubernetes `cert-manager`
-- [ ] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
+- [x] Meta/control services validate JWTs; gameplay services trust Game Session Service and skip JWT checks
+- [x] Configure mutual TLS (mTLS) for gRPC between internal services
+- [x] Install and configure `cert-manager` in the Kubernetes cluster
+- [x] Manage certificates via Kubernetes `cert-manager`
+- [x] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
 - [ ] Add integration test for mid-session role refresh via Game Session Service
-- [ ] Implement hot reload for TLS certificates and JWKS keys
-- [ ] Implement connection rate limiting in Spring Cloud Gateway
+- [x] Implement hot reload for TLS certificates and JWKS keys
+- [x] Implement connection rate limiting in Spring Cloud Gateway
 
 ### Web Frontend
 
@@ -241,13 +241,13 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### Observability & Tracing
 
-- [ ] Configure centralized log aggregation dashboards early
-- [ ] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
+- [x] Configure centralized log aggregation dashboards early
+- [x] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
 - [ ] Deploy OpenTelemetry Collector for distributed tracing
 - [ ] Deploy Jaeger or equivalent trace UI for visualizing spans
 - [ ] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
 - [ ] Commit default Grafana and Kibana dashboard templates
-- [ ] Configure Elasticsearch index retention (14 days dev, 90 days prod)
+- [x] Configure Elasticsearch index retention (14 days dev, 90 days prod)
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
@@ -296,8 +296,8 @@ The standard microservice checklist is now copied into each service task list.
   - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
   - [ ] Optimize database queries & network traffic handling
   - [x] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
-  - [ ] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
-  - [ ] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
+  - [x] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
+  - [x] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
 
 ## 🛠️ Phase 4: Community & Funding
 

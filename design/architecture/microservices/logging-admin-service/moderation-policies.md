@@ -24,4 +24,3 @@ The Social & Groups Service integrates a configurable word list. When detected, 
 ## Appeals
 
 Players may appeal bans through a web form provided by the Account Service. Moderators should document evidence and keep responses timely.
-

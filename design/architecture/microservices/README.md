@@ -23,7 +23,6 @@ This directory contains detailed design documents for each core microservice in 
 
 All services share the same cluster and databases. Each table stores a `tenantId` and Redis keys use a matching prefix so data stays isolated between games. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details.
 
-
 ---
 
 ## 🧭 Usage

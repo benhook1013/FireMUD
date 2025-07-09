@@ -26,4 +26,3 @@ These dashboards rely on structured JSON logs shipped via Fluent Bit. Saved sear
 - Real-time charts for saga workflow states.
 - Custom dashboards per game with shared templates.
 - Export options for longer-term analytics in external BI tools.
-

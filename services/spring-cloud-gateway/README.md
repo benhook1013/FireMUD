@@ -16,4 +16,3 @@ To run the entire stack:
 ```bash
 ./gradlew devUp
 ```
-
