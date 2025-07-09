@@ -31,14 +31,15 @@ jobs:
         with:
           version: '1.30.0'
 
-      # Buf lint runs in pre-commit hooks; this job only checks breaking changes
-      # and generates protobufs for CI builds.
+      - name: 🛠️ Fetch Base Branch for Buf Breaking
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}:${{ github.event.pull_request.base.ref }}
 
       - name: ⚠️ Buf Breaking
         if: github.event_name == 'pull_request'
         run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
-          buf breaking --against origin/${{ github.event.pull_request.base.ref }}
+          buf breaking --against ${{ github.event.pull_request.base.ref }}
 
       - name: ⚙️ Generate Protobufs
         run: buf generate
