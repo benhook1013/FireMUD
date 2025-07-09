@@ -26,3 +26,8 @@ repos:
         entry: buf lint
         language: system
         pass_filenames: false
+      - id: frontend-lint
+        name: Frontend ESLint
+        entry: bash -c 'cd web-client && npm run lint && npm run format:fix'
+        language: system
+        pass_filenames: false
