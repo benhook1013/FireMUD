@@ -33,6 +33,24 @@ The repository uses a hierarchical Gradle setup. The root `build.gradle` delegat
 
 Unit and integration tests run automatically in GitHub Actions through the Gradle `check` task. Cross-service tests can be triggered manually when preparing a release.
 
+## 💡 Cross-Service Integration Plan
+
+For workflows that span multiple services, such as account creation and world provisioning, we start several containers at once using **Testcontainers**. Each container joins a shared network so gRPC calls function just like in production.
+
+### Example Workflow
+
+1. Launch PostgreSQL and Redis containers.
+2. Start Account, Game Session, and World Management services.
+3. Perform a registration and login sequence to verify saga state.
+
+```kotlin
+val network = Network.newNetwork()
+val postgres = PostgreSQLContainer<Nothing>("postgres:15").withNetwork(network)
+val accountService = GenericContainer("account-service:latest").withNetwork(network)
+```
+
+These tests run via `./gradlew crossServiceTest` and validate saga orchestration logic.
+
 ---
 
 ## 🚦 CI/CD Integration

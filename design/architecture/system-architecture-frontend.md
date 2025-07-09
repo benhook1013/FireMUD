@@ -61,6 +61,14 @@ FireMUD aims to let each hosted game supply its own UI styling and layout tweaks
 - Creators can override Material-UI themes, logos, and optionally define extra routes.
 - Core components remain shared so feature updates reach all games without forks.
 
+## 🌍 Internationalization Strategy
+
+The React client uses **react-i18next** to load translation JSON files at runtime. Players select a language in the settings menu, and the UI strings update without a page reload. Locale files live under `src/i18n/` and can be extended by hosted games.
+
+## 🧪 End-to-End Testing
+
+After the UI stabilizes, **Playwright** tests will exercise key flows by starting the Docker Compose stack and running a headless browser against the web client.
+
 ---
 
 This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend services or features can follow the same patterns for consistency.

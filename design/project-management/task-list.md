@@ -257,16 +257,16 @@ The standard microservice checklist is now copied into each service task list.
 
 ## 🛠️ Phase 2: Testing & Pre-Launch Preparations
 
-- [ ] **Write Developer Documentation for Game Creators**
-  - [ ] Provide API references for scripting & integration
-  - [ ] Guide for setting up and configuring hosted games
+- [x] **Write Developer Documentation for Game Creators**
+  - [x] Provide API references for scripting & integration
+  - [x] Guide for setting up and configuring hosted games
 
 ### Integration & Saga Testing
 
-- [ ] Plan integration tests (via Testcontainers) for service collaboration
-- [ ] Implement integration tests for multi-service interactions
-- [ ] Validate saga workflows for account and world creation
-- [ ] Create cross-service integration example scripts (account creation, game session startup)
+- [x] Plan integration tests (via Testcontainers) for service collaboration
+- [x] Implement integration tests for multi-service interactions
+- [x] Validate saga workflows for account and world creation
+- [x] Create cross-service integration example scripts (account creation, game session startup)
 
 ---
 
@@ -276,7 +276,7 @@ The standard microservice checklist is now copied into each service task list.
   - [ ] Expand game customization options for hosted games
   - [ ] Improve scripting capabilities & developer tools
 - [ ] **Onboard Game Creators & Improve UX**
-  - [ ] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
+  - [x] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
   - [ ] Gather feedback from early users & iterate on UI/UX
   - [ ] Add MCP support for AI assisted game creation
 
@@ -312,6 +312,6 @@ The standard microservice checklist is now copied into each service task list.
 ## ➕ Additional Tasks
 
 - [x] Provide command-line tooling for local game and session management
-- [ ] Plan for **end-to-end UI testing** using Cypress or Playwright once the
+- [x] Plan for **end-to-end UI testing** using Cypress or Playwright once the
   web UI is stable
-- [ ] Evaluate localization and internationalization support for the React client
+- [x] Evaluate localization and internationalization support for the React client

@@ -148,6 +148,7 @@ Before contributing, we recommend reviewing the following key documents:
 - **[Versioning & Runtime Configuration](design/architecture/system-architecture-versioning-runtime.md)** – publishing versions and controlling runtime flags.
 - **[Example User Journeys](design/architecture/user-journeys.md)** – step-by-step workflows for creators and players.
 - **[Task List](design/project-management/task-list.md)** – planned features and development progress.
+- **[Game Creator Guide](design/user-guides/game-creator-guide.md)** – customizing worlds and using the scripting API.
 - **[FAQ](FAQ.md)** – frequently asked questions for quick context.
 
 ---
