@@ -44,7 +44,6 @@ This document collects common questions and answers about the FireMUD Game Platf
 - **How do I report bugs or request features?**
   Open an issue on GitHub with as much detail as possible. Please search existing issues first to avoid duplicates.
 
-
 ---
 
 ## Deployment and Infrastructure

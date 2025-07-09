@@ -5,6 +5,7 @@
 Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections.
 
 ### Responsibilities
+
 - Registration and login flows, including password resets
 - Issuing JWT tokens consumed by other microservices
 - Tracking profiles, achievements, and external account links
@@ -113,6 +114,7 @@ The gRPC schemas for this service live in
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - OAuth2 support for social logins.

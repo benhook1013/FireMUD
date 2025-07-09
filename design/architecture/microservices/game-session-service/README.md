@@ -5,6 +5,7 @@
 Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. Acts as the central hub for gameplay state.
 
 ### Responsibilities
+
 - Maintain session state and tick timing in Redis
 - Queue player commands and dispatch them to Game Logic Service
 - Broadcast lifecycle events and world updates to other services
@@ -86,9 +87,9 @@ Service definitions reside in
 
 ## 📚 Related Documentation
 
- - [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) — how game instances load published versions and runtime flags.
- - [Reconnection Strategy](../system-architecture-reconnection.md)
- - [Authentication & Authorization](../system-architecture-authentication.md)
+- [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) — how game instances load published versions and runtime flags.
+- [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Authentication & Authorization](../system-architecture-authentication.md)
 - [Tick System and Runtime Design](../system-architecture-ticks.md)
 - [Redis Architecture](../system-architecture-redis.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
@@ -105,6 +106,7 @@ Service definitions reside in
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Cross-region sharding for massive worlds.

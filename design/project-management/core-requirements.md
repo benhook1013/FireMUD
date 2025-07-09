@@ -106,7 +106,7 @@ This document outlines the **core functional and non-functional requirements** f
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
   - A **platform fee** applies to all transactions.
   - **External payment methods are not allowed** to ensure security and compliance.
-   - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
+  - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
 
 ---
 
@@ -147,7 +147,6 @@ This document outlines the **core functional and non-functional requirements** f
 - Supports **multi-region deployments** to provide better latency for global users.
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
 - **Velero** backs up Kubernetes resources and PostgreSQL volumes for disaster recovery. The production snapshot schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
-
 
 ### 3.4 Gameplay Session Architecture
 

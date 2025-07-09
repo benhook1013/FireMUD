@@ -47,7 +47,7 @@ seamlessly with cert-manager for automatic rotation.
 
 - The **Spring Cloud Gateway** and **TCP Proxy Service** reside in the **network DMZ** and serve as the only ingress points for client traffic.
 - Internal microservices are not directly exposed externally.
- - Traffic flow is controlled via **NetworkPolicies**, which whitelist internal service access.
+- Traffic flow is controlled via **NetworkPolicies**, which whitelist internal service access.
    A baseline policy restricts **ingress** for all microservice pods (except the Gateway and TCP proxy) so they only accept traffic from other pods in the namespace. The manifests are provided under [`k8s/network-policies/`](../../k8s/network-policies).
 - **Zero-trust** principles are **not currently required** or implemented beyond mTLS and JWT-based validation, but may be reconsidered in future hardening efforts.
 

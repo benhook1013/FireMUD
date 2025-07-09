@@ -5,6 +5,7 @@
 The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events, notifying other services over gRPC when the environment changes.
 
 ### Responsibilities
+
 - Persist region, zone, and room data with tenant isolation
 - Execute scheduled world events and procedural generation
 - Provide pathfinding and navmesh information
@@ -104,6 +105,7 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Tools for fine-tuning procedural generation rules.

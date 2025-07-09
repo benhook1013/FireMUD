@@ -5,6 +5,7 @@
 Centralized logging and administration tools for the platform. Collects log data from all services and provides moderation capabilities for game operators.
 
 ### Responsibilities
+
 - Aggregate logs and metrics from every microservice
 - Offer dashboards and search for operators and moderators
 - Enforce moderation actions such as bans via secured APIs
@@ -14,6 +15,7 @@ Centralized logging and administration tools for the platform. Collects log data
 
 Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
 All admin APIs are secured via role-based access control integrated with the Account Service.
+
 - Access to this service is protected by mTLS and JWT validation through the
   JWKS endpoint provided by the Account Service. See
   [Security Architecture](../system-architecture-security.md).
@@ -27,10 +29,10 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ## Key Features
 
- - Central log collection and search.
- - [Analytics dashboards](./analytics-dashboards.md) for operators.
- - Tools for banning or restricting accounts.
- - [Moderation policies](./moderation-policies.md) including profanity filters.
+- Central log collection and search.
+- [Analytics dashboards](./analytics-dashboards.md) for operators.
+- Tools for banning or restricting accounts.
+- [Moderation policies](./moderation-policies.md) including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
@@ -91,6 +93,7 @@ these change, run `./gradlew generateProto` to refresh generated sources.
 ## 📚 Related Documentation
 
 See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for details on the shared observability stack.
+
 - [Security Architecture](../system-architecture-security.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
@@ -105,6 +108,7 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Role-based admin UI.

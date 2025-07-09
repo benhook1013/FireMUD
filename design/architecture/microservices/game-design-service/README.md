@@ -5,6 +5,7 @@
 Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules and administrators.
 
 ### Responsibilities
+
 - Provide web and gRPC tools for editing game assets
 - Version and publish immutable game configurations
 - Track revision history for rollback
@@ -94,6 +95,7 @@ stubs with `./gradlew generateProto` whenever these files are updated.
 ## 📚 Related Documentation
 
 See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
+
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
@@ -113,6 +115,7 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
 ## Future Enhancements
 
 - Web-based visual design interface.
