@@ -3,8 +3,8 @@
 - [ ] **Develop Entity Management Service**
   - [x] Implement player character storage
   - [x] Implement NPC storage and data structures
-  - [x] Implement item and inventory management
-  - [x] Implement entity stats and progression tracking
+  - [ ] Implement item and inventory management
+  - [ ] Implement entity stats and progression tracking
   - [ ] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
   - [ ] Implement entity graph caching for fast lookups
