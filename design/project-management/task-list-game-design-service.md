@@ -43,7 +43,7 @@ participate in CI.
 ## 📦 Project Setup & CI
 
 - [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
-- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
+- [ ] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
 - [x] Provide a `Dockerfile` and Gradle task to build the image
 - [x] Create `README.md` with local setup instructions and design links
 - [x] Add the service to the GitHub Actions build matrix and Buf lint step
