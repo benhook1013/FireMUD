@@ -17,8 +17,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  buf-check:
+    name: Buf Breaking and Generation
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      # Buf lint runs in pre-commit hooks; this job only checks breaking changes
+      # and generates protobufs for CI builds.
+      - name: ⚠️ Buf Breaking
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+          buf breaking --against origin/${{ github.event.pull_request.base.ref }}
+      - name: ⚙️ Generate Protobufs
+        run: buf generate
+
   build-and-test:
     name: Build and Test (${{ matrix.service }})
+    needs: buf-check
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
