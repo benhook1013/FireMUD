@@ -202,14 +202,14 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Cache Gradle and Node dependencies in CI for faster builds
   - [x] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
 - [ ] Add CI steps for:
-  - Protobuf generation and schema checking
-  - Lint `.proto` files with `buf` and enforce schema versioning
-  - Include `buf breaking` tests in CI for backward compatibility
-  - Generate gRPC stubs for each service via Gradle plugin
-  - Integrate proto generation and schema validation into CI workflow
-    - Include generated sources in build and CI
-    - OpenAPI consistency
-    - Static analysis
+  - [x] Protobuf generation and schema checking
+  - [x] Lint `.proto` files with `buf` and enforce schema versioning
+  - [x] Include `buf breaking` tests in CI for backward compatibility
+  - [x] Generate gRPC stubs for each service via Gradle plugin
+  - [x] Integrate proto generation and schema validation into CI workflow
+    - [x] Include generated sources in build and CI
+    - [ ] OpenAPI consistency
+    - [ ] Static analysis
   - [ ] Generate ERD diagrams and baseline Flyway scripts for each service in CI
   - [x] Add pre-commit hooks for:
     - [x] Spotless
