@@ -125,6 +125,17 @@ manual steps.
 
 ---
 
+## 🔍 PR Preview Environments
+
+Pull requests spin up a short-lived Docker Compose stack so reviewers can test
+changes interactively. The `.github/workflows/preview.yml` workflow builds the
+service images with `./gradlew buildDockerImages` and launches them using
+`docker compose up`. A status comment is posted with a summary once the gateway
+passes its health check. The runner is discarded at the end of the job,
+removing the preview automatically.
+
+---
+
 ## ➕ Optional Add-Ons
 
 - **Nightly builds or scheduled jobs** for integration testing.

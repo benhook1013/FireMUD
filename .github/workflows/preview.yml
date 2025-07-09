@@ -1,0 +1,60 @@
+name: PR Preview Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: \u2B07\uFE0F Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and Start Stack
+        run: ./gradlew devUp
+
+      - name: Check Gateway Health
+        run: |
+          for i in {1..30}; do
+            if curl -fs http://localhost:8080/actuator/health >/dev/null; then
+              echo "Gateway healthy" && break
+            fi
+            sleep 5
+          done
+          curl -fs http://localhost:8080/actuator/health
+
+      - name: Post Preview Summary
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const body = `### \u2728 Preview environment up\nAll services started via Docker Compose.`;
+            core.summary.addHeading('Preview Environment').addRaw(body).write();
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number
+            });
+            const existing = comments.find(c => c.body.startsWith('### \u2728 Preview environment'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+      - name: Tear Down Stack
+        if: always()
+        run: ./gradlew devDown
