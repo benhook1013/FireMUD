@@ -15,3 +15,6 @@ terraform apply
 ```
 
 After applying, use the generated kubeconfig path to deploy the manifests or Helm charts from the `k8s/` directory.
+
+For a production-ready starting point, see [../terraform-production](../terraform-production),
+which installs PostgreSQL and Redis with replication enabled on an existing Kubernetes cluster.

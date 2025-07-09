@@ -150,7 +150,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Define `firemud` namespace and basic RBAC
     - [x] Optionally configure local Redis or Helm releases
   - [x] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
-  - [ ] Deploy PostgreSQL cluster with replication and persistent volumes
+  - [x] Deploy PostgreSQL cluster with replication and persistent volumes
   - [x] Install redis-exporter for Prometheus metrics
     - [x] Prepare Helm charts and baseline Kubernetes manifests for each service
       - [x] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
@@ -165,7 +165,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Document network policy usage in architecture docs
   - [x] Apply Kubernetes `NetworkPolicy` manifests across environments
     - [x] Provide Helm umbrella chart for deploying all services together
-  - [ ] Develop production Terraform modules for Kubernetes, PostgreSQL, and Redis
+  - [x] Develop production Terraform modules for Kubernetes, PostgreSQL, and Redis
   - [x] Build shared base Docker image for microservices
 
 ### Security & Authentication
