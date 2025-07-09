@@ -79,6 +79,12 @@ After tests pass, each service is packaged into a Docker image:
 
 Images are tagged with the commit SHA and pushed to **GitHub Container Registry (GHCR)**.
 
+### Base Docker Image
+
+All service containers extend a common `firemud-base` image built from
+`docker/base.Dockerfile`. The `buildBaseImage` Gradle task builds and pushes
+this image so microservices share the same runtime configuration.
+
 ---
 
 ## 🚢 Deploying to Kubernetes

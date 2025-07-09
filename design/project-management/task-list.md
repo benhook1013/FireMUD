@@ -166,7 +166,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Apply Kubernetes `NetworkPolicy` manifests across environments
     - [x] Provide Helm umbrella chart for deploying all services together
   - [ ] Develop production Terraform modules for Kubernetes, PostgreSQL, and Redis
-  - [ ] Build shared base Docker image for microservices
+  - [x] Build shared base Docker image for microservices
 
 ### Security & Authentication
 
