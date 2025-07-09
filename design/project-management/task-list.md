@@ -210,7 +210,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Include generated sources in build and CI
     - [x] OpenAPI consistency
     - [x] Static analysis
-  - [ ] Generate ERD diagrams and baseline Flyway scripts for each service in CI
+  - [x] Generate ERD diagrams and baseline Flyway scripts for each service in CI
   - [x] Add pre-commit hooks for:
     - [x] Spotless
     - [x] Checkstyle
