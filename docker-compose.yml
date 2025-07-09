@@ -1,13 +1,13 @@
 version: '3.9'
 
 x-service-environment: &service-env
-  POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-  POSTGRES_DB: ${POSTGRES_DB:-firemud}
-  POSTGRES_USER: ${POSTGRES_USER:-firemud}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-firemud}
-  REDIS_HOST: ${REDIS_HOST:-redis}
-  REDIS_PORT: ${REDIS_PORT:-6379}
+  FIREMUD_POSTGRES_HOST: ${FIREMUD_POSTGRES_HOST:-postgres}
+  FIREMUD_POSTGRES_PORT: ${FIREMUD_POSTGRES_PORT:-5432}
+  FIREMUD_POSTGRES_DB: ${FIREMUD_POSTGRES_DB:-firemud}
+  FIREMUD_POSTGRES_USER: ${FIREMUD_POSTGRES_USER:-firemud}
+  FIREMUD_POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD:-firemud}
+  FIREMUD_REDIS_HOST: ${FIREMUD_REDIS_HOST:-redis}
+  FIREMUD_REDIS_PORT: ${FIREMUD_REDIS_PORT:-6379}
   SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
 
 x-service-healthcheck: &service-health
@@ -178,15 +178,15 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-firemud}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-firemud}
-      POSTGRES_DB: ${POSTGRES_DB:-firemud}
+      POSTGRES_USER: ${FIREMUD_POSTGRES_USER:-firemud}
+      POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD:-firemud}
+      POSTGRES_DB: ${FIREMUD_POSTGRES_DB:-firemud}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-firemud}"]
+      test: ["CMD", "pg_isready", "-U", "${FIREMUD_POSTGRES_USER:-firemud}"]
       interval: 10s
       timeout: 5s
       retries: 5

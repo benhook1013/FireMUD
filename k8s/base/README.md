@@ -37,13 +37,13 @@ environment variables. A `firemud-config` `ConfigMap` and `firemud-secret`
 `Secret` are provided to supply these values:
 
 ```bash
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-POSTGRES_DB=firemud
-POSTGRES_USER=firemud
-POSTGRES_PASSWORD=firemud
-REDIS_HOST=redis
-REDIS_PORT=6379
+FIREMUD_POSTGRES_HOST=postgres
+FIREMUD_POSTGRES_PORT=5432
+FIREMUD_POSTGRES_DB=firemud
+FIREMUD_POSTGRES_USER=firemud
+FIREMUD_POSTGRES_PASSWORD=firemud
+FIREMUD_REDIS_HOST=redis
+FIREMUD_REDIS_PORT=6379
 ```
 
 Each deployment loads these variables using `envFrom`. Replace the sample
