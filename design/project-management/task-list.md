@@ -223,7 +223,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Schedule recurring security scans (including base image and dependency scans)
 - [x] Add `weekly-security-scan.yml` workflow to scan published images weekly
 - [x] Add GitHub workflow to generate release notes on tag push
-- [ ] Automate semantic version bumps
+- [x] Automate semantic version bumps
 - [ ] Integrate open source license scanning into CI
 - [x] Enable Dependabot for automated dependency updates
 - [x] Enable static analysis:
