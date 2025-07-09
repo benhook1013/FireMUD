@@ -128,11 +128,11 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Publish common package to internal repository (Maven/Gradle)
   - [x] Publish **firemud-protos** artifact with shared gRPC definitions
   - [x] Add `common-library` README with usage examples
-  - [ ] Extend **firemud-common** with saga orchestration support
-    - [ ] Define `saga` schema tables for step tracking and state
-    - [ ] Implement fluent API for saga orchestration
-    - [ ] Add gRPC call helpers with retry and compensation hooks
-    - [ ] Document example saga usage
+  - [x] Extend **firemud-common** with saga orchestration support
+    - [x] Define `saga` schema tables for step tracking and state
+    - [x] Implement fluent API for saga orchestration
+    - [x] Add gRPC call helpers with retry and compensation hooks
+    - [x] Document example saga usage
   - [ ] Replace placeholder classes with real implementations
 
 ### Infrastructure Setup
@@ -182,13 +182,13 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### Web Frontend
 
-- [ ] Scaffold React-based MUD client with Vite and Material-UI
+- [x] Scaffold React-based MUD client with Vite and Material-UI
 - [ ] Build web-based game editor for game creators
-- [ ] Configure ESLint and Prettier for consistent formatting
-- [ ] Add pre-commit hooks for frontend linting
+- [x] Configure ESLint and Prettier for consistent formatting
+- [x] Add pre-commit hooks for frontend linting
 - [ ] Add accessibility checks (Axe or Lighthouse) to CI
-- [ ] Convert React frontend to TypeScript for type safety
-- [ ] Run ESLint and Prettier checks in GitHub Actions
+- [x] Convert React frontend to TypeScript for type safety
+- [x] Run ESLint and Prettier checks in GitHub Actions
 
 ### CI/CD & Developer Automation
 
