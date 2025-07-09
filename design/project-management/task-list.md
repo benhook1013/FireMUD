@@ -224,7 +224,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Add `weekly-security-scan.yml` workflow to scan published images weekly
 - [x] Add GitHub workflow to generate release notes on tag push
 - [x] Automate semantic version bumps
-- [ ] Integrate open source license scanning into CI
+  - [x] Integrate open source license scanning into CI
 - [x] Enable Dependabot for automated dependency updates
 - [x] Enable static analysis:
   - [x] Spotless for formatting
@@ -237,7 +237,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia project file for manual API testing
 - [x] Provide Kreya project file for manual API testing
-- [ ] Configure Slack or email notifications for failed workflows
+  - [x] Configure email notifications for failed workflows
 
 ### Observability & Tracing
 
@@ -245,8 +245,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
 - [ ] Deploy OpenTelemetry Collector for distributed tracing
 - [ ] Deploy Jaeger or equivalent trace UI for visualizing spans
-- [ ] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
-- [ ] Commit default Grafana and Kibana dashboard templates
+- [x] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
+- [x] Commit default Grafana and Kibana dashboard templates
 - [x] Configure Elasticsearch index retention (14 days dev, 90 days prod)
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)

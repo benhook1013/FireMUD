@@ -5,4 +5,9 @@ This directory contains all architecture and project-management documentation fo
 - **architecture/** – Infrastructure, microservice designs, and system overviews.
 - **project-management/** – Requirements, task lists, and AI rule sets.
 
+Additional generated documentation lives in:
+
+- **grpc-docs/** – API references generated from our protobuf definitions.
+- **observability/** – Default Grafana and Kibana dashboard templates.
+
 Refer to the README files within each subdirectory for more details.
