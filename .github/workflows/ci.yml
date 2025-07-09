@@ -82,6 +82,9 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: 📑 Lint OpenAPI Specs
+        run: npm run openapi:lint
+
       - name: 💾 Cache Node Modules
         uses: actions/cache@v3
         with:
