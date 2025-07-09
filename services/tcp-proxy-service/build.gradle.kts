@@ -1,7 +1,8 @@
 import com.github.spotbugs.snom.SpotBugsTask
 
 plugins {
-    id("org.springframework.boot") version "3.5.3" apply false
+    // Apply the Spring Boot plugin so `bootBuildImage` is available for Docker builds
+    id("org.springframework.boot") version "3.5.3"
     id("org.flywaydb.flyway") version "11.10.1"
 }
 
