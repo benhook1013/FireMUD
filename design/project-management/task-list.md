@@ -302,7 +302,8 @@ The standard microservice checklist is now copied into each service task list.
 ## 🛠️ Phase 4: Community & Funding
 
 - [ ] Set up financial contribution options
-  - [x] Add PayPal donation link
+  - [ ] Add PayPal donation link
+  - [ ] Add Patreon donation link
   - [ ] Configure GitHub Sponsors profile
 - [ ] Create Patreon page
 
