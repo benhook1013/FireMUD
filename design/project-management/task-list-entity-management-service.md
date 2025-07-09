@@ -3,8 +3,8 @@
 - [ ] **Develop Entity Management Service**
   - [x] Implement player character storage
   - [x] Implement NPC storage and data structures
-  - [ ] Implement item and inventory management
-  - [ ] Implement entity stats and progression tracking
+  - [x] Implement item and inventory management
+  - [x] Implement entity stats and progression tracking
   - [ ] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
   - [ ] Implement entity graph caching for fast lookups
@@ -21,7 +21,7 @@ participate in CI.
 ## 📦 Project Setup & CI
 
 - [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
-- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
+- [ ] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
 - [x] Provide a `Dockerfile` and Gradle task to build the image
 - [x] Create `README.md` with local setup instructions and design links
 - [x] Add the service to the GitHub Actions build matrix and Buf lint step
