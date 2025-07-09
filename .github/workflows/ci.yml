@@ -30,6 +30,7 @@ jobs:
         uses: bufbuild/buf-setup-action@v1
         with:
           version: '1.30.0'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🛠️ Fetch Base Commit for Buf Breaking
         if: github.event_name == 'pull_request'
