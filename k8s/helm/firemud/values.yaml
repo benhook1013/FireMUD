@@ -1,0 +1,6 @@
+account-service:
+  image:
+    tag: latest
+game-session-service:
+  image:
+    tag: latest
