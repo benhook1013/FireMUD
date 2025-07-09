@@ -196,7 +196,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Verify each service starts via `./gradlew devUp` and shows `Started` logs
 - [x] Create Gradle `devDown` task to stop the Docker Compose stack
 - [x] Create Gradle `buildDockerImages` task to build all service images
-- [ ] Provision ephemeral preview environments for pull requests
+- [x] Provision ephemeral preview environments for pull requests
 - [x] Automate Docker image builds and registry pushes
 - [x] Publish Docker images to GitHub Container Registry (GHCR)
 - [x] Cache Gradle and Node dependencies in CI for faster builds
