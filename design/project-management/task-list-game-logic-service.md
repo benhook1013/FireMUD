@@ -37,7 +37,7 @@ participate in CI.
 - [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
-- [x] Provide contract smoke tests using `grpcurl`
+- [ ] Provide contract smoke tests using `grpcurl`
 - [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [ ] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
