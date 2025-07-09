@@ -1,0 +1,9 @@
+architecture: replication
+master:
+  persistence:
+    enabled: true
+    size: 8Gi
+replica:
+  persistence:
+    enabled: true
+    size: 8Gi

@@ -1,0 +1,16 @@
+global:
+  postgresql:
+    auth:
+      postgresPassword: firemud
+      username: firemud
+      password: firemud
+      database: firemud
+architecture: replication
+primary:
+  persistence:
+    enabled: true
+    size: 10Gi
+readReplicas:
+  persistence:
+    enabled: true
+    size: 10Gi
