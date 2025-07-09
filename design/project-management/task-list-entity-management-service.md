@@ -1,8 +1,8 @@
 # Entity Management Service Task List
 
 - [ ] **Develop Entity Management Service**
-  - [ ] Implement player character storage
-  - [ ] Implement NPC storage and data structures
+  - [x] Implement player character storage
+  - [x] Implement NPC storage and data structures
   - [ ] Implement item and inventory management
   - [ ] Implement entity stats and progression tracking
   - [ ] Implement NPC respawn rules and timing
