@@ -141,7 +141,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Provide `config/redis.conf` with AOF settings for local development
 - [x] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
 - [x] Include `redis.conf` for local Redis with AOF persistence
-- [ ] Standardize `FIREMUD_` environment variable prefix across all services
+- [x] Standardize `FIREMUD_` environment variable prefix across all services
   - [x] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
   - [x] Expand `docker-compose.yml` to include all services
 - [x] Include RedisInsight container in `docker-compose.override.yml` for debugging

@@ -93,13 +93,13 @@ The `docker-compose.yml` file orchestrates all services, including PostgreSQL an
 This task builds all service images and starts the Docker Compose stack with PostgreSQL and Redis. Connection settings are read from an optional `.env` file. A sample file named `.env.sample` is provided with default credentials:
 
 ```env
-POSTGRES_USER=firemud
-POSTGRES_PASSWORD=firemud
-POSTGRES_DB=firemud
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-REDIS_HOST=redis
-REDIS_PORT=6379
+FIREMUD_POSTGRES_USER=firemud
+FIREMUD_POSTGRES_PASSWORD=firemud
+FIREMUD_POSTGRES_DB=firemud
+FIREMUD_POSTGRES_HOST=postgres
+FIREMUD_POSTGRES_PORT=5432
+FIREMUD_REDIS_HOST=redis
+FIREMUD_REDIS_PORT=6379
 ```
 
 Copy this to `.env` and adjust values as needed before running the stack.
