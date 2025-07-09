@@ -1,6 +1,5 @@
 # Entity Management Service Task List
 
-- **Prepare Helm chart for Entity Management Service**
 - **Develop Entity Management Service**
   - Implement player character storage
   - Implement NPC storage and data structures

@@ -1,6 +1,5 @@
 # Account Service Task List
 
-- **Prepare Helm chart for Account Service**
 - **Develop Account Service**
   - Implement user registration and authentication (OAuth2, JWT)
   - Implement session management and persistent logins

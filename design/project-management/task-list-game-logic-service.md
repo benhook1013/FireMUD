@@ -1,6 +1,5 @@
 # Game Logic Service Task List
 
-- **Prepare Helm chart for Game Logic Service**
 - **Develop Game Logic Service**
   - Implement command parsing & validation
   - Implement action processing (movement, interactions, combat)
