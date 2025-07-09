@@ -164,7 +164,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Reference Terraform files as optional future cloud setup
   - [x] Document network policy usage in architecture docs
   - [ ] Apply Kubernetes `NetworkPolicy` manifests across environments
-  - [ ] Provide Helm umbrella chart for deploying all services together
+    - [x] Provide Helm umbrella chart for deploying all services together
   - [ ] Develop production Terraform modules for Kubernetes, PostgreSQL, and Redis
   - [ ] Build shared base Docker image for microservices
 
@@ -302,7 +302,7 @@ The standard microservice checklist is now copied into each service task list.
 ## 🛠️ Phase 4: Community & Funding
 
 - [ ] Set up financial contribution options
-  - [ ] Add PayPal donation link
+  - [x] Add PayPal donation link
   - [ ] Configure GitHub Sponsors profile
 - [ ] Create Patreon page
 

@@ -23,3 +23,10 @@ helm install account-service ./account-service \
   -f values-local.yaml
 ```
 
+
+To deploy all services at once you can use the umbrella chart:
+
+```bash
+helm install firemud ./firemud \
+  -f values-local.yaml
+```
