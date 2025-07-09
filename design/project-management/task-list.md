@@ -109,7 +109,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Derive minimal data models and proto schemas based on real usage
 - [x] Refine shared DTOs and gRPC contracts from concrete examples
   - [x] Document Redis key naming conventions and locking scheme
-- [ ] Finalize API schemas from concrete gameplay flows
+- [x] Finalize API schemas from concrete gameplay flows
 
 ### Build `firemud-common` Library
 
@@ -209,7 +209,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Integrate proto generation and schema validation into CI workflow
     - [x] Include generated sources in build and CI
     - [ ] OpenAPI consistency
-    - [ ] Static analysis
+    - [x] Static analysis
   - [ ] Generate ERD diagrams and baseline Flyway scripts for each service in CI
   - [x] Add pre-commit hooks for:
     - [x] Spotless
