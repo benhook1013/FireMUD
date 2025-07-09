@@ -46,3 +46,13 @@ The following mechanics are **future additions** to the platform and are not yet
 ---
 
 By constraining scripts to curated components and enforcing strict quotas, FireMUD delivers powerful automation tools while maintaining security and fair resource usage across all hosted games.
+
+## 🛠️ Developer Tools
+
+Several helper scripts live under `dev-tools/` to streamline common tasks:
+
+- `firemud-cli.sh` – command-line utility for starting and stopping the local stack.
+- `generate-erd.sh` – produces Entity Relationship Diagrams for each service.
+- `generate-grpc-docs.sh` – generates HTML documentation from protobuf definitions.
+
+These scripts complement the web-based editor and allow creators to automate routine actions.

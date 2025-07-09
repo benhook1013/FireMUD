@@ -48,6 +48,13 @@ For local development, use `./gradlew devUp` to start Docker Compose.
 
 See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for snapshot schedules and retention policies.
 
+## 🩹 Hotfix Procedure
+
+1. Identify the offending service via logs or alerts.
+2. Commit the fix to `main` and trigger the CI pipeline.
+3. Use `helm upgrade --install` with the new image tag to deploy only the affected service.
+4. Monitor metrics and logs to ensure the issue is resolved.
+
 ---
 
 These runbooks provide a starting point for operators. Update them as new tooling or workflows evolve.
