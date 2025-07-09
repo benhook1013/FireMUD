@@ -1,6 +1,4 @@
-version: v2
-modules:
-  - path: protos
+version: v1
 lint:
   use:
     - DEFAULT
