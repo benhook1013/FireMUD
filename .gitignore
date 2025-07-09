@@ -20,3 +20,4 @@
 # Terraform
 **/.terraform/
 *.tfstate
+design/erd/
