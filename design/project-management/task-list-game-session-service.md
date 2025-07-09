@@ -2,7 +2,7 @@
 
 - [ ] **Expand Game Session Service**
   - [ ] Implement game instance lifecycle (start, stop, restart)
-  - [ ] Support multi-tenancy for hosted games
+  - [x] Support multi-tenancy for hosted games
   - [ ] Implement tick orchestration using Redis for command queues
   - [ ] Implement Lua-based staging, commit, and rollback scripts for tick transactions
   - [ ] Implement distributed lock acquisition in Redis for tick updates
