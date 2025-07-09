@@ -27,7 +27,7 @@ participate in CI.
 - [x] Add the service to the GitHub Actions build matrix and Buf lint step
 - [x] Include the service in the Docker image workflow (`buildDockerImages`)
 - [x] Define Kubernetes `Deployment` and `Service` manifests
-- [x] Expose `/actuator/health` for readiness and liveness probes
+- [ ] Expose `/actuator/health` for readiness and liveness probes
 
 ---
 
