@@ -91,6 +91,17 @@ jobs:
           key: node-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
           restore-keys: node-${{ runner.os }}-
 
+      - name: 📦 Install Frontend Dependencies
+        run: |
+          cd web-client
+          npm ci
+        
+      - name: 🛠 Run Frontend Lint
+        run: |
+          cd web-client
+          npm run lint
+          npm run format -- -c
+
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
