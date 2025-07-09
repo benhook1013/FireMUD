@@ -119,7 +119,7 @@ participate in CI.
 ## 📖 Documentation
 
 - [x] Create `design/README.md` summarizing APIs and sample requests
-- [ ] Document proto contracts and any Redis keys in the service README
+- [x] Document proto contracts and any Redis keys in the service README
 - [ ] Document required environment variables and configuration
 - [ ] Note `tenantId` handling and cross-service dependencies
 - [x] Add a design document under `design/architecture/microservices/<service>/README.md`
