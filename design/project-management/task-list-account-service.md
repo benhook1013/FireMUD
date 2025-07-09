@@ -1,37 +1,37 @@
 # Account Service Task List
 
-- **Develop Account Service**
-  - Implement user registration and authentication (OAuth2, JWT)
-  - Implement session management and persistent logins
-  - Implement role-based access control (RBAC) for admins, moderators, and players
-  - Enable external account linking (Google, Discord, Steam)
-  - Implement profile system with achievements, game history, and social features
-  - Implement player data export & deletion (GDPR compliance)
-  - Expose JWKS endpoint for token verification
-  - Use saga orchestrator for account creation workflow
-  - Implement self-service account recovery
-  - Add optional 2FA for admin and moderator roles
-- **Develop Email & Notification System**
-  - Implement email verification & password resets
-  - Implement in-game notification system for events & messages
-  - Configure SMTP provider and test templates
-  - Document email and notification design in `account-service/design/README.md`
-  - Add asynchronous NotificationService components with gRPC endpoints
-- **Develop Monetization & Payment Module**
-  - Integrate Stripe or similar for in-game purchases
-  - Support subscriptions, one-time purchases, and donations
-  - Enforce platform fee on transactions
-  - Implement refund & chargeback handling
-  - Use saga orchestrator for cross-service purchase workflows
-  - Create `payment_transaction` and `subscription` entities in the Account Service
-  - Add gRPC methods in `AccountService` for payments
-  - Define proto contracts for payment and subscription flows in the account proto namespace
-  - Add Flyway migration scripts for payment tables
-  - Document monetization design in `account-service/design/README.md`
-  - Implement virtual currency system (game-specific currencies)
-  - Implement premium hosting tiers & features for game creators
-  - Implement platform-controlled ad system (for free-to-play games)
-  - Implement revenue-sharing system for game creators
+- [ ] **Develop Account Service**
+  - [ ] Implement user registration and authentication (OAuth2, JWT)
+  - [ ] Implement session management and persistent logins
+  - [ ] Implement role-based access control (RBAC) for admins, moderators, and players
+  - [ ] Enable external account linking (Google, Discord, Steam)
+  - [ ] Implement profile system with achievements, game history, and social features
+  - [ ] Implement player data export & deletion (GDPR compliance)
+  - [ ] Expose JWKS endpoint for token verification
+  - [ ] Use saga orchestrator for account creation workflow
+  - [ ] Implement self-service account recovery
+  - [ ] Add optional 2FA for admin and moderator roles
+- [ ] **Develop Email & Notification System**
+  - [ ] Implement email verification & password resets
+  - [ ] Implement in-game notification system for events & messages
+  - [ ] Configure SMTP provider and test templates
+  - [ ] Document email and notification design in `account-service/design/README.md`
+  - [ ] Add asynchronous NotificationService components with gRPC endpoints
+- [ ] **Develop Monetization & Payment Module**
+  - [ ] Integrate Stripe or similar for in-game purchases
+  - [ ] Support subscriptions, one-time purchases, and donations
+  - [ ] Enforce platform fee on transactions
+  - [ ] Implement refund & chargeback handling
+  - [ ] Use saga orchestrator for cross-service purchase workflows
+  - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
+  - [ ] Add gRPC methods in `AccountService` for payments
+  - [ ] Define proto contracts for payment and subscription flows in the account proto namespace
+  - [ ] Add Flyway migration scripts for payment tables
+  - [ ] Document monetization design in `account-service/design/README.md`
+  - [ ] Implement virtual currency system (game-specific currencies)
+  - [ ] Implement premium hosting tiers & features for game creators
+  - [ ] Implement platform-controlled ad system (for free-to-play games)
+  - [ ] Implement revenue-sharing system for game creators
 
 ## Reusable Microservice Checklist
 

@@ -223,7 +223,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Schedule recurring security scans (including base image and dependency scans)
 - [x] Add `weekly-security-scan.yml` workflow to scan published images weekly
 - [x] Add GitHub workflow to generate release notes on tag push
-- [ ] Automate semantic version bumps
+- [x] Automate semantic version bumps
 - [ ] Integrate open source license scanning into CI
 - [x] Enable Dependabot for automated dependency updates
 - [x] Enable static analysis:
@@ -301,11 +301,11 @@ The standard microservice checklist is now copied into each service task list.
 
 ## 🛠️ Phase 4: Community & Funding
 
-- [ ] Set up financial contribution options
+- [x] Set up financial contribution options
   - [x] Add PayPal donation link
   - [x] Add Patreon donation link
   - [x] Configure GitHub Sponsors profile
-- [ ] Create Patreon page
+- [x] Create Patreon page
 
 ---
 
