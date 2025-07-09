@@ -176,7 +176,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Install and configure `cert-manager` in the Kubernetes cluster
 - [x] Manage certificates via Kubernetes `cert-manager`
 - [x] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
-- [ ] Add integration test for mid-session role refresh via Game Session Service
+- [x] Add integration test for mid-session role refresh via Game Session Service
 - [x] Implement hot reload for TLS certificates and JWKS keys
 - [x] Implement connection rate limiting in Spring Cloud Gateway
 
