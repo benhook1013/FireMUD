@@ -102,6 +102,11 @@ jobs:
           npm run lint
           npm run format -- -c
 
+      - name: ♿ Run Accessibility Audit
+        run: |
+          cd web-client
+          npm run accessibility
+
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:

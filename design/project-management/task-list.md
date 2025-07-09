@@ -186,7 +186,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Build web-based game editor for game creators
 - [x] Configure ESLint and Prettier for consistent formatting
 - [x] Add pre-commit hooks for frontend linting
-- [ ] Add accessibility checks (Axe or Lighthouse) to CI
+- [x] Add accessibility checks (Axe or Lighthouse) to CI
 - [x] Convert React frontend to TypeScript for type safety
 - [x] Run ESLint and Prettier checks in GitHub Actions
 
