@@ -39,7 +39,7 @@ jobs:
       - name: ⚠️ Buf Breaking
         if: github.event_name == 'pull_request'
         run: |
-          buf breaking --against ${{ github.event.pull_request.base.sha }}
+          buf breaking --against ".git#commit=${{ github.event.pull_request.base.sha }}"
 
       - name: ⚙️ Generate Protobufs
         run: buf generate
