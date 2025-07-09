@@ -1,7 +1,7 @@
 import com.github.spotbugs.snom.SpotBugsTask
 
 plugins {
-    id("org.springframework.boot") version "3.5.3" apply false
+    id("org.springframework.boot") version "3.5.3"
     id("org.flywaydb.flyway") version "11.10.1"
 }
 
@@ -12,6 +12,8 @@ dependencies {
     compileOnly("org.projectlombok:lombok:1.18.38")
     implementation("org.flywaydb:flyway-core:11.10.1")
     implementation("org.mapstruct:mapstruct:1.6.3")
+    implementation("org.springframework.boot:spring-boot-starter:3.5.3")
+    implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
     implementation(project(":common-library"))
 }
 
