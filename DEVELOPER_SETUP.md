@@ -17,8 +17,11 @@ Install the following tools before building the services:
 Each microservice includes a `Dockerfile` and a Gradle build script. After cloning the repository, generate the Gradle wrapper scripts if they are not already present:
 
 ```bash
-gradle wrapper --gradle-version 8.5 --distribution-type bin
+gradle wrapper --gradle-version 8.14.3 --distribution-type bin
 ```
+
+Run this command any time the wrapper JAR is missing. It downloads the
+required `gradle-wrapper.jar` into `gradle/wrapper/`.
 
 This creates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`. You only need to run it once after cloning.
 

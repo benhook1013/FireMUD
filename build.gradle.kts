@@ -2,6 +2,15 @@ import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
 import java.io.File
 
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.fasterxml.jackson.core:jackson-databind:2.19.1")
+    }
+}
+
 plugins {
     java
     id("com.github.node-gradle.node") version "7.1.0"
