@@ -15,7 +15,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [TCP Proxy Service](task-list-tcp-proxy-service.md)
 - [World Management Service](task-list-world-management-service.md)
 
-- [Common Microservice Tasks](task-list-common.md)
+- Common microservice tasks are included in each service list.
 
 ## 📋 Phase 0: Project Planning
 
@@ -251,7 +251,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
-See [task-list-common.md](task-list-common.md) for tasks shared across all services.
+The standard microservice checklist is now copied into each service task list.
 
 ---
 
