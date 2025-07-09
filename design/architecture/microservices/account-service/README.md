@@ -65,6 +65,13 @@ Manages user accounts and authentication for the platform. Stores profile data a
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
 
+### REST Endpoints
+
+| Method | Path       | Description               |
+| ------ | ---------- | ------------------------- |
+| `POST` | `/accounts` | Create a new user account |
+| `GET`  | `/ping`    | Simple health check       |
+
 ## Dependencies
 
 - **Internal:**

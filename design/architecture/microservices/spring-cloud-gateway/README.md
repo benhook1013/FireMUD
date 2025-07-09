@@ -77,6 +77,19 @@ details on shared infrastructure components.
   explains how routes and certificates differ between Docker Compose and
   production clusters.
 
+## Environment Variables
+
+The gateway reads configuration from environment variables so both Docker Compose
+and Kubernetes deployments behave consistently. Important variables include:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SPRING_PROFILES_ACTIVE` | Spring profile to load (`dev` or `prod`) | `dev` |
+| `SERVER_PORT` | HTTP port exposed by the service | `8080` |
+
+The database variables (`FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*`) are included
+for consistency across services but are not used by the gateway.
+
 ## Proto Files
 
 Gateway-related proto definitions are stored in
