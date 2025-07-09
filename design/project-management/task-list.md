@@ -201,7 +201,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Publish Docker images to GitHub Container Registry (GHCR)
 - [x] Cache Gradle and Node dependencies in CI for faster builds
   - [x] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
-- [ ] Add CI steps for:
+- [x] Add CI steps for:
   - [x] Protobuf generation and schema checking
   - [x] Lint `.proto` files with `buf` (handled via pre-commit hooks)
   - [x] Include `buf breaking` tests in CI for backward compatibility

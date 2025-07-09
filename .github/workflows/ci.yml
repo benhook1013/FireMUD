@@ -291,9 +291,8 @@ jobs:
                 ...context.repo,
                 issue_number: context.issue.number,
                 body
-              });
-            }
-
+            });
+          }
 
   generate-erd:
     name: Generate ERD Diagrams
