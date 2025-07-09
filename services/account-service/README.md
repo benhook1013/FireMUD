@@ -18,3 +18,36 @@ Or start all services:
 ```bash
 ./gradlew devUp
 ```
+
+## Environment Variables
+
+The service relies on standard Spring Boot properties for database and Redis
+connections. Typical variables when running locally are:
+
+| Variable | Purpose |
+| --- | --- |
+| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | Database user |
+| `SPRING_DATASOURCE_PASSWORD` | Database password |
+| `SPRING_REDIS_HOST` | Redis hostname |
+| `SPRING_REDIS_PORT` | Redis port |
+
+Values can also be configured via `application.yml` profiles for different
+environments.
+
+## Redis Key Pattern
+
+Account session tokens are stored in Redis using the following format:
+
+```text
+session:{tenantId}:{token}
+```
+
+These keys expire automatically and allow the Game Session Service to restore a
+player's connection without requiring another login.
+
+## Tenant Handling and Dependencies
+
+Every account row includes a `tenantId` column. This ensures data isolation for
+games hosted on the platform. Other microservices verify JWT tokens issued by
+this service and include the tenant identifier in all requests.
