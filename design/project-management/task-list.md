@@ -126,7 +126,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Implement configuration management (centralized properties, environment handling)
   - [x] Include Lombok and MapStruct dependencies for annotation-based code generation
   - [x] Publish common package to internal repository (Maven/Gradle)
-  - [ ] Publish **firemud-protos** artifact with shared gRPC definitions
+  - [x] Publish **firemud-protos** artifact with shared gRPC definitions
   - [x] Add `common-library` README with usage examples
   - [ ] Extend **firemud-common** with saga orchestration support
     - [ ] Define `saga` schema tables for step tracking and state
