@@ -1,7 +1,7 @@
 # Logging & Admin Service Task List
 
 - [ ] **Develop Logging & Admin Service**
-  - [ ] Collect logs from all services and provide search dashboards
+  - [x] Collect logs from all services and provide search dashboards
   - [x] Allow players to report others for abuse/violations
   - [x] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
