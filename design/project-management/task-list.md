@@ -203,7 +203,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
 - [ ] Add CI steps for:
   - [x] Protobuf generation and schema checking
-  - [x] Lint `.proto` files with `buf` and enforce schema versioning
+  - [x] Lint `.proto` files with `buf` (handled via pre-commit hooks)
   - [x] Include `buf breaking` tests in CI for backward compatibility
   - [x] Generate gRPC stubs for each service via Gradle plugin
   - [x] Integrate proto generation and schema validation into CI workflow
@@ -216,7 +216,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Checkstyle
     - [x] markdownlint
     - [x] SpotBugs
-    - [x] Buf or proto consistency
+    - [x] Buf or proto consistency (lint via pre-commit)
 - [x] Use Trivy for container and dependency vulnerability scanning
 - [x] Post Trivy scan report as pull request comment
 - [x] Cache Trivy vulnerability database in CI for faster scans

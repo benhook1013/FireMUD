@@ -18,15 +18,15 @@ concurrency:
 
 jobs:
   buf-check:
-    name: Buf Lint and Breaking Check
+    name: Buf Breaking and Generation
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: 📝 Buf Lint
-        run: buf lint
+      # Buf lint runs in pre-commit hooks; this job only checks breaking changes
+      # and generates protobufs for CI builds.
       - name: ⚠️ Buf Breaking
         if: github.event_name == 'pull_request'
         run: |
