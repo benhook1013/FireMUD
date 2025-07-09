@@ -125,7 +125,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Implement common exception handling & error response structures
   - [x] Implement configuration management (centralized properties, environment handling)
   - [x] Include Lombok and MapStruct dependencies for annotation-based code generation
-  - [ ] Publish common package to internal repository (Maven/Gradle)
+  - [x] Publish common package to internal repository (Maven/Gradle)
   - [ ] Publish **firemud-protos** artifact with shared gRPC definitions
   - [x] Add `common-library` README with usage examples
   - [ ] Extend **firemud-common** with saga orchestration support
@@ -291,7 +291,7 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] **Monitor Logs & Fix Issues in Production**
   - [ ] Track errors, crashes, and performance issues
   - [ ] Implement hotfixes for immediate problems
-  - [ ] Document operational runbooks for deployment, scaling, and recovery
+  - [x] Document operational runbooks for deployment, scaling, and recovery
 - [ ] **Scale & Optimize Performance**
   - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
   - [ ] Optimize database queries & network traffic handling

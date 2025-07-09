@@ -14,6 +14,16 @@ dependencies {
 
 When published to a repository, include it via `implementation("net.firedevops.firemud.shared:firemud-common:<version>")`.
 
+### Publishing
+
+The library is published to the GitHub Packages registry. Provide `GITHUB_ACTOR` and `GITHUB_TOKEN` when running:
+
+```bash
+./gradlew :common-library:publish
+```
+
+Artifacts are uploaded under `net.firedevops.firemud:firemud-common`.
+
 ## Example Usage
 
 The library provides `ApiResponse` and other helpers. Controllers typically return:
