@@ -118,7 +118,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Implement `ApiResponse`, `ResultStatus`, and `GlobalExceptionHandler`
   - [x] Implement centralized logging utilities
   - [x] Implement gRPC interceptors for logging and metrics
-  - [ ] Integrate OpenTelemetry tracing helpers into `firemud-common`
+  - [x] Integrate OpenTelemetry tracing helpers into `firemud-common`
   - [x] Implement authentication & authorization utilities (OAuth2, JWT helper methods)
   - [x] Implement database connection utilities (PostgreSQL, Redis connectors)
   - [x] Implement base configuration classes for service discovery and shared properties
@@ -163,7 +163,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
     - [x] Reference Terraform files as optional future cloud setup
   - [x] Document network policy usage in architecture docs
-  - [ ] Apply Kubernetes `NetworkPolicy` manifests across environments
+  - [x] Apply Kubernetes `NetworkPolicy` manifests across environments
     - [x] Provide Helm umbrella chart for deploying all services together
   - [ ] Develop production Terraform modules for Kubernetes, PostgreSQL, and Redis
   - [ ] Build shared base Docker image for microservices
@@ -302,16 +302,16 @@ The standard microservice checklist is now copied into each service task list.
 ## 🛠️ Phase 4: Community & Funding
 
 - [ ] Set up financial contribution options
-  - [ ] Add PayPal donation link
-  - [ ] Add Patreon donation link
-  - [ ] Configure GitHub Sponsors profile
+  - [x] Add PayPal donation link
+  - [x] Add Patreon donation link
+  - [x] Configure GitHub Sponsors profile
 - [ ] Create Patreon page
 
 ---
 
 ## ➕ Additional Tasks
 
-- [ ] Provide command-line tooling for local game and session management
+- [x] Provide command-line tooling for local game and session management
 - [ ] Plan for **end-to-end UI testing** using Cypress or Playwright once the
   web UI is stable
 - [ ] Evaluate localization and internationalization support for the React client

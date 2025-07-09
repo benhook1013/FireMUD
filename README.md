@@ -191,9 +191,9 @@ Your support can make a significant difference in the development and success of
 - **Contribute**: See the [Getting Started and Contributing](#getting-started-and-contributing) section for ways to contribute code, documentation, or ideas.
 - **Spread the Word**: Share the project with friends, colleagues, and on social media platforms to help us reach a wider audience.
 - **Financial Contributions**: See the [Community & Funding tasks](design/project-management/task-list.md#🛠-phase-11-community--funding) for planned donation options. Upcoming support channels include:
-  - **Sponsor on PayPal** *(planned)*
-  - **Sponsor on GitHub** *(planned)*
-  - **Patreon** *(planned)*
+  - [PayPal Donation](https://paypal.me/firedevops)
+  - [GitHub Sponsors](https://github.com/sponsors/benhook1013)
+  - [Patreon](https://www.patreon.com/firemud)
 
   *Note: Financial contributions will be used to cover development costs, hosting, and other expenses related to the project.*
 

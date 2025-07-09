@@ -14,6 +14,7 @@ dependencies {
     compileOnly("org.projectlombok:lombok:1.18.38")
     implementation("io.jsonwebtoken:jjwt-api:0.11.5")
     implementation("io.micrometer:micrometer-core:1.15.1")
+    implementation("io.opentelemetry:opentelemetry-api:1.38.0")
     implementation("org.mapstruct:mapstruct:1.6.3")
     implementation("org.springframework.boot:spring-boot-starter-data-redis:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-jdbc:3.5.3")
