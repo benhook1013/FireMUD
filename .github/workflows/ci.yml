@@ -34,7 +34,7 @@ jobs:
       - name: 🛠️ Fetch Base Branch for Buf Breaking
         if: github.event_name == 'pull_request'
         run: |
-          git fetch origin ${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
+          git fetch origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
 
       - name: ⚠️ Buf Breaking
         if: github.event_name == 'pull_request'
