@@ -37,6 +37,7 @@ The architecture section describes the platform infrastructure and each microser
 
 - [**system-architecture-cicd.md**](./system-architecture-cicd.md) – CI/CD pipeline design using GitHub Actions.
 - [**system-architecture-backup-recovery.md**](./system-architecture-backup-recovery.md) – Backup strategy and disaster recovery procedures.
+- [**system-architecture-runbooks.md**](./system-architecture-runbooks.md) – Operational runbooks for deployment, scaling, and recovery.
 
 ## Additional Resources
 

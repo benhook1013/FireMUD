@@ -3,6 +3,7 @@ import com.github.spotbugs.snom.SpotBugsTask
 plugins {
     `java-library`
     id("org.springframework.boot") version "3.5.3" apply false
+    `maven-publish`
 }
 
 
@@ -43,5 +44,24 @@ tasks.named<SpotBugsTask>("spotbugsTest") {
             exclude("**/proto/**")
         }
     )
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            from(components["java"])
+            artifactId = "firemud-common"
+        }
+    }
+    repositories {
+        maven {
+            name = "github"
+            url = uri("https://maven.pkg.github.com/firedevops/firemud")
+            credentials {
+                username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
+                password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
 }
 
