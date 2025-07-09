@@ -22,6 +22,8 @@ This document consolidates the platform's observability architecture. It replace
 - **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**.
 - **Grafana** dashboards visualize performance data.
 - **OpenTelemetry** spans provide distributed tracing across ticks and requests.
+  Traces are collected by an OpenTelemetry Collector and visualized with Jaeger.
+  See [Tracing](./system-architecture-tracing.md) for deployment details.
 - Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals
   are tuned per environment (typically 15s in development and 30s in production).
 - Distributed traces are exported via OTLP and correlated with logs using the same

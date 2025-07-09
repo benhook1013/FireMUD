@@ -25,6 +25,22 @@ After the services are running, apply the default network policies found in
 kubectl apply -f network-policies/internal-services.yaml
 ```
 
+## Monitoring Components
+
+The `monitoring/` folder provides example manifests for observability tools:
+
+- `redis-exporter.yaml` exposes Redis metrics to Prometheus.
+- `otel-collector.yaml` receives OTLP spans from the services.
+- `jaeger.yaml` stores traces and offers a web UI on port `16686`.
+
+Apply them with:
+
+```bash
+kubectl apply -f monitoring/redis-exporter.yaml
+kubectl apply -f monitoring/otel-collector.yaml
+kubectl apply -f monitoring/jaeger.yaml
+```
+
 Customize these manifests with proper image repositories and resource limits before running in production.
 All Spring Boot services are configured to run with the `prod` profile by default via the `SPRING_PROFILES_ACTIVE` environment variable.
 

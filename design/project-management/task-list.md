@@ -151,7 +151,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Optionally configure local Redis or Helm releases
   - [x] Deploy Redis cluster with automatic failover and AOF persistence (see [Redis Architecture](../architecture/system-architecture-redis.md))
   - [ ] Deploy PostgreSQL cluster with replication and persistent volumes
-  - [ ] Install redis-exporter for Prometheus metrics
+  - [x] Install redis-exporter for Prometheus metrics
     - [x] Prepare Helm charts and baseline Kubernetes manifests for each service
       - [x] Include `Deployment`, `Service`, and `NetworkPolicy` manifests
   - [x] Add example `values.yaml` files for local and dev environments
@@ -243,8 +243,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [x] Configure centralized log aggregation dashboards early
 - [x] Deploy Prometheus, Grafana, and Alertmanager for metrics and alerts
-- [ ] Deploy OpenTelemetry Collector for distributed tracing
-- [ ] Deploy Jaeger or equivalent trace UI for visualizing spans
+- [x] Deploy OpenTelemetry Collector for distributed tracing
+- [x] Deploy Jaeger or equivalent trace UI for visualizing spans
 - [x] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
 - [x] Commit default Grafana and Kibana dashboard templates
 - [x] Configure Elasticsearch index retention (14 days dev, 90 days prod)

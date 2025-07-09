@@ -29,6 +29,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-frontend.md**](./system-architecture-frontend.md) – React UI structure and state management.
 - [**system-architecture-shared-libraries.md**](./system-architecture-shared-libraries.md) – Common libraries for microservices.
 - [**system-architecture-logging-monitoring.md**](./system-architecture-logging-monitoring.md) – Logging and observability stack.
+- [**system-architecture-tracing.md**](./system-architecture-tracing.md) – Deploying the OpenTelemetry Collector and Jaeger.
 - [**system-architecture-database-migrations.md**](./system-architecture-database-migrations.md) – Managing schema changes per service.
 - [**system-architecture-testing.md**](./system-architecture-testing.md) – Unit, integration, and load testing strategy.
 
