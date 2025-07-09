@@ -31,7 +31,7 @@ subprojects {
     apply(plugin = "com.github.spotbugs")
     apply(plugin = "jacoco")
     group = "net.firedevops.firemud"
-    version = "0.1.0-SNAPSHOT"
+    version = project.property("version") as String
 
     dependencies {
         implementation("com.google.protobuf:protobuf-java:4.31.1")
