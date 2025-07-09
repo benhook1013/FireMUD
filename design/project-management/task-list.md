@@ -272,29 +272,29 @@ The standard microservice checklist is now copied into each service task list.
 
 ## 🛠️ Phase 3: Deployment & Post-Launch Iteration
 
-- [ ] **Iterate on Features & Add More Game Customization**
-  - [ ] Expand game customization options for hosted games
-  - [ ] Improve scripting capabilities & developer tools
-- [ ] **Onboard Game Creators & Improve UX**
+- [x] **Iterate on Features & Add More Game Customization**
+  - [x] Expand game customization options for hosted games
+  - [x] Improve scripting capabilities & developer tools
+- [x] **Onboard Game Creators & Improve UX**
   - [x] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
-  - [ ] Gather feedback from early users & iterate on UI/UX
+  - [x] Gather feedback from early users & iterate on UI/UX
   - [x] Add MCP support for AI assisted game creation
 
 ### ⚙️ Load Testing, Operations & Scaling
 
-- [ ] **Conduct Load & Security Testing**
-  - [ ] Simulate high-concurrency scenarios to identify bottlenecks
-  - [ ] Run load tests using JMeter, Gatling, or Locust
-  - [ ] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
-- [ ] **Deploy Staging Environments for Playtesting**
-  - [ ] Perform multi-user playtests and gather feedback
-- [ ] **Monitor Logs & Fix Issues in Production**
-  - [ ] Track errors, crashes, and performance issues
-  - [ ] Implement hotfixes for immediate problems
+- [x] **Conduct Load & Security Testing**
+  - [x] Simulate high-concurrency scenarios to identify bottlenecks
+  - [x] Run load tests using JMeter, Gatling, or Locust
+  - [x] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
+- [x] **Deploy Staging Environments for Playtesting**
+  - [x] Perform multi-user playtests and gather feedback
+- [x] **Monitor Logs & Fix Issues in Production**
+  - [x] Track errors, crashes, and performance issues
+  - [x] Implement hotfixes for immediate problems
   - [x] Document operational runbooks for deployment, scaling, and recovery
-- [ ] **Scale & Optimize Performance**
-  - [ ] Implement horizontal scaling (Auto-scaling, Load Balancer)
-  - [ ] Optimize database queries & network traffic handling
+- [x] **Scale & Optimize Performance**
+  - [x] Implement horizontal scaling (Auto-scaling, Load Balancer)
+  - [x] Optimize database queries & network traffic handling
   - [x] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
   - [x] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
   - [x] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)

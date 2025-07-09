@@ -34,6 +34,10 @@ This document consolidates the platform's observability architecture. It replace
 - Spring Boot `/actuator/health` endpoints feed Kubernetes readiness and liveness probes.
 - See [Deployment Environments](./infrastructure/deployment-environments.md#🩺-kubernetes-health-monitoring) for probe behavior.
 
+## 🚑 Error Tracking and Hotfixes
+
+Logs in Kibana are searched daily for uncaught exceptions or repeated crashes. Alerts from Prometheus trigger on high error rates. When issues arise, operators follow the runbooks to deploy a hotfix image built from the `main` branch.
+
 ## 📚 Related Documentation
 
 - [System Architecture Overview](./system-architecture-overview.md)

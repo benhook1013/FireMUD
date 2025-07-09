@@ -59,6 +59,14 @@ GitHub Actions executes formatting and lint checks, builds the code, and runs al
 
 Load testing is executed on demand outside of CI and does not block deployments.
 
+### High-Concurrency Load Testing
+
+Gatling scenarios simulate thousands of concurrent connections to measure service limits and uncover bottlenecks. Results guide scaling decisions and database indexing.
+
+### Security Testing
+
+OWASP ZAP crawls the web client and Gateway endpoints during CI. Penetration tests and rate-limiting checks run before major releases.
+
 ---
 
 ## 📚 Related Documentation
