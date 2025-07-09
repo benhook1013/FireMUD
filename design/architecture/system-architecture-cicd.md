@@ -132,7 +132,8 @@ changes interactively. The `.github/workflows/preview.yml` workflow builds the
 service images with `./gradlew buildDockerImages` and launches them using
 `docker compose up`. A status comment is posted with a summary once the gateway
 passes its health check. The runner is discarded at the end of the job,
-removing the preview automatically.
+removing the preview automatically. The workflow first copies `.env.sample` to
+`.env` so Docker Compose has default environment variables available.
 
 ---
 
