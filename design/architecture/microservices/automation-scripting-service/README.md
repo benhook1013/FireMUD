@@ -35,12 +35,14 @@ For details on how scripts are authored and executed safely, see [System Archite
 - Persistent NPC memory and dynamic reactions  
 - Timers and delayed actions for asynchronous events  
 - Tick-based AI execution for efficient CPU usage and fair scheduling — AI logic runs during tick cycles only when triggered by events, avoiding constant background processing
+- Faction reputation influences NPC aggression states
 
 ### Data Model
 
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
 - `automation_queue` keys in Redis buffer triggered events until a script runs.
+- `factions` and `faction_standing` tables track player reputation.
 
 ### Script Lifecycle
 
@@ -56,6 +58,16 @@ For details on how scripts are authored and executed safely, see [System Archite
 - `UpdateScript` – uploads or replaces a script definition for later use.
 - `GetScriptStatus` – queries whether a script is queued or running for a given
   entity.
+
+## Faction & Reputation System
+
+NPCs belong to factions that track each player's reputation. Reputation scores
+range from negative to positive values and directly influence NPC aggression
+states. A higher reputation with a faction results in more neutral or friendly
+behaviour from its members, while negative reputation can make them hostile.
+
+Reputation changes are persisted in the `faction_standing` table and exposed via
+REST endpoints so other services can query or modify standings.
 
 ## Dependencies
 
@@ -112,8 +124,7 @@ stubs.
 - Web UI for creating and testing scripts.
 - Additional AI modules for advanced behaviors.
 - Procedural world generation hooks working in tandem with the World Management Service.
-- Faction and reputation tracking to influence NPC reactions.
-- NPC aggression states, fleeing and surrender logic.
+- NPC fleeing and surrender logic.
 - NPC formations and squad AI for coordinated encounters.
 - Fairness quotas and per-script resource limits to prevent abuse, as outlined
   in [System Architecture: Scripting & Automation](../system-architecture-scripting.md#fairness--abuse-prevention-planned).

@@ -54,6 +54,9 @@ automation_queue:{tenantId}:{entityId}
 
 These ephemeral keys queue triggered events until a script runs.
 
+Faction reputation is stored in the `faction_standing` table and determines how
+aggressive NPCs behave toward each player.
+
 ## Tenant Handling and Dependencies
 
 Each script row includes a `tenantId` column to keep data isolated between

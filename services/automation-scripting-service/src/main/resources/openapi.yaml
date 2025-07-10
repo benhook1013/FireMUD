@@ -45,6 +45,23 @@ components:
         - name
         - version
         - definition
+    FactionDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+    ReputationResponse:
+      type: object
+      properties:
+        data:
+          type: integer
+          example: 10
 paths:
   /ping:
     get:
@@ -60,4 +77,31 @@ paths:
                 properties:
                   data:
                     type: string
-                    example: pong
+                  example: pong
+  /factions/{id}/reputation:
+    patch:
+      summary: Adjust player reputation for a faction
+      operationId: adjustFactionReputation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: playerId
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: delta
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: New reputation value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReputationResponse'
