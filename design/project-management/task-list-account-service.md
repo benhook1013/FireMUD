@@ -127,11 +127,11 @@ participate in CI.
 
 ## 📈 Observability & Tracing
 
-- [ ] Use Micrometer for Prometheus metrics
-- [ ] Enable OpenTelemetry tracing
+- [x] Use Micrometer for Prometheus metrics
+- [x] Enable OpenTelemetry tracing
 - [ ] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
-- [ ] Expose `/actuator/prometheus` for scraping by Prometheus
+- [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
 

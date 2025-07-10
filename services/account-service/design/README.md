@@ -68,3 +68,10 @@ Expected response:
   "accountId": "123"
 }
 ```
+
+## Metrics & Tracing
+
+Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are
+exported to the collector service so traces can be viewed in Jaeger. No
+additional configuration is required when running via `./gradlew bootRun` as the
+default properties target `http://otel-collector:4317`.
