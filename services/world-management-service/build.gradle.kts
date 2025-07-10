@@ -22,6 +22,7 @@ dependencies {
     implementation("io.micrometer:micrometer-registry-prometheus:1.15.1")
     implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0")
     runtimeOnly("org.postgresql:postgresql:42.7.7")
 }
 

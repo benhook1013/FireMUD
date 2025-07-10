@@ -16,6 +16,9 @@ property.
 
 - `GET /ping` – basic health check returning `"pong"`.
 
+The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger
+UI at `/swagger-ui.html` when running locally.
+
 ```bash
 curl http://localhost:8080/ping
 ```

@@ -47,17 +47,11 @@ public class WorldManagementGrpcService
       if (json.isPresent()) {
         GetRoomResponse response = GetRoomResponse.newBuilder().setRoomJson(json.get()).build();
         responseObserver.onNext(response);
+        responseObserver.onCompleted();
       } else {
-        responseObserver.onNext(
-            GetRoomResponse.newBuilder()
-                .setError(
-                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode("NOT_FOUND")
-                        .setMessage("room not found")
-                        .build())
-                .build());
+        responseObserver.onError(
+            Status.NOT_FOUND.withDescription("room not found").asRuntimeException());
       }
-      responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
       responseObserver.onError(
           Status.INVALID_ARGUMENT.withDescription("invalid id").asRuntimeException());

@@ -16,6 +16,10 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
+Once the service is running, the generated OpenAPI specification is available at
+`http://localhost:8080/v3/api-docs` and the Swagger UI at
+`http://localhost:8080/swagger-ui.html`.
+
 ## Environment Variables
 
 The service relies on standard Spring Boot properties for PostgreSQL and Redis

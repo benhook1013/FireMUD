@@ -41,7 +41,7 @@ participate in CI.
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
+- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
@@ -57,7 +57,7 @@ participate in CI.
 ## 🔁 Inter-Service Communication
 
 - [x] Use `firemud-common` protobuf types for shared messages
-- [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
 - [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
