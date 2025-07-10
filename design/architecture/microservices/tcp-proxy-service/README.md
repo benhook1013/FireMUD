@@ -45,13 +45,14 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 
 ### Service Interactions
 
-The proxy does not expose its own public gRPC API. Instead it performs two
-internal operations when communicating with other microservices:
+The proxy does not expose a public client API. Instead it defines two gRPC
+events used internally when communicating with other microservices:
 
 - **NotifyDisconnect** – informs the Game Session Service when a Telnet client
     drops so the session may be suspended.
 - **PushBufferedInput** – forwards any queued commands after a reconnect
     event.
+These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Command Handling
 
