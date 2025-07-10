@@ -16,6 +16,9 @@ import net.firedevops.firemud.gamesession.v1.RestartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.StopSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
+import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
+import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
+import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.PingService;
 import org.lognet.springboot.grpc.GRpcService;
@@ -25,10 +28,15 @@ import org.lognet.springboot.grpc.GRpcService;
 public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionServiceImplBase {
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
+  private final FeatureFlagService featureFlagService;
 
-  public GameSessionGrpcService(PingService pingService, GameInstanceService gameInstanceService) {
+  public GameSessionGrpcService(
+      PingService pingService,
+      GameInstanceService gameInstanceService,
+      FeatureFlagService featureFlagService) {
     this.pingService = pingService;
     this.gameInstanceService = gameInstanceService;
+    this.featureFlagService = featureFlagService;
   }
 
   @Override
@@ -96,6 +104,19 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
       QueryStateRequest request, StreamObserver<QueryStateResponse> responseObserver) {
     // state query not yet implemented
     QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson("{}").build();
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void toggleFeatureFlag(
+      ToggleFeatureFlagRequest request,
+      StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
+    featureFlagService.toggleFlag(
+        new net.firedevops.firemud.dto.ToggleFeatureFlagRequest(
+            Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
+    ToggleFeatureFlagResponse response =
+        ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }

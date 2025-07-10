@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.v1.StartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.FeatureFlagService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -21,7 +22,9 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
-    GameSessionGrpcService service = new GameSessionGrpcService(pingService, gameInstanceService);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(pingService, gameInstanceService, featureFlagService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -48,11 +51,13 @@ class GameSessionGrpcServiceTest {
   void startSessionReturnsId() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.dto.StartSessionRequest.class)))
         .thenReturn(new GameInstanceDto(1L, 1L, "v1", 0L, "RUNNING"));
-    GameSessionGrpcService service = new GameSessionGrpcService(pingService, gameInstanceService);
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(pingService, gameInstanceService, featureFlagService);
 
     AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
     service.startSession(

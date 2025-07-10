@@ -51,6 +51,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 ### Data Model
 
 - `session` table tracks active games, associated `version_id`, and owner account.
+- `feature_flag` table stores runtime configuration overrides per tenant.
 - Redis stores volatile queues, timers, and reconnect metadata.
 
 ### Tick Execution Model
@@ -64,6 +65,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - `StartSession` – spins up a game instance from a published version.
 - `EnqueueCommand` – adds a player action to the next tick's queue.
 - `QueryState` – retrieves condensed session or player state for monitoring.
+- `ToggleFeatureFlag` – updates runtime flags for a tenant.
 
 ## Dependencies
 

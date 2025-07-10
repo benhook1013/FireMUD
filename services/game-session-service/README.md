@@ -11,6 +11,9 @@ POST /sessions/{id}/stop    # stop a running session
 POST /sessions/{id}/restart # restart a stopped session
 ```
 
+The gRPC API also exposes `ToggleFeatureFlag` to update runtime configuration
+for a tenant. See the design document for message details.
+
 ## Configuration
 
 The service relies on `DatabaseAutoConfiguration` and `RedisProperties` from the
