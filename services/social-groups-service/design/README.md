@@ -32,3 +32,9 @@ curl -X POST http://localhost:8080/friends \
 ```bash
 grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 ```
+
+## Metrics & Tracing
+
+Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are
+exported to the collector defined in the shared configuration. No additional
+setup is required when running `./gradlew bootRun`.
