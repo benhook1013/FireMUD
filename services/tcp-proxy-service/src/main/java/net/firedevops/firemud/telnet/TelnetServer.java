@@ -1,5 +1,6 @@
 package net.firedevops.firemud.telnet;
 
+import io.micrometer.core.annotation.Timed;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -61,6 +62,7 @@ public class TelnetServer {
     }
   }
 
+  @Timed(value = "tcpproxy.start")
   public void start() throws InterruptedException {
     if (running.get()) {
       return;
@@ -89,6 +91,7 @@ public class TelnetServer {
     logger.info("Telnet server started on port {}", port);
   }
 
+  @Timed(value = "tcpproxy.stop")
   public void stop() {
     if (!running.get()) {
       return;
