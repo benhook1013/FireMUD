@@ -85,7 +85,7 @@ participate in CI.
 - [x] Access Redis through helpers in `firemud-common`
 - [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [x] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
+- [x] Emit metrics for Redis connectivity and commands
 - [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
 
@@ -107,7 +107,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---

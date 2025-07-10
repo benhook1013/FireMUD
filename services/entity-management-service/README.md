@@ -67,4 +67,5 @@ persistent data.
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods emit
 `@Timed` metrics and traces are exported to the collector configured in
-`application.yml`.
+`application.yml`. Redis command latency is recorded via Micrometer and
+exposed under the `redis` metric namespace.
