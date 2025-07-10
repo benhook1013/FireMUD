@@ -27,8 +27,13 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
   }
 
   @Override
-  public void remove(String routeId) {
-    routes.remove(routeId);
-    logger.info("Removed route {}", routeId);
+  public boolean remove(String routeId) {
+    boolean existed = routes.remove(routeId) != null;
+    if (existed) {
+      logger.info("Removed route {}", routeId);
+    } else {
+      logger.info("Route {} not found", routeId);
+    }
+    return existed;
   }
 }

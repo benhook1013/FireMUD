@@ -41,7 +41,7 @@ participate in CI.
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
 - [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
-- [ ] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
+- [x] *(N/A - stateless service)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
 
@@ -56,8 +56,8 @@ participate in CI.
 ## 🔁 Inter-Service Communication
 
 - [x] Use `firemud-common` protobuf types for shared messages
-- [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
-- [ ] Register with service discovery via helpers in `firemud-common`
+- [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] *(N/A - no service discovery)* Register with service discovery via helpers in `firemud-common`
 - [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
@@ -74,32 +74,32 @@ participate in CI.
 
 ## 🔄 Saga Participation *(if used)*
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] *(N/A - gateway does not participate in sagas)* Use saga helpers from `firemud-common` for workflow steps
+- [x] *(N/A - gateway does not participate in sagas)* Emit metrics and correlation IDs for compensation and retries
+- [x] *(N/A - gateway does not participate in sagas)* Document saga participation in `design/README.md`
 
 ---
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] *(N/A - no Redis usage)* Use Redis for transient gameplay state only
+- [x] *(N/A - no Redis usage)* Access Redis through helpers in `firemud-common`
+- [x] *(N/A - no Redis usage)* Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
+- [x] *(N/A - no Redis usage)* Validate shard-local key usage and avoid per-service caching
+- [x] *(N/A - no Redis usage)* Emit metrics for Redis connectivity and commands
+- [x] *(N/A - no Redis usage)* *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] *(N/A - no Redis usage)* Prefix all keys with `tenantId` to isolate game data
 
 ---
 
 ## 🧪 Testing & Quality Gates
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
-- [ ] Use Spring Boot Test and Testcontainers for integration tests
-- [ ] Validate contracts with smoke tests (gRPC and REST)
-- [ ] Seed minimal test data for local workflows
+- [x] Use Spring Boot Test and Testcontainers for integration tests
+- [x] Validate contracts with smoke tests (gRPC and REST)
+- [x] *(N/A - stateless service)* Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
-- [ ] *(When workflows span services)* add cross-service integration tests
+- [x] *(N/A - no cross-service flows yet)* *(When workflows span services)* add cross-service integration tests
 
 ---
 
@@ -108,7 +108,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] *(N/A - no tick or Redis metrics)* Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---

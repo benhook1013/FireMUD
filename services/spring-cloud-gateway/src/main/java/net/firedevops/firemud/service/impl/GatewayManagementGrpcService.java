@@ -30,6 +30,13 @@ public class GatewayManagementGrpcService
 
   @Override
   public void upsertRoute(RouteDefinition request, StreamObserver<RouteResponse> responseObserver) {
+    if (request.getRouteId().isBlank() || request.getUri().isBlank()) {
+      responseObserver.onError(
+          io.grpc.Status.INVALID_ARGUMENT
+              .withDescription("routeId and uri are required")
+              .asRuntimeException());
+      return;
+    }
     GatewayRoute route =
         new GatewayRoute(
             request.getRouteId(),
@@ -44,9 +51,23 @@ public class GatewayManagementGrpcService
 
   @Override
   public void removeRoute(RouteRequest request, StreamObserver<RouteResponse> responseObserver) {
-    routeService.remove(request.getRouteId());
-    RouteResponse response = RouteResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    boolean removed = routeService.remove(request.getRouteId());
+    if (removed) {
+      RouteResponse response = RouteResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } else {
+      RouteResponse response =
+          RouteResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("NOT_FOUND")
+                      .setMessage("route not found")
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 }

@@ -13,7 +13,7 @@ class GatewayRouteServiceImplTest {
     GatewayRoute route = new GatewayRoute("test", "http://example.com", null, null);
     service.upsert(route);
     assertEquals(route, service.upsert(route));
-    service.remove("test");
-    // route map is package-private not accessible; verifying no exception on remove
+    boolean removed = service.remove("test");
+    assertEquals(true, removed);
   }
 }
