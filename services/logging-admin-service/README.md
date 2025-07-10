@@ -15,3 +15,28 @@ To run the entire stack:
 ```bash
 ./gradlew devUp
 ```
+
+## Environment Variables
+
+The service relies on standard Spring Boot properties for PostgreSQL and Redis connections.
+Typical variables when running locally are:
+
+| Variable | Purpose |
+| --- | --- |
+| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | Database user |
+| `SPRING_DATASOURCE_PASSWORD` | Database password |
+| `SPRING_REDIS_HOST` | Redis hostname |
+| `SPRING_REDIS_PORT` | Redis port |
+
+Values may also be provided through `application.yml` profiles.
+
+## Tenant Handling and Dependencies
+
+All log and moderation records contain a `tenantId` column to ensure operators only
+access data for their games. The service consumes account events from the
+[Account Service](../../design/architecture/microservices/account-service/README.md)
+and chat logs from the
+[Social & Groups Service](../../design/architecture/microservices/social-groups-service/README.md).
+Game Session metrics are streamed from the
+[Game Session Service](../../design/architecture/microservices/game-session-service/README.md).
