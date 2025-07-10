@@ -1,4 +1,4 @@
-CREATE TABLE game_session (
+CREATE TABLE game_instances (
     id BIGSERIAL PRIMARY KEY,
     version_id BIGINT NOT NULL,
     owner_account_id BIGINT NOT NULL,

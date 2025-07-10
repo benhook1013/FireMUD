@@ -1,0 +1,32 @@
+package net.firedevops.firemud.service.impl;
+
+import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.dto.GameManifestDto;
+import net.firedevops.firemud.entity.GameManifest;
+import net.firedevops.firemud.mapper.GameManifestMapper;
+import net.firedevops.firemud.repository.GameManifestRepository;
+import net.firedevops.firemud.service.GameManifestService;
+import org.slf4j.Logger;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class GameManifestServiceImpl implements GameManifestService {
+  private static final Logger logger = LoggingUtil.getLogger(GameManifestServiceImpl.class);
+  private final GameManifestRepository repository;
+  private final GameManifestMapper mapper;
+
+  public GameManifestServiceImpl(GameManifestRepository repository, GameManifestMapper mapper) {
+    this.repository = repository;
+    this.mapper = mapper;
+  }
+
+  @Override
+  @Transactional
+  public GameManifestDto createManifest(GameManifestDto dto) {
+    logger.info("Creating game manifest for version {}", dto.versionId());
+    GameManifest entity = mapper.toEntity(dto);
+    entity = repository.save(entity);
+    return mapper.toDto(entity);
+  }
+}

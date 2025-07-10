@@ -4,6 +4,13 @@ Refer to [design/README.md](design/README.md) for architecture details.
 
 - **Proto definitions**: [../../protos/game-session/v1](../../protos/game-session/v1)
 
+New lifecycle endpoints manage running sessions:
+
+```bash
+POST /sessions/{id}/stop    # stop a running session
+POST /sessions/{id}/restart # restart a stopped session
+```
+
 ## Configuration
 
 The service relies on `DatabaseAutoConfiguration` and `RedisProperties` from the

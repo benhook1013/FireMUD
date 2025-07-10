@@ -82,3 +82,43 @@ paths:
                     $ref: '#/components/schemas/GameInstanceDto'
         '400':
           description: Invalid request
+  /sessions/{sessionId}/stop:
+    post:
+      summary: Stop a running session
+      operationId: stopSession
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Stopped session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GameInstanceDto'
+  /sessions/{sessionId}/restart:
+    post:
+      summary: Restart a stopped session
+      operationId: restartSession
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Restarted session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GameInstanceDto'

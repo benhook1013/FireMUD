@@ -39,4 +39,24 @@ class GameInstanceControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.id").value(1));
   }
+
+  @Test
+  void stopSessionReturnsDto() throws Exception {
+    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", 1L, "STOPPED");
+    org.mockito.Mockito.when(gameInstanceService.stopSession(1L)).thenReturn(dto);
+    mockMvc
+        .perform(post("/sessions/1/stop"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("STOPPED"));
+  }
+
+  @Test
+  void restartSessionReturnsDto() throws Exception {
+    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", 1L, "RUNNING");
+    org.mockito.Mockito.when(gameInstanceService.restartSession(1L)).thenReturn(dto);
+    mockMvc
+        .perform(post("/sessions/1/restart"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("RUNNING"));
+  }
 }
