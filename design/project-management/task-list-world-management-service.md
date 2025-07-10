@@ -6,8 +6,8 @@
   - [x] Define instance rules, expiration, and persistence
   - [x] Implement world event scheduling system (seasonal events, resets)
   - [x] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
-  - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
-  - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
+  - [x] Implement travel & navigation system (movement, teleportation, pathfinding)
+  - [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
   - [ ] Use saga orchestrator for world creation workflow
   - [ ] Provide tools to fine-tune procedural generation rules
   - [ ] Support multi-server world shards
