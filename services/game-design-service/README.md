@@ -15,3 +15,18 @@ To run the entire stack:
 ```bash
 ./gradlew devUp
 ```
+
+## Environment Variables
+
+The service reads configuration from standard Spring Boot variables. Typical
+settings when running locally are:
+
+| Variable | Purpose |
+| --- | --- |
+| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | Database user |
+| `SPRING_DATASOURCE_PASSWORD` | Database password |
+| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) |
+
+See the [Environment Variables & Secrets Management](../../design/architecture/infrastructure/environment-and-secrets.md)
+document for details on how these values are supplied in different environments.
