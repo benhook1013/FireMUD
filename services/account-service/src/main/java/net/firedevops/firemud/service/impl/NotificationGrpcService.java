@@ -18,13 +18,18 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
   @Override
   public void sendNotification(
       SendNotificationRequest request, StreamObserver<SendNotificationResponse> responseObserver) {
-    notificationService.sendNotification(
-        Long.valueOf(request.getTenantId()),
-        Long.valueOf(request.getAccountId()),
-        request.getMessage());
-    SendNotificationResponse response =
-        SendNotificationResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      notificationService.sendNotification(
+          Long.valueOf(request.getTenantId()),
+          Long.valueOf(request.getAccountId()),
+          request.getMessage());
+      SendNotificationResponse response =
+          SendNotificationResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onError(
+          io.grpc.Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
+    }
   }
 }

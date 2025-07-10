@@ -34,17 +34,29 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   @Override
   public void createAccount(
       CreateAccountRequest request, StreamObserver<CreateAccountResponse> responseObserver) {
-    net.firedevops.firemud.dto.CreateAccountRequest dto =
-        new net.firedevops.firemud.dto.CreateAccountRequest(
-            Long.valueOf(request.getTenantId()),
-            request.getUsername(),
-            request.getEmail(),
-            request.getPassword());
-    var account = accountService.createAccount(dto);
-    CreateAccountResponse response =
-        CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      net.firedevops.firemud.dto.CreateAccountRequest dto =
+          new net.firedevops.firemud.dto.CreateAccountRequest(
+              Long.valueOf(request.getTenantId()),
+              request.getUsername(),
+              request.getEmail(),
+              request.getPassword());
+      var account = accountService.createAccount(dto);
+      CreateAccountResponse response =
+          CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          CreateAccountResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build());
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
