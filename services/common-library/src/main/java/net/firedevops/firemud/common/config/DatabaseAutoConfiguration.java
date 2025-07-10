@@ -1,7 +1,15 @@
 package net.firedevops.firemud.common.config;
 
+import io.lettuce.core.metrics.MicrometerCommandLatencyRecorder;
+import io.lettuce.core.metrics.MicrometerOptions;
+import io.lettuce.core.resource.ClientResources;
+import io.lettuce.core.resource.DefaultClientResources;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import javax.sql.DataSource;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
@@ -31,8 +39,39 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
-  public RedisConnectionFactory redisConnectionFactory() {
-    return new LettuceConnectionFactory(redis.getHost(), redis.getPort());
+  @ConditionalOnMissingBean(MeterRegistry.class)
+  public MeterRegistry meterRegistry() {
+    return new SimpleMeterRegistry();
+  }
+
+  @Bean
+  public ClientResources lettuceClientResources(MeterRegistry registry) {
+    MicrometerOptions options = MicrometerOptions.create();
+    return DefaultClientResources.builder()
+        .commandLatencyRecorder(new MicrometerCommandLatencyRecorder(registry, options))
+        .build();
+  }
+
+  @Bean
+  public RedisConnectionFactory redisConnectionFactory(ClientResources resources) {
+    LettuceConnectionFactory factory =
+        new LettuceConnectionFactory(redis.getHost(), redis.getPort());
+    factory.setClientResources(resources);
+    return factory;
+  }
+
+  @Bean
+  public Gauge redisUpGauge(RedisConnectionFactory factory, MeterRegistry registry) {
+    return Gauge.builder(
+            "redis.up",
+            () -> {
+              try (var conn = factory.getConnection()) {
+                return "PONG".equalsIgnoreCase(conn.ping()) ? 1.0 : 0.0;
+              } catch (Exception e) {
+                return 0.0;
+              }
+            })
+        .register(registry);
   }
 
   @Bean
