@@ -1,6 +1,8 @@
 # Game Design Service
 
-Refer to [design/README.md](design/README.md) for architecture details.
+Refer to [design/README.md](design/README.md) for architecture details. A new
+document describing game templates and configuration tools is available at
+[design/game-templates.md](design/game-templates.md).
 
 - **Proto definitions**: [../../protos/game-design/v1](../../protos/game-design/v1)
 

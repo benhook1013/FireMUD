@@ -1,0 +1,35 @@
+package net.firedevops.firemud.controller;
+
+import jakarta.validation.Valid;
+import java.util.List;
+import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.dto.GameTemplateDto;
+import net.firedevops.firemud.service.GameTemplateService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/templates")
+@RequiredArgsConstructor
+public class GameTemplateController {
+  private final GameTemplateService templateService;
+
+  @PostMapping
+  public ResponseEntity<ApiResponse<GameTemplateDto>> create(
+      @Valid @RequestBody GameTemplateDto dto) {
+    GameTemplateDto created = templateService.createTemplate(dto);
+    return ResponseEntity.ok(ApiResponse.success(created));
+  }
+
+  @GetMapping
+  public ResponseEntity<ApiResponse<List<GameTemplateDto>>> list(@RequestParam Long tenantId) {
+    List<GameTemplateDto> templates = templateService.listTemplates(tenantId);
+    return ResponseEntity.ok(ApiResponse.success(templates));
+  }
+}
