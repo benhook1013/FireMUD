@@ -34,6 +34,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Command parsing and alias system.
 - Rule processing for combat and progression.
 - Emote and roleplay action handling.
+- Event dispatcher for triggers and world events.
 - Effect stacking and cooldown calculation.
 - Environmental effect resolution (weather, lighting) influencing gameplay.
 - Economy logic for trading, shops, and pricing adjustments.
@@ -54,6 +55,7 @@ This service is largely stateless. It relies on:
 
 ### gRPC APIs
 
+- `Ping` – basic connectivity check.
 - `ExecuteCommand` – evaluates a parsed command and returns the outcome.
 
 ## Dependencies
