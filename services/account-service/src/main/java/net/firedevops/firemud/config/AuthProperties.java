@@ -8,4 +8,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class AuthProperties {
   private String jwtSecret;
   private long jwtExpirationMs;
+  private long sessionExpirationMs = 3600000L;
 }

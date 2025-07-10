@@ -15,6 +15,10 @@ The proto definitions live in [`payment_service.proto`](../../../protos/account/
 
 This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables specify SMTP credentials. The gRPC API is defined in [`notification_service.proto`](../../../protos/account/v1/notification_service.proto).
 
+## Session Management
+
+Authentication returns a JWT token which is stored in Redis for quick reconnects. Keys follow `session:{tenantId}:{token}` and expire after the duration configured by `session-expiration-ms` in `AuthProperties`.
+
 ## REST & gRPC Endpoints
 
 ### REST
