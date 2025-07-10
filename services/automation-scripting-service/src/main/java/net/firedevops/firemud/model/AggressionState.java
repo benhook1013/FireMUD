@@ -4,5 +4,9 @@ package net.firedevops.firemud.model;
 public enum AggressionState {
   HOSTILE,
   NEUTRAL,
-  PASSIVE
+  PASSIVE,
+  /** NPC has low health or morale and is attempting to flee combat. */
+  FLEEING,
+  /** NPC has yielded and will no longer fight. */
+  SURRENDERED
 }

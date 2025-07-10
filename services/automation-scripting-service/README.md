@@ -55,7 +55,8 @@ automation_queue:{tenantId}:{entityId}
 These ephemeral keys queue triggered events until a script runs.
 
 Faction reputation is stored in the `faction_standing` table and determines how
-aggressive NPCs behave toward each player.
+aggressive NPCs behave toward each player. When health or morale drops too low,
+NPCs may enter a `FLEEING` or `SURRENDERED` state to avoid lethal outcomes.
 
 ## Tenant Handling and Dependencies
 
