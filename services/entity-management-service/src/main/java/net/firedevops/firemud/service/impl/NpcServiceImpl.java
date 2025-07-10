@@ -1,0 +1,28 @@
+package net.firedevops.firemud.service.impl;
+
+import java.time.Instant;
+import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.entity.Npc;
+import net.firedevops.firemud.repository.NpcRepository;
+import net.firedevops.firemud.service.NpcService;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@RequiredArgsConstructor
+public class NpcServiceImpl implements NpcService {
+
+  private final NpcRepository npcRepository;
+
+  @Override
+  @Transactional(readOnly = true)
+  public boolean shouldRespawn(Long npcId) {
+    Npc npc = npcRepository.findById(npcId).orElseThrow();
+    if (npc.getLastDefeatedAt() == null) {
+      return false;
+    }
+    return npc.getLastDefeatedAt()
+        .plusSeconds(npc.getRespawnDelaySeconds())
+        .isBefore(Instant.now());
+  }
+}

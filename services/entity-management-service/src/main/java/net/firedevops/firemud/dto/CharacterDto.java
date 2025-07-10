@@ -8,4 +8,11 @@ public record CharacterDto(
     @NotNull Long tenantId,
     @NotNull Long accountId,
     @NotNull @Size(max = 100) String name,
-    int level) {}
+    int level,
+    int experience,
+    int strength,
+    int agility,
+    int intelligence,
+    int stamina,
+    int health,
+    int mana) {}
