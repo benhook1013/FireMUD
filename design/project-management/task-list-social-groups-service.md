@@ -3,7 +3,7 @@
 - [ ] **Develop Social & Groups Service**
   - [x] Enable cross-game friend lists and social graph
   - [x] Support private messages, global chat, and guild channels
-  - [ ] Implement player-to-player mail system (asynchronous in-game messaging)
+  - [x] Implement player-to-player mail system (asynchronous in-game messaging)
   - [x] Allow players to form and manage guilds
   - [x] Implement guild ranking & permissions system
   - [ ] Implement shared guild storage and alliance system
