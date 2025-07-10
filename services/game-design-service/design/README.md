@@ -6,6 +6,7 @@ The design for this service is located here:
 
 Additional details on template management can be found in
 [game-templates.md](game-templates.md).
+Asset storage details are documented in [asset-storage.md](asset-storage.md).
 
 This stub exists to make the design easy to find from the service source tree.
 
@@ -14,6 +15,7 @@ This stub exists to make the design easy to find from the service source tree.
 ### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
+- `POST /assets` – upload a binary asset for a tenant.
 
 ```bash
 curl http://localhost:8080/ping

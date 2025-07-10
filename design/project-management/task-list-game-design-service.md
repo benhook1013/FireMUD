@@ -16,9 +16,9 @@
   - [x] Track version history and patch notes for published games
   - [ ] Build a web-based visual design interface
   - [ ] Integrate version control for design assets
-  - [ ] Configure database storage for game assets
-    - Provide asset upload API in Game Design Service
-    - Document asset storage setup and configuration
+  - [x] Configure database storage for game assets
+    - [x] Provide asset upload API in Game Design Service
+    - [x] Document asset storage setup and configuration
 - [ ] **Expand Scripting & Modding**
   - [ ] Implement event-driven scripting API for game creators
   - [ ] Implement in-game modding/plugin framework
