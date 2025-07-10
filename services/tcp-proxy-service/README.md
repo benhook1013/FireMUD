@@ -49,3 +49,4 @@ setup is required when running `./gradlew bootRun`.
 - **Spring Cloud Gateway** – receives proxied WebSocket traffic.
 - **Game Session Service** – sessions are resumed via the `NotifyDisconnect` and
   `PushBufferedInput` events defined in the proto contracts.
+- **CommonAutoConfiguration** – provides shared properties like `ServiceEndpointsProperties`.

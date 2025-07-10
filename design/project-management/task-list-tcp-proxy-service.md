@@ -54,11 +54,11 @@ participate in CI.
 
 ## 🔁 Inter-Service Communication
 
-- [ ] Use `firemud-common` protobuf types for shared messages
-- [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
-- [ ] Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
+- [x] Use `firemud-common` protobuf types for shared messages
+- [x] *(N/A - events only)* Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] *(N/A - no service discovery)* Register with service discovery via helpers in `firemud-common`
+- [x] *(N/A - no direct gRPC)* Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] *(N/A - no direct gRPC)* Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
 
@@ -66,8 +66,8 @@ participate in CI.
 
 - [x] Depend on `firemud-common` via Gradle
 - [x] Apply logging, tracing, and security interceptors from the library
-- [ ] Use provided autoconfiguration classes to reduce boilerplate
-- [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
+- [x] Use provided autoconfiguration classes to reduce boilerplate
+- [x] *(N/A - stateless service)* Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
 ---
 
@@ -94,7 +94,7 @@ participate in CI.
 ## 🧪 Testing & Quality Gates
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
-- [ ] Use Spring Boot Test and Testcontainers for integration tests
+- [x] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [x] *(N/A - stateless service)* Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
@@ -107,7 +107,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] *(N/A - no Redis)* Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
