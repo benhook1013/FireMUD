@@ -1,9 +1,11 @@
+import com.google.protobuf.gradle.*
 import com.github.spotbugs.snom.SpotBugsTask
 
 plugins {
     // Apply the Spring Boot plugin so `bootBuildImage` is available for Docker builds
     id("org.springframework.boot") version "3.5.3"
     id("org.flywaydb.flyway") version "11.10.1"
+    id("com.google.protobuf")
 }
 
 dependencies {
@@ -16,6 +18,35 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
     implementation(project(":common-library"))
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.31.1"
+    }
+    plugins {
+        id("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.73.0"
+        }
+    }
+    generateProtoTasks {
+        ofSourceSet("main").forEach {
+            it.plugins {
+                id("grpc")
+            }
+        }
+    }
+}
+
+sourceSets["main"].java.srcDirs(
+    "build/generated/source/proto/main/java",
+    "build/generated/source/proto/main/grpc"
+)
+
+sourceSets {
+    main {
+        proto.srcDir("../../protos")
+    }
 }
 
 tasks.named<SpotBugsTask>("spotbugsMain") {

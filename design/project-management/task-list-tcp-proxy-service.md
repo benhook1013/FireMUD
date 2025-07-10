@@ -1,7 +1,7 @@
 # TCP Proxy Service Task List
 
 - [ ] **Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway**
-- [ ] **Define Telnet bridge gRPC APIs for TCP Proxy Service**
+- [x] **Define Telnet bridge gRPC APIs for TCP Proxy Service**
 - [ ] **Develop TCP Proxy Service**
   - [ ] Implement Telnet networking and WebSocket bridging
   - [ ] Buffer Telnet input and discard on disconnect to support reconnection
@@ -35,8 +35,8 @@ participate in CI.
 
 - [x] Define gRPC service stubs with explicit `Request`/`Response` messages
 - [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
-- [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
-- [ ] Generate gRPC stubs via Gradle and include them in the source set
+- [x] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
+- [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
 - [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
@@ -115,9 +115,9 @@ participate in CI.
 ## 📖 Documentation
 
 - [x] Create `design/README.md` summarizing APIs and sample requests
-- [ ] Document proto contracts and any Redis keys in the service README
-- [ ] Document required environment variables and configuration
-- [ ] Note `tenantId` handling and cross-service dependencies
+- [x] Document proto contracts and any Redis keys in the service README
+- [x] Document required environment variables and configuration
+- [x] Note `tenantId` handling and cross-service dependencies
 - [x] Add a design document under `design/architecture/microservices/<service>/README.md`
 
 ---

@@ -5,12 +5,35 @@ package tcp_proxy.v1;
 option java_package = "net.firedevops.firemud.tcpproxy.v1";
 option java_multiple_files = true;
 
+import "shared/v1/errors.proto";
+
 service TcpProxyService {
   rpc Ping(PingRequest) returns (PingResponse);
+  rpc NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse);
+  rpc PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse);
 }
 
 message PingRequest {}
 
 message PingResponse {
   string message = 1;
+}
+
+message NotifyDisconnectRequest {
+  string session_id = 1;
+  string tenant_id = 2;
+}
+
+message NotifyDisconnectResponse {
+  shared.v1.ErrorDetail error = 1;
+}
+
+message PushBufferedInputRequest {
+  string session_id = 1;
+  repeated string commands = 2;
+  string tenant_id = 3;
+}
+
+message PushBufferedInputResponse {
+  shared.v1.ErrorDetail error = 1;
 }

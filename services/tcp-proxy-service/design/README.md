@@ -18,7 +18,11 @@ curl http://localhost:8080/ping
 
 ### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check.
+- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected.
+- `PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse)` – delivers queued commands after a reconnect.
+
+All RPC definitions live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ```bash
 grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
