@@ -107,6 +107,7 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [User Journeys – Publish and Start a Game Instance](../user-journeys.md#4-publish-and-start-a-game-instance)
 - [User Journeys – Patch and Update a Live Game](../user-journeys.md#8-patch-and-update-a-live-game)
 - [Asset Storage Setup](../../../../services/game-design-service/design/asset-storage.md)
+- [World Editing & Customization Tools](world-editing-tools.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Database Migrations](../system-architecture-database-migrations.md)

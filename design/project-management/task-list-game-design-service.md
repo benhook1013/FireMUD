@@ -7,7 +7,7 @@
   - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
   - [x] Create design-time database models
 - [ ] **Develop Game Design Service**
-  - [ ] Implement world editing & customization tools
+  - [x] Implement world editing & customization tools
   - [ ] Implement scripting & event design tools
   - [ ] Build a **visual scripting editor** using a **component-based DSL**
   - [ ] Sandbox script execution with quotas via the Automation & Scripting Service
