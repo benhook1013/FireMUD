@@ -10,6 +10,13 @@ The service exposes a minimal REST endpoint for testing command parsing:
 curl -X POST http://localhost:8080/command -d "attack goblin"
 ```
 
+Run `smoke-test.sh` while the service is running to perform basic REST and gRPC
+contract checks:
+
+```bash
+./smoke-test.sh
+```
+
 ## Running Locally
 
 ```bash
