@@ -46,6 +46,7 @@ environments work out of the box.
 ### Filter Chain
 
 - Authentication, rate limiting, and logging filters run before routing.
+- `JwtAuthFilter` validates admin JWTs using `JwtUtil` from the common library.
 - WebSocket upgrades are handled with heartbeat and idle timeout logic.
 
 ### Key Routes

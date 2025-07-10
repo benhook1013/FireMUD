@@ -1,7 +1,7 @@
 # Spring Cloud Gateway Task List
 
 - [x] **Finalize Spring Cloud Gateway design**
-- [ ] **Develop Spring Cloud Gateway**
+- [x] **Develop Spring Cloud Gateway**
   - [x] Handle API routing and request validation
   - [x] Terminate TLS and forward traffic to internal services using mTLS
   - [x] Collect connection metrics and throttle abusive clients
@@ -47,8 +47,8 @@ participate in CI.
 
 ## 🔒 Authentication & Authorization
 
-- [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [ ] Check `globalRoles` and `scopedRoles` where applicable
+- [x] Meta and admin services validate JWTs using helpers from `firemud-common`
+- [x] Check `globalRoles` and `scopedRoles` where applicable
 - [x] Gameplay services rely on the Game Session Service for session validation
 
 ---
@@ -67,8 +67,8 @@ participate in CI.
 
 - [x] Depend on `firemud-common` via Gradle
 - [x] Apply logging, tracing, and security interceptors from the library
-- [ ] Use provided autoconfiguration classes to reduce boilerplate
-- [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
+- [x] Use provided autoconfiguration classes to reduce boilerplate
+- [x] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
 ---
 
