@@ -6,7 +6,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
+import java.util.Queue;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,9 +18,29 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private final String gatewayWsUrl;
   private WebSocket webSocket;
+  private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
 
   public TelnetServerHandler(String gatewayWsUrl) {
     this.gatewayWsUrl = gatewayWsUrl;
+  }
+
+  void setWebSocket(WebSocket webSocket) {
+    this.webSocket = webSocket;
+    flushBuffer();
+  }
+
+  int getBufferedSize() {
+    return buffer.size();
+  }
+
+  private void flushBuffer() {
+    if (webSocket == null) {
+      return;
+    }
+    String msg;
+    while ((msg = buffer.poll()) != null) {
+      webSocket.sendText(msg, true);
+    }
   }
 
   @Override
@@ -31,7 +53,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             new Listener() {
               @Override
               public void onOpen(WebSocket webSocket) {
-                TelnetServerHandler.this.webSocket = webSocket;
+                setWebSocket(webSocket);
                 webSocket.request(1);
                 logger.info("WebSocket connected to {}", gatewayWsUrl);
               }
@@ -50,6 +72,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
     if (webSocket != null) {
       webSocket.sendText(msg, true);
+    } else {
+      buffer.add(msg);
     }
   }
 
@@ -57,7 +81,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   public void channelInactive(ChannelHandlerContext ctx) {
     if (webSocket != null) {
       webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+      webSocket = null;
     }
+    buffer.clear();
   }
 
   @Override
