@@ -26,6 +26,7 @@
 - Ensure valid syntax
 - Include basic error handling (e.g., try/catch, null checks)
 - Log errors with enough context for debugging
+- gRPC services must return `ErrorDetail` fields on logical failures instead of throwing transport exceptions. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric with the error code, and tag tracing spans. Use `onError()` only for transport or infrastructure issues.
 
 ## 4. Comments and Explanation
 
