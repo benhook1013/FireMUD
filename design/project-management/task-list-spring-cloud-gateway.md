@@ -66,7 +66,7 @@ participate in CI.
 ## 📚 Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
-- [ ] Apply logging, tracing, and security interceptors from the library
+- [x] Apply logging, tracing, and security interceptors from the library
 - [ ] Use provided autoconfiguration classes to reduce boilerplate
 - [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
@@ -94,7 +94,7 @@ participate in CI.
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
@@ -106,8 +106,8 @@ participate in CI.
 ## 📈 Observability & Tracing
 
 - [x] Use Micrometer for Prometheus metrics
-- [ ] Enable OpenTelemetry tracing
-- [ ] Use shared interceptors to propagate `traceId` and `correlationId`
+- [x] Enable OpenTelemetry tracing
+- [x] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
