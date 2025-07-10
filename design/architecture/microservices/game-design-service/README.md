@@ -21,6 +21,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
   services as outlined in
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
+  The workflow is implemented using the Saga utilities from `firemud-common`
+  with compensation steps to roll back if downstream copies fail.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).

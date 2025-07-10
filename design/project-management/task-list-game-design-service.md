@@ -3,7 +3,7 @@
 - [ ] **Expand Game Design Service**
   - [x] Provide game templates and configuration tools
   - [x] Enable publishing of game versions
-  - [ ] Use saga orchestrator for game publishing workflow
+  - [x] Use saga orchestrator for game publishing workflow
   - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
   - [x] Create design-time database models
 - [ ] **Develop Game Design Service**
@@ -95,9 +95,9 @@ participate in CI.
 
 ## 🔄 Saga Participation *(if used)*
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
+- [x] Use saga helpers from `firemud-common` for workflow steps
 - [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] Document saga participation in `design/README.md`
 
 ---
 
@@ -115,7 +115,7 @@ participate in CI.
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
