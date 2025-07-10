@@ -55,3 +55,11 @@ Start a session via gRPC:
 grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
   localhost:6565 game_session.v1.GameSessionService/StartSession
 ```
+
+## Additional Notes
+
+- See the "Cross-Region Sharding and Session Handoff" section in the central
+  [Game Session Service design](../../../design/architecture/microservices/game-session-service/README.md)
+  for how sessions migrate between clusters.
+- Metrics emitted by this service feed the operator
+  [Analytics Dashboards](../../../design/architecture/microservices/logging-admin-service/analytics-dashboards.md).

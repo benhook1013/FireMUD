@@ -10,9 +10,9 @@
   - [ ] Persist session state in Redis for reconnect recovery
   - [ ] Enforce single-session control per character (session takeover on new login)
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
-  - [ ] Plan for cross-region sharding and session handoff
+  - [x] Plan for cross-region sharding and session handoff
   - [x] Implement `game_manifest` table for version coordination
-  - [ ] Emit gameplay analytics for operators
+  - [x] Emit gameplay analytics for operators
 
 ## Reusable Microservice Checklist
 
