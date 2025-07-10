@@ -5,3 +5,6 @@ They describe the gRPC API exposed by the service.
 
 Generate Java stubs with `./gradlew generateProto` from the repository root.
 For details see the [design docs](../../../design/architecture/microservices/automation-scripting-service/README.md).
+
+The `PingResponse` message reuses the shared `ErrorDetail` type from
+`protos/shared/v1/errors.proto`.

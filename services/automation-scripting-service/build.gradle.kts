@@ -46,7 +46,7 @@ sourceSets["main"].java.srcDirs(
 
 sourceSets {
     main {
-        proto.srcDir("../../protos/automation-scripting")
+        proto.srcDir("../../protos")
     }
 }
 
