@@ -38,6 +38,12 @@ gateway can route commands to the correct game instance. See the
 [Multi-Tenancy design](../../design/architecture/system-architecture-multi-tenancy.md)
 for details.
 
+### Metrics & Tracing
+
+Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are
+exported to the collector configured via the `otel.endpoint` property. No extra
+setup is required when running `./gradlew bootRun`.
+
 ### Dependencies
 
 - **Spring Cloud Gateway** – receives proxied WebSocket traffic.

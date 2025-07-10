@@ -27,3 +27,8 @@ All RPC definitions live in [`tcp_proxy_service.proto`](../../../protos/tcp-prox
 ```bash
 grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
 ```
+
+## Metrics & Tracing
+
+Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are
+exported to the collector service so traces can be viewed in Jaeger.

@@ -1,14 +1,17 @@
 package net.firedevops.firemud.telnet;
 
+import io.micrometer.core.annotation.Timed;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import org.slf4j.Logger;
@@ -83,6 +86,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   @Override
+  @Timed(value = "tcpproxy.command")
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
     long now = System.currentTimeMillis();
     messageTimes.addLast(now);
@@ -125,11 +129,32 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     ctx.close();
   }
 
+  private static final byte IAC = (byte) 255;
+
+  private static final Set<Byte> ALLOWED_COMMANDS =
+      Set.of((byte) 240, (byte) 241, (byte) 249, (byte) 251, (byte) 252, (byte) 253, (byte) 254);
+
   private String sanitize(String msg) {
-    String cleaned = msg.replaceAll("[^\\p{Print}]", "").trim();
-    if (cleaned.isEmpty()) {
-      return null;
+    byte[] bytes = msg.getBytes(StandardCharsets.ISO_8859_1);
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < bytes.length; i++) {
+      byte b = bytes[i];
+      if (b == IAC) {
+        if (i + 1 < bytes.length) {
+          byte cmd = bytes[++i];
+          if (!ALLOWED_COMMANDS.contains(cmd)) {
+            continue;
+          }
+          // drop allowed Telnet commands rather than forwarding
+          continue;
+        }
+        continue;
+      }
+      if (b >= 32 && b <= 126) {
+        sb.append((char) b);
+      }
     }
-    return cleaned;
+    String cleaned = sb.toString().trim();
+    return cleaned.isEmpty() ? null : cleaned;
   }
 }

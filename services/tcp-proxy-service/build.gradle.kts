@@ -20,6 +20,12 @@ dependencies {
     implementation("io.netty:netty-all:4.1.108.Final")
     implementation("org.springframework.boot:spring-boot-starter-websocket:3.5.3")
     implementation(project(":common-library"))
+    implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
+    implementation("io.micrometer:micrometer-core:1.15.1")
+    implementation("io.micrometer:micrometer-registry-prometheus:1.15.1")
+    implementation("io.opentelemetry:opentelemetry-api:1.38.0")
+    implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
 }
 
 protobuf {

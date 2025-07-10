@@ -24,9 +24,9 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
   `tenantId` so the gateway can route commands to the proper game. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Runs in the network DMZ and never contacts internal services directly.
-- Sanitizes incoming Telnet data and, in future iterations, will enforce a
-  whitelist of **Telnet protocol commands** as described in the
-  [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+- Sanitizes incoming Telnet data and enforces a whitelist of
+   **Telnet protocol commands** as described in the
+   [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
 - Applies connection throttling and optional TLS termination.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -58,12 +58,11 @@ These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/
 
 ### Telnet Command Handling
 
-The proxy currently forwards Telnet input verbatim so that classic MUD clients
-remain compatible. According to the [Security Architecture](../system-architecture-security.md#%F0%9F%94%8C-telnet-command-handling-and-future-controls),
-future iterations will sanitize incoming bytes and allow only a safe subset of
-**Telnet protocol commands**. This approach avoids implementing the full
-Telnet specification while protecting against malformed negotiation sequences
-and other legacy edge cases.
+The proxy sanitizes incoming bytes and allows only a safe subset of
+**Telnet protocol commands** as described in the
+[Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+This avoids implementing the full Telnet specification while still protecting
+against malformed negotiation sequences and other legacy edge cases.
 
 ## Dependencies
 
@@ -88,6 +87,12 @@ details on how Telnet connections are integrated into the platform.
   a minimal collector endpoint.
 - Configuration for local Docker Compose versus production clusters is described
   in [Deployment Environments](../../infrastructure/deployment-environments.md).
+
+## Metrics & Tracing
+
+Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The
+service exports OpenTelemetry spans to the collector defined by the
+`otel.endpoint` property so traces appear in Jaeger.
 
 ## Proto Files
 
