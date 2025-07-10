@@ -13,3 +13,18 @@ CREATE TABLE npc_memory (
     value VARCHAR(255),
     tenant_id BIGINT NOT NULL
 );
+
+CREATE TABLE factions (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE faction_standing (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    player_id BIGINT NOT NULL,
+    faction_id BIGINT NOT NULL REFERENCES factions(id),
+    reputation INT NOT NULL DEFAULT 0
+);
