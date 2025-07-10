@@ -45,3 +45,12 @@ several backends:
 
 All game data remains isolated by tenant; the gateway simply passes the
 identifier to downstream services.
+
+## Metrics
+
+The gateway exposes Prometheus metrics for monitoring connection load. Counters and gauges include:
+
+- `gateway.connections.total` – total number of HTTP/WebSocket requests handled
+- `gateway.connections.active` – active in-flight connections
+
+Metrics are available at `/actuator/prometheus` and scraped automatically in Docker Compose and Kubernetes environments.
