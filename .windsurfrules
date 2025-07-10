@@ -48,6 +48,7 @@ Testing:
 - Unit: JUnit, Mockito
 - Integration: Spring Test
 - Load: Gatling
+- New features must include unit tests and, where applicable, integration tests.
 
 Monetization:
 
@@ -128,4 +129,5 @@ Monetization:
 - Prioritize security, validation, scalability.
 - Maintain clean project structure.
 - Use `@Timed` for Prometheus metrics.
+- Instrument new services with Micrometer metrics and OpenTelemetry tracing using existing interceptors and configuration.
 - Avoid returning nulls; use transactions for DB consistency.
