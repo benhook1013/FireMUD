@@ -9,6 +9,11 @@ grpc:
   server:
     port: 6565
 
+firemud:
+  auth:
+    jwt-secret: changeit-changeit-changeit-changeit
+    jwt-expiration-ms: 3600000
+
 management:
   endpoints:
     web:

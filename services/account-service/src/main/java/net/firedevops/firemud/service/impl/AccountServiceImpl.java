@@ -3,7 +3,10 @@ package net.firedevops.firemud.service.impl;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Map;
+import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.entity.Account;
@@ -20,10 +23,13 @@ public class AccountServiceImpl implements AccountService {
 
   private final AccountRepository accountRepository;
   private final AccountMapper accountMapper;
+  private final JwtUtil jwtUtil;
 
-  public AccountServiceImpl(AccountRepository accountRepository, AccountMapper accountMapper) {
+  public AccountServiceImpl(
+      AccountRepository accountRepository, AccountMapper accountMapper, JwtUtil jwtUtil) {
     this.accountRepository = accountRepository;
     this.accountMapper = accountMapper;
+    this.jwtUtil = jwtUtil;
   }
 
   @Override
@@ -37,6 +43,19 @@ public class AccountServiceImpl implements AccountService {
     account.setPasswordHash(hashPassword(request.password()));
     account = accountRepository.save(account);
     return accountMapper.toDto(account);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public String authenticate(Long tenantId, String username, String password) {
+    Optional<Account> accountOpt = accountRepository.findByTenantIdAndUsername(tenantId, username);
+    Account account =
+        accountOpt.orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
+    String hash = hashPassword(password);
+    if (!hash.equals(account.getPasswordHash())) {
+      throw new IllegalArgumentException("Invalid credentials");
+    }
+    return jwtUtil.generateToken(account.getId().toString(), Map.of("accountId", account.getId()));
   }
 
   private String hashPassword(String password) {
