@@ -41,7 +41,7 @@ participate in CI.
 
 - [x] Define gRPC service stubs with explicit `Request`/`Response` messages
 - [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
-- [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
+- [x] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
@@ -99,7 +99,7 @@ participate in CI.
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows

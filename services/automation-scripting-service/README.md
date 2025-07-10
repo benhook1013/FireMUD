@@ -2,7 +2,7 @@
 
 Refer to [design/README.md](design/README.md) for architecture details.
 
-- **Proto definitions**: [../../protos/automation-scripting/v1](../../protos/automation-scripting/v1)
+- **Proto definitions**: [../../protos/automation-scripting/v1](../../protos/automation-scripting/v1) (uses shared `ErrorDetail`)
 
 ## Running Locally
 
