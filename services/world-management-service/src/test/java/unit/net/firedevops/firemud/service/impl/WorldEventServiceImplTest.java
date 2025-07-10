@@ -3,6 +3,7 @@ package net.firedevops.firemud.service.impl;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import net.firedevops.firemud.dto.WorldEventDto;
@@ -20,12 +21,15 @@ class WorldEventServiceImplTest {
   private RegionRepository regionRepository;
   private WorldEventMapper mapper = Mappers.getMapper(WorldEventMapper.class);
   private WorldEventServiceImpl service;
+  private SimpleMeterRegistry meterRegistry;
 
   @BeforeEach
   void setUp() {
     eventRepository = mock(WorldEventRepository.class);
     regionRepository = mock(RegionRepository.class);
-    service = new WorldEventServiceImpl(eventRepository, regionRepository, mapper);
+    meterRegistry = new SimpleMeterRegistry();
+    service = new WorldEventServiceImpl(eventRepository, regionRepository, mapper, meterRegistry);
+    service.initMetrics();
   }
 
   @Test
