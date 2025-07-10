@@ -42,4 +42,22 @@ class CharacterServiceImplTest {
     assertEquals(2, dto.level());
     assertEquals(0, dto.experience());
   }
+
+  @Test
+  void getWithInventoryReturnsDto() {
+    CharacterRepository repo = Mockito.mock(CharacterRepository.class);
+    CharacterMapper mapper = Mappers.getMapper(CharacterMapper.class);
+    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper);
+
+    Character character = new Character();
+    character.setId(1L);
+    character.setTenantId(1L);
+    character.setAccountId(1L);
+    character.setName("Test");
+
+    when(repo.findWithInventoryById(1L)).thenReturn(Optional.of(character));
+
+    CharacterDto dto = service.getWithInventory(1L);
+    assertEquals(1L, dto.id());
+  }
 }
