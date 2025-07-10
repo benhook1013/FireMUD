@@ -17,6 +17,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
     implementation("org.springframework.cloud:spring-cloud-starter-gateway:4.3.0")
+    implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
+    implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive:3.5.3")
     implementation(project(":common-library"))
 }
 

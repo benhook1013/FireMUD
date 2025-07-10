@@ -2,14 +2,14 @@
 
 - [x] **Finalize Spring Cloud Gateway design**
 - [ ] **Develop Spring Cloud Gateway**
-  - [ ] Handle API routing and request validation
+  - [x] Handle API routing and request validation
   - [ ] Terminate TLS and forward traffic to internal services using mTLS
-  - [ ] Collect connection metrics and throttle abusive clients
-  - [ ] Create gateway route configuration files for all services
+  - [x] Collect connection metrics and throttle abusive clients
+  - [x] Create gateway route configuration files for all services
   - [x] Add baseline route configuration for Spring Cloud Gateway
   - [x] Create `GatewayController` endpoints for dynamic route management
   - [x] Allow creation of custom gateway routes via API
-  - [ ] Add gRPC `GatewayManagementService` for remote route configuration
+  - [x] Add gRPC `GatewayManagementService` for remote route configuration
 
 ## Reusable Microservice Checklist
 
@@ -105,11 +105,11 @@ participate in CI.
 
 ## 📈 Observability & Tracing
 
-- [ ] Use Micrometer for Prometheus metrics
+- [x] Use Micrometer for Prometheus metrics
 - [ ] Enable OpenTelemetry tracing
 - [ ] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
-- [ ] Expose `/actuator/prometheus` for scraping by Prometheus
+- [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
 
