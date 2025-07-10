@@ -45,6 +45,46 @@ components:
         createdAt:
           type: string
           format: date-time
+    SendMailRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        senderAccountId:
+          type: integer
+        recipientAccountId:
+          type: integer
+        subject:
+          type: string
+        content:
+          type: string
+      required:
+        - tenantId
+        - senderAccountId
+        - recipientAccountId
+        - subject
+        - content
+    MailMessageDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        senderAccountId:
+          type: integer
+        recipientAccountId:
+          type: integer
+        subject:
+          type: string
+        content:
+          type: string
+        sentAt:
+          type: string
+          format: date-time
+        readAt:
+          type: string
+          format: date-time
 paths:
   /ping:
     get:
@@ -83,3 +123,23 @@ paths:
                     $ref: '#/components/schemas/FriendLinkDto'
         '400':
           description: Invalid request
+  /mail:
+    post:
+      summary: Send in-game mail
+      operationId: sendMail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMailRequest'
+      responses:
+        '200':
+          description: Mail sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/MailMessageDto'

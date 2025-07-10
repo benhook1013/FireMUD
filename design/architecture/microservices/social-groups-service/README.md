@@ -32,6 +32,7 @@ Provides chat, guild, and social networking features across games. Enables playe
 
 - Global and guild chat rooms.
 - Private messaging and presence indicators.
+- Asynchronous player-to-player mail.
 - Guild creation and membership management.
 - Friend lists scoped both to individual games and to overall accounts.
 - Cross-game presence lets players know when friends are online in any hosted
@@ -43,6 +44,7 @@ Provides chat, guild, and social networking features across games. Enables playe
 - `chat_message` table persists guild and private messages.
 - `guild` and `guild_member` tables store group ownership and membership roles.
 - `friend_link` table tracks account or character friendships and blocks.
+- `mail_message` table stores asynchronous player mail.
 
 ### Chat Pipeline
 
@@ -56,6 +58,7 @@ Provides chat, guild, and social networking features across games. Enables playe
 - `SendAccountMessage` – delivers a direct message between account holders.
 - `CreateGuild` – establishes a new guild with an owner account.
 - `AddFriend` – adds a friend relationship at the game or account level.
+- `SendMail` – stores asynchronous player mail for later retrieval.
 
 ## Dependencies
 
