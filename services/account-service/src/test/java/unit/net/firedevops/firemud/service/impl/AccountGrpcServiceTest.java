@@ -3,8 +3,6 @@ package net.firedevops.firemud.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -46,14 +44,14 @@ class AccountGrpcServiceTest {
   }
 
   @Test
-  void authenticateFailureReturnsUnauthenticated() {
+  void authenticateFailureReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.authenticate(1L, "demo", "bad"))
         .thenThrow(new IllegalArgumentException("invalid"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
-    AtomicReference<Throwable> errorRef = new AtomicReference<>();
+    AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
     service.authenticate(
         AuthenticateRequest.newBuilder()
             .setTenantId("1")
@@ -62,20 +60,19 @@ class AccountGrpcServiceTest {
             .build(),
         new StreamObserver<>() {
           @Override
-          public void onNext(AuthenticateResponse value) {}
+          public void onNext(AuthenticateResponse value) {
+            ref.set(value);
+          }
 
           @Override
-          public void onError(Throwable t) {
-            errorRef.set(t);
-          }
+          public void onError(Throwable t) {}
 
           @Override
           public void onCompleted() {}
         });
 
-    assertNotNull(errorRef.get());
-    StatusRuntimeException ex = (StatusRuntimeException) errorRef.get();
-    assertEquals(Status.Code.UNAUTHENTICATED, ex.getStatus().getCode());
+    assertNotNull(ref.get());
+    assertEquals("UNAUTHENTICATED", ref.get().getError().getCode());
   }
 
   @Test
