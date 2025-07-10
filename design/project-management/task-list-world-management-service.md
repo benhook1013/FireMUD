@@ -56,7 +56,7 @@ participate in CI.
 
 ## 🔁 Inter-Service Communication
 
-- [ ] Use `firemud-common` protobuf types for shared messages
+- [x] Use `firemud-common` protobuf types for shared messages
 - [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
 - [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
@@ -95,7 +95,7 @@ participate in CI.
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
@@ -110,7 +110,7 @@ participate in CI.
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
-- [ ] Expose `/actuator/prometheus` for scraping by Prometheus
+- [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
 
