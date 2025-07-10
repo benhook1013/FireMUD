@@ -1,7 +1,7 @@
 # Social & Groups Service Task List
 
 - [ ] **Develop Social & Groups Service**
-  - [ ] Enable cross-game friend lists and social graph
+  - [x] Enable cross-game friend lists and social graph
   - [ ] Support private messages, global chat, and guild channels
   - [ ] Implement player-to-player mail system (asynchronous in-game messaging)
   - [ ] Allow players to form and manage guilds
@@ -40,7 +40,7 @@ participate in CI.
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
+- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---

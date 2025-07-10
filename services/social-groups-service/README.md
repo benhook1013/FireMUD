@@ -22,3 +22,17 @@ This service uses the standard `FIREMUD_` prefixed variables for PostgreSQL and
 Redis connectivity. See the
 [Environment Variables & Secrets Management](../../design/architecture/infrastructure/environment-and-secrets.md)
 doc for defaults.
+
+## API Documentation
+
+REST endpoints are documented in `openapi.yaml` within the resources directory. A Swagger UI can be generated using any OpenAPI toolchain.
+
+### Example Request
+
+Create a friend link:
+
+```bash
+curl -X POST http://localhost:8080/friends \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"accountId":100,"friendAccountId":200}'
+```
