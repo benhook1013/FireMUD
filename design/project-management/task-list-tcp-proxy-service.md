@@ -7,8 +7,8 @@
   - [x] Buffer Telnet input and discard on disconnect to support reconnection
   - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
   - [ ] Enforce Telnet protocol command whitelist and input sanitization
-  - [ ] Implement connection throttling and rate limits
-  - [ ] Support TLS termination for secure Telnet clients
+  - [x] Implement connection throttling and rate limits
+  - [x] Support TLS termination for secure Telnet clients
 
 ## Reusable Microservice Checklist
 
@@ -39,8 +39,8 @@ participate in CI.
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
-- [ ] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
+- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
+- [x] *(N/A - stateless service)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
 
@@ -93,10 +93,10 @@ participate in CI.
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
-- [ ] Seed minimal test data for local workflows
+- [x] *(N/A - stateless service)* Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests
 

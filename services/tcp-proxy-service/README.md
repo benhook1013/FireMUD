@@ -5,6 +5,7 @@ Refer to [design/README.md](design/README.md) for architecture details.
 - **Proto definitions**: [../../protos/tcp-proxy/v1](../../protos/tcp-proxy/v1)
   include events used to notify the Game Session Service when clients disconnect
   and to push buffered commands after a reconnect.
+- **OpenAPI spec**: [src/main/resources/openapi.yaml](src/main/resources/openapi.yaml)
 
 ## Running Locally
 

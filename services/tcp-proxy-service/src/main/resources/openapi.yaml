@@ -1,0 +1,27 @@
+openapi: 3.0.3
+info:
+  title: TCP Proxy Service API
+  description: Health endpoint for the TCP Proxy Service
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://api.firemud.com
+security: []
+paths:
+  /ping:
+    get:
+      summary: Health check endpoint
+      operationId: ping
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                    example: pong
