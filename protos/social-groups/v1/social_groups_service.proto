@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package social_groups.v1;
 
+import "shared/v1/errors.proto";
 option java_package = "net.firedevops.firemud.socialgroups.v1";
 option java_multiple_files = true;
 
@@ -16,6 +17,7 @@ message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message SendMessageRequest {
@@ -27,6 +29,7 @@ message SendMessageRequest {
 
 message SendMessageResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message CreateGuildRequest {
@@ -37,6 +40,7 @@ message CreateGuildRequest {
 
 message CreateGuildResponse {
   string guild_id = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message AddFriendRequest {
@@ -47,4 +51,5 @@ message AddFriendRequest {
 
 message AddFriendResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
 }

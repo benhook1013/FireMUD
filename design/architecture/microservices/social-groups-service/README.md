@@ -64,6 +64,14 @@ Provides chat, guild, and social networking features across games. Enables playe
   - Logging & Admin Service consumes chat logs for moderation.
 - **External:** PostgreSQL for social data.
 
+### TenantId Handling & Cross-Service Dependencies
+
+All data models include a `tenantId` column so chat history and guild
+information remain isolated per game. Redis keys use the same prefix. The service
+validates this context on every request and forwards the identifier to other
+services, such as the Logging & Admin Service, to maintain isolation across the
+platform.
+
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
 and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
@@ -78,6 +86,24 @@ details on shared infrastructure components.
 - Health is monitored via `/actuator/health`; see
   [Deployment Environments](../../infrastructure/deployment-environments.md) for
   differences between local Docker Compose and production.
+
+## Environment Variables
+
+The service uses the shared configuration conventions defined in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+Important variables include:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
+| `FIREMUD_POSTGRES_HOST` | PostgreSQL host | `postgres` |
+| `FIREMUD_POSTGRES_PORT` | PostgreSQL port | `5432` |
+| `FIREMUD_REDIS_HOST` | Redis host | `redis` |
+| `FIREMUD_REDIS_PORT` | Redis port | `6379` |
+
+See `DatabaseAutoConfiguration` in the
+[Shared Libraries](../system-architecture-shared-libraries.md) for how these
+variables are consumed.
 
 ## Proto Files
 
