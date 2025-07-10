@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entity.Character;
@@ -22,6 +23,7 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional(readOnly = true)
   @Cacheable(value = "characterGraph", key = "#characterId")
+  @Timed(value = "character.get")
   public CharacterDto getWithInventory(Long characterId) {
     Character character = characterRepository.findWithInventoryById(characterId).orElseThrow();
     return characterMapper.toDto(character);
@@ -29,6 +31,7 @@ public class CharacterServiceImpl implements CharacterService {
 
   @Override
   @Transactional
+  @Timed(value = "character.gainExperience")
   public CharacterDto gainExperience(Long characterId, int amount) {
     Character character = characterRepository.findById(characterId).orElseThrow();
     character.setExperience(character.getExperience() + amount);

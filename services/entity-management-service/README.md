@@ -61,3 +61,9 @@ timer:{tenantId}:{entityId}:{effectId}
 
 These keys coordinate tick execution and cooldown timers but contain no
 persistent data.
+
+## Metrics & Tracing
+
+Prometheus scrapes metrics from `/actuator/prometheus`. Service methods emit
+`@Timed` metrics and traces are exported to the collector configured in
+`application.yml`.
