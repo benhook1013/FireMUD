@@ -1,7 +1,12 @@
 package net.firedevops.firemud.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import net.firedevops.firemud.common.grpc.LoggingInterceptor;
 import net.firedevops.firemud.common.grpc.MetricsInterceptor;
 import net.firedevops.firemud.common.grpc.TracingInterceptor;
@@ -28,5 +33,19 @@ public class GrpcConfig {
   @GRpcGlobalInterceptor
   public TracingInterceptor tracingInterceptor(Tracer tracer) {
     return new TracingInterceptor(tracer);
+  }
+
+  @Bean
+  public OpenTelemetry openTelemetry() {
+    OtlpGrpcSpanExporter exporter =
+        OtlpGrpcSpanExporter.builder().setEndpoint("http://otel-collector:4317").build();
+    SdkTracerProvider provider =
+        SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)).build();
+    return OpenTelemetrySdk.builder().setTracerProvider(provider).build();
+  }
+
+  @Bean
+  public Tracer tracer(OpenTelemetry openTelemetry) {
+    return openTelemetry.getTracer("social-groups-service");
   }
 }
