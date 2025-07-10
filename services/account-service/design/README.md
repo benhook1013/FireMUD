@@ -25,9 +25,10 @@ Authentication returns a JWT token which is stored in Redis for quick reconnects
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /accounts` – create a new account and profile.
+- `POST /auth/login` – authenticate and return a JWT token.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 
-Example request:
+Example account creation request:
 
 ```bash
 curl -X POST http://localhost:8080/accounts \
@@ -43,6 +44,25 @@ Example response:
   "tenantId": 1,
   "username": "demo",
   "email": "demo@example.com"
+}
+```
+
+Example login request:
+
+```bash
+curl -X POST http://localhost:8080/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"username":"demo","password":"secret"}'
+```
+
+Example login response:
+
+```json
+{
+  "status": "SUCCESS",
+  "data": {
+    "authToken": "<token>"
+  }
 }
 ```
 
