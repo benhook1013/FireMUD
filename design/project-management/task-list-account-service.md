@@ -2,7 +2,7 @@
 
 - [ ] **Develop Account Service**
   - [ ] Implement user registration and authentication (OAuth2, JWT)
-  - [ ] Implement session management and persistent logins
+  - [x] Implement session management and persistent logins
   - [ ] Implement role-based access control (RBAC) for admins, moderators, and players
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [ ] Implement profile system with achievements, game history, and social features

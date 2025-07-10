@@ -19,6 +19,27 @@ Or start all services:
 ./gradlew devUp
 ```
 
+## REST Authentication Endpoint
+
+Request a JWT token using the `/auth/login` route:
+
+```bash
+curl -X POST http://localhost:8080/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"username":"demo","password":"secret"}'
+```
+
+Sample response:
+
+```json
+{
+  "status": "SUCCESS",
+  "data": {
+    "authToken": "<token>"
+  }
+}
+```
+
 ## Environment Variables
 
 The service relies on standard Spring Boot properties for database and Redis
