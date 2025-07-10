@@ -1,7 +1,7 @@
 # Game Design Service Task List
 
 - [ ] **Expand Game Design Service**
-  - [ ] Provide game templates and configuration tools
+  - [x] Provide game templates and configuration tools
   - [x] Enable publishing of game versions
   - [ ] Use saga orchestrator for game publishing workflow
   - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime

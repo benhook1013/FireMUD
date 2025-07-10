@@ -1,0 +1,8 @@
+package net.firedevops.firemud.repository;
+
+import net.firedevops.firemud.entity.GameTemplate;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface GameTemplateRepository extends JpaRepository<GameTemplate, Long> {}
