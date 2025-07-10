@@ -6,7 +6,7 @@
   - [x] Implement Telnet networking and WebSocket bridging
   - [x] Buffer Telnet input and discard on disconnect to support reconnection
   - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
-  - [ ] Enforce Telnet command whitelist and input sanitization
+  - [ ] Enforce Telnet protocol command whitelist and input sanitization
   - [ ] Implement connection throttling and rate limits
   - [ ] Support TLS termination for secure Telnet clients
 
