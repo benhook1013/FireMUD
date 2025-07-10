@@ -1,6 +1,8 @@
 package net.firedevops.firemud.logic.command;
 
-/** Processes parsed commands and returns outcome text. */
+import net.firedevops.firemud.logic.dto.CommandResult;
+
+/** Processes parsed commands and returns a result object. */
 public interface CommandProcessor {
-  String process(Command command);
+  CommandResult process(Command command);
 }

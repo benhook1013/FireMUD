@@ -1,5 +1,7 @@
 package net.firedevops.firemud.logic.service;
 
+import net.firedevops.firemud.logic.dto.CommandResult;
+
 public interface CommandService {
-  String handleCommand(String commandText);
+  CommandResult handleCommand(String commandText);
 }
