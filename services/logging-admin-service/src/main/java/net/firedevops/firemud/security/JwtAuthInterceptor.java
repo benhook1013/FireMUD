@@ -6,6 +6,7 @@ import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -31,11 +32,27 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     String token = authHeader.substring(7);
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
-      List<String> roles = claims.getBody().get("globalRoles", List.class);
-      if (roles == null || (!roles.contains("platformAdmin") && !roles.contains("moderator"))) {
+      List<String> globalRoles = claims.getBody().get("globalRoles", List.class);
+      Map<String, List<String>> scopedRoles = claims.getBody().get("scopedRoles", Map.class);
+
+      boolean hasGlobalRole =
+          globalRoles != null
+              && (globalRoles.contains("platformAdmin") || globalRoles.contains("moderator"));
+      boolean hasScopedRole = false;
+      if (scopedRoles != null) {
+        for (List<String> roles : scopedRoles.values()) {
+          if (roles.contains("admin") || roles.contains("moderator")) {
+            hasScopedRole = true;
+            break;
+          }
+        }
+      }
+
+      if (!hasGlobalRole && !hasScopedRole) {
         response.setStatus(HttpStatus.FORBIDDEN.value());
         return false;
       }
+
       return true;
     } catch (JwtException ex) {
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
