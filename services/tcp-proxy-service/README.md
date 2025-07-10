@@ -26,6 +26,11 @@ Environment variables used by the service:
 |----------|-------------|---------|
 | `TCP_PROXY_PORT` | Port to accept Telnet connections | `2323` |
 | `GATEWAY_WS_URL` | WebSocket endpoint for the Spring Cloud Gateway | `ws://spring-cloud-gateway:8080/ws` |
+| `TCP_PROXY_TLS_ENABLED` | Enable TLS termination for Telnet | `false` |
+| `TCP_PROXY_TLS_CERT` | Path to TLS certificate (if enabled) | `""` |
+| `TCP_PROXY_TLS_KEY` | Path to TLS private key (if enabled) | `""` |
+| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Max simultaneous connections per IP | `5` |
+| `TCP_PROXY_MAX_MSGS_PER_SEC` | Max allowed messages per connection per second | `5` |
 
 The proxy tags each connection with the player's `tenantId` during login so the
 gateway can route commands to the correct game instance. See the

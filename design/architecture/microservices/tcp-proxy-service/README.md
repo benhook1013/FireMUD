@@ -24,8 +24,10 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
   `tenantId` so the gateway can route commands to the proper game. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Runs in the network DMZ and never contacts internal services directly.
-- Future hardening includes whitelisting Telnet commands and sanitizing input as
-  described in the [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+- Sanitizes incoming Telnet data and, in future iterations, will enforce a
+  whitelist of **Telnet protocol commands** as described in the
+  [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+- Applies connection throttling and optional TLS termination.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
@@ -58,9 +60,10 @@ These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/
 
 The proxy currently forwards Telnet input verbatim so that classic MUD clients
 remain compatible. According to the [Security Architecture](../system-architecture-security.md#%F0%9F%94%8C-telnet-command-handling-and-future-controls),
-future iterations will enforce a whitelisted subset of commands and sanitize
-incoming bytes. These controls are planned to mitigate malformed command
-injection and other legacy protocol edge cases.
+future iterations will sanitize incoming bytes and allow only a safe subset of
+**Telnet protocol commands**. This approach avoids implementing the full
+Telnet specification while protecting against malformed negotiation sequences
+and other legacy edge cases.
 
 ## Dependencies
 
@@ -112,5 +115,5 @@ regenerated via `./gradlew generateProto` when the proto files change.
 
 ## Future Enhancements
 
-- Connection throttling and rate limits.
-- Support for SSL/TLS termination if required.
+- Additional abuse heuristics and advanced command filtering.
+- Auto-scaling policies for heavy traffic bursts.
