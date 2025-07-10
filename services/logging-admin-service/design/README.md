@@ -23,7 +23,10 @@ curl http://localhost:8080/ping
 - `QueryLogs(QueryLogsRequest) returns (QueryLogsResponse)` – searches collected logs.
 - `ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse)` – records a moderation event.
 - `CreateReport(CreateReportRequest) returns (CreateReportResponse)` – ingest a player report.
+- `ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse)` – enable or disable a feature flag.
 
 ```bash
 grpcurl -plaintext localhost:6565 logging_admin.v1.LoggingAdminService/Ping
 ```
+
+- `POST /feature-flags/toggle` – enable or disable runtime flags.

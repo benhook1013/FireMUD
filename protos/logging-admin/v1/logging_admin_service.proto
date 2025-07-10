@@ -9,6 +9,7 @@ service LoggingAdminService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc QueryLogs(QueryLogsRequest) returns (QueryLogsResponse);
   rpc ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse);
+  rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
 }
 
 message PingRequest {}
@@ -34,5 +35,15 @@ message ApplyModerationActionRequest {
 }
 
 message ApplyModerationActionResponse {
+  bool success = 1;
+}
+
+message ToggleFeatureFlagRequest {
+  string tenant_id = 1;
+  string name = 2;
+  bool enabled = 3;
+}
+
+message ToggleFeatureFlagResponse {
   bool success = 1;
 }

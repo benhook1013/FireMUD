@@ -1,0 +1,1 @@
+ALTER TABLE feature_flag ADD COLUMN tenant_id BIGINT NOT NULL;
