@@ -1,0 +1,68 @@
+package net.firedevops.firemud.service.impl;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.Optional;
+import net.firedevops.firemud.dto.GameInstanceDto;
+import net.firedevops.firemud.dto.StartSessionRequest;
+import net.firedevops.firemud.entity.GameInstance;
+import net.firedevops.firemud.mapper.GameInstanceMapper;
+import net.firedevops.firemud.repository.GameInstanceRepository;
+import net.firedevops.firemud.service.SessionStateService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class GameInstanceServiceImplTest {
+  private GameInstanceRepository repository;
+  private GameInstanceMapper mapper;
+  private SessionStateService stateService;
+  private GameInstanceServiceImpl service;
+
+  @BeforeEach
+  void setup() {
+    repository = mock(GameInstanceRepository.class);
+    mapper = mock(GameInstanceMapper.class);
+    stateService = mock(SessionStateService.class);
+    service = new GameInstanceServiceImpl(repository, mapper, stateService);
+  }
+
+  @Test
+  void startSessionSavesState() {
+    StartSessionRequest request = new StartSessionRequest(1L, "v1", 42L);
+    GameInstance entity = new GameInstance();
+    entity.setId(10L);
+    entity.setTenantId(1L);
+    entity.setVersionId("v1");
+    entity.setOwnerAccountId(42L);
+    entity.setStatus("RUNNING");
+
+    when(repository.save(any())).thenReturn(entity);
+    GameInstanceDto dto = new GameInstanceDto(10L, 1L, "v1", 42L, "RUNNING");
+    when(mapper.toDto(entity)).thenReturn(dto);
+
+    service.startSession(request);
+
+    verify(stateService).saveState(dto);
+  }
+
+  @Test
+  void stopSessionDeletesState() {
+    GameInstance entity = new GameInstance();
+    entity.setId(10L);
+    entity.setTenantId(1L);
+    entity.setVersionId("v1");
+    entity.setOwnerAccountId(42L);
+    entity.setStatus("RUNNING");
+
+    when(repository.findById(10L)).thenReturn(Optional.of(entity));
+    when(repository.save(entity)).thenReturn(entity);
+    when(mapper.toDto(entity)).thenReturn(new GameInstanceDto(10L, 1L, "v1", 42L, "STOPPED"));
+
+    service.stopSession(10L);
+
+    verify(stateService).deleteState(1L, 10L);
+  }
+}

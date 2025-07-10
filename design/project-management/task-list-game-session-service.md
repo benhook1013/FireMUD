@@ -7,8 +7,8 @@
   - [ ] Implement Lua-based staging, commit, and rollback scripts for tick transactions
   - [ ] Implement distributed lock acquisition in Redis for tick updates
   - [ ] Implement tick replay and crash recovery logic
-  - [ ] Persist session state in Redis for reconnect recovery
-  - [ ] Enforce single-session control per character (session takeover on new login)
+  - [x] Persist session state in Redis for reconnect recovery
+  - [x] Enforce single-session control per character (session takeover on new login)
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [x] Plan for cross-region sharding and session handoff
   - [x] Implement `game_manifest` table for version coordination
@@ -69,9 +69,9 @@ participate in CI.
 ## 📚 Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
-- [ ] Apply logging, tracing, and security interceptors from the library
-- [ ] Use provided autoconfiguration classes to reduce boilerplate
-- [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
+- [x] Apply logging, tracing, and security interceptors from the library
+- [x] Use provided autoconfiguration classes to reduce boilerplate
+- [x] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
 ---
 
@@ -79,25 +79,25 @@ participate in CI.
 
 - [ ] Use saga helpers from `firemud-common` for workflow steps
 - [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] Document saga participation in `design/README.md`
 
 ---
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
+- [x] Use Redis for transient gameplay state only
+- [x] Access Redis through helpers in `firemud-common`
+- [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [ ] Validate shard-local key usage and avoid per-service caching
 - [ ] Emit metrics for Redis connectivity and commands
 - [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
@@ -108,11 +108,11 @@ participate in CI.
 
 ## 📈 Observability & Tracing
 
-- [ ] Use Micrometer for Prometheus metrics
-- [ ] Enable OpenTelemetry tracing
-- [ ] Use shared interceptors to propagate `traceId` and `correlationId`
+- [x] Use Micrometer for Prometheus metrics
+- [x] Enable OpenTelemetry tracing
+- [x] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
-- [ ] Expose `/actuator/prometheus` for scraping by Prometheus
+- [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
 

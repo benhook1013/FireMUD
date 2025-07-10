@@ -63,4 +63,18 @@ grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
   for how sessions migrate between clusters.
 - Metrics emitted by this service feed the operator
   [Analytics Dashboards](../../../design/architecture/microservices/logging-admin-service/analytics-dashboards.md).
-  Prometheus scrapes metrics from `/actuator/prometheus`.
+Prometheus scrapes metrics from `/actuator/prometheus`.
+
+## Saga Participation
+
+Game startup and shutdown are coordinated using the shared `Saga` helpers from
+`firemud-common`. Each dependent service (World Management, Entity Management
+and Game Logic) confirms its part of the workflow before the session becomes
+active. Failures trigger compensating steps, ensuring consistent rollbacks. See
+[Transaction Strategies](../../../design/architecture/system-architecture-transactions.md)
+for background.
+
+## Redis Keys
+
+Session state needed for reconnect recovery is stored under
+`session:{tenantId}:{sessionId}`. Keys are removed when a session stops.

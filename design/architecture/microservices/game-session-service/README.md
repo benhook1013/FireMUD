@@ -25,7 +25,9 @@ Orchestrates live game sessions, including tick execution, player input validati
   Redis keys and database tables prefix this value so sessions from different
   games remain isolated. The platform may enforce per-game resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../system-architecture-multi-tenancy.md) document.
-- Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
+  Session state for reconnect recovery lives in Redis using keys of the form
+  `session:{tenantId}:{sessionId}` and is purged when the session ends.
+  - Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../system-architecture-transactions.md).
