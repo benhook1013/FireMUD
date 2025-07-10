@@ -120,6 +120,4 @@ adding or removing routes at runtime.
 
 ## Future Enhancements
 
-- Connection metrics and throttling.
 - Horizontal scaling for high concurrency.
-- Remote route configuration over gRPC.
