@@ -90,8 +90,7 @@ details on shared infrastructure components.
   development uses Docker Compose with the same Spring profiles.
 - Exposes `/actuator/health` for readiness and liveness probes consumed by the
   cluster.
-- Metrics are scraped by Prometheus and logs shipped through Fluent Bit to
-  Elasticsearch, with traces captured via OpenTelemetry.
+- Metrics are scraped by Prometheus from `/actuator/prometheus` and logs shipped through Fluent Bit to Elasticsearch. Traces are exported via OpenTelemetry to the collector service for visualization in Jaeger.
 - Configuration differences between environments are described in
   [Deployment Environments](../../infrastructure/deployment-environments.md).
 
