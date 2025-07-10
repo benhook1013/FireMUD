@@ -10,9 +10,10 @@ import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
 import net.firedevops.firemud.gamesession.v1.StartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
+import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.service.FeatureFlagService;
+import net.firedevops.firemud.service.TickService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -23,8 +24,10 @@ class GameSessionGrpcServiceTest {
     Mockito.when(pingService.ping()).thenReturn("pong");
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TickService tickService = Mockito.mock(TickService.class);
     GameSessionGrpcService service =
-        new GameSessionGrpcService(pingService, gameInstanceService, featureFlagService);
+        new GameSessionGrpcService(
+            pingService, gameInstanceService, featureFlagService, tickService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -52,12 +55,14 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TickService tickService = Mockito.mock(TickService.class);
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.dto.StartSessionRequest.class)))
         .thenReturn(new GameInstanceDto(1L, 1L, "v1", 0L, "RUNNING"));
     GameSessionGrpcService service =
-        new GameSessionGrpcService(pingService, gameInstanceService, featureFlagService);
+        new GameSessionGrpcService(
+            pingService, gameInstanceService, featureFlagService, tickService);
 
     AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
     service.startSession(

@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.TickService;
 import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC endpoints for the Game Session Service. */
@@ -29,14 +30,17 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
+  private final TickService tickService;
 
   public GameSessionGrpcService(
       PingService pingService,
       GameInstanceService gameInstanceService,
-      FeatureFlagService featureFlagService) {
+      FeatureFlagService featureFlagService,
+      TickService tickService) {
     this.pingService = pingService;
     this.gameInstanceService = gameInstanceService;
     this.featureFlagService = featureFlagService;
+    this.tickService = tickService;
   }
 
   @Override
@@ -93,7 +97,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   @Override
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
-    // command queuing not yet implemented
+    tickService.enqueueCommand(Long.valueOf(request.getSessionId()), request.getCommand());
     EnqueueCommandResponse response = EnqueueCommandResponse.newBuilder().setAccepted(true).build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
@@ -102,8 +106,8 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   @Override
   public void queryState(
       QueryStateRequest request, StreamObserver<QueryStateResponse> responseObserver) {
-    // state query not yet implemented
-    QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson("{}").build();
+    String state = tickService.queryState(Long.valueOf(request.getSessionId()));
+    QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson(state).build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
