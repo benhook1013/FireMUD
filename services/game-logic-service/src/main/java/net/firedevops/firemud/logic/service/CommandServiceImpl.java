@@ -1,5 +1,6 @@
 package net.firedevops.firemud.logic.service;
 
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.logic.command.Command;
 import net.firedevops.firemud.logic.command.CommandParser;
 import net.firedevops.firemud.logic.command.CommandProcessor;
@@ -17,6 +18,7 @@ public class CommandServiceImpl implements CommandService {
   }
 
   @Override
+  @Timed(value = "game_logic.handle_command")
   public CommandResult handleCommand(String commandText) {
     Command cmd = parser.parse(commandText);
     return processor.process(cmd);
