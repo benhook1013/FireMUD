@@ -65,3 +65,7 @@ prefix. This isolates game data for each hosted title. The service communicates
 with the Game Logic, Entity Management, and World Management services over gRPC
 to coordinate ticks and world state. Lifecycle events are also sent to the
 Logging & Admin Service for auditing.
+
+Redis stores active session details under keys following the pattern
+`session:{tenantId}:{sessionId}`. These entries enable reconnect recovery when
+clients disconnect temporarily.

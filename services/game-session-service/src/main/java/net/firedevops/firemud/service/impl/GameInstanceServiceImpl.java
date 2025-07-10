@@ -7,6 +7,7 @@ import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.mapper.GameInstanceMapper;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.GameInstanceService;
+import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,10 +19,15 @@ public class GameInstanceServiceImpl implements GameInstanceService {
 
   private final GameInstanceRepository repository;
   private final GameInstanceMapper mapper;
+  private final SessionStateService sessionStateService;
 
-  public GameInstanceServiceImpl(GameInstanceRepository repository, GameInstanceMapper mapper) {
+  public GameInstanceServiceImpl(
+      GameInstanceRepository repository,
+      GameInstanceMapper mapper,
+      SessionStateService sessionStateService) {
     this.repository = repository;
     this.mapper = mapper;
+    this.sessionStateService = sessionStateService;
   }
 
   @Override
@@ -39,6 +45,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                   existing.getOwnerAccountId());
               existing.setStatus("STOPPED");
               repository.save(existing);
+              sessionStateService.deleteState(existing.getTenantId(), existing.getId());
             });
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
@@ -46,7 +53,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setOwnerAccountId(request.ownerAccountId());
     instance.setStatus("RUNNING");
     instance = repository.save(instance);
-    return mapper.toDto(instance);
+    GameInstanceDto dto = mapper.toDto(instance);
+    sessionStateService.saveState(dto);
+    return dto;
   }
 
   @Override
@@ -57,7 +66,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
     instance.setStatus("STOPPED");
-    return mapper.toDto(repository.save(instance));
+    GameInstance saved = repository.save(instance);
+    sessionStateService.deleteState(instance.getTenantId(), instance.getId());
+    return mapper.toDto(saved);
   }
 
   @Override
@@ -68,6 +79,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
     instance.setStatus("RUNNING");
-    return mapper.toDto(repository.save(instance));
+    GameInstance saved = repository.save(instance);
+    GameInstanceDto dto = mapper.toDto(saved);
+    sessionStateService.saveState(dto);
+    return dto;
   }
 }
