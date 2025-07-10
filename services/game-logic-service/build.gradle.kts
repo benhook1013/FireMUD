@@ -43,7 +43,7 @@ sourceSets["main"].java.srcDirs(
 
 sourceSets {
     main {
-        proto.srcDir("../../protos/game-logic")
+        proto.srcDir("../../protos")
     }
 }
 

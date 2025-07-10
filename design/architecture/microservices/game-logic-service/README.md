@@ -57,6 +57,7 @@ This service is largely stateless. It relies on:
 
 - `Ping` – basic connectivity check.
 - `ExecuteCommand` – evaluates a parsed command and returns the outcome.
+- All responses include a `shared.v1.ErrorDetail` field for standardized error handling.
 
 ## Dependencies
 
@@ -79,7 +80,22 @@ details on shared infrastructure components.
 - Prometheus collects command execution metrics while Fluent Bit forwards logs
   to Elasticsearch with trace context from OpenTelemetry.
 - For environment-specific configuration see
+
   [Deployment Environments](../../infrastructure/deployment-environments.md).
+
+## Environment Variables
+
+The service uses the standard configuration outlined in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+Key variables include:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
+| `FIREMUD_POSTGRES_HOST` | PostgreSQL host | `postgres` |
+| `FIREMUD_POSTGRES_PORT` | PostgreSQL port | `5432` |
+| `FIREMUD_REDIS_HOST` | Redis host | `redis` |
+| `FIREMUD_REDIS_PORT` | Redis port | `6379` |
 
 ## Proto Files
 
