@@ -1,7 +1,7 @@
 # Game Session Service Task List
 
 - [ ] **Expand Game Session Service**
-  - [ ] Implement game instance lifecycle (start, stop, restart)
+  - [x] Implement game instance lifecycle (start, stop, restart)
   - [x] Support multi-tenancy for hosted games
   - [ ] Implement tick orchestration using Redis for command queues
   - [ ] Implement Lua-based staging, commit, and rollback scripts for tick transactions
@@ -11,7 +11,7 @@
   - [ ] Enforce single-session control per character (session takeover on new login)
   - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [ ] Plan for cross-region sharding and session handoff
-  - [ ] Implement `game_manifest` table for version coordination
+  - [x] Implement `game_manifest` table for version coordination
   - [ ] Emit gameplay analytics for operators
 
 ## Reusable Microservice Checklist
@@ -39,11 +39,11 @@ participate in CI.
 
 - [x] Define gRPC service stubs with explicit `Request`/`Response` messages
 - [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
-- [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
+- [x] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
+- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
@@ -120,8 +120,8 @@ participate in CI.
 
 - [x] Create `design/README.md` summarizing APIs and sample requests
 - [x] Document proto contracts and any Redis keys in the service README
-- [ ] Document required environment variables and configuration
-- [ ] Note `tenantId` handling and cross-service dependencies
+- [x] Document required environment variables and configuration
+- [x] Note `tenantId` handling and cross-service dependencies
 - [x] Add a design document under `design/architecture/microservices/<service>/README.md`
 
 ---
