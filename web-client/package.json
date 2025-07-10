@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "format": "prettier --check \"src/**/*.{ts,tsx}\"",
     "format:fix": "prettier --write \"src/**/*.{ts,tsx}\"",
-    "accessibility": "npm run build && npx axe dist/index.html --exit"
+    "accessibility": "npm run build && npx axe file:dist/index.html --exit"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
