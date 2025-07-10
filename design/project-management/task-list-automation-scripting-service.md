@@ -1,17 +1,17 @@
 # Automation & Scripting Service Task List
 
 - [ ] **Develop Automation & Scripting Service**
-  - [ ] Implement state-driven & event-driven NPC behaviors
+  - [x] Implement state-driven & event-driven NPC behaviors *(see [System Architecture: Scripting](../architecture/system-architecture-scripting.md))*
   - [ ] Implement procedural world generation
-  - [ ] Implement scripted events for game mechanics and NPC interactions
-  - [ ] Implement AI memory & dynamic NPC behaviors (NPCs remember past player interactions)
+  - [x] Implement scripted events for game mechanics and NPC interactions *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
+  - [x] Implement AI memory & dynamic NPC behaviors (NPCs remember past player interactions) *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
   - [ ] Implement player vs. environment (PvE) mechanics (random encounters, environmental hazards)
   - [ ] Implement faction & reputation system (players gain faction reputation over time)
   - [ ] Implement NPC aggression states (hostile, neutral, passive)
   - [ ] Implement NPC fleeing/surrender logic
   - [ ] Implement NPC formations & squad AI
-  - [ ] Create sandboxed script runtime
-  - [ ] Support hot reloading of scripts published by the Game Design Service
+  - [x] Create sandboxed script runtime *(see [Scripting & Automation Framework](../architecture/system-architecture-scripting.md))*
+  - [x] Support hot reloading of scripts published by the Game Design Service *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
   - [ ] Provide web UI for script creation and testing
   - [ ] Add advanced AI modules for complex behaviors
   - [ ] Enforce fairness quotas and per-script resource limits
