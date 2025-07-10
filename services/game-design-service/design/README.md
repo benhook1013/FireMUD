@@ -6,6 +6,8 @@ The design for this service is located here:
 
 Additional details on template management can be found in
 [game-templates.md](game-templates.md).
+Asset storage configuration is documented in
+[asset-storage.md](asset-storage.md).
 
 This stub exists to make the design easy to find from the service source tree.
 

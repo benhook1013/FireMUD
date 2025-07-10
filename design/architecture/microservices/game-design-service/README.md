@@ -21,6 +21,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
   services as outlined in
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
+  The workflow is orchestrated using the shared Saga library from **firemud-common**, ensuring idempotent steps and retry handling.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
@@ -47,6 +48,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing.
 - `runtime_flag` table holds feature flag definitions copied to the Game Session Service.
+- Published versions are activated by the Game Session Service and flags can be toggled at runtime via the Logging & Admin Service.
 
 ### Design Workflow
 

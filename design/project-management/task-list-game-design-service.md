@@ -3,7 +3,7 @@
 - [ ] **Expand Game Design Service**
   - [x] Provide game templates and configuration tools
   - [x] Enable publishing of game versions
-  - [ ] Use saga orchestrator for game publishing workflow
+  - [x] Use saga orchestrator for game publishing workflow
   - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
   - [x] Create design-time database models
 - [ ] **Develop Game Design Service**
@@ -18,7 +18,7 @@
   - [ ] Integrate version control for design assets
   - [ ] Configure database storage for game assets
     - Provide asset upload API in Game Design Service
-    - Document asset storage setup and configuration
+    - [x] Document asset storage setup and configuration
 - [ ] **Expand Scripting & Modding**
   - [ ] Implement event-driven scripting API for game creators
   - [ ] Implement in-game modding/plugin framework
@@ -29,8 +29,8 @@
 - [x] Implement cross-service game version publishing workflow
 - [x] Store immutable versions in the Game Design Service
 - [x] Copy published data to domain services using the `version_id`
-- [ ] Activate versions and runtime flags via the Game Session Service
-- [ ] Expose admin APIs for runtime flag toggles through the Logging & Admin Service
+- [x] Activate versions and runtime flags via the Game Session Service
+- [x] Expose admin APIs for runtime flag toggles through the Logging & Admin Service
 
 ## Reusable Microservice Checklist
 
