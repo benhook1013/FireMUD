@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entity;
 
 import jakarta.persistence.*;
+import java.time.Instant;
 import lombok.Data;
 
 @Data
@@ -19,4 +20,10 @@ public class Npc {
 
   @Column(length = 100)
   private String behavior;
+
+  @Column(name = "respawn_delay", nullable = false)
+  private int respawnDelaySeconds = 60;
+
+  @Column(name = "last_defeated_at")
+  private Instant lastDefeatedAt;
 }

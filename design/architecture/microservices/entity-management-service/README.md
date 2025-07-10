@@ -37,6 +37,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Character and NPC management.
 - Item storage and inventory handling.
 - Experience and level tracking.
+- NPC respawn scheduling with configurable delays.
 - Character creation templates pulled from the Game Design Service.
 - Supports instance-based spaces so characters can enter private dungeons or
   personalized housing without affecting the main world state.
@@ -48,6 +49,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Many-to-many tables define inventory and equipment relationships.
 - `instance_member` table tracks which characters are present in optional
   instance-based spaces.
+- Entity graphs cache inventory relationships for fast lookups.
 
 ### gRPC APIs
 
@@ -106,7 +108,6 @@ proto files, run `./gradlew generateProto` to update generated sources.
 
 ## Future Enhancements
 
-- Entity graph caching for faster lookups.
 - Support for complex crafting recipes.
 - Cross-game account linking to share a single profile across multiple games (see
   [Multi-Tenancy](../system-architecture-multi-tenancy.md)).
