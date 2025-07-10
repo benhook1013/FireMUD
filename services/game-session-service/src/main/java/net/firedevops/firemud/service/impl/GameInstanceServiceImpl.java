@@ -29,6 +29,17 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   public GameInstanceDto startSession(StartSessionRequest request) {
     logger.info(
         "Starting game session for tenant {} version {}", request.tenantId(), request.versionId());
+    repository
+        .findFirstByOwnerAccountIdAndStatus(request.ownerAccountId(), "RUNNING")
+        .ifPresent(
+            existing -> {
+              logger.info(
+                  "Stopping existing session {} for owner {}",
+                  existing.getId(),
+                  existing.getOwnerAccountId());
+              existing.setStatus("STOPPED");
+              repository.save(existing);
+            });
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
     instance.setVersionId(request.versionId());
@@ -36,5 +47,27 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("RUNNING");
     instance = repository.save(instance);
     return mapper.toDto(instance);
+  }
+
+  @Override
+  @Transactional
+  public GameInstanceDto stopSession(long sessionId) {
+    GameInstance instance =
+        repository
+            .findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    instance.setStatus("STOPPED");
+    return mapper.toDto(repository.save(instance));
+  }
+
+  @Override
+  @Transactional
+  public GameInstanceDto restartSession(long sessionId) {
+    GameInstance instance =
+        repository
+            .findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    instance.setStatus("RUNNING");
+    return mapper.toDto(repository.save(instance));
   }
 }

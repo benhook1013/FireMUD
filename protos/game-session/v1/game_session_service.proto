@@ -10,6 +10,8 @@ option java_multiple_files = true;
 service GameSessionService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
+  rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
+  rpc RestartSession(RestartSessionRequest) returns (RestartSessionResponse);
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
   rpc QueryState(QueryStateRequest) returns (QueryStateResponse);
 }
@@ -21,6 +23,24 @@ message StartSessionRequest {
 
 message StartSessionResponse {
   string session_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message StopSessionRequest {
+  string session_id = 1;
+}
+
+message StopSessionResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RestartSessionRequest {
+  string session_id = 1;
+}
+
+message RestartSessionResponse {
+  bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

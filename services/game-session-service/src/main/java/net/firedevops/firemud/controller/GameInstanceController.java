@@ -6,6 +6,7 @@ import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.service.GameInstanceService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,6 +26,18 @@ public class GameInstanceController {
   public ResponseEntity<ApiResponse<GameInstanceDto>> startSession(
       @Valid @RequestBody StartSessionRequest request) {
     GameInstanceDto dto = gameInstanceService.startSession(request);
+    return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @PostMapping("/{sessionId}/stop")
+  public ResponseEntity<ApiResponse<GameInstanceDto>> stopSession(@PathVariable long sessionId) {
+    GameInstanceDto dto = gameInstanceService.stopSession(sessionId);
+    return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @PostMapping("/{sessionId}/restart")
+  public ResponseEntity<ApiResponse<GameInstanceDto>> restartSession(@PathVariable long sessionId) {
+    GameInstanceDto dto = gameInstanceService.restartSession(sessionId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 }

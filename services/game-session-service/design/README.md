@@ -23,6 +23,8 @@ column and Redis keys are prefixed with this value as outlined in the
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /sessions` – create a new game session from a published version.
+- `POST /sessions/{id}/stop` – stop a running session.
+- `POST /sessions/{id}/restart` – restart a stopped session.
 
 ```bash
 curl http://localhost:8080/ping
