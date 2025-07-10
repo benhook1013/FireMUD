@@ -18,7 +18,9 @@ class InventoryServiceImplTest {
   void listInventoryReturnsMappedDtos() {
     InventoryEntryRepository repo = Mockito.mock(InventoryEntryRepository.class);
     InventoryEntryMapper mapper = Mappers.getMapper(InventoryEntryMapper.class);
-    InventoryServiceImpl service = new InventoryServiceImpl(repo, mapper);
+    var charRepo = Mockito.mock(net.firedevops.firemud.repository.CharacterRepository.class);
+    var itemRepo = Mockito.mock(net.firedevops.firemud.repository.ItemRepository.class);
+    InventoryServiceImpl service = new InventoryServiceImpl(repo, mapper, charRepo, itemRepo);
 
     InventoryEntry entry = new InventoryEntry();
     InventoryKey key = new InventoryKey();
