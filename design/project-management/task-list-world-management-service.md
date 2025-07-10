@@ -5,7 +5,7 @@
   - [x] Implement instance-based game spaces (e.g., dungeons, player housing)
   - [x] Define instance rules, expiration, and persistence
   - [x] Implement world event scheduling system (seasonal events, resets)
-  - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
+  - [x] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
   - [ ] Use saga orchestrator for world creation workflow
@@ -67,9 +67,9 @@ participate in CI.
 ## 📚 Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
-- [ ] Apply logging, tracing, and security interceptors from the library
-- [ ] Use provided autoconfiguration classes to reduce boilerplate
-- [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
+- [x] Apply logging, tracing, and security interceptors from the library
+- [x] Use provided autoconfiguration classes to reduce boilerplate
+- [x] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
 ---
 
@@ -106,9 +106,9 @@ participate in CI.
 
 ## 📈 Observability & Tracing
 
-- [ ] Use Micrometer for Prometheus metrics
-- [ ] Enable OpenTelemetry tracing
-- [ ] Use shared interceptors to propagate `traceId` and `correlationId`
+- [x] Use Micrometer for Prometheus metrics
+- [x] Enable OpenTelemetry tracing
+- [x] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
 - [ ] Expose `/actuator/prometheus` for scraping by Prometheus
 
