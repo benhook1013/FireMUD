@@ -4,6 +4,14 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    paths:
+      - '**/build.gradle*'
+      - '**/pom.xml'
+      - '**/package.json'
+      - '**/yarn.lock'
+      - '**/requirements.txt'
+      - '**/setup.py'
+      - '.github/workflows/license-scan.yml'
   workflow_dispatch:
 
 permissions:
