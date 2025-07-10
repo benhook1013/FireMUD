@@ -6,6 +6,14 @@ The design for this service is located here:
 
 This stub exists to make the design easy to find from the service source tree.
 
+## Configuration
+
+PostgreSQL and Redis connections are configured via the common
+`DatabaseAutoConfiguration` and `RedisProperties` classes. Refer to
+[Deployment Environments](../../../design/architecture/infrastructure/deployment-environments.md)
+for default values. Local development typically uses the settings from
+`.env.sample`.
+
 ## REST & gRPC Endpoints
 
 ### REST
