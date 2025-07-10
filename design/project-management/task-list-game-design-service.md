@@ -16,7 +16,7 @@
   - [x] Track version history and patch notes for published games
   - [ ] Build a web-based visual design interface
   - [ ] Integrate version control for design assets
-  - [ ] Configure S3-compatible object storage for game assets
+  - [ ] Configure database storage for game assets
     - Provide asset upload API in Game Design Service
     - Document asset storage setup and configuration
 - [ ] **Expand Scripting & Modding**
