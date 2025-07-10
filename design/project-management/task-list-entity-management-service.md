@@ -4,10 +4,10 @@
   - [x] Implement player character storage
   - [x] Implement NPC storage and data structures
   - [x] Implement item and inventory management
-  - [ ] Implement entity stats and progression tracking
-  - [ ] Implement NPC respawn rules and timing
+  - [x] Implement entity stats and progression tracking
+  - [x] Implement NPC respawn rules and timing
   - [ ] Implement cross-game account linking (allow single account across multiple hosted games)
-  - [ ] Implement entity graph caching for fast lookups
+  - [x] Implement entity graph caching for fast lookups
   - [ ] Support complex crafting recipes
 
 ## Reusable Microservice Checklist
@@ -65,9 +65,9 @@ participate in CI.
 ## 📚 Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
-- [ ] Apply logging, tracing, and security interceptors from the library
-- [ ] Use provided autoconfiguration classes to reduce boilerplate
-- [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
+- [x] Apply logging, tracing, and security interceptors from the library
+- [x] Use provided autoconfiguration classes to reduce boilerplate
+- [x] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
 ---
 
@@ -81,10 +81,10 @@ participate in CI.
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
+- [x] Use Redis for transient gameplay state only
+- [x] Access Redis through helpers in `firemud-common`
 - [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
+- [x] Validate shard-local key usage and avoid per-service caching
 - [ ] Emit metrics for Redis connectivity and commands
 - [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
 - [ ] Prefix all keys with `tenantId` to isolate game data
@@ -104,9 +104,9 @@ participate in CI.
 
 ## 📈 Observability & Tracing
 
-- [ ] Use Micrometer for Prometheus metrics
-- [ ] Enable OpenTelemetry tracing
-- [ ] Use shared interceptors to propagate `traceId` and `correlationId`
+- [x] Use Micrometer for Prometheus metrics
+- [x] Enable OpenTelemetry tracing
+- [x] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
 - [ ] Expose `/actuator/prometheus` for scraping by Prometheus
 

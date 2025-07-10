@@ -6,6 +6,7 @@ import net.firedevops.firemud.entity.Character;
 import net.firedevops.firemud.mapper.CharacterMapper;
 import net.firedevops.firemud.repository.CharacterRepository;
 import net.firedevops.firemud.service.CharacterService;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +18,14 @@ public class CharacterServiceImpl implements CharacterService {
   private final CharacterMapper characterMapper;
 
   private static final int EXP_PER_LEVEL = 1000;
+
+  @Override
+  @Transactional(readOnly = true)
+  @Cacheable(value = "characterGraph", key = "#characterId")
+  public CharacterDto getWithInventory(Long characterId) {
+    Character character = characterRepository.findWithInventoryById(characterId).orElseThrow();
+    return characterMapper.toDto(character);
+  }
 
   @Override
   @Transactional
