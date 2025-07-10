@@ -3,7 +3,7 @@
 - [x] **Finalize Spring Cloud Gateway design**
 - [ ] **Develop Spring Cloud Gateway**
   - [x] Handle API routing and request validation
-  - [ ] Terminate TLS and forward traffic to internal services using mTLS
+  - [x] Terminate TLS and forward traffic to internal services using mTLS
   - [x] Collect connection metrics and throttle abusive clients
   - [x] Create gateway route configuration files for all services
   - [x] Add baseline route configuration for Spring Cloud Gateway
@@ -40,7 +40,7 @@ participate in CI.
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
+- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [ ] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
@@ -49,17 +49,17 @@ participate in CI.
 
 - [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
 - [ ] Check `globalRoles` and `scopedRoles` where applicable
-- [ ] Gameplay services rely on the Game Session Service for session validation
+- [x] Gameplay services rely on the Game Session Service for session validation
 
 ---
 
 ## 🔁 Inter-Service Communication
 
-- [ ] Use `firemud-common` protobuf types for shared messages
+- [x] Use `firemud-common` protobuf types for shared messages
 - [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
+- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
 

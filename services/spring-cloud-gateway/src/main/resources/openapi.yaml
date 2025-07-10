@@ -1,0 +1,85 @@
+openapi: 3.0.3
+info:
+  title: Spring Cloud Gateway API
+  description: API for dynamic route management
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://api.firemud.com
+security: []
+components:
+  schemas:
+    GatewayRoute:
+      type: object
+      properties:
+        routeId:
+          type: string
+        uri:
+          type: string
+        predicates:
+          type: array
+          items:
+            type: string
+        filters:
+          type: array
+          items:
+            type: string
+paths:
+  /ping:
+    get:
+      summary: Health check
+      operationId: ping
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                    example: pong
+  /routes:
+    post:
+      summary: Add or update a gateway route
+      operationId: upsertRoute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GatewayRoute'
+      responses:
+        '200':
+          description: Route added or updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GatewayRoute'
+  /routes/{routeId}:
+    delete:
+      summary: Remove a gateway route
+      operationId: removeRoute
+      parameters:
+        - name: routeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Route removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                    example: removed
