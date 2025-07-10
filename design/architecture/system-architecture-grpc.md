@@ -70,6 +70,7 @@ Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `
 - Map application-level failures to appropriate gRPC status codes (`INVALID_ARGUMENT`, `NOT_FOUND`, etc.).
 - Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
 - Prefer returning structured errors over using gRPC metadata for application faults.
+- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric labeled with `error.code`, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures.
 
 ## 🧪 Example Code Generation (Java)
 
