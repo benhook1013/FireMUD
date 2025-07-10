@@ -132,4 +132,5 @@ Monetization:
 - Use `@Timed` for Prometheus metrics.
 - Instrument new services with Micrometer metrics and OpenTelemetry tracing using existing interceptors and configuration.
 - Ensure new endpoints record metrics and create spans for business operations.
+- Run `pre-commit run --all-files` or `./gradlew check` before committing to verify formatting, tests, and coverage.
 - Avoid returning nulls; use transactions for DB consistency.
