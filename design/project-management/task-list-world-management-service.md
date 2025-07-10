@@ -4,7 +4,7 @@
   - [x] Implement world map storage (rooms, regions)
   - [x] Implement instance-based game spaces (e.g., dungeons, player housing)
   - [x] Define instance rules, expiration, and persistence
-  - [ ] Implement world event scheduling system (seasonal events, resets)
+  - [x] Implement world event scheduling system (seasonal events, resets)
   - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [ ] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation

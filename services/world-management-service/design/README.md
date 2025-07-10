@@ -39,3 +39,9 @@ Expected response:
   "message": "pong"
 }
 ```
+
+## World Events
+
+World events are persisted in the `world_event` table and processed
+periodically by `WorldEventService`. A weather change event updates the
+`region.weather` column before notifying other services.
