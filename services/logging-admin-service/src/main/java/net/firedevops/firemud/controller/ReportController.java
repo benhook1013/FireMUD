@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import io.micrometer.core.annotation.Timed;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.CreateReportRequest;
@@ -21,6 +22,7 @@ public class ReportController {
   }
 
   @PostMapping
+  @Timed(value = "createReport", description = "Create a player report")
   public ResponseEntity<ApiResponse<ReportDto>> createReport(
       @Valid @RequestBody CreateReportRequest request) {
     ReportDto dto = reportService.createReport(request);

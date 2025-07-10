@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import io.micrometer.core.annotation.Timed;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.FeatureFlagDto;
@@ -21,6 +22,7 @@ public class FeatureFlagController {
   }
 
   @PostMapping("/toggle")
+  @Timed(value = "featureFlagToggle", description = "Toggle a runtime feature flag")
   public ResponseEntity<ApiResponse<FeatureFlagDto>> toggle(
       @Valid @RequestBody ToggleFeatureFlagRequest request) {
     FeatureFlagDto dto = service.toggleFlag(request);

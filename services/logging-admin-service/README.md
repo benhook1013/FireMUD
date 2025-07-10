@@ -16,6 +16,12 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
+### Observability
+
+Metrics are available at `http://localhost:8080/actuator/prometheus` and
+OpenTelemetry traces are exported to the collector defined in
+[`GrpcConfig`](src/main/java/net/firedevops/firemud/config/GrpcConfig.java).
+
 ## Environment Variables
 
 The service relies on standard Spring Boot properties for PostgreSQL and Redis connections.
