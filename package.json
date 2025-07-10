@@ -2,10 +2,10 @@
   "name": "firemud-root",
   "private": true,
   "devDependencies": {
-    "@redocly/openapi-cli": "^1.0.0-beta.95",
+    "@redocly/cli": "^1.34.4",
     "markdownlint-cli2": "^0.18.1"
   },
   "scripts": {
-    "openapi:lint": "npx openapi lint \"services/**/openapi.yaml\""
+    "openapi:lint": "npx @redocly/cli lint \"services/**/openapi.yaml\""
   }
 }
