@@ -75,4 +75,64 @@ class TelnetServerHandlerTest {
 
     verify(ws, times(1)).sendText(anyString(), eq(true));
   }
+
+  @Test
+  void unsupportedTelnetCommandsAreDropped() {
+    TelnetServerHandler handler =
+        new TelnetServerHandler("ws://localhost/ws", new ConnectionThrottler(1), 5);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    when(ctx.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    WebSocket ws = mock(WebSocket.class);
+    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
+    org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
+    handler.setWebSocket(ws);
+
+    byte[] bytes = {(byte) 255, (byte) 1, 'l', 'o', 'o', 'k'};
+    String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+    handler.channelRead0(ctx, msg);
+
+    verify(ws).sendText("look", true);
+  }
+
+  @Test
+  void controlCharactersAreRemoved() {
+    TelnetServerHandler handler =
+        new TelnetServerHandler("ws://localhost/ws", new ConnectionThrottler(1), 5);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    when(ctx.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    WebSocket ws = mock(WebSocket.class);
+    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
+    org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
+    handler.setWebSocket(ws);
+
+    byte[] bytes = {'t', 'e', 's', 't', 7};
+    String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+    handler.channelRead0(ctx, msg);
+
+    verify(ws).sendText("test", true);
+  }
+
+  @Test
+  void emptyAfterSanitizeIsIgnored() {
+    TelnetServerHandler handler =
+        new TelnetServerHandler("ws://localhost/ws", new ConnectionThrottler(1), 5);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    when(ctx.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    WebSocket ws = mock(WebSocket.class);
+    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
+    org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
+    handler.setWebSocket(ws);
+
+    byte[] bytes = {(byte) 255, (byte) 1};
+    String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+    handler.channelRead0(ctx, msg);
+
+    verify(ws, times(0)).sendText(anyString(), eq(true));
+  }
 }

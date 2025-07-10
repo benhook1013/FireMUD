@@ -77,11 +77,7 @@ seamlessly with cert-manager for automatic rotation.
 ## 🔌 Telnet Command Handling and Future Controls
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ and **never contacts internal services directly**.
-- Future plans include:
-  - Enforcing a **whitelisted subset of Telnet protocol commands** (legacy compatibility only)
-  - Applying **sanitization** to Telnet input to mitigate malformed command injection
-
-These controls are not yet implemented but are expected to strengthen security against legacy protocol edge cases.
+- The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences.
 
 ---
 
@@ -104,7 +100,7 @@ These controls are not yet implemented but are expected to strengthen security a
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
 | Brute-Force Defense       | Per-IP tracking, blacklisting, global throttle delays                    |
 | Abuse Detection           | Current: login only; Future: command-level heuristics                    |
-| Telnet Controls           | Future: Telnet protocol command whitelist + sanitization                                         |
+| Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
 | Admin Role Access         | JWT-only; no special network-level restrictions                          |
 | Zero Trust                | Not currently adopted; mTLS and JWTs provide strong internal identity    |
 | 2FA                       | Not implemented; optional future enhancement for elevated roles          |
