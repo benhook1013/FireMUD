@@ -23,6 +23,8 @@ The World Management Service stores and manages game world data such as rooms, r
   data into its schema, ensuring world data matches the active version. See
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
+- World creation for new games also runs as a Saga, outlined in
+  [World Creation Workflow](world-creation-workflow.md).
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).

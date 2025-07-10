@@ -2,7 +2,16 @@ package net.firedevops.firemud.repository;
 
 import net.firedevops.firemud.entity.Region;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-public interface RegionRepository extends JpaRepository<Region, Long> {}
+public interface RegionRepository extends JpaRepository<Region, Long> {
+
+  @Modifying
+  @Transactional
+  @Query("delete from Region r where r.tenantId = :tenantId")
+  void deleteByTenantId(Long tenantId);
+}
