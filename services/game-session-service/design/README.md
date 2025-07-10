@@ -63,3 +63,4 @@ grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
   for how sessions migrate between clusters.
 - Metrics emitted by this service feed the operator
   [Analytics Dashboards](../../../design/architecture/microservices/logging-admin-service/analytics-dashboards.md).
+  Prometheus scrapes metrics from `/actuator/prometheus`.
