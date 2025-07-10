@@ -2,9 +2,9 @@
 
 - [ ] **Expand Game Design Service**
   - [ ] Provide game templates and configuration tools
-  - [ ] Enable publishing of game versions
+  - [x] Enable publishing of game versions
   - [ ] Use saga orchestrator for game publishing workflow
-  - [ ] Ensure domain services copy data by `version_id` and never query the design database at runtime
+  - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
   - [x] Create design-time database models
 - [ ] **Develop Game Design Service**
   - [ ] Implement world editing & customization tools
@@ -26,11 +26,11 @@
 
 ## Versioning & Runtime Configuration
 
-- [ ] Implement cross-service game version publishing workflow
-  - [x] Store immutable versions in the Game Design Service
-  - [ ] Copy published data to domain services using the `version_id`
-  - [ ] Activate versions and runtime flags via the Game Session Service
-  - [ ] Expose admin APIs for runtime flag toggles through the Logging & Admin Service
+- [x] Implement cross-service game version publishing workflow
+- [x] Store immutable versions in the Game Design Service
+- [x] Copy published data to domain services using the `version_id`
+- [ ] Activate versions and runtime flags via the Game Session Service
+- [ ] Expose admin APIs for runtime flag toggles through the Logging & Admin Service
 
 ## Reusable Microservice Checklist
 
@@ -57,7 +57,7 @@ participate in CI.
 
 - [x] Define gRPC service stubs with explicit `Request`/`Response` messages
 - [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
-- [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
+- [x] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
@@ -138,7 +138,7 @@ participate in CI.
 
 - [x] Create `design/README.md` summarizing APIs and sample requests
 - [x] Document proto contracts and any Redis keys in the service README
-- [ ] Document required environment variables and configuration
+- [x] Document required environment variables and configuration
 - [x] Note `tenantId` handling and cross-service dependencies
 - [x] Add a design document under `design/architecture/microservices/<service>/README.md`
 
