@@ -7,7 +7,7 @@
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [ ] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
-  - [ ] Expose JWKS endpoint for token verification
+  - [x] Expose JWKS endpoint for token verification
   - [ ] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
   - [ ] Add optional 2FA for admin and moderator roles
@@ -15,16 +15,16 @@
   - [ ] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages
   - [ ] Configure SMTP provider and test templates
-  - [ ] Document email and notification design in `account-service/design/README.md`
-  - [ ] Add asynchronous NotificationService components with gRPC endpoints
+  - [x] Document email and notification design in `account-service/design/README.md`
+  - [x] Add asynchronous NotificationService components with gRPC endpoints
 - [ ] **Develop Monetization & Payment Module**
   - [ ] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
   - [ ] Enforce platform fee on transactions
   - [ ] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows
-  - [ ] Create `payment_transaction` and `subscription` entities in the Account Service
-  - [ ] Add gRPC methods in `AccountService` for payments
+  - [x] Create `payment_transaction` and `subscription` entities in the Account Service
+  - [x] Add gRPC methods in `AccountService` for payments
   - [x] Define proto contracts for payment and subscription flows in the account proto namespace
   - [x] Add Flyway migration scripts for payment tables
   - [x] Document monetization design in `account-service/design/README.md`

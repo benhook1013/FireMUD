@@ -13,7 +13,7 @@ The proto definitions live in [`payment_service.proto`](../../../protos/account/
 
 ## Email & Notification Design
 
-This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables specify SMTP credentials.
+This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables specify SMTP credentials. The gRPC API is defined in [`notification_service.proto`](../../../protos/account/v1/notification_service.proto).
 
 ## REST & gRPC Endpoints
 
@@ -21,6 +21,7 @@ This service sends verification and password reset emails using a configured SMT
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /accounts` – create a new account and profile.
+- `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 
 Example request:
 
@@ -45,6 +46,7 @@ Example response:
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`account_service.proto`](../../../protos/account/v1/account_service.proto).
 - `CreateAccount(CreateAccountRequest) returns (CreateAccountResponse)` – registers a new user.
+- `SendNotification(SendNotificationRequest) returns (SendNotificationResponse)` – deliver account notifications asynchronously.
 
 Call the gRPC method with:
 
