@@ -4,6 +4,29 @@ Refer to [design/README.md](design/README.md) for architecture details.
 
 - **Proto definitions**: [../../protos/game-session/v1](../../protos/game-session/v1)
 
+## Configuration
+
+The service relies on `DatabaseAutoConfiguration` and `RedisProperties` from the
+common library. Connection details are supplied via environment variables as
+described in the [Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md)
+doc. Most setups can use the defaults from `.env.sample`:
+
+```bash
+FIREMUD_POSTGRES_HOST=postgres
+FIREMUD_POSTGRES_PORT=5432
+FIREMUD_POSTGRES_USER=firemud
+FIREMUD_POSTGRES_PASSWORD=firemud
+FIREMUD_POSTGRES_DB=firemud
+FIREMUD_REDIS_HOST=redis
+FIREMUD_REDIS_PORT=6379
+```
+
+Each request includes a `tenantId` that identifies the game instance. Database
+rows and Redis keys are prefixed with this value to keep game data isolated as
+outlined in the [Multi-Tenancy](../../design/architecture/system-architecture-multi-tenancy.md)
+document. The service coordinates with the Game Logic, Entity Management and
+World Management services over gRPC.
+
 ## Running Locally
 
 ```bash

@@ -6,6 +6,17 @@ The design for this service is located here:
 
 This stub exists to make the design easy to find from the service source tree.
 
+## Configuration
+
+Environment variables configure the PostgreSQL and Redis connections via
+`DatabaseAutoConfiguration` and `RedisProperties`. Refer to the
+[Deployment Environments](../../../design/architecture/infrastructure/deployment-environments.md)
+document for details. The `.env.sample` file contains example values.
+
+The service enforces multi-tenant isolation. All tables include a `tenant_id`
+column and Redis keys are prefixed with this value as outlined in the
+[Multi-Tenancy design](../../../design/architecture/system-architecture-multi-tenancy.md).
+
 ## REST & gRPC Endpoints
 
 ### REST
