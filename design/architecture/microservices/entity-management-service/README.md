@@ -31,6 +31,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
   outlined in the [Security Architecture](../system-architecture-security.md).
 
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
 
 ## Key Features
 
@@ -72,8 +73,8 @@ details on shared infrastructure components.
 ## Operational Notes
 
 - Runs as a scalable Deployment in Kubernetes, exposing `/actuator/health` for
-  readiness and liveness checks.
-- Prometheus scrapes service metrics while Fluent Bit ships logs to
+  readiness and liveness checks. Metrics are available at `/actuator/prometheus`.
+- Prometheus scrapes these metrics while Fluent Bit ships logs to
   Elasticsearch; tracing integrates with OpenTelemetry.
 - Local Docker Compose uses the same Spring profiles to mimic production, as
   documented in

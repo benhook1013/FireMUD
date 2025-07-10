@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.InventoryEntryDto;
@@ -24,6 +25,7 @@ public class InventoryServiceImpl implements InventoryService {
   private final ItemRepository itemRepository;
 
   @Override
+  @Timed(value = "inventory.list")
   public List<InventoryEntryDto> listInventory(Long characterId) {
     return repository.findAll().stream()
         .filter(e -> e.getId().getCharacterId().equals(characterId))
@@ -33,6 +35,7 @@ public class InventoryServiceImpl implements InventoryService {
 
   @Override
   @Transactional
+  @Timed(value = "inventory.add")
   public InventoryEntryDto addItem(Long characterId, Long itemId, int quantity) {
     InventoryKey key = new InventoryKey();
     key.setCharacterId(characterId);
@@ -55,6 +58,7 @@ public class InventoryServiceImpl implements InventoryService {
 
   @Override
   @Transactional
+  @Timed(value = "inventory.remove")
   public void removeItem(Long characterId, Long itemId) {
     InventoryKey key = new InventoryKey();
     key.setCharacterId(characterId);
