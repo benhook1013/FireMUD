@@ -38,3 +38,4 @@ These files describe style, architecture, and best practices for Java/Spring pro
 - Code quality tools (Checkstyle and SpotBugs) run during the `check` task, and JaCoCo produces coverage reports.
 - CI also performs a Trivy security scan.
 - When adding new features, include JUnit tests and instrument metrics and tracing as described in `design/architecture/system-architecture-logging-monitoring.md`.
+- Reuse the `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from `services/common-library` to ensure all gRPC endpoints emit logs, metrics, and spans consistently.
