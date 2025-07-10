@@ -16,6 +16,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa:3.5.3")
+    implementation("org.springframework.boot:spring-boot-starter-data-redis:3.5.3")
     implementation(project(":common-library"))
     implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
     implementation("io.micrometer:micrometer-core:1.15.1")

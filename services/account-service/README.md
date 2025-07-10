@@ -31,6 +31,9 @@ connections. Typical variables when running locally are:
 | `SPRING_DATASOURCE_PASSWORD` | Database password |
 | `SPRING_REDIS_HOST` | Redis hostname |
 | `SPRING_REDIS_PORT` | Redis port |
+| `FIREMUD_AUTH_JWT_SECRET` | Secret key for JWT signing |
+| `FIREMUD_AUTH_JWT_EXPIRATION_MS` | JWT expiration time in ms |
+| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Session token TTL in ms |
 
 Values can also be configured via `application.yml` profiles for different
 environments.
