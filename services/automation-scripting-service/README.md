@@ -3,6 +3,7 @@
 Refer to [design/README.md](design/README.md) for architecture details.
 
 - **Proto definitions**: [../../protos/automation-scripting/v1](../../protos/automation-scripting/v1) (uses shared `ErrorDetail`)
+- **OpenAPI spec**: [src/main/resources/openapi.yaml](src/main/resources/openapi.yaml)
 
 ## Running Locally
 
