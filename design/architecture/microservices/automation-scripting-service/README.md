@@ -35,7 +35,7 @@ For details on how scripts are authored and executed safely, see [System Archite
 - Persistent NPC memory and dynamic reactions  
 - Timers and delayed actions for asynchronous events  
 - Tick-based AI execution for efficient CPU usage and fair scheduling — AI logic runs during tick cycles only when triggered by events, avoiding constant background processing
-- Faction reputation influences NPC aggression states
+- Faction reputation influences NPC aggression states. NPCs may become **FLEEING** or **SURRENDERED** when low on health or morale, allowing players to resolve encounters non-lethally.
 
 ### Data Model
 
