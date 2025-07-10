@@ -5,6 +5,9 @@ spring:
     name: account-service
   flyway:
     enabled: true
+grpc:
+  server:
+    port: 6565
 
 management:
   endpoints:
