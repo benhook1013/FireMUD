@@ -30,16 +30,26 @@ public class TickServiceImpl implements TickService {
   private long tickDurationMs;
 
   private Counter enqueueCounter;
+  private Counter redisErrorCounter;
   private Timer tickTimer;
+  private RedisScript<Long> stageScript;
   private RedisScript<Long> commitScript;
+  private RedisScript<Long> rollbackScript;
 
   @PostConstruct
   void init() {
     this.enqueueCounter = meterRegistry.counter("game_session_commands_enqueued_total");
+    this.redisErrorCounter = meterRegistry.counter("game_session_redis_errors_total");
     this.tickTimer = meterRegistry.timer("game_session_tick_duration_ms");
-    ResourceScriptSource source =
+    ResourceScriptSource commitSrc =
         new ResourceScriptSource(new ClassPathResource("redis/tick_commit.lua"));
-    this.commitScript = RedisScript.of(source.getResource(), Long.class);
+    ResourceScriptSource stageSrc =
+        new ResourceScriptSource(new ClassPathResource("redis/tick_stage.lua"));
+    ResourceScriptSource rollbackSrc =
+        new ResourceScriptSource(new ClassPathResource("redis/tick_rollback.lua"));
+    this.stageScript = RedisScript.of(stageSrc.getResource(), Long.class);
+    this.commitScript = RedisScript.of(commitSrc.getResource(), Long.class);
+    this.rollbackScript = RedisScript.of(rollbackSrc.getResource(), Long.class);
   }
 
   @Override
@@ -59,7 +69,20 @@ public class TickServiceImpl implements TickService {
       return;
     }
     try {
-      tickTimer.record(() -> redisTemplate.execute(commitScript, List.of(queueKey(sessionId))));
+      Long pending = redisTemplate.opsForList().size(pendingKey(sessionId));
+      if (pending != null && pending > 0) {
+        logger.info("Replaying {} pending commands for {}", pending, sessionId);
+        tickTimer.record(() -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId))));
+      }
+      tickTimer.record(
+          () ->
+              redisTemplate.execute(
+                  stageScript, List.of(queueKey(sessionId), pendingKey(sessionId))));
+      tickTimer.record(() -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId))));
+    } catch (Exception ex) {
+      redisErrorCounter.increment();
+      logger.error("Tick processing failed, rolling back", ex);
+      redisTemplate.execute(rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId)));
     } finally {
       redisTemplate.delete(lockKey);
     }
@@ -81,5 +104,9 @@ public class TickServiceImpl implements TickService {
 
   private String stateKey(Long sessionId) {
     return "session:" + sessionId;
+  }
+
+  private String pendingKey(Long sessionId) {
+    return "tick:pending:" + sessionId;
   }
 }

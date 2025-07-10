@@ -1,7 +1,7 @@
-local queue = KEYS[1]
+local pending = KEYS[1]
 local processed = 0
 while true do
-  local cmd = redis.call('LPOP', queue)
+  local cmd = redis.call('LPOP', pending)
   if not cmd then
     break
   end

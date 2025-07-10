@@ -44,6 +44,7 @@ class TickServiceImplTest {
     when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
     service.processTick(2L);
     ArgumentCaptor<RedisScript> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
-    verify(redisTemplate).execute(scriptCaptor.capture(), any(List.class));
+    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(scriptCaptor.capture(), any(List.class));
   }
 }
