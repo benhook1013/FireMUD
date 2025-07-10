@@ -49,6 +49,7 @@ Testing:
 - Integration: Spring Test
 - Load: Gatling
 - New features must include unit tests and, where applicable, integration tests.
+- Verify coverage with JaCoCo by running `./gradlew check` before committing.
 
 Monetization:
 
@@ -130,4 +131,5 @@ Monetization:
 - Maintain clean project structure.
 - Use `@Timed` for Prometheus metrics.
 - Instrument new services with Micrometer metrics and OpenTelemetry tracing using existing interceptors and configuration.
+- Ensure new endpoints record metrics and create spans for business operations.
 - Avoid returning nulls; use transactions for DB consistency.
