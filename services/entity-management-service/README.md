@@ -3,6 +3,7 @@
 Refer to [design/README.md](design/README.md) for architecture details.
 
 - **Proto definitions**: [../../protos/entity-management/v1](../../protos/entity-management/v1)
+- **OpenAPI spec**: [src/main/resources/openapi.yaml](src/main/resources/openapi.yaml)
 
 ## Running Locally
 
