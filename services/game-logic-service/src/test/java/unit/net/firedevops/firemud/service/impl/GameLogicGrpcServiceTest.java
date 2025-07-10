@@ -13,7 +13,6 @@ import net.firedevops.firemud.logic.event.EventDispatcher;
 import net.firedevops.firemud.logic.script.NoOpScriptingHook;
 import net.firedevops.firemud.logic.service.CommandServiceImpl;
 import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.service.impl.PingServiceImpl;
 import org.junit.jupiter.api.Test;
 
 class GameLogicGrpcServiceTest {

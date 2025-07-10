@@ -12,6 +12,7 @@ import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.entity.Account;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.service.session.SessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -20,6 +21,7 @@ import org.mockito.MockitoAnnotations;
 
 class AccountServiceImplTest {
   @Mock private AccountRepository accountRepository;
+  @Mock private SessionService sessionService;
 
   private AccountServiceImpl service;
 
@@ -28,7 +30,7 @@ class AccountServiceImplTest {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
-    service = new AccountServiceImpl(accountRepository, mapper, jwtUtil);
+    service = new AccountServiceImpl(accountRepository, mapper, jwtUtil, sessionService);
   }
 
   @Test
@@ -56,6 +58,7 @@ class AccountServiceImplTest {
     String token = service.authenticate(1L, "demo", "password");
 
     assertNotNull(token);
+    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, token);
   }
 
   @Test

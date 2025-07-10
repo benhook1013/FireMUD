@@ -24,12 +24,17 @@ public class AccountServiceImpl implements AccountService {
   private final AccountRepository accountRepository;
   private final AccountMapper accountMapper;
   private final JwtUtil jwtUtil;
+  private final net.firedevops.firemud.service.session.SessionService sessionService;
 
   public AccountServiceImpl(
-      AccountRepository accountRepository, AccountMapper accountMapper, JwtUtil jwtUtil) {
+      AccountRepository accountRepository,
+      AccountMapper accountMapper,
+      JwtUtil jwtUtil,
+      net.firedevops.firemud.service.session.SessionService sessionService) {
     this.accountRepository = accountRepository;
     this.accountMapper = accountMapper;
     this.jwtUtil = jwtUtil;
+    this.sessionService = sessionService;
   }
 
   @Override
@@ -55,7 +60,10 @@ public class AccountServiceImpl implements AccountService {
     if (!hash.equals(account.getPasswordHash())) {
       throw new IllegalArgumentException("Invalid credentials");
     }
-    return jwtUtil.generateToken(account.getId().toString(), Map.of("accountId", account.getId()));
+    String token =
+        jwtUtil.generateToken(account.getId().toString(), Map.of("accountId", account.getId()));
+    sessionService.storeSession(tenantId, account.getId(), token);
+    return token;
   }
 
   private String hashPassword(String password) {
