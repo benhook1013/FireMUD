@@ -2,11 +2,11 @@
 
 - [x] **Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway**
 - [x] **Define Telnet bridge gRPC APIs for TCP Proxy Service**
-- [ ] **Develop TCP Proxy Service**
+- [x] **Develop TCP Proxy Service**
   - [x] Implement Telnet networking and WebSocket bridging
   - [x] Buffer Telnet input and discard on disconnect to support reconnection
   - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
-  - [ ] Enforce Telnet protocol command whitelist and input sanitization
+  - [x] Enforce Telnet protocol command whitelist and input sanitization
   - [x] Implement connection throttling and rate limits
   - [x] Support TLS termination for secure Telnet clients
 
@@ -65,7 +65,7 @@ participate in CI.
 ## 📚 Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
-- [ ] Apply logging, tracing, and security interceptors from the library
+- [x] Apply logging, tracing, and security interceptors from the library
 - [ ] Use provided autoconfiguration classes to reduce boilerplate
 - [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
@@ -104,11 +104,11 @@ participate in CI.
 
 ## 📈 Observability & Tracing
 
-- [ ] Use Micrometer for Prometheus metrics
-- [ ] Enable OpenTelemetry tracing
-- [ ] Use shared interceptors to propagate `traceId` and `correlationId`
+- [x] Use Micrometer for Prometheus metrics
+- [x] Enable OpenTelemetry tracing
+- [x] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
-- [ ] Expose `/actuator/prometheus` for scraping by Prometheus
+- [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
 
