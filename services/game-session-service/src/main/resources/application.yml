@@ -15,3 +15,5 @@ management:
     health:
       probes:
         enabled: true
+game:
+  tick-duration-ms: 1000

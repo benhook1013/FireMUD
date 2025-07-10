@@ -8,4 +8,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface GameInstanceRepository extends JpaRepository<GameInstance, Long> {
   Optional<GameInstance> findFirstByOwnerAccountIdAndStatus(Long ownerAccountId, String status);
+
+  java.util.List<GameInstance> findByStatus(String status);
 }
