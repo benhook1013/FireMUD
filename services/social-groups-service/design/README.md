@@ -25,6 +25,14 @@ curl -X POST http://localhost:8080/friends \
   -d '{"tenantId":1,"accountId":100,"friendAccountId":200}'
 ```
 
+- `POST /mail` – send an asynchronous in-game mail message.
+
+```bash
+curl -X POST http://localhost:8080/mail \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"senderAccountId":100,"recipientAccountId":200,"subject":"Hi","content":"Hello"}'
+```
+
 ### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`social_groups_service.proto`](../../../protos/social-groups/v1/social_groups_service.proto).

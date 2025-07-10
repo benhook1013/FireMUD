@@ -11,6 +11,7 @@ service SocialGroupsService {
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
   rpc CreateGuild(CreateGuildRequest) returns (CreateGuildResponse);
   rpc AddFriend(AddFriendRequest) returns (AddFriendResponse);
+  rpc SendMail(SendMailRequest) returns (SendMailResponse);
 }
 
 message PingRequest {}
@@ -50,6 +51,19 @@ message AddFriendRequest {
 }
 
 message AddFriendResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message SendMailRequest {
+  string tenant_id = 1;
+  string sender_account_id = 2;
+  string recipient_account_id = 3;
+  string subject = 4;
+  string content = 5;
+}
+
+message SendMailResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }
