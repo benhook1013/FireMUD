@@ -74,6 +74,12 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ## Operational Notes
 
+Environment variables supply PostgreSQL and Redis connection details. The
+common library's `DatabaseAutoConfiguration` reads values from
+`FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` as described in the
+[Deployment Environments](../../infrastructure/deployment-environments.md)
+document.
+
 - Deployed in Kubernetes with multiple replicas; Redis provides the shared state needed for sticky sessions.
 - Exposes `/actuator/health` for readiness and liveness probes used by the cluster.
 - Metrics and traces flow to Prometheus and OpenTelemetry, and logs are shipped via Fluent Bit to Elasticsearch.

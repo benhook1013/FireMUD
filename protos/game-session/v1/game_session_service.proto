@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package game_session.v1;
 
+import "shared/v1/errors.proto";
+
 option java_package = "net.firedevops.firemud.gamesession.v1";
 option java_multiple_files = true;
 
@@ -19,6 +21,7 @@ message StartSessionRequest {
 
 message StartSessionResponse {
   string session_id = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message EnqueueCommandRequest {
@@ -28,6 +31,7 @@ message EnqueueCommandRequest {
 
 message EnqueueCommandResponse {
   bool accepted = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message QueryStateRequest {
@@ -36,10 +40,12 @@ message QueryStateRequest {
 
 message QueryStateResponse {
   string state_json = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
 }
