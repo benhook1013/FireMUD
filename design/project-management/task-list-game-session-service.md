@@ -3,13 +3,13 @@
 - [ ] **Expand Game Session Service**
   - [x] Implement game instance lifecycle (start, stop, restart)
   - [x] Support multi-tenancy for hosted games
-  - [ ] Implement tick orchestration using Redis for command queues
-  - [ ] Implement Lua-based staging, commit, and rollback scripts for tick transactions
-  - [ ] Implement distributed lock acquisition in Redis for tick updates
-  - [ ] Implement tick replay and crash recovery logic
+  - [x] Implement tick orchestration using Redis for command queues
+  - [x] Implement Lua-based staging, commit, and rollback scripts for tick transactions
+  - [x] Implement distributed lock acquisition in Redis for tick updates
+  - [x] Implement tick replay and crash recovery logic
   - [x] Persist session state in Redis for reconnect recovery
   - [x] Enforce single-session control per character (session takeover on new login)
-  - [ ] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
+  - [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
   - [x] Plan for cross-region sharding and session handoff
   - [x] Implement `game_manifest` table for version coordination
   - [x] Emit gameplay analytics for operators
@@ -111,7 +111,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+ - [x] Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
