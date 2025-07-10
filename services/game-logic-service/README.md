@@ -21,3 +21,19 @@ To run the entire stack:
 ```bash
 ./gradlew devUp
 ```
+
+## Environment Variables
+
+This service relies on the standard `FIREMUD_` prefixed variables for
+PostgreSQL and Redis configuration. Common settings in development are:
+
+| Variable | Purpose |
+| --- | --- |
+| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | Database user |
+| `SPRING_DATASOURCE_PASSWORD` | Database password |
+| `SPRING_REDIS_HOST` | Redis hostname |
+| `SPRING_REDIS_PORT` | Redis port |
+
+See the [Environment Variables & Secrets Management](../../design/architecture/infrastructure/environment-and-secrets.md)
+doc for defaults and profile-based configuration.

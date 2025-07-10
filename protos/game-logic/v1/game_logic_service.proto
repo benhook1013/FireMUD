@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package game_logic.v1;
 
+import "shared/v1/errors.proto";
+
 option java_package = "net.firedevops.firemud.gamelogic.v1";
 option java_multiple_files = true;
 
@@ -14,6 +16,7 @@ message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message ExecuteCommandRequest {
@@ -24,4 +27,5 @@ message ExecuteCommandRequest {
 
 message ExecuteCommandResponse {
   string result = 1;
+  shared.v1.ErrorDetail error = 2;
 }

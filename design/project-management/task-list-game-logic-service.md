@@ -34,7 +34,7 @@ participate in CI.
 
 - [x] Define gRPC service stubs with explicit `Request`/`Response` messages
 - [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
-- [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
+- [x] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
@@ -115,7 +115,7 @@ participate in CI.
 
 - [x] Create `design/README.md` summarizing APIs and sample requests
 - [x] Document proto contracts and any Redis keys in the service README
-- [ ] Document required environment variables and configuration
+- [x] Document required environment variables and configuration
 - [x] Note `tenantId` handling and cross-service dependencies
 - [x] Add a design document under `design/architecture/microservices/<service>/README.md`
 
