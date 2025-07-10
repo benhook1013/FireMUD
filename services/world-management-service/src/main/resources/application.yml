@@ -15,3 +15,7 @@ management:
     health:
       probes:
         enabled: true
+
+world:
+  instance:
+    expiration-hours: 24

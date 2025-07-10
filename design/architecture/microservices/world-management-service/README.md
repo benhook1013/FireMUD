@@ -47,6 +47,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Tables for `region`, `zone`, and `room` define the world hierarchy.
 - `terrain` and `object_spawn` tables support procedural generation.
 - `instance` table tracks temporary copies of zones for instanced gameplay.
+- `expires_at` column defines when instances are cleaned up by a scheduled job.
 - Redis caches hot rooms for active sessions to speed up lookups.
 
 ### gRPC APIs
