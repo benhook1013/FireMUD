@@ -4,7 +4,7 @@
   - [x] Collect logs from all services and provide search dashboards
   - [x] Allow players to report others for abuse/violations
   - [x] Store logs for admin moderation and auditing
-  - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
+  - [x] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
     - [x] Provide analytics dashboards for operators
     - [x] Define moderation policies including profanity filters
   - [ ] Integrate Alertmanager for automated alerts

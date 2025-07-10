@@ -40,3 +40,13 @@ and chat logs from the
 [Social & Groups Service](../../design/architecture/microservices/social-groups-service/README.md).
 Game Session metrics are streamed from the
 [Game Session Service](../../design/architecture/microservices/game-session-service/README.md).
+
+## Feature Flags
+
+Toggle runtime flags via REST:
+
+```bash
+curl -X POST http://localhost:8080/feature-flags/toggle \
+  -H "Content-Type: application/json" \
+  -d '{"tenantId":1,"name":"double_xp","enabled":true}'
+```
