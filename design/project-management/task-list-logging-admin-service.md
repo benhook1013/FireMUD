@@ -3,7 +3,7 @@
 - [ ] **Develop Logging & Admin Service**
   - [x] Collect logs from all services and provide search dashboards
   - [x] Allow players to report others for abuse/violations
-  - [ ] Store logs for admin moderation and auditing
+  - [x] Store logs for admin moderation and auditing
   - [ ] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
     - [x] Provide analytics dashboards for operators
     - [x] Define moderation policies including profanity filters
@@ -121,8 +121,8 @@ participate in CI.
 
 - [x] Create `design/README.md` summarizing APIs and sample requests
 - [x] Document proto contracts and any Redis keys in the service README
-- [ ] Document required environment variables and configuration
-- [ ] Note `tenantId` handling and cross-service dependencies
+  - [x] Document required environment variables and configuration
+  - [x] Note `tenantId` handling and cross-service dependencies
 - [x] Add a design document under `design/architecture/microservices/<service>/README.md`
 
 ---
