@@ -111,5 +111,9 @@ stubs.
 
 - Web UI for creating and testing scripts.
 - Additional AI modules for advanced behaviors.
+- Procedural world generation hooks working in tandem with the World Management Service.
+- Faction and reputation tracking to influence NPC reactions.
+- NPC aggression states, fleeing and surrender logic.
+- NPC formations and squad AI for coordinated encounters.
 - Fairness quotas and per-script resource limits to prevent abuse, as outlined
   in [System Architecture: Scripting & Automation](../system-architecture-scripting.md#fairness--abuse-prevention-planned).

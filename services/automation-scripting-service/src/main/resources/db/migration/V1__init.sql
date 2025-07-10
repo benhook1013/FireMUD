@@ -1,8 +1,9 @@
-CREATE TABLE script (
+CREATE TABLE scripts (
     id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
     name VARCHAR(100) NOT NULL,
-    version INT NOT NULL,
-    content TEXT NOT NULL
+    version VARCHAR(20) NOT NULL,
+    definition TEXT NOT NULL
 );
 
 CREATE TABLE npc_memory (
