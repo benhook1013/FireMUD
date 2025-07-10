@@ -20,6 +20,9 @@ dependencies {
     implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive:3.5.3")
     implementation(project(":common-library"))
+    implementation("io.opentelemetry:opentelemetry-api:1.38.0")
+    implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
 }
 
 protobuf {
