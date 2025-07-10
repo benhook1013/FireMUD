@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package gamedesign.v1;
 
+import "shared/v1/errors.proto";
+
 option java_package = "net.firedevops.firemud.gamedesign.v1";
 option java_multiple_files = true;
 
@@ -20,6 +22,7 @@ message SaveRevisionRequest {
 
 message SaveRevisionResponse {
   int64 revision_id = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message PublishVersionRequest {
@@ -29,6 +32,7 @@ message PublishVersionRequest {
 
 message PublishVersionResponse {
   int64 version_id = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message ListVersionsRequest {
@@ -37,6 +41,7 @@ message ListVersionsRequest {
 
 message ListVersionsResponse {
   repeated Version versions = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message Version {
@@ -49,4 +54,5 @@ message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
 }
