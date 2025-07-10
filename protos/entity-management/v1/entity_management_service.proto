@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package entity_management.v1;
 
+import "shared/v1/errors.proto";
+
 option java_package = "net.firedevops.firemud.entitymanagement.v1";
 option java_multiple_files = true;
 
@@ -20,6 +22,7 @@ message CreateCharacterRequest {
 
 message CreateCharacterResponse {
   string character_id = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message UpdateEntityRequest {
@@ -28,6 +31,7 @@ message UpdateEntityRequest {
 
 message UpdateEntityResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message QueryInventoryRequest {
@@ -36,10 +40,12 @@ message QueryInventoryRequest {
 
 message QueryInventoryResponse {
   repeated string item_ids = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
 }

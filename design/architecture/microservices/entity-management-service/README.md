@@ -108,3 +108,5 @@ proto files, run `./gradlew generateProto` to update generated sources.
 
 - Entity graph caching for faster lookups.
 - Support for complex crafting recipes.
+- Cross-game account linking to share a single profile across multiple games (see
+  [Multi-Tenancy](../system-architecture-multi-tenancy.md)).
