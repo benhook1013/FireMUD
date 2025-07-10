@@ -16,21 +16,32 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
-## Environment Variables
+## Configuration
 
-The service relies on standard Spring Boot properties for database and Redis
-connections. Typical variables include:
+Connection settings are provided by `DatabaseAutoConfiguration` and
+`RedisProperties` from the common library. See
+[Deployment Environments](../../design/architecture/infrastructure/deployment-environments.md)
+for defaults. Typical values from `.env.sample`:
+
+```bash
+FIREMUD_POSTGRES_HOST=postgres
+FIREMUD_POSTGRES_PORT=5432
+FIREMUD_POSTGRES_USER=firemud
+FIREMUD_POSTGRES_PASSWORD=firemud
+FIREMUD_POSTGRES_DB=firemud
+FIREMUD_REDIS_HOST=redis
+FIREMUD_REDIS_PORT=6379
+```
 
 | Variable | Purpose |
 | --- | --- |
-| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL |
-| `SPRING_DATASOURCE_USERNAME` | Database user |
-| `SPRING_DATASOURCE_PASSWORD` | Database password |
-| `SPRING_REDIS_HOST` | Redis hostname |
-| `SPRING_REDIS_PORT` | Redis port |
-
-Values can also be specified in `application.yml` profiles for different
-environments.
+| `FIREMUD_POSTGRES_HOST` | PostgreSQL hostname |
+| `FIREMUD_POSTGRES_PORT` | PostgreSQL port |
+| `FIREMUD_POSTGRES_USER` | Database user |
+| `FIREMUD_POSTGRES_PASSWORD` | Database password |
+| `FIREMUD_POSTGRES_DB` | Database name |
+| `FIREMUD_REDIS_HOST` | Redis hostname |
+| `FIREMUD_REDIS_PORT` | Redis port |
 
 ## Redis Key Pattern
 
