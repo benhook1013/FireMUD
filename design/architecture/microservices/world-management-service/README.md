@@ -38,7 +38,7 @@ The World Management Service stores and manages game world data such as rooms, r
   shared world map.
 - Persistent world state with incremental saves.
 - Procedural generation tools for rooms and terrain.
-- Pathfinding algorithms and navmesh data for movement calculations.
+- `TravelService` implements Dijkstra-based pathfinding using the `room_exit` table.
 - Event scheduling for world-wide holidays or timed modifiers, communicating changes over gRPC. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state before notifying listeners.
 - Chunk-based world snapshots for backup and recovery.
 

@@ -41,3 +41,10 @@ Service depends on:
 - **Game Design Service** for procedural generation rules and versioned map data.
 - **Game Session Service** to deliver room information and world event updates.
 - **Automation & Scripting Service** to react to scheduled world changes.
+
+## Travel and Pathfinding
+
+The service exposes pathfinding utilities used by NPCs and movement validation.
+`TravelService` performs Dijkstra-based searches across `room_exit` records to
+return the shortest list of room IDs between two locations. This pathfinding is
+invoked by the Game Session Service when a player moves or an NPC navigates.
