@@ -65,6 +65,13 @@ grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
   [Analytics Dashboards](../../../design/architecture/microservices/logging-admin-service/analytics-dashboards.md).
 Prometheus scrapes metrics from `/actuator/prometheus`.
 
+## Runtime Feature Flags
+
+Feature flags are stored in the `feature_flag` table and can be toggled through
+the Logging & Admin Service. The Game Session Service exposes a gRPC
+`ToggleFeatureFlag` method so administrators can enable or disable experimental
+behavior without restarting a session.
+
 ## Saga Participation
 
 Game startup and shutdown are coordinated using the shared `Saga` helpers from
