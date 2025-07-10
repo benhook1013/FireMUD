@@ -1,0 +1,63 @@
+openapi: 3.0.3
+info:
+  title: Automation Scripting Service API
+  description: API for NPC automation and script management
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://api.firemud.com
+security: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    ScriptDefinitionDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        version:
+          type: string
+        definition:
+          type: string
+    CreateScriptRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        name:
+          type: string
+        version:
+          type: string
+        definition:
+          type: string
+      required:
+        - tenantId
+        - name
+        - version
+        - definition
+paths:
+  /ping:
+    get:
+      summary: Health check endpoint
+      operationId: ping
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                    example: pong
