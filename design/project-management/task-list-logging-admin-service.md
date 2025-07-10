@@ -12,8 +12,8 @@
   - [x] Evaluate adopting a zero-trust network model for internal traffic
   - [x] Create **Saga Dashboard** to inspect workflow states and failures
   - [x] Integrate saga metrics and timeout recovery
-  - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
-  - [ ] Build role-based admin UI
+  - [x] Use saga orchestrator for multi-service admin operations (bans, content revocation)
+  - [x] Build role-based admin UI
 
 ## Reusable Microservice Checklist
 
@@ -53,17 +53,17 @@ participate in CI.
 
 - [x] Meta and admin services validate JWTs using helpers from `firemud-common`
 - [x] Check `globalRoles` and `scopedRoles` where applicable
-- [ ] Gameplay services rely on the Game Session Service for session validation
+- [x] *(N/A - meta service)* Gameplay services rely on the Game Session Service for session validation
 
 ---
 
 ## 🔁 Inter-Service Communication
 
-- [ ] Use `firemud-common` protobuf types for shared messages
-- [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] Use `firemud-common` protobuf types for shared messages
+- [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
+- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
 
@@ -78,21 +78,21 @@ participate in CI.
 
 ## 🔄 Saga Participation *(if used)*
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
+- [x] Use saga helpers from `firemud-common` for workflow steps
+- [x] Emit metrics and correlation IDs for compensation and retries
 - [x] Document saga participation in `design/README.md`
 
 ---
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] *(N/A - no Redis usage)* Use Redis for transient gameplay state only
+- [x] *(N/A - no Redis usage)* Access Redis through helpers in `firemud-common`
+- [x] *(N/A - no Redis usage)* Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
+- [x] *(N/A - no Redis usage)* Validate shard-local key usage and avoid per-service caching
+- [x] *(N/A - no Redis usage)* Emit metrics for Redis connectivity and commands
+- [x] *(N/A - no Redis usage)* *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] *(N/A - no Redis usage)* Prefix all keys with `tenantId` to isolate game data
 
 ---
 
@@ -100,7 +100,7 @@ participate in CI.
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [x] Use Spring Boot Test and Testcontainers for integration tests
-- [ ] Validate contracts with smoke tests (gRPC and REST)
+- [x] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests
@@ -112,7 +112,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] *(N/A - no tick or Redis metrics)* Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---

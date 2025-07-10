@@ -32,6 +32,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Central log collection and search.
 - [Analytics dashboards](./analytics-dashboards.md) for operators.
 - Tools for banning or restricting accounts.
+- [Admin operations saga](./admin-operations-saga.md) coordinates bans across services.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
@@ -120,7 +121,7 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 
 ## Future Enhancements
 
-- Role-based admin UI.
+- [Role-based admin UI](./admin-ui.md).
 - Automated alerting for suspicious activity is configured via Prometheus
   Alertmanager (see `k8s/monitoring/alertmanager.yaml`).
 - Real-time analytics on game performance.
