@@ -1,10 +1,15 @@
 package net.firedevops.firemud.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
+import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.logic.command.DefaultCommandParser;
@@ -43,5 +48,36 @@ class GameLogicGrpcServiceTest {
         });
 
     assertEquals("pong", holder.get().getMessage());
+  }
+
+  @Test
+  void executeCommandReturnsInvalidArgument() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    GameLogicGrpcService service = new GameLogicGrpcService(pingService, commandService);
+
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    service.executeCommand(
+        ExecuteCommandRequest.newBuilder().setCommand("foo").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ExecuteCommandResponse value) {
+            fail("should not succeed");
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            error.set(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertTrue(error.get() instanceof StatusRuntimeException);
+    StatusRuntimeException ex = (StatusRuntimeException) error.get();
+    assertEquals(Status.INVALID_ARGUMENT.getCode(), ex.getStatus().getCode());
   }
 }

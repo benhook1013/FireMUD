@@ -1,5 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
@@ -9,7 +11,6 @@ import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.logic.dto.CommandResult;
 import net.firedevops.firemud.logic.service.CommandService;
 import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC endpoints for the Game Logic Service. */
@@ -34,16 +35,15 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void executeCommand(
       ExecuteCommandRequest request, StreamObserver<ExecuteCommandResponse> responseObserver) {
     CommandResult result = commandService.handleCommand(request.getCommand());
-    ExecuteCommandResponse.Builder builder =
-        ExecuteCommandResponse.newBuilder().setResult(result.result());
     if (result.error() != null) {
-      builder.setError(
-          ErrorDetail.newBuilder()
-              .setCode(result.error().code())
-              .setMessage(result.error().message())
-              .build());
+      StatusRuntimeException exception =
+          Status.INVALID_ARGUMENT.withDescription(result.error().message()).asRuntimeException();
+      responseObserver.onError(exception);
+      return;
     }
-    responseObserver.onNext(builder.build());
+    ExecuteCommandResponse response =
+        ExecuteCommandResponse.newBuilder().setResult(result.result()).build();
+    responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
 }
