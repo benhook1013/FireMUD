@@ -31,3 +31,13 @@ curl http://localhost:8080/ping
 ```bash
 grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping
 ```
+
+## Saga Participation
+
+Publishing a game version is coordinated using the Saga utilities from
+`firemud-common`. The `VersionServiceImpl` builds a workflow that first persists
+the new version and then copies design data to downstream services. If any step
+fails, previously executed actions are compensated so the database remains
+consistent. See the
+[Versioning & Runtime Configuration](../../../design/architecture/system-architecture-versioning-runtime.md)
+document for the overall flow.
