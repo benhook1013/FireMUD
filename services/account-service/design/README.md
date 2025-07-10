@@ -11,6 +11,10 @@ This stub exists to make the design easy to find from the service source tree.
 The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../design/project-management/core-requirements.md#2.8-moderation-administration--monetization). Planned entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers will expose operations for creating payment intents and managing subscriptions.
 The proto definitions live in [`payment_service.proto`](../../../protos/account/v1/payment_service.proto).
 
+## Email & Notification Design
+
+This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables specify SMTP credentials.
+
 ## REST & gRPC Endpoints
 
 ### REST
