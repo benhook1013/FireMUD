@@ -2,8 +2,8 @@
 
 - [ ] **Develop World Management Service**
   - [x] Implement world map storage (rooms, regions)
-  - [ ] Implement instance-based game spaces (e.g., dungeons, player housing)
-  - [ ] Define instance rules, expiration, and persistence
+  - [x] Implement instance-based game spaces (e.g., dungeons, player housing)
+  - [x] Define instance rules, expiration, and persistence
   - [ ] Implement world event scheduling system (seasonal events, resets)
   - [ ] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [ ] Implement travel & navigation system (movement, teleportation, pathfinding)
