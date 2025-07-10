@@ -117,3 +117,22 @@ Service definitions reside in
 
 - Cross-region sharding for massive worlds.
 - Built-in analytics for player behavior.
+
+### Cross-Region Sharding and Session Handoff
+
+Massive games may outgrow a single Kubernetes cluster. To support global player
+bases, sessions can be sharded across regions using consistent hashing on the
+`tenantId`. Each shard runs an independent Redis and database pair. When a
+player travels to a region hosted elsewhere, the session state is serialized to
+a compact protobuf and transferred via gRPC to the target cluster. The source
+cluster marks the session as handed off and clients reconnect using the new
+endpoint. This strategy minimizes latency while keeping per-region failure
+domains isolated.
+
+### Gameplay Analytics
+
+The service emits Prometheus metrics for tick timing, queue lengths and command
+latency. Logs include the `tenantId` and `traceId` fields so operators can build
+dashboards in the Logging & Admin Service. These metrics feed the default
+[Analytics Dashboards](../microservices/logging-admin-service/analytics-dashboards.md)
+to monitor game health and player activity.
