@@ -1,7 +1,10 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
+import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.WorldEventDto;
@@ -22,7 +25,14 @@ public class WorldEventServiceImpl implements WorldEventService {
   private final WorldEventRepository eventRepository;
   private final RegionRepository regionRepository;
   private final WorldEventMapper mapper;
+  private final MeterRegistry meterRegistry;
+  private Counter eventsProcessedCounter;
   private static final Logger logger = LoggingUtil.getLogger(WorldEventServiceImpl.class);
+
+  @PostConstruct
+  void initMetrics() {
+    this.eventsProcessedCounter = meterRegistry.counter("world_events_processed_total");
+  }
 
   @Override
   public WorldEventDto scheduleEvent(WorldEventDto dto) {
@@ -45,6 +55,7 @@ public class WorldEventServiceImpl implements WorldEventService {
       event.setProcessed(true);
       event.setProcessedAt(now);
       eventRepository.save(event);
+      eventsProcessedCounter.increment();
     }
     if (!events.isEmpty()) {
       logger.debug("Processed {} world events", events.size());
