@@ -8,7 +8,7 @@
   - [x] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
   - [x] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
-  - [ ] Use saga orchestrator for world creation workflow
+  - [x] Use saga orchestrator for world creation workflow
   - [ ] Provide tools to fine-tune procedural generation rules
   - [ ] Support multi-server world shards
 
