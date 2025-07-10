@@ -9,9 +9,9 @@
     - [x] Define moderation policies including profanity filters
   - [x] Integrate Alertmanager for automated alerts
   - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
-  - [ ] Evaluate adopting a zero-trust network model for internal traffic
-  - [ ] Create **Saga Dashboard** to inspect workflow states and failures
-  - [ ] Integrate saga metrics and timeout recovery
+  - [x] Evaluate adopting a zero-trust network model for internal traffic
+  - [x] Create **Saga Dashboard** to inspect workflow states and failures
+  - [x] Integrate saga metrics and timeout recovery
   - [ ] Use saga orchestrator for multi-service admin operations (bans, content revocation)
   - [ ] Build role-based admin UI
 
@@ -70,7 +70,7 @@ participate in CI.
 ## 📚 Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
-- [ ] Apply logging, tracing, and security interceptors from the library
+- [x] Apply logging, tracing, and security interceptors from the library
 - [ ] Use provided autoconfiguration classes to reduce boilerplate
 - [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
@@ -80,7 +80,7 @@ participate in CI.
 
 - [ ] Use saga helpers from `firemud-common` for workflow steps
 - [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] Document saga participation in `design/README.md`
 
 ---
 

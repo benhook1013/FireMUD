@@ -50,3 +50,12 @@ curl -X POST http://localhost:8080/feature-flags/toggle \
   -H "Content-Type: application/json" \
   -d '{"tenantId":1,"name":"double_xp","enabled":true}'
 ```
+
+## Saga Dashboard
+
+Query saga instances and steps:
+
+```bash
+curl http://localhost:8080/sagas
+curl http://localhost:8080/sagas/1/steps
+```

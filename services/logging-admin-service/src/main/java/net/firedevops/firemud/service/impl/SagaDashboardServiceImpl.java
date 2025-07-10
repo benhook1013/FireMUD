@@ -1,0 +1,46 @@
+package net.firedevops.firemud.service.impl;
+
+import java.util.List;
+import net.firedevops.firemud.dto.SagaInstanceDto;
+import net.firedevops.firemud.dto.SagaStepDto;
+import net.firedevops.firemud.mapper.SagaMapper;
+import net.firedevops.firemud.metrics.SagaMetrics;
+import net.firedevops.firemud.repository.SagaInstanceRepository;
+import net.firedevops.firemud.repository.SagaStepRepository;
+import net.firedevops.firemud.service.SagaDashboardService;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class SagaDashboardServiceImpl implements SagaDashboardService {
+  private final SagaInstanceRepository instanceRepository;
+  private final SagaStepRepository stepRepository;
+  private final SagaMapper mapper;
+  private final SagaMetrics metrics;
+
+  public SagaDashboardServiceImpl(
+      SagaInstanceRepository instanceRepository,
+      SagaStepRepository stepRepository,
+      SagaMapper mapper,
+      SagaMetrics metrics) {
+    this.instanceRepository = instanceRepository;
+    this.stepRepository = stepRepository;
+    this.mapper = mapper;
+    this.metrics = metrics;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<SagaInstanceDto> listInstances() {
+    List<SagaInstanceDto> instances =
+        instanceRepository.findAll().stream().map(mapper::toDto).toList();
+    metrics.setActive(instances.size());
+    return instances;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<SagaStepDto> listSteps(Long instanceId) {
+    return stepRepository.findByInstanceId(instanceId).stream().map(mapper::toDto).toList();
+  }
+}
