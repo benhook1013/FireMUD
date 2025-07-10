@@ -46,7 +46,7 @@ sourceSets["main"].java.srcDirs(
 
 sourceSets {
     main {
-        proto.srcDir("../../protos/entity-management")
+        proto.srcDir("../../protos")
     }
 }
 
