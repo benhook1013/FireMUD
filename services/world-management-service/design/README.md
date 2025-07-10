@@ -6,6 +6,10 @@ The design for this service is located here:
 
 This stub exists to make the design easy to find from the service source tree.
 
+The service creates temporary **instances** of zones for dungeons or housing.
+Instances expire automatically based on the `world.instance.expiration-hours`
+property.
+
 ## REST & gRPC Endpoints
 
 ### REST
