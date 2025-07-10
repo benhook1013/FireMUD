@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package world_management.v1;
 
+import "shared/v1/errors.proto";
+
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
 
@@ -18,6 +20,7 @@ message GetRoomRequest {
 
 message GetRoomResponse {
   string room_json = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message UpdateWorldStateRequest {
@@ -26,10 +29,12 @@ message UpdateWorldStateRequest {
 
 message UpdateWorldStateResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
 }
