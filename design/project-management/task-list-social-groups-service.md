@@ -2,14 +2,14 @@
 
 - [ ] **Develop Social & Groups Service**
   - [x] Enable cross-game friend lists and social graph
-  - [ ] Support private messages, global chat, and guild channels
+  - [x] Support private messages, global chat, and guild channels
   - [ ] Implement player-to-player mail system (asynchronous in-game messaging)
-  - [ ] Allow players to form and manage guilds
-  - [ ] Implement guild ranking & permissions system
+  - [x] Allow players to form and manage guilds
+  - [x] Implement guild ranking & permissions system
   - [ ] Implement shared guild storage and alliance system
   - [ ] Provide rich moderation tools for chat
   - [ ] Add optional voice chat integration
-  - [ ] Use saga orchestrator for guild creation workflow
+  - [x] Use saga orchestrator for guild creation workflow
 
 ## Reusable Microservice Checklist
 
@@ -76,19 +76,19 @@ participate in CI.
 
 - [ ] Use saga helpers from `firemud-common` for workflow steps
 - [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] Document saga participation in `design/README.md`
 
 ---
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
+- [x] Use Redis for transient gameplay state only
 - [ ] Access Redis through helpers in `firemud-common`
 - [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [ ] Validate shard-local key usage and avoid per-service caching
 - [ ] Emit metrics for Redis connectivity and commands
 - [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
 
