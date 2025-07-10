@@ -6,6 +6,7 @@ import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.service.CharacterService;
 import net.firedevops.firemud.service.PingService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -14,8 +15,10 @@ class EntityManagementGrpcServiceTest {
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
-    EntityManagementGrpcService service = new EntityManagementGrpcService(pingService);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(pingService, characterService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(

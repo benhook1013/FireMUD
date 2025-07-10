@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entity.Character;
@@ -41,5 +42,14 @@ public class CharacterServiceImpl implements CharacterService {
     }
     characterRepository.save(character);
     return characterMapper.toDto(character);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "character.listForAccount")
+  public List<CharacterDto> listForAccount(Long accountId) {
+    return characterRepository.findByAccountId(accountId).stream()
+        .map(characterMapper::toDto)
+        .toList();
   }
 }

@@ -1,0 +1,35 @@
+package net.firedevops.firemud.controller;
+
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.List;
+import net.firedevops.firemud.dto.CharacterDto;
+import net.firedevops.firemud.service.CharacterService;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+@WebMvcTest(CharacterController.class)
+class CharacterControllerTest {
+
+  @Autowired private MockMvc mockMvc;
+
+  @MockitoBean private CharacterService characterService;
+
+  @Test
+  void listReturnsCharacters() throws Exception {
+    CharacterDto dto = new CharacterDto(1L, 1L, 1L, "Hero", 1, 0, 1, 1, 1, 1, 10, 5);
+    when(characterService.listForAccount(1L)).thenReturn(List.of(dto));
+
+    mockMvc
+        .perform(get("/accounts/1/characters"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data[0].name").value("Hero"));
+  }
+}

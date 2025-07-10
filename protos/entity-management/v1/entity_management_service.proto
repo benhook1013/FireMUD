@@ -12,6 +12,7 @@ service EntityManagementService {
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
   rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
+  rpc ListCharactersByAccount(ListCharactersRequest) returns (ListCharactersResponse);
 }
 
 message CreateCharacterRequest {
@@ -40,6 +41,30 @@ message QueryInventoryRequest {
 
 message QueryInventoryResponse {
   repeated string item_ids = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListCharactersRequest {
+  string account_id = 1;
+}
+
+message Character {
+  string id = 1;
+  string tenant_id = 2;
+  string account_id = 3;
+  string name = 4;
+  int32 level = 5;
+  int32 experience = 6;
+  int32 strength = 7;
+  int32 agility = 8;
+  int32 intelligence = 9;
+  int32 stamina = 10;
+  int32 health = 11;
+  int32 mana = 12;
+}
+
+message ListCharactersResponse {
+  repeated Character characters = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

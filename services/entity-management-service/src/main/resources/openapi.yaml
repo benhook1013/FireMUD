@@ -25,6 +25,57 @@ components:
           type: integer
         quantity:
           type: integer
+    CharacterDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        name:
+          type: string
+        level:
+          type: integer
+        experience:
+          type: integer
+        strength:
+          type: integer
+        agility:
+          type: integer
+        intelligence:
+          type: integer
+        stamina:
+          type: integer
+        health:
+          type: integer
+        mana:
+          type: integer
+    CraftingIngredientDto:
+      type: object
+      properties:
+        itemId:
+          type: integer
+        quantity:
+          type: integer
+    CraftingRecipeDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        resultItemId:
+          type: integer
+        resultQuantity:
+          type: integer
+        ingredients:
+          type: array
+          items:
+            $ref: '#/components/schemas/CraftingIngredientDto'
     AddInventoryItemRequest:
       type: object
       properties:
@@ -123,4 +174,66 @@ paths:
                 properties:
                   data:
                     type: object
+  /accounts/{accountId}/characters:
+    get:
+      summary: List characters by account
+      operationId: listCharactersForAccount
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Character list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CharacterDto'
+  /crafting/recipes:
+    post:
+      summary: Create crafting recipe
+      operationId: createRecipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CraftingRecipeDto'
+      responses:
+        '200':
+          description: Recipe
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CraftingRecipeDto'
+  /crafting/recipes/{id}:
+    get:
+      summary: Get crafting recipe
+      operationId: getRecipe
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Recipe
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CraftingRecipeDto'
 
