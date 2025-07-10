@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.SagaInstanceDto;
@@ -21,11 +22,13 @@ public class SagaDashboardController {
   }
 
   @GetMapping
+  @Timed(value = "listSagas", description = "List saga instances")
   public ResponseEntity<ApiResponse<List<SagaInstanceDto>>> listInstances() {
     return ResponseEntity.ok(ApiResponse.success(sagaDashboardService.listInstances()));
   }
 
   @GetMapping("/{id}/steps")
+  @Timed(value = "listSagaSteps", description = "List saga steps for instance")
   public ResponseEntity<ApiResponse<List<SagaStepDto>>> listSteps(@PathVariable Long id) {
     return ResponseEntity.ok(ApiResponse.success(sagaDashboardService.listSteps(id)));
   }

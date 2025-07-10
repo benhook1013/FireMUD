@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.service.PingService;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ public class PingController {
   }
 
   @GetMapping
+  @Timed(value = "ping", description = "Time spent responding to ping requests")
   public ResponseEntity<ApiResponse<String>> ping() {
     String result = pingService.ping();
     return ResponseEntity.ok(ApiResponse.success(result));

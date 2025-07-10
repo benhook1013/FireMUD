@@ -98,7 +98,7 @@ participate in CI.
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
@@ -109,11 +109,11 @@ participate in CI.
 
 ## 📈 Observability & Tracing
 
-- [ ] Use Micrometer for Prometheus metrics
-- [ ] Enable OpenTelemetry tracing
-- [ ] Use shared interceptors to propagate `traceId` and `correlationId`
+- [x] Use Micrometer for Prometheus metrics
+- [x] Enable OpenTelemetry tracing
+- [x] Use shared interceptors to propagate `traceId` and `correlationId`
 - [ ] Emit service metrics for ticks and Redis commands when relevant
-- [ ] Expose `/actuator/prometheus` for scraping by Prometheus
+- [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
 
