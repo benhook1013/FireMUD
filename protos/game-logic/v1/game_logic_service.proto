@@ -7,10 +7,21 @@ option java_multiple_files = true;
 
 service GameLogicService {
   rpc Ping(PingRequest) returns (PingResponse);
+  rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
 }
 
 message PingRequest {}
 
 message PingResponse {
   string message = 1;
+}
+
+message ExecuteCommandRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string command = 3;
+}
+
+message ExecuteCommandResponse {
+  string result = 1;
 }
