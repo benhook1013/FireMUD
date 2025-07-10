@@ -47,6 +47,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing.
 - `runtime_flag` table holds feature flag definitions copied to the Game Session Service.
+- `game_assets` table stores uploaded binary files such as icons or sound effects.
 
 ### Design Workflow
 
@@ -103,6 +104,7 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [User Journeys – World and Entity Design](../user-journeys.md#2-world-and-entity-design)
 - [User Journeys – Publish and Start a Game Instance](../user-journeys.md#4-publish-and-start-a-game-instance)
 - [User Journeys – Patch and Update a Live Game](../user-journeys.md#8-patch-and-update-a-live-game)
+- [Asset Storage Setup](../../../../services/game-design-service/design/asset-storage.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Database Migrations](../system-architecture-database-migrations.md)

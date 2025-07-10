@@ -3,6 +3,7 @@
 Refer to [design/README.md](design/README.md) for architecture details. A new
 document describing game templates and configuration tools is available at
 [design/game-templates.md](design/game-templates.md).
+[design/asset-storage.md](design/asset-storage.md) explains how uploaded assets are stored.
 
 - **Proto definitions**: [../../protos/game-design/v1](../../protos/game-design/v1)
 
