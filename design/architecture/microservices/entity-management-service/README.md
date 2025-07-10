@@ -57,6 +57,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - `CreateCharacter` – builds a new player character from a template.
 - `UpdateEntity` – updates stats or equipment for a character or NPC.
 - `QueryInventory` – lists items for an entity with pagination.
+- `ListCharactersByAccount` – returns all characters owned by an account across tenants.
 
 ## Dependencies
 
@@ -109,6 +110,6 @@ proto files, run `./gradlew generateProto` to update generated sources.
 
 ## Future Enhancements
 
-- Support for complex crafting recipes.
-- Cross-game account linking to share a single profile across multiple games (see
-  [Multi-Tenancy](../system-architecture-multi-tenancy.md)).
+The service now exposes crafting recipe management and an API to list characters
+for an account across all games. Future work will expand these APIs with
+additional validation and integration tests.
