@@ -1,6 +1,8 @@
 package net.firedevops.firemud.logic.command;
 
+import net.firedevops.firemud.common.ErrorDetail;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.logic.dto.CommandResult;
 import net.firedevops.firemud.logic.event.EventDispatcher;
 import net.firedevops.firemud.logic.event.GameEvent;
 import net.firedevops.firemud.logic.event.GameEventType;
@@ -22,7 +24,7 @@ public class SimpleCommandProcessor implements CommandProcessor {
   }
 
   @Override
-  public String process(Command command) {
+  public CommandResult process(Command command) {
     scriptingHook.execute(command);
     String result =
         switch (command.actionType()) {
@@ -34,6 +36,10 @@ public class SimpleCommandProcessor implements CommandProcessor {
         };
     logger.info("Processed action {} -> {}", command.actionType(), result);
     dispatcher.dispatch(new GameEvent(GameEventType.ACTION_EXECUTED, command, result));
-    return result;
+    if ("Unknown action".equals(result)) {
+      ErrorDetail error = new ErrorDetail("UNKNOWN_COMMAND", "Command not recognized");
+      return new CommandResult(result, error);
+    }
+    return new CommandResult(result, null);
   }
 }

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.controller;
 
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.logic.dto.CommandResult;
 import net.firedevops.firemud.logic.service.CommandService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,7 +21,10 @@ public class CommandController {
 
   @PostMapping
   public ResponseEntity<ApiResponse<String>> execute(@RequestBody String body) {
-    String result = commandService.handleCommand(body);
-    return ResponseEntity.ok(ApiResponse.success(result));
+    CommandResult result = commandService.handleCommand(body);
+    if (result.error() != null) {
+      return ResponseEntity.badRequest().body(ApiResponse.error(result.error()));
+    }
+    return ResponseEntity.ok(ApiResponse.success(result.result()));
   }
 }
