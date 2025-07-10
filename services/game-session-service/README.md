@@ -21,6 +21,18 @@ FIREMUD_REDIS_HOST=redis
 FIREMUD_REDIS_PORT=6379
 ```
 
+Typical environment variables are summarized below:
+
+| Variable | Purpose |
+| --- | --- |
+| `FIREMUD_POSTGRES_HOST` | PostgreSQL hostname |
+| `FIREMUD_POSTGRES_PORT` | PostgreSQL port |
+| `FIREMUD_POSTGRES_USER` | Database user |
+| `FIREMUD_POSTGRES_PASSWORD` | Database password |
+| `FIREMUD_POSTGRES_DB` | Database name |
+| `FIREMUD_REDIS_HOST` | Redis hostname |
+| `FIREMUD_REDIS_PORT` | Redis port |
+
 Each request includes a `tenantId` that identifies the game instance. Database
 rows and Redis keys are prefixed with this value to keep game data isolated as
 outlined in the [Multi-Tenancy](../../design/architecture/system-architecture-multi-tenancy.md)
@@ -38,3 +50,11 @@ To run the entire stack:
 ```bash
 ./gradlew devUp
 ```
+
+## Tenant Handling and Dependencies
+
+Every session row contains a `tenantId` column, and all Redis keys include this
+prefix. This isolates game data for each hosted title. The service communicates
+with the Game Logic, Entity Management, and World Management services over gRPC
+to coordinate ticks and world state. Lifecycle events are also sent to the
+Logging & Admin Service for auditing.
