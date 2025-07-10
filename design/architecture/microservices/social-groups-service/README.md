@@ -34,6 +34,7 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Private messaging and presence indicators.
 - Asynchronous player-to-player mail.
 - Guild creation and membership management.
+- Shared guild storage and alliance system.
 - Friend lists scoped both to individual games and to overall accounts.
 - Cross-game presence lets players know when friends are online in any hosted
   game.
@@ -137,5 +138,5 @@ files change.
 
 ## Future Enhancements
 
-- Rich moderation tools for chat.
-- Optional voice chat integration.
+- Rich moderation tools for chat including profanity filtering and moderator dashboards.
+- Optional voice chat integration via a WebRTC gateway.

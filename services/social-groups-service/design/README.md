@@ -33,12 +33,28 @@ curl -X POST http://localhost:8080/mail \
   -d '{"tenantId":1,"senderAccountId":100,"recipientAccountId":200,"subject":"Hi","content":"Hello"}'
 ```
 
+- `POST /guilds/storage` – add an item to guild storage.
+
+```bash
+curl -X POST http://localhost:8080/guilds/storage \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"guildId":10,"itemName":"Sword","quantity":1}'
+```
+
 ### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`social_groups_service.proto`](../../../protos/social-groups/v1/social_groups_service.proto).
 
 ```bash
 grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
+```
+
+- `POST /chat` – send a chat message filtered for profanity.
+
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
 ```
 
 ## Metrics & Tracing
