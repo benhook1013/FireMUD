@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package logging_admin.v1;
 
+import "shared/v1/errors.proto";
+
 option java_package = "net.firedevops.firemud.loggingadmin.v1";
 option java_multiple_files = true;
 
@@ -16,6 +18,7 @@ message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message QueryLogsRequest {
@@ -25,6 +28,7 @@ message QueryLogsRequest {
 
 message QueryLogsResponse {
   repeated string entries = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message ApplyModerationActionRequest {
@@ -36,6 +40,7 @@ message ApplyModerationActionRequest {
 
 message ApplyModerationActionResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message ToggleFeatureFlagRequest {
@@ -46,4 +51,5 @@ message ToggleFeatureFlagRequest {
 
 message ToggleFeatureFlagResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
 }

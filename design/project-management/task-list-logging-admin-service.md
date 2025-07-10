@@ -7,8 +7,8 @@
   - [x] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
     - [x] Provide analytics dashboards for operators
     - [x] Define moderation policies including profanity filters
-  - [ ] Integrate Alertmanager for automated alerts
-  - [ ] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
+  - [x] Integrate Alertmanager for automated alerts
+  - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
   - [ ] Evaluate adopting a zero-trust network model for internal traffic
   - [ ] Create **Saga Dashboard** to inspect workflow states and failures
   - [ ] Integrate saga metrics and timeout recovery
@@ -40,7 +40,7 @@ participate in CI.
 
 - [x] Define gRPC service stubs with explicit `Request`/`Response` messages
 - [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
-- [ ] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
+- [x] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
