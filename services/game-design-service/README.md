@@ -32,3 +32,9 @@ settings when running locally are:
 
 See the [Environment Variables & Secrets Management](../../design/architecture/infrastructure/environment-and-secrets.md)
 document for details on how these values are supplied in different environments.
+
+## Metrics & Tracing
+
+Prometheus scrapes metrics from `/actuator/prometheus`. Service methods emit
+`@Timed` metrics and traces are exported to the collector configured in
+`application.yml`.
