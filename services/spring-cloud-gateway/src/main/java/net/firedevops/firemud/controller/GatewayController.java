@@ -31,7 +31,10 @@ public class GatewayController {
   /** Remove a gateway route by ID. */
   @DeleteMapping("/{routeId}")
   public ResponseEntity<ApiResponse<String>> remove(@PathVariable String routeId) {
-    routeService.remove(routeId);
-    return ResponseEntity.ok(ApiResponse.success("removed"));
+    boolean removed = routeService.remove(routeId);
+    if (removed) {
+      return ResponseEntity.ok(ApiResponse.success("removed"));
+    }
+    return ResponseEntity.ok(ApiResponse.success("notFound"));
   }
 }
