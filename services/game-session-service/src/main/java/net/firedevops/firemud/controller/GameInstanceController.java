@@ -1,0 +1,30 @@
+package net.firedevops.firemud.controller;
+
+import jakarta.validation.Valid;
+import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.dto.GameInstanceDto;
+import net.firedevops.firemud.dto.StartSessionRequest;
+import net.firedevops.firemud.service.GameInstanceService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/** REST endpoints for managing game instances. */
+@RestController
+@RequestMapping("/sessions")
+public class GameInstanceController {
+  private final GameInstanceService gameInstanceService;
+
+  public GameInstanceController(GameInstanceService gameInstanceService) {
+    this.gameInstanceService = gameInstanceService;
+  }
+
+  @PostMapping
+  public ResponseEntity<ApiResponse<GameInstanceDto>> startSession(
+      @Valid @RequestBody StartSessionRequest request) {
+    GameInstanceDto dto = gameInstanceService.startSession(request);
+    return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+}

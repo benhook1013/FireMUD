@@ -15,6 +15,33 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  schemas:
+    StartSessionRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        versionId:
+          type: string
+        ownerAccountId:
+          type: integer
+      required:
+        - tenantId
+        - versionId
+        - ownerAccountId
+    GameInstanceDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        versionId:
+          type: string
+        ownerAccountId:
+          type: integer
+        status:
+          type: string
 paths:
   /ping:
     get:
@@ -31,5 +58,27 @@ paths:
                   data:
                     type: string
                     example: pong
+        '400':
+          description: Invalid request
+  /sessions:
+    post:
+      summary: Start a new game session
+      operationId: startSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSessionRequest'
+      responses:
+        '200':
+          description: Game instance details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GameInstanceDto'
         '400':
           description: Invalid request
