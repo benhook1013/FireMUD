@@ -32,6 +32,7 @@ The `monitoring/` folder provides example manifests for observability tools:
 - `redis-exporter.yaml` exposes Redis metrics to Prometheus.
 - `otel-collector.yaml` receives OTLP spans from the services.
 - `jaeger.yaml` stores traces and offers a web UI on port `16686`.
+- `alertmanager.yaml` handles alert notifications from Prometheus.
 
 Apply them with:
 
@@ -39,6 +40,7 @@ Apply them with:
 kubectl apply -f monitoring/redis-exporter.yaml
 kubectl apply -f monitoring/otel-collector.yaml
 kubectl apply -f monitoring/jaeger.yaml
+kubectl apply -f monitoring/alertmanager.yaml
 ```
 
 Customize these manifests with proper image repositories and resource limits before running in production.

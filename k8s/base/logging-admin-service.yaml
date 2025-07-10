@@ -45,6 +45,22 @@ spec:
               port: 8080
             initialDelaySeconds: 15
             periodSeconds: 20
+        - name: fluent-bit
+          image: fluent/fluent-bit:2.2.2
+          args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: containers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: containers
+          hostPath:
+            path: /var/lib/docker/containers
 ---
 apiVersion: v1
 kind: Service

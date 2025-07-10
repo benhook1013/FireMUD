@@ -47,7 +47,7 @@ sourceSets["main"].java.srcDirs(
 
 sourceSets {
     main {
-        proto.srcDir("../../protos/logging-admin")
+        proto.srcDir("../../protos")
     }
 }
 

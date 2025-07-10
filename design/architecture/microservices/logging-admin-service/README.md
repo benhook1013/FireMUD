@@ -79,8 +79,8 @@ details on shared infrastructure components.
 - Deployed as a Kubernetes Deployment with horizontal scaling for log-processing
   workloads.
 - Health endpoints under `/actuator/health` feed readiness and liveness probes.
-- Metrics and OpenTelemetry traces are scraped by Prometheus; Fluent Bit ships
-  structured logs to Elasticsearch for search.
+- Metrics and OpenTelemetry traces are scraped by Prometheus. Each pod runs a Fluent Bit
+  sidecar that forwards JSON logs to Elasticsearch for search.
 - Environment differences are outlined in
   [Deployment Environments](../../infrastructure/deployment-environments.md).
 
@@ -112,7 +112,8 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 ## Future Enhancements
 
 - Role-based admin UI.
-- Automated alerting for suspicious activity via Prometheus Alertmanager.
+- Automated alerting for suspicious activity is configured via Prometheus
+  Alertmanager (see `k8s/monitoring/alertmanager.yaml`).
 - Real-time analytics on game performance.
 - Optional 2FA support for administrator accounts, pending
   [Security Architecture](../system-architecture-security.md) enhancements.
