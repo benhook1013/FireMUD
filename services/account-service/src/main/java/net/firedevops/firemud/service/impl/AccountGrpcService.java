@@ -1,6 +1,5 @@
 package net.firedevops.firemud.service.impl;
 
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -70,8 +69,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.UNAUTHENTICATED.withDescription(ex.getMessage()).asRuntimeException());
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("UNAUTHENTICATED")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 }
