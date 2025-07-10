@@ -59,3 +59,9 @@
 
 - Use standard directory layout for the tech stack
 - Avoid one-off scripts unless reused
+
+## 9. Testing & Observability
+
+- Provide unit tests for new logic and integration tests for features that touch databases or external services.
+- Verify coverage with JaCoCo by running `./gradlew check` before committing.
+- Instrument new code with Micrometer metrics and OpenTelemetry tracing following `design/architecture/system-architecture-logging-monitoring.md`.
