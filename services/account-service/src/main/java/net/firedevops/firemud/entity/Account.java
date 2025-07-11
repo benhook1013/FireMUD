@@ -22,4 +22,10 @@ public class Account {
 
   @Column(nullable = false, length = 255)
   private String passwordHash;
+
+  @Column(nullable = false, length = 20)
+  private String role = "player";
+
+  @Column(name = "two_factor_secret", length = 64)
+  private String twoFactorSecret;
 }

@@ -55,7 +55,7 @@ class AccountServiceImplTest {
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.of(account));
 
-    String token = service.authenticate(1L, "demo", "password");
+    String token = service.authenticate(1L, "demo", "password", null);
 
     assertNotNull(token);
     org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, token);
@@ -64,7 +64,8 @@ class AccountServiceImplTest {
   @Test
   void authenticateThrowsWhenInvalid() {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
-    assertThrows(IllegalArgumentException.class, () -> service.authenticate(1L, "demo", "bad"));
+    assertThrows(
+        IllegalArgumentException.class, () -> service.authenticate(1L, "demo", "bad", null));
   }
 
   private static String hash(String password) {

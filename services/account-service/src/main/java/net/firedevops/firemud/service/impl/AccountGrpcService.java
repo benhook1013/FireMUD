@@ -64,7 +64,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       String token =
           accountService.authenticate(
-              Long.valueOf(request.getTenantId()), request.getUsername(), request.getPassword());
+              Long.valueOf(request.getTenantId()),
+              request.getUsername(),
+              request.getPassword(),
+              request.getOtp());
       AuthenticateResponse response = AuthenticateResponse.newBuilder().setAuthToken(token).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

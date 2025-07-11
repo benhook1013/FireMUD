@@ -25,8 +25,8 @@ class AuthControllerTest {
 
   @Test
   void loginReturnsToken() throws Exception {
-    LoginRequest request = new LoginRequest(1L, "demo", "password");
-    when(accountService.authenticate(1L, "demo", "password")).thenReturn("tok123");
+    LoginRequest request = new LoginRequest(1L, "demo", "password", null);
+    when(accountService.authenticate(1L, "demo", "password", null)).thenReturn("tok123");
 
     mockMvc
         .perform(
