@@ -6,7 +6,7 @@ The design for this service is located here:
 This stub exists only to link to the real design document. **Do not add design details here.**
 Additional details on template management can be found in
 [game-templates.md](game-templates.md). Asset storage details are documented in
-[asset-storage.md](asset-storage.md).
+[asset-storage.md](asset-storage.md). Additional docs cover [Ability & Action Design Tools](ability-action-tools.md) and [Item & Equipment Balancing Tools](item-equipment-balancing.md).
 
 This stub exists to make the design easy to find from the service source tree.
 
