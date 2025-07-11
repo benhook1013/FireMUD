@@ -3,29 +3,32 @@ package net.firedevops.firemud.client;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import jakarta.annotation.PostConstruct;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /** Client for communicating with the Logging & Admin Service. */
 @Component
 public class LoggingAdminClient implements AutoCloseable {
-  private final String host;
-  private final int port;
+  private final ServiceEndpointsProperties endpoints;
 
   private ManagedChannel channel;
   private ReportServiceGrpc.ReportServiceBlockingStub stub;
 
-  public LoggingAdminClient(
-      @Value("${loggingAdmin.host:logging-admin-service}") String host,
-      @Value("${loggingAdmin.port:6565}") int port) {
-    this.host = host;
-    this.port = port;
+  public LoggingAdminClient(ServiceEndpointsProperties endpoints) {
+    this.endpoints = endpoints;
   }
 
   @PostConstruct
   void init() {
+    String target = endpoints.getLoggingAdminService();
+    if (target == null || target.isEmpty()) {
+      target = "logging-admin-service:6565";
+    }
+    String[] parts = target.split(":");
+    String host = parts[0];
+    int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
     channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
     stub = ReportServiceGrpc.newBlockingStub(channel);
   }

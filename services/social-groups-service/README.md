@@ -23,6 +23,9 @@ Redis connectivity. See the
 [Environment Variables & Secrets Management](../../design/architecture/infrastructure/environment-and-secrets.md)
 doc for defaults.
 
+`firemud.services.logging-admin-service` specifies the gRPC endpoint for the
+Logging & Admin Service. The default value is `logging-admin-service:6565`.
+
 ## API Documentation
 
 REST endpoints are documented in `openapi.yaml` within the resources directory. A Swagger UI can be generated using any OpenAPI toolchain.
