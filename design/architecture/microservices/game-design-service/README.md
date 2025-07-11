@@ -88,7 +88,6 @@ Configuration uses the conventions defined in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
 This service relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
 Redis variables are not used.
-=======
 
 ## Proto Files
 
