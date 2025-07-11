@@ -31,6 +31,8 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../system-architecture-transactions.md).
+- Saga workflows use the shared `SagaBuilder` and emit metrics with correlation
+  IDs via `SagaRunner`.
 - Monitors login attempts per IP and temporarily blacklists repeat offenders.
   Global spikes introduce small delays and suspicious activity triggers
   notification emails to the account holder. See
@@ -73,6 +75,8 @@ Orchestrates live game sessions, including tick execution, player input validati
   - Entity Management Service, Game Logic Service, World Management Service.
   - Logging & Admin Service receives session lifecycle events.
 - **External:** Redis for session state.
+- gRPC clients discover endpoints via `ServiceEndpointsProperties` and secure
+  connections with mTLS certificates issued by cert-manager.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for details on shared infrastructure components.
 
