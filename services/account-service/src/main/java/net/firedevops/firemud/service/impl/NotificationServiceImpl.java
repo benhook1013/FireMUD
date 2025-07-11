@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.service.NotificationService;
 import org.slf4j.Logger;
@@ -10,6 +11,7 @@ public class NotificationServiceImpl implements NotificationService {
   private static final Logger logger = LoggingUtil.getLogger(NotificationServiceImpl.class);
 
   @Override
+  @Timed(value = "notification.send")
   public void sendNotification(Long tenantId, Long accountId, String message) {
     logger.info("Send notification to account {} tenant {}: {}", accountId, tenantId, message);
   }
