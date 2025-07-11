@@ -4,4 +4,4 @@ The design for this service is located here:
 
 [📄 Central Architecture: Social Groups Service Design](../../../design/architecture/microservices/social-groups-service/README.md)
 
-This stub exists only to link to the real design document. **Do not add design details here.** An OpenAPI specification is available at `src/main/resources/openapi.yaml`.
+This stub exists only to link to the real design document. **Do not add design details here.**

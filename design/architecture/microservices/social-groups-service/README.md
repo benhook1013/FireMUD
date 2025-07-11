@@ -4,6 +4,8 @@
 
 Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time.
 
+An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
+
 ### Responsibilities
 
 - Deliver real-time chat and presence notifications
@@ -20,8 +22,10 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Chat profanity triggers a gRPC call to the Logging & Admin Service to record a
   moderation report.
 - In-game chat commands such as say, tell, guild chat, and mail originate in the
-  Game Logic Service, which invokes this service to deliver messages and perform
-  profanity checks. All communications are logged for audit and moderation.
+  Game Logic Service and incorporate context from the World Management and
+  Entity Management services. The Game Logic Service invokes this service to
+  deliver messages, run profanity checks, and log all communications for audit
+  and moderation.
 - Messages are briefly cached in Redis streams to smooth bursts of activity and
   enable delivery retries.
 - Guild creation and membership changes participate in Saga workflows so other
@@ -91,7 +95,6 @@ default and can be enabled per tenant through configuration.
   - Account Service for user identities.
   - Logging & Admin Service consumes chat logs for moderation.
 - **External:** PostgreSQL for social data.
-
 
 ## Operational Notes
 

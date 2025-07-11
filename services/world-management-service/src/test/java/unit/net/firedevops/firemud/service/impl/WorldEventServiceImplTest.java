@@ -22,13 +22,18 @@ class WorldEventServiceImplTest {
   private WorldEventMapper mapper = Mappers.getMapper(WorldEventMapper.class);
   private WorldEventServiceImpl service;
   private SimpleMeterRegistry meterRegistry;
+  private net.firedevops.firemud.config.WorldProperties worldProperties;
 
   @BeforeEach
   void setUp() {
     eventRepository = mock(WorldEventRepository.class);
     regionRepository = mock(RegionRepository.class);
     meterRegistry = new SimpleMeterRegistry();
-    service = new WorldEventServiceImpl(eventRepository, regionRepository, mapper, meterRegistry);
+    worldProperties = new net.firedevops.firemud.config.WorldProperties();
+    worldProperties.setLocalShardId(0);
+    service =
+        new WorldEventServiceImpl(
+            eventRepository, regionRepository, mapper, meterRegistry, worldProperties);
     service.initMetrics();
   }
 
@@ -53,7 +58,7 @@ class WorldEventServiceImplTest {
     event.setExecuteAt(LocalDateTime.now().minusMinutes(1));
     event.setProcessed(false);
 
-    when(eventRepository.findByProcessedFalseAndExecuteAtBefore(any()))
+    when(eventRepository.findDueEventsForShard(any(), anyInt()))
         .thenReturn(Collections.singletonList(event));
     when(regionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 

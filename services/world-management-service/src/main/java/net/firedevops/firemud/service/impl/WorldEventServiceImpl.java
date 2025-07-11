@@ -7,6 +7,7 @@ import java.util.List;
 import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.config.WorldProperties;
 import net.firedevops.firemud.dto.WorldEventDto;
 import net.firedevops.firemud.entity.Region;
 import net.firedevops.firemud.entity.WorldEvent;
@@ -26,6 +27,7 @@ public class WorldEventServiceImpl implements WorldEventService {
   private final RegionRepository regionRepository;
   private final WorldEventMapper mapper;
   private final MeterRegistry meterRegistry;
+  private final WorldProperties worldProperties;
   private Counter eventsProcessedCounter;
   private static final Logger logger = LoggingUtil.getLogger(WorldEventServiceImpl.class);
 
@@ -49,7 +51,8 @@ public class WorldEventServiceImpl implements WorldEventService {
   @Transactional
   public void processDueEvents() {
     LocalDateTime now = LocalDateTime.now();
-    List<WorldEvent> events = eventRepository.findByProcessedFalseAndExecuteAtBefore(now);
+    List<WorldEvent> events =
+        eventRepository.findDueEventsForShard(now, worldProperties.getLocalShardId());
     for (WorldEvent event : events) {
       handleEvent(event);
       event.setProcessed(true);
