@@ -1,11 +1,14 @@
 package net.firedevops.firemud.service.impl;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.loggingadmin.v1.*;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.LogQueryService;
 import net.firedevops.firemud.service.ModerationService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
@@ -14,61 +17,112 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   private final FeatureFlagService featureFlagService;
   private final LogQueryService logQueryService;
   private final ModerationService moderationService;
+  private final MeterRegistry meterRegistry;
 
   public LoggingAdminGrpcService(
       FeatureFlagService featureFlagService,
       LogQueryService logQueryService,
-      ModerationService moderationService) {
+      ModerationService moderationService,
+      MeterRegistry meterRegistry) {
     this.featureFlagService = featureFlagService;
     this.logQueryService = logQueryService;
     this.moderationService = moderationService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   @Override
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
-    PingResponse response = PingResponse.newBuilder().setMessage("pong").build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      PingResponse response = PingResponse.newBuilder().setMessage("pong").build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
   }
 
   @Override
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
-    featureFlagService.toggleFlag(
-        new net.firedevops.firemud.dto.ToggleFeatureFlagRequest(
-            Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
-    ToggleFeatureFlagResponse response =
-        ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      featureFlagService.toggleFlag(
+          new net.firedevops.firemud.dto.ToggleFeatureFlagRequest(
+              Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
+      ToggleFeatureFlagResponse response =
+          ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ToggleFeatureFlagResponse response =
+          ToggleFeatureFlagResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
   }
 
   @Override
   public void queryLogs(
       QueryLogsRequest request, StreamObserver<QueryLogsResponse> responseObserver) {
-    List<String> entries =
-        logQueryService.queryLogs(
-            new net.firedevops.firemud.dto.QueryLogsRequest(
-                Long.valueOf(request.getTenantId()), request.getFilter()));
-    QueryLogsResponse response = QueryLogsResponse.newBuilder().addAllEntries(entries).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      List<String> entries =
+          logQueryService.queryLogs(
+              new net.firedevops.firemud.dto.QueryLogsRequest(
+                  Long.valueOf(request.getTenantId()), request.getFilter()));
+      QueryLogsResponse response = QueryLogsResponse.newBuilder().addAllEntries(entries).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      QueryLogsResponse response =
+          QueryLogsResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
   }
 
   @Override
   public void applyModerationAction(
       ApplyModerationActionRequest request,
       StreamObserver<ApplyModerationActionResponse> responseObserver) {
-    moderationService.applyAction(
-        new net.firedevops.firemud.dto.ApplyModerationActionRequest(
-            Long.valueOf(request.getTenantId()),
-            Long.valueOf(request.getAccountId()),
-            request.getAction(),
-            request.getReason()));
-    ApplyModerationActionResponse response =
-        ApplyModerationActionResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      moderationService.applyAction(
+          new net.firedevops.firemud.dto.ApplyModerationActionRequest(
+              Long.valueOf(request.getTenantId()),
+              Long.valueOf(request.getAccountId()),
+              request.getAction(),
+              request.getReason()));
+      ApplyModerationActionResponse response =
+          ApplyModerationActionResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ApplyModerationActionResponse response =
+          ApplyModerationActionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
   }
 }
