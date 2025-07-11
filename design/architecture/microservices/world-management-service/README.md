@@ -10,6 +10,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Execute scheduled world events and procedural generation
 - Provide pathfinding and navmesh information
 - Notify Game Session and Automation services when the world changes
+- Track character locations and instance occupancy
 
 ## Architecture / Design Notes
 
@@ -36,8 +37,9 @@ The World Management Service stores and manages game world data such as rooms, r
 ## Key Features
 
 - Region and location management with shard support.
-- Instance-based zones allow temporary dungeons or housing separate from the
-  shared world map.
+- Instance-based zones are treated as regular rooms; this service records which
+  characters occupy each instance so private dungeons or housing do not affect
+  the shared world map.
 - Persistent world state with incremental saves.
 - Procedural generation tools for rooms and terrain.
 - `TravelService` implements Dijkstra-based pathfinding using the `room_exit` table.
@@ -50,6 +52,8 @@ The World Management Service stores and manages game world data such as rooms, r
 - `terrain` and `object_spawn` tables support procedural generation.
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
+- `character_location` table records the current room for each character,
+  including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.
 - `region.weather` column records the current weather state.
 - Redis caches hot rooms for active sessions to speed up lookups.
