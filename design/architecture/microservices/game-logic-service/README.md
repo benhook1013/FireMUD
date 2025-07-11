@@ -11,7 +11,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Interact with entity and world services for context data
 - Push results back to the Game Session Service for distribution
 - Forward chat actions to the Social & Groups Service for delivery and
-  profanity checks
+  profanity checks after verifying room context via the World Management
+  Service and character state via the Entity Management Service
 
 ## Architecture / Design Notes
 
@@ -36,7 +37,9 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Command parsing and alias system.
 - Rule processing for combat and progression.
 - Emote and roleplay action handling.
-- In-game chat processing for say, tell, guild chat, and mail actions.
+- In-game chat processing for say, tell, guild chat, and mail actions,
+  leveraging World Management and Entity Management for context before
+  delegating delivery and logging to the Social & Groups Service.
 - Event dispatcher for triggers and world events.
 - Effect stacking and cooldown calculation.
 - Environmental effect resolution (weather, lighting) influencing gameplay.
