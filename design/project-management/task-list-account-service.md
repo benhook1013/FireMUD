@@ -78,7 +78,7 @@ participate in CI.
 ## 🔁 Inter-Service Communication
 
 - [x] Use `firemud-common` protobuf types for shared messages
-- [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
 - [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
@@ -88,7 +88,7 @@ participate in CI.
 ## 📚 Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
-- [ ] Apply logging, tracing, and security interceptors from the library
+- [x] Apply logging, tracing, and security interceptors from the library
 - [ ] Use provided autoconfiguration classes to reduce boilerplate
 - [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
@@ -104,19 +104,19 @@ participate in CI.
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
+- [x] Use Redis for transient gameplay state only
 - [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
+- [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
+- [x] Emit metrics for Redis connectivity and commands
 - [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
@@ -129,8 +129,8 @@ participate in CI.
 
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
-- [ ] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] Use shared interceptors to propagate `traceId` and `correlationId`
+- [x] Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
