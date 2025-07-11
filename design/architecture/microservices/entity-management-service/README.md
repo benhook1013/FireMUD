@@ -22,6 +22,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Item transfers and other gameplay actions span services but execute within ticks
   using Redis scripts for rollback. Sagas are reserved for non-gameplay
   workflows. See [Transaction Strategies](../system-architecture-transactions.md).
+  This service currently does not participate in any saga workflows.
 - All entity tables include a `tenantId` column. Service methods always filter on
   this value so character data for different games remains isolated; Redis keys
   mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)

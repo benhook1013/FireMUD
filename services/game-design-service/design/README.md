@@ -47,8 +47,6 @@ document for the overall flow.
 `TestDataSeeder` populates a demo game, template, revision and version when the
 `dev` Spring profile is active. A simple smoke-test script verifies both REST and
 gRPC endpoints. Cross-service integration tests live under
-`src/test/java/crossservice` and can be executed once dependent services are
-available.
+`src/test/java/crossservice` and can be executed once dependent services are available.
 
-This stub exists only to link to the real design document. **Do not add design details here.*
-
+This stub exists only to link to the real design document. **Do not add design details here.**
