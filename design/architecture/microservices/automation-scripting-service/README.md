@@ -13,6 +13,8 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 
 For details on how scripts are authored and executed safely, see [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
 
+An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
+
 ## Architecture / Design Notes
 
 - Executes scripts in response to world or player events received via gRPC callbacks.
