@@ -9,7 +9,7 @@
   - [x] Implement faction & reputation system (players gain faction reputation over time)
   - [x] Implement NPC aggression states (hostile, neutral, passive)
   - [x] Implement NPC fleeing/surrender logic
-  - [ ] Implement NPC formations & squad AI
+  - [x] Implement NPC formations & squad AI
   - [x] Create sandboxed script runtime *(see [Scripting & Automation Framework](../architecture/system-architecture-scripting.md))*
   - [x] Support hot reloading of scripts published by the Game Design Service *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
   - [ ] Provide web UI for script creation and testing

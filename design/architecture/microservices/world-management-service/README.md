@@ -59,6 +59,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - `region.weather` column records the current weather state.
 - `region.shard_id` indicates which server shard hosts the region.
 - Redis caches hot rooms for active sessions to speed up lookups.
+- Cached rooms use keys `room:{tenantId}:{roomId}` and expire after `world.room.cache-ttl-seconds`.
 
 ### Multi-Server Shards
 

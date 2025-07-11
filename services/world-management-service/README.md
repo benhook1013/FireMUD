@@ -34,6 +34,7 @@ connections. Typical variables in development are:
 | `SPRING_REDIS_PORT` | Redis port |
 | `FIREMUD_AUTH_JWT_SECRET` | JWT signing secret |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | JWT expiration in milliseconds |
+| `WORLD_ROOM_CACHE_TTL_SECONDS` | Override default TTL for room cache |
 
 Configuration values can also be set through profiles in `application.yml`.
 
@@ -65,3 +66,5 @@ The service exposes pathfinding utilities used by NPCs and movement validation.
 `TravelService` performs Dijkstra-based searches across `room_exit` records to
 return the shortest list of room IDs between two locations. This pathfinding is
 invoked by the Game Session Service when a player moves or an NPC navigates.
+
+Room data for frequently visited locations is cached in Redis using keys of the form `room:{tenantId}:{roomId}`. Entries expire after `world.room.cache-ttl-seconds` (default 60 seconds).

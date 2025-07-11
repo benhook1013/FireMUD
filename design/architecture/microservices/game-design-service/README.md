@@ -35,12 +35,13 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ## Key Features
 
 - World and room editors.
-- Ability and action design tools.
+- [Ability & Action Design Tools](ability-action-tools.md)
 - Scripting and event workflow creation.
 - Visual editor for building scripts in the same component-based DSL used by the
   Automation & Scripting Service.
 - [Game templates](game-templates.md) with predefined rulesets and administrators.
 - Version and patch note management for published games.
+- [Item & Equipment Balancing Tools](item-equipment-balancing.md)
 - Import/export of design assets for sharing between game worlds.
 
 ### Data Model
@@ -108,6 +109,8 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [User Journeys – Patch and Update a Live Game](../user-journeys.md#8-patch-and-update-a-live-game)
 - [Asset Storage Setup](asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
+- [Ability & Action Design Tools](ability-action-tools.md)
+- [Item & Equipment Balancing Tools](item-equipment-balancing.md)
 - [Web-Based Visual Design Interface](web-visual-interface.md)
 - [Version Control for Design Assets](version-control.md)
 - [In-Game Modding and Plugin Framework](modding-framework.md)
