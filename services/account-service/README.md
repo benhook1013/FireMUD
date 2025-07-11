@@ -4,6 +4,7 @@ Manages user accounts and authentication.
 
 - **Design docs**: [design/README.md](design/README.md)
 - **Proto definitions**: [../../protos/account/v1](../../protos/account/v1)
+- **OpenAPI spec**: [src/main/resources/openapi.yaml](src/main/resources/openapi.yaml)
 
 ## Running Locally
 
@@ -55,6 +56,18 @@ Update a profile:
 curl -X PUT http://localhost:8080/profiles/2 \
   -H 'Content-Type: application/json' \
   -d '{"tenantId":1,"accountId":2,"displayName":"demo","bio":"bio"}'
+```
+
+Export all account data for GDPR compliance:
+
+```bash
+curl http://localhost:8080/accounts/2/export?tenantId=1
+```
+
+Delete an account:
+
+```bash
+curl -X DELETE http://localhost:8080/accounts/2?tenantId=1
 ```
 
 ## Environment Variables

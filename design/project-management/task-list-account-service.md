@@ -6,7 +6,7 @@
   - [ ] Implement role-based access control (RBAC) for admins, moderators, and players
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [x] Implement profile system with achievements, game history, and social features
-  - [ ] Implement player data export & deletion (GDPR compliance)
+  - [x] Implement player data export & deletion (GDPR compliance)
   - [x] Expose JWKS endpoint for token verification
   - [ ] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
@@ -62,7 +62,7 @@ participate in CI.
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
+- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
@@ -89,8 +89,8 @@ participate in CI.
 
 - [x] Depend on `firemud-common` via Gradle
 - [x] Apply logging, tracing, and security interceptors from the library
-- [ ] Use provided autoconfiguration classes to reduce boilerplate
-- [ ] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
+- [x] Use provided autoconfiguration classes to reduce boilerplate
+- [x] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
 
 ---
 
