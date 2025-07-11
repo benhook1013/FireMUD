@@ -1,0 +1,60 @@
+package net.firedevops.firemud.service.impl;
+
+import io.grpc.Status;
+import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.dto.ReportDto;
+import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
+import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
+import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
+import net.firedevops.firemud.service.ReportService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.lognet.springboot.grpc.GRpcService;
+
+@GRpcService
+public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
+
+  private final ReportService reportService;
+  private final MeterRegistry meterRegistry;
+
+  public ReportGrpcService(ReportService reportService, MeterRegistry meterRegistry) {
+    this.reportService = reportService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
+  }
+
+  @Override
+  public void createReport(
+      CreateReportRequest request, StreamObserver<CreateReportResponse> responseObserver) {
+    try {
+      ReportDto dto =
+          reportService.createReport(
+              new net.firedevops.firemud.dto.CreateReportRequest(
+                  Long.valueOf(request.getTenantId()),
+                  Long.valueOf(request.getReporterAccountId()),
+                  request.getTargetAccountId().isEmpty()
+                      ? null
+                      : Long.valueOf(request.getTargetAccountId()),
+                  request.getType(),
+                  request.getDescription()));
+      CreateReportResponse response =
+          CreateReportResponse.newBuilder().setReportId(dto.id().toString()).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      CreateReportResponse response =
+          CreateReportResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
+  }
+}

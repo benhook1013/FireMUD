@@ -29,4 +29,11 @@ curl http://localhost:8080/ping
 grpcurl -plaintext localhost:6565 logging_admin.v1.LoggingAdminService/Ping
 ```
 
+Create a report via gRPC:
+
+```bash
+grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id":2,"type":"BUG","description":"example"}' \
+  localhost:6565 logging_admin.v1.ReportService/CreateReport
+```
+
 - `POST /feature-flags/toggle` – enable or disable runtime flags.
