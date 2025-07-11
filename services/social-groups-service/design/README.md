@@ -73,3 +73,11 @@ channels for guilds and parties. When enabled, the REST API issues short-lived
 WebRTC tokens and records connection events so moderation actions can be traced.
 This feature is disabled by default and is intended for games that wish to offer
 in-client voice without relying on external tools.
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:8080/voice/token \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"accountId":100,"channelId":"guild-10"}'
+```

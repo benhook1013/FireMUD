@@ -8,7 +8,7 @@
   - [x] Implement guild ranking & permissions system
   - [x] Implement shared guild storage and alliance system
   - [x] Provide rich moderation tools for chat
-  - [ ] Add optional voice chat integration
+  - [x] Add optional voice chat integration
   - [x] Use saga orchestrator for guild creation workflow
 
 ## Reusable Microservice Checklist
