@@ -1,5 +1,8 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.client.LoggingAdminClient;
@@ -12,6 +15,7 @@ import net.firedevops.firemud.repository.ChatMessageRepository;
 import net.firedevops.firemud.service.ChatService;
 import net.firedevops.firemud.util.ProfanityFilter;
 import org.slf4j.Logger;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +28,17 @@ public class ChatServiceImpl implements ChatService {
   private final ChatMessageMapper mapper;
   private final ProfanityFilter profanityFilter;
   private final LoggingAdminClient loggingAdminClient;
+  private final RedisTemplate<String, Object> redisTemplate;
+  private final MeterRegistry meterRegistry;
+
+  private Counter publishCounter;
+  private Counter redisErrorCounter;
+
+  @PostConstruct
+  void init() {
+    this.publishCounter = meterRegistry.counter("chat_messages_published_total");
+    this.redisErrorCounter = meterRegistry.counter("chat_redis_errors_total");
+  }
 
   @Override
   @Transactional
@@ -42,6 +57,15 @@ public class ChatServiceImpl implements ChatService {
     message.setTimestamp(Instant.now());
     message.setGuildId(null);
     message.setRecipientAccountId(null);
-    return mapper.toDto(repository.save(message));
+    ChatMessage saved = repository.save(message);
+    publishCounter.increment();
+    try {
+      String key = String.format("chat:%d:%s", request.tenantId(), request.channelId());
+      redisTemplate.opsForList().leftPush(key, saved.getContent());
+    } catch (Exception e) {
+      redisErrorCounter.increment();
+      logger.warn("Failed to publish chat message to Redis", e);
+    }
+    return mapper.toDto(saved);
   }
 }

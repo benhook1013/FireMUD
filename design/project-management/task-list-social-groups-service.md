@@ -22,7 +22,7 @@ participate in CI.
 ## 📦 Project Setup & CI
 
 - [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
-- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
+- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` _(not needed for Gateway or TCP Proxy)_
 - [x] Provide a `Dockerfile` and Gradle task to build the image
 - [x] Create `README.md` with local setup instructions and design links
 - [x] Add the service to the GitHub Actions build matrix and Buf lint step
@@ -40,8 +40,8 @@ participate in CI.
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
-- [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
+- [x] _(If REST endpoints are exposed)_ implement controllers and generate OpenAPI specs
+- [x] _(If persistent storage is used)_ define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
 
@@ -72,7 +72,7 @@ participate in CI.
 
 ---
 
-## 🔄 Saga Participation *(if used)*
+## 🔄 Saga Participation _(if used)_
 
 - [ ] Use saga helpers from `firemud-common` for workflow steps
 - [ ] Emit metrics and correlation IDs for compensation and retries
@@ -80,14 +80,14 @@ participate in CI.
 
 ---
 
-## 🔑 Redis Integration *(if used)*
+## 🔑 Redis Integration _(if used)_
 
 - [x] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
+- [x] Access Redis through helpers in `firemud-common`
+- [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] Emit metrics for Redis connectivity and commands
+- [ ] _(If participating in ticks)_ implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
@@ -99,7 +99,7 @@ participate in CI.
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
-- [ ] *(When workflows span services)* add cross-service integration tests
+- [ ] _(When workflows span services)_ add cross-service integration tests
 
 ---
 
@@ -108,7 +108,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
@@ -123,4 +123,4 @@ participate in CI.
 
 ---
 
-*Game-specific services may define additional commands or entity behavior but follow the same deployment conventions.*
+_Game-specific services may define additional commands or entity behavior but follow the same deployment conventions._
