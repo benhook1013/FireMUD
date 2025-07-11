@@ -35,9 +35,8 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Cross-service calls always forward the `tenantId` so features remain isolated;
   see [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details.
-- APIs require authenticated JWTs from the Account Service and all inter-service
-  communication is encrypted via mutual TLS, following the
-  [Security Architecture](../system-architecture-security.md).
+- APIs require authenticated JWTs from the Account Service for role checks.
+  These tokens are exchanged only between services. All inter-service communication is encrypted via mutual TLS, following the [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features

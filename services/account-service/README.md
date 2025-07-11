@@ -21,9 +21,7 @@ Or start all services:
 ```
 
 ## REST Authentication Endpoint
-
-Request a JWT token using the `/auth/login` route:
-
+The `/auth/login` route establishes a session for meta/control services. The JWT returned is used internally for service calls:
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
@@ -31,7 +29,7 @@ curl -X POST http://localhost:8080/auth/login \
 # `otp` is only needed if two-factor authentication is enabled
 ```
 
-Sample response:
+Sample response (token shown for debugging only):
 
 ```json
 {
