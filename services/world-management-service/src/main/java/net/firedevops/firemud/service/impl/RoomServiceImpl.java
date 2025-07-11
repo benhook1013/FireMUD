@@ -1,10 +1,16 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
+import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.config.WorldProperties;
 import net.firedevops.firemud.dto.RoomDto;
 import net.firedevops.firemud.mapper.RoomMapper;
 import net.firedevops.firemud.repository.RoomRepository;
 import net.firedevops.firemud.service.RoomService;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -12,13 +18,47 @@ import org.springframework.stereotype.Service;
 public class RoomServiceImpl implements RoomService {
   private final RoomRepository roomRepository;
   private final RoomMapper roomMapper;
+  private final RedisTemplate<String, Object> redisTemplate;
+  private final MeterRegistry meterRegistry;
+  private final WorldProperties worldProperties;
+
+  private Counter cacheHitCounter;
+  private Counter cacheMissCounter;
+
+  private long cacheTtlSeconds;
+
+  // Setter used in tests to override TTL
+  void setCacheTtlSeconds(long seconds) {
+    this.cacheTtlSeconds = seconds;
+  }
+
+  @PostConstruct
+  void initMetrics() {
+    cacheHitCounter = meterRegistry.counter("room_cache_hits_total");
+    cacheMissCounter = meterRegistry.counter("room_cache_misses_total");
+    cacheTtlSeconds = worldProperties.getRoomCacheTtlSeconds();
+  }
 
   @Override
   public RoomDto getRoom(Long tenantId, Long roomId) {
-    return roomRepository
-        .findById(roomId)
-        .filter(r -> r.getTenantId().equals(tenantId))
-        .map(roomMapper::toDto)
-        .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+    String key = cacheKey(tenantId, roomId);
+    Object cached = redisTemplate.opsForValue().get(key);
+    if (cached instanceof RoomDto dto) {
+      cacheHitCounter.increment();
+      return dto;
+    }
+    cacheMissCounter.increment();
+    RoomDto dto =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getTenantId().equals(tenantId))
+            .map(roomMapper::toDto)
+            .orElseThrow(() -> new IllegalArgumentException("Room not found"));
+    redisTemplate.opsForValue().set(key, dto, Duration.ofSeconds(cacheTtlSeconds));
+    return dto;
+  }
+
+  private String cacheKey(Long tenantId, Long roomId) {
+    return "room:" + tenantId + ":" + roomId;
   }
 }
