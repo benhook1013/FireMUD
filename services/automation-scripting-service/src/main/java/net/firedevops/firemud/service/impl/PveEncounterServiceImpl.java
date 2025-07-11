@@ -1,0 +1,37 @@
+package net.firedevops.firemud.service.impl;
+
+import java.util.List;
+import java.util.Random;
+import lombok.extern.slf4j.Slf4j;
+import net.firedevops.firemud.model.PveEvent;
+import net.firedevops.firemud.service.PveEncounterService;
+import org.springframework.stereotype.Service;
+
+/**
+ * Basic PvE encounter generator. Uses a fixed set of events per region for now. Future iterations
+ * may load data from the database or design service.
+ */
+@Service
+@Slf4j
+public class PveEncounterServiceImpl implements PveEncounterService {
+  private static final List<String> FOREST_EVENTS =
+      List.of("wild boar attack", "bandit ambush", "swarm of insects");
+  private static final List<String> CAVE_EVENTS =
+      List.of("goblin raiders", "loose rocks", "toxic fumes");
+
+  @Override
+  public PveEvent generateEvent(String region, long seed) {
+    Random rnd = new Random(seed);
+    List<String> pool;
+    switch (region.toLowerCase()) {
+      case "forest" -> pool = FOREST_EVENTS;
+      case "cave" -> pool = CAVE_EVENTS;
+      default -> {
+        log.warn("Unknown region '{}' using generic encounter", region);
+        pool = List.of("sudden storm", "minor quake", "roaming beast");
+      }
+    }
+    String desc = pool.get(rnd.nextInt(pool.size()));
+    return new PveEvent(region, desc);
+  }
+}
