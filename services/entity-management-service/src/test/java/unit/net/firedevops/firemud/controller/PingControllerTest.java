@@ -14,7 +14,6 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PingController.class)
 class PingControllerTest {
-
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private PingService pingService;

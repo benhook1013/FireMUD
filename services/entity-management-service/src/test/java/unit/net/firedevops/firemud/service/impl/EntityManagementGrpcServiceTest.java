@@ -15,8 +15,8 @@ class EntityManagementGrpcServiceTest {
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
-    CharacterService characterService = Mockito.mock(CharacterService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
+    CharacterService characterService = Mockito.mock(CharacterService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(pingService, characterService);
 

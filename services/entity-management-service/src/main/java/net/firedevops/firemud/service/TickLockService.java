@@ -1,0 +1,10 @@
+package net.firedevops.firemud.service;
+
+/** Simple service for acquiring per-entity tick locks in Redis. */
+public interface TickLockService {
+  /** Acquire a tick lock for the entity. Returns true if obtained. */
+  boolean acquireLock(Long entityId);
+
+  /** Release the previously acquired lock. */
+  void releaseLock(Long entityId);
+}

@@ -26,3 +26,7 @@ curl http://localhost:8080/ping
 ```bash
 grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
 ```
+
+### Tick Locking
+
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{entityId}` key described in the [Redis Architecture](../../../design/architecture/system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
