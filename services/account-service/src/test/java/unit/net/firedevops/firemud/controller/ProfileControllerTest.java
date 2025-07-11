@@ -7,31 +7,48 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+import java.util.Map;
+import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.config.AuthConfig;
+import net.firedevops.firemud.config.WebConfig;
 import net.firedevops.firemud.dto.ProfileDto;
 import net.firedevops.firemud.dto.UpdateProfileRequest;
+import net.firedevops.firemud.security.JwtAuthInterceptor;
 import net.firedevops.firemud.service.AccountService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(ProfileController.class)
+@Import({AuthConfig.class, WebConfig.class, JwtAuthInterceptor.class})
+@TestPropertySource(
+    properties = {
+      "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+      "firemud.auth.jwt-expiration-ms=3600000"
+    })
 class ProfileControllerTest {
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @MockitoBean private AccountService accountService;
+  @Autowired private JwtUtil jwtUtil;
 
   @Test
   void getProfileReturnsDto() throws Exception {
     ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
     when(accountService.getProfile(1L, 2L)).thenReturn(dto);
 
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
     mockMvc
-        .perform(get("/profiles/2").param("tenantId", "1"))
+        .perform(get("/profiles/2").param("tenantId", "1").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.displayName").value("demo"));
@@ -43,11 +60,13 @@ class ProfileControllerTest {
     ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
     when(accountService.updateProfile(req)).thenReturn(dto);
 
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
     mockMvc
         .perform(
             put("/profiles/2")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(req)))
+                .content(objectMapper.writeValueAsString(req))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.displayName").value("demo"));

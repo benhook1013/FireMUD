@@ -33,7 +33,8 @@ public class GrpcConfig {
 
   @Bean
   @GRpcGlobalInterceptor
-  public AuthTokenInterceptor authTokenInterceptor(JwtUtil jwtUtil) {
-    return new AuthTokenInterceptor(jwtUtil);
+  public GrpcJwtAuthInterceptor grpcJwtAuthInterceptor(
+      net.firedevops.firemud.common.security.JwtUtil jwtUtil) {
+    return new GrpcJwtAuthInterceptor(jwtUtil);
   }
 }
