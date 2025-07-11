@@ -4,4 +4,4 @@ The design for this service is located here:
 
 [📄 Central Architecture: Automation Scripting Service Design](../../../design/architecture/microservices/automation-scripting-service/README.md)
 
-This stub exists only to link to the real design document. **Do not add design details here.** An OpenAPI specification is available at `src/main/resources/openapi.yaml`
+This stub exists only to link to the real design document. **Do not add design details here.**

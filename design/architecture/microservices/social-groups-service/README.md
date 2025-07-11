@@ -4,6 +4,8 @@
 
 Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time.
 
+An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
+
 ### Responsibilities
 
 - Deliver real-time chat and presence notifications
@@ -83,7 +85,6 @@ default and can be enabled per tenant through configuration.
   - Account Service for user identities.
   - Logging & Admin Service consumes chat logs for moderation.
 - **External:** PostgreSQL for social data.
-
 
 ## Operational Notes
 
