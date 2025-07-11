@@ -9,7 +9,7 @@
   - [x] Implement travel & navigation system (movement, teleportation, pathfinding)
   - [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
   - [x] Use saga orchestrator for world creation workflow
-  - [ ] Provide tools to fine-tune procedural generation rules
+  - [x] Provide tools to fine-tune procedural generation rules
   - [ ] Support multi-server world shards
 
 ## Reusable Microservice Checklist

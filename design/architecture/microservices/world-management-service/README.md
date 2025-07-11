@@ -111,7 +111,18 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
 
+## Procedural Generation Rules API
+
+Administrators can tweak procedural generation without redeploying the service.
+Rules are stored in the `generation_rule` table and managed over REST:
+
+- `POST /generation/rules` – create or update a rule for a tenant
+- `GET /generation/rules?tenantId=...` – list rules for a tenant
+
+These endpoints allow live tuning of parameters such as room density or terrain
+variation. Updates are persisted immediately and picked up by the procedural
+generation engine on the next run.
+
 ## Future Enhancements
 
-- Tools for fine-tuning procedural generation rules.
 - Support for multi-server world shards.
