@@ -79,3 +79,9 @@ commands to the Game Logic Service for rule evaluation.
 ### Procedural Generation
 
 A lightweight dungeon generator is provided for early world creation. It generates a simple tree of rooms which can be persisted by the World Management Service. See [System Architecture: Procedural Generation](../../design/architecture/system-architecture-procedural-generation.md) for details.
+
+### PvE Mechanics
+
+`PveEncounterService` offers random encounters and environmental hazards. Events
+are selected from predefined lists based on the region type and a random seed so
+results can be reproduced during testing.

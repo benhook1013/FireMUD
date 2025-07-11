@@ -27,6 +27,16 @@ Run `./smoke-test.sh` while the service is running to verify that the REST and g
 ./smoke-test.sh
 ```
 
+### Cross-Service Integration Test
+
+The `src/test/java/crossservice` directory contains an integration test that
+starts the proxy alongside the Spring Cloud Gateway using Testcontainers. Run it
+manually once the Gateway image is built:
+
+```bash
+./gradlew :tcp-proxy-service:test --tests "*CrossServiceIntegrationTest"
+```
+
 ## Configuration
 
 Environment variables used by the service:
@@ -40,6 +50,7 @@ Environment variables used by the service:
 | `TCP_PROXY_TLS_KEY` | Path to TLS private key (if enabled) | `""` |
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Max simultaneous connections per IP | `5` |
 | `TCP_PROXY_MAX_MSGS_PER_SEC` | Max allowed messages per connection per second | `5` |
+| `OTEL_ENDPOINT` | OpenTelemetry collector endpoint | `http://otel-collector:4317` |
 
 The proxy tags each connection with the player's `tenantId` during login so the
 gateway can route commands to the correct game instance. See the

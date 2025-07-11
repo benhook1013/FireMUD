@@ -12,6 +12,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
 - Feed chat logs to the Logging & Admin Service for moderation
+- Send out-of-game notifications and bulk emails on behalf of game creators
 
 ## Architecture / Design Notes
 
@@ -20,6 +21,9 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Integrates with the Logging & Admin Service for moderation events.
 - Chat profanity triggers a gRPC call to the Logging & Admin Service to record a
   moderation report.
+- In-game chat commands such as say, tell, guild chat, and mail originate in the
+  Game Logic Service, which invokes this service to deliver messages and perform
+  profanity checks. All communications are logged for audit and moderation.
 - Messages are briefly cached in Redis streams to smooth bursts of activity and
   enable delivery retries.
 - Guild creation and membership changes participate in Saga workflows so other
@@ -45,12 +49,16 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Cross-game presence lets players know when friends are online in any hosted
   game.
 - In-game social chat plus account-to-account direct messaging.
+- Broadcast email capability for game creators to reach all active players.
 
 ### Data Model
 
 - `chat_message` table persists guild and private messages.
 - `guild` and `guild_member` tables store group ownership and membership roles.
 - `friend_link` table tracks account or character friendships and blocks.
+- Per-game friendships are stored on character records in the Entity Management
+  Service. When a game opts in, account-level friends from this service are
+  mirrored as in-game friends automatically.
 - `mail_message` table stores asynchronous player mail.
 - `faction` and `faction_standing` tables maintain player reputation. The
   [Automation & Scripting Service](../automation-scripting-service/README.md)

@@ -28,6 +28,17 @@ Once the service is running you can execute a basic contract check:
 Running with the `dev` profile automatically seeds a demo game, template,
 revision and version via `TestDataSeeder`.
 
+### Cross-Service Integration Test
+
+The `src/test/java/crossservice` directory contains a basic integration test
+that starts the Game Design Service alongside the World Management Service using
+Testcontainers. This verifies that the services can communicate when started
+together. Run it manually once the dependent Docker images are built:
+
+```bash
+./gradlew :game-design-service:test --tests "*CrossServiceIntegrationTest"
+```
+
 ## Environment Variables
 
 The service reads configuration from standard Spring Boot variables. Typical

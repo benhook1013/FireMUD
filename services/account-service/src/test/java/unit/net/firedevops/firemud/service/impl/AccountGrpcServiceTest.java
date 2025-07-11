@@ -9,8 +9,12 @@ import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
+import net.firedevops.firemud.account.v1.GetProfileRequest;
+import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
+import net.firedevops.firemud.account.v1.UpdateProfileRequest;
+import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.PingService;
 import org.junit.jupiter.api.Test;
@@ -97,6 +101,71 @@ class AccountGrpcServiceTest {
         new StreamObserver<>() {
           @Override
           public void onNext(CreateAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void getProfileReturnsProfile() throws Exception {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.getProfile(1L, 2L))
+        .thenReturn(new net.firedevops.firemud.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetProfileResponse> ref = new AtomicReference<>();
+    service.getProfile(
+        GetProfileRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetProfileResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(
+        "demo",
+        com.fasterxml.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(ref.get().getProfileJson())
+            .get("displayName")
+            .asText());
+  }
+
+  @Test
+  void updateProfileErrorReturnsDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.updateProfile(Mockito.any()))
+        .thenThrow(new IllegalArgumentException("bad"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<UpdateProfileResponse> ref = new AtomicReference<>();
+    service.updateProfile(
+        UpdateProfileRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setProfileJson("{\"displayName\":\"demo\",\"bio\":\"bio\"}")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(UpdateProfileResponse value) {
             ref.set(value);
           }
 

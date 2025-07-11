@@ -13,13 +13,16 @@ class WorldCreationServiceImplTest {
   private RegionRepository regionRepository;
   private WorldCreationServiceImpl service;
   private MeterRegistry meterRegistry;
+  private net.firedevops.firemud.config.WorldProperties worldProperties;
 
   @BeforeEach
   void setup() {
     regionRepository = mock(RegionRepository.class);
     meterRegistry = mock(MeterRegistry.class);
     when(meterRegistry.counter(anyString())).thenReturn(mock(Counter.class));
-    service = new WorldCreationServiceImpl(regionRepository, meterRegistry);
+    worldProperties = new net.firedevops.firemud.config.WorldProperties();
+    worldProperties.setLocalShardId(0);
+    service = new WorldCreationServiceImpl(regionRepository, meterRegistry, worldProperties);
   }
 
   @Test
