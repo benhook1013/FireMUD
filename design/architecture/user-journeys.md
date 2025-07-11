@@ -69,6 +69,12 @@ The Game Session Service handles login, session recovery, and active gameplay. P
 ## 6. Social Interaction
 
 During gameplay, players form groups and communicate via the [Social & Groups Service](./microservices/social-groups-service/README.md). Chat rooms, guilds, and friend lists are synchronized in real time.
+In-game chat commands (say, tell, guild chat, and mail) are processed by the Game Logic Service
+and forwarded to the Social & Groups Service, which performs profanity checks and logs
+all communication. Account-to-account messages and broadcast emails to active players
+use the same service. Per-game friend connections are stored on characters via the
+Entity Management Service while account-level friends automatically appear in-game
+when the feature is enabled.
 
 ---
 

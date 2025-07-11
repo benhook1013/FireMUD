@@ -43,6 +43,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Supports instance-based spaces in conjunction with the World Management Service
   so characters can enter private dungeons or personalized housing without affecting
   the shared world state.
+- Stores per-game friendship links on characters for local social features.
 
 ### Data Model
 
@@ -52,6 +53,8 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Character location and instance membership are stored by the World Management
   Service rather than this service.
 - Entity graphs cache inventory relationships for fast lookups.
+- `character_friend` table stores per-game friend links used by the Game Logic
+  Service.
 
 ### gRPC APIs
 
