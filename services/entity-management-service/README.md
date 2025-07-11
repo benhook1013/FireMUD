@@ -41,7 +41,6 @@ contain either `platformAdmin` or `moderator` in the `globalRoles` claim, or an
 `admin`/`moderator` role within the `scopedRoles` map. Include the token using
 the standard `Authorization: Bearer <token>` header.
 
-
 ## Proto Contracts
 
 See [`entity_management_service.proto`](../../protos/entity-management/v1/entity_management_service.proto)
