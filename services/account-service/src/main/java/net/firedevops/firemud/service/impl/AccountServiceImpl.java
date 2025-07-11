@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import com.bastiaanjansen.otp.TOTPGenerator;
 import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -48,6 +49,7 @@ public class AccountServiceImpl implements AccountService {
     account.setUsername(request.username());
     account.setEmail(request.email());
     account.setPasswordHash(hashPassword(request.password()));
+    account.setRole("player");
     account = accountRepository.save(account);
     return accountMapper.toDto(account);
   }
@@ -55,7 +57,7 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.authenticate")
-  public String authenticate(Long tenantId, String username, String password) {
+  public String authenticate(Long tenantId, String username, String password, String otp) {
     Optional<Account> accountOpt = accountRepository.findByTenantIdAndUsername(tenantId, username);
     Account account =
         accountOpt.orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
@@ -63,8 +65,18 @@ public class AccountServiceImpl implements AccountService {
     if (!hash.equals(account.getPasswordHash())) {
       throw new IllegalArgumentException("Invalid credentials");
     }
+    if (account.getTwoFactorSecret() != null
+        && ("admin".equals(account.getRole()) || "moderator".equals(account.getRole()))) {
+      TOTPGenerator generator = new TOTPGenerator.Builder(account.getTwoFactorSecret()).build();
+      if (otp == null || !generator.verify(otp)) {
+        throw new IllegalArgumentException("Invalid 2FA code");
+      }
+    }
     String token =
-        jwtUtil.generateToken(account.getId().toString(), Map.of("accountId", account.getId()));
+        jwtUtil.generateToken(
+            account.getId().toString(),
+            Map.of(
+                "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
     sessionService.storeSession(tenantId, account.getId(), token);
     return token;
   }

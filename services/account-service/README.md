@@ -26,7 +26,8 @@ Request a JWT token using the `/auth/login` route:
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"username":"demo","password":"secret"}'
+  -d '{"tenantId":1,"username":"demo","password":"secret","otp":"123456"}'
+# `otp` is only needed if two-factor authentication is enabled
 ```
 
 Sample response:

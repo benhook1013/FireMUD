@@ -125,5 +125,4 @@ The gRPC schemas for this service live in
 
 - OAuth2 support for social logins.
 - Self-service account recovery tools.
-- Optional 2FA for elevated roles, as planned in the
-  [Security Architecture](../system-architecture-security.md#%F0%9F%94%A1-summary).
+- Two-factor authentication is now available for admins and moderators using TOTPs.

@@ -10,7 +10,7 @@
   - [x] Expose JWKS endpoint for token verification
   - [ ] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
-  - [ ] Add optional 2FA for admin and moderator roles
+  - [x] Add optional 2FA for admin and moderator roles
 - [ ] **Develop Email & Notification System**
   - [ ] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages

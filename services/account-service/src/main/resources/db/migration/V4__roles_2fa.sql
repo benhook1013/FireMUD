@@ -1,0 +1,2 @@
+ALTER TABLE accounts ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'player';
+ALTER TABLE accounts ADD COLUMN two_factor_secret VARCHAR(64);

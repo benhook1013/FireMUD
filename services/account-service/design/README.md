@@ -19,6 +19,13 @@ This service sends verification and password reset emails using a configured SMT
 
 Authentication returns a JWT token which is stored in Redis for quick reconnects. Keys follow `session:{tenantId}:{token}` and expire after the duration configured by `session-expiration-ms` in `AuthProperties`.
 
+## Two-Factor Authentication
+
+Admin and moderator accounts can enable a TOTP secret for additional protection.
+If a `two_factor_secret` is present on the account row, the `/auth/login` endpoint
+expects an `otp` field. Codes are validated using the Base32 secret as outlined
+in the [Security Architecture](../../../design/architecture/system-architecture-security.md).
+
 ## REST & gRPC Endpoints
 
 ### REST
@@ -49,10 +56,12 @@ Example response:
 
 Example login request:
 
+`otp` is only required when two-factor authentication is enabled for the account.
+
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"username":"demo","password":"secret"}'
+  -d '{"tenantId":1,"username":"demo","password":"secret","otp":"123456"}'
 ```
 
 Example login response:

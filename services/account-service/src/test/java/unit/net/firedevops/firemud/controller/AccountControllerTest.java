@@ -28,7 +28,7 @@ class AccountControllerTest {
   void createAccountReturnsDto() throws Exception {
     CreateAccountRequest request =
         new CreateAccountRequest(1L, "demo", "demo@example.com", "password");
-    AccountDto response = new AccountDto(1L, 1L, "demo", "demo@example.com");
+    AccountDto response = new AccountDto(1L, 1L, "demo", "demo@example.com", "player");
     when(accountService.createAccount(request)).thenReturn(response);
 
     mockMvc

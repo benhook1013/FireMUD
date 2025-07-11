@@ -24,6 +24,7 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-api:1.38.0")
     implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
+    implementation("com.github.bastiaanjansen:otp-java:2.1.0")
     runtimeOnly("org.postgresql:postgresql:42.7.7")
 }
 

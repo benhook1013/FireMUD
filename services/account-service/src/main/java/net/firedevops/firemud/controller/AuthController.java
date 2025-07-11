@@ -23,7 +23,8 @@ public class AuthController {
   @PostMapping("/login")
   public ResponseEntity<ApiResponse<AuthTokenDto>> login(@Valid @RequestBody LoginRequest request) {
     String token =
-        accountService.authenticate(request.tenantId(), request.username(), request.password());
+        accountService.authenticate(
+            request.tenantId(), request.username(), request.password(), request.otp());
     return ResponseEntity.ok(ApiResponse.success(new AuthTokenDto(token)));
   }
 }
