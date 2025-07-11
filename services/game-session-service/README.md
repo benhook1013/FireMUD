@@ -61,6 +61,11 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
+### Test Data
+
+Running with the `dev` profile automatically seeds a demo manifest, feature flag,
+and game instance via `TestDataSeeder` when the database tables are empty.
+
 ## Tenant Handling and Dependencies
 
 Every session row contains a `tenantId` column, and all Redis keys include this

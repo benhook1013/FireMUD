@@ -84,7 +84,6 @@ default and can be enabled per tenant through configuration.
   - Logging & Admin Service consumes chat logs for moderation.
 - **External:** PostgreSQL for social data.
 
-
 ## Operational Notes
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
