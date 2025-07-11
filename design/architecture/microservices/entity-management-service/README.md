@@ -8,7 +8,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 - Persist characters, NPCs, and items with optimistic locking
 - Provide CRUD and query APIs for other services
-- Manage inventories and instanced zones
+- Manage inventories; location and instance data live in the World Management Service
 - Coordinate deferred writes through Game Session Service
 
 ## Architecture / Design Notes
@@ -40,16 +40,17 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Experience and level tracking.
 - NPC respawn scheduling with configurable delays.
 - Character creation templates pulled from the Game Design Service.
-- Supports instance-based spaces so characters can enter private dungeons or
-  personalized housing without affecting the main world state.
+- Supports instance-based spaces in conjunction with the World Management Service
+  so characters can enter private dungeons or personalized housing without affecting
+  the shared world state.
 
 ### Data Model
 
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
 - Many-to-many tables define inventory and equipment relationships.
-- `instance_member` table tracks which characters are present in optional
-  instance-based spaces.
+- Character location and instance membership are stored by the World Management
+  Service rather than this service.
 - Entity graphs cache inventory relationships for fast lookups.
 
 ### gRPC APIs
