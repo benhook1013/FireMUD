@@ -1,6 +1,6 @@
 # Game Design Service Task List
 
-- [ ] **Expand Game Design Service**
+- [x] **Expand Game Design Service**
   - [x] Provide game templates and configuration tools
   - [x] Enable publishing of game versions
   - [x] Use saga orchestrator for game publishing workflow
@@ -8,11 +8,11 @@
   - [x] Create design-time database models
 - [ ] **Develop Game Design Service**
   - [x] Implement world editing & customization tools
-  - [ ] Implement scripting & event design tools
-  - [ ] Build a **visual scripting editor** using a **component-based DSL**
-  - [ ] Sandbox script execution with quotas via the Automation & Scripting Service
-  - [ ] Implement ability & action design tools
-  - [ ] Implement item & equipment balancing tools
+  - [x] Implement scripting & event design tools
+  - [x] Build a **visual scripting editor** using a **component-based DSL**
+  - [x] Sandbox script execution with quotas via the Automation & Scripting Service
+  - [x] Implement ability & action design tools
+  - [x] Implement item & equipment balancing tools
   - [x] Track version history and patch notes for published games
   - [ ] Build a web-based visual design interface
   - [ ] Integrate version control for design assets
@@ -20,17 +20,17 @@
     - [x] Provide asset upload API in Game Design Service
     - [x] Document asset storage setup and configuration
 - [ ] **Expand Scripting & Modding**
-  - [ ] Implement event-driven scripting API for game creators
+  - [x] Implement event-driven scripting API for game creators
   - [ ] Implement in-game modding/plugin framework
-  - [ ] Implement scripted AI behaviors for NPCs
+  - [x] Implement scripted AI behaviors for NPCs
 
 ## Versioning & Runtime Configuration
 
 - [x] Implement cross-service game version publishing workflow
 - [x] Store immutable versions in the Game Design Service
 - [x] Copy published data to domain services using the `version_id`
-- [ ] Activate versions and runtime flags via the Game Session Service
-- [ ] Expose admin APIs for runtime flag toggles through the Logging & Admin Service
+  - [x] Activate versions and runtime flags via the Game Session Service
+  - [x] Expose admin APIs for runtime flag toggles through the Logging & Admin Service
 
 ## Reusable Microservice Checklist
 
@@ -68,19 +68,19 @@ participate in CI.
 
 ## 🔒 Authentication & Authorization
 
-- [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [ ] Check `globalRoles` and `scopedRoles` where applicable
-- [ ] Gameplay services rely on the Game Session Service for session validation
+- [x] Meta and admin services validate JWTs using helpers from `firemud-common`
+- [x] Check `globalRoles` and `scopedRoles` where applicable
+- [x] Gameplay services rely on the Game Session Service for session validation
 
 ---
 
 ## 🔁 Inter-Service Communication
 
-- [ ] Use `firemud-common` protobuf types for shared messages
-- [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
-- [ ] Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
+- [x] Use `firemud-common` protobuf types for shared messages
+- [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] Register with service discovery via helpers in `firemud-common`
+- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
 
@@ -96,7 +96,7 @@ participate in CI.
 ## 🔄 Saga Participation *(if used)*
 
 - [x] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
+  - [x] Emit metrics and correlation IDs for compensation and retries
 - [x] Document saga participation in `design/README.md`
 
 ---
