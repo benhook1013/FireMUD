@@ -63,3 +63,7 @@ NPCs may enter a `FLEEING` or `SURRENDERED` state to avoid lethal outcomes.
 Each script row includes a `tenantId` column to keep data isolated between
 games. The service receives events from the Game Session Service and sends
 commands to the Game Logic Service for rule evaluation.
+
+### AutomationQueueService
+
+`AutomationQueueService` stores triggered events using Redis lists. Events are pushed to `automation_queue:{tenantId}:{entityId}` and drained when the script engine runs. Metrics `automation_queue_enqueued_total` and `automation_queue_drained_total` record queue activity.

@@ -87,13 +87,13 @@ participate in CI.
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
+- [x] Use Redis for transient gameplay state only
+- [x] Access Redis through helpers in `firemud-common`
+- [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
+- [x] Validate shard-local key usage and avoid per-service caching
+- [x] Emit metrics for Redis connectivity and commands
 - [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
 
@@ -101,7 +101,7 @@ participate in CI.
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [ ] Use Spring Boot Test and Testcontainers for integration tests
-- [ ] Validate contracts with smoke tests (gRPC and REST)
+- [x] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests
@@ -113,7 +113,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
