@@ -17,3 +17,10 @@ management:
         enabled: true
 game:
   tick-duration-ms: 1000
+firemud:
+  services:
+    game-logic-service: game-logic-service:6565
+  grpc:
+    cert-chain: classpath:certs/client.crt
+    private-key: classpath:certs/client.key
+    ca-cert: classpath:certs/ca.crt
