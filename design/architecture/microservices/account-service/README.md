@@ -89,6 +89,20 @@ details on shared infrastructure components.
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
+## Environment Variables
+
+This service follows the standard scheme described in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
+variables.
+
+## Proto Files
+
+The gRPC schemas for this service live in
+[../../../../protos/account/v1](../../../../protos/account/v1). Use
+`./gradlew generateProto` to regenerate Java stubs when the definitions change.
+
 ## 📚 Related Documentation
 
 - [Authentication & Authorization](../system-architecture-authentication.md)

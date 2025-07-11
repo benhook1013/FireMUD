@@ -82,6 +82,13 @@ details on shared infrastructure components.
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
+## Environment Variables
+
+Configuration uses the conventions defined in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+This service relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
+Redis variables are not used.
+
 ## Proto Files
 
 The service API contract resides in

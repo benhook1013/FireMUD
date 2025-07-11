@@ -81,6 +81,14 @@ details on shared infrastructure components.
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
+## Environment Variables
+
+World Management Service uses the configuration scheme defined in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It depends on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
+
+
 ## Proto Files
 
 The gRPC contract for world operations is located in

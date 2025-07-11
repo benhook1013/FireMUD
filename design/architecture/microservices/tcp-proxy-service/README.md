@@ -84,6 +84,13 @@ details on how Telnet connections are integrated into the platform.
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
+## Environment Variables
+
+The proxy uses minimal configuration. It still follows the scheme in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
+so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be present
+but are ignored.
+
 ## Metrics & Tracing
 
 Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The

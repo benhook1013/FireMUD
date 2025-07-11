@@ -102,21 +102,10 @@ details on shared infrastructure components.
 
 ## Environment Variables
 
-The service uses the shared configuration conventions defined in
+The service follows the conventions from
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
-Important variables include:
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
-| `FIREMUD_POSTGRES_HOST` | PostgreSQL host | `postgres` |
-| `FIREMUD_POSTGRES_PORT` | PostgreSQL port | `5432` |
-| `FIREMUD_REDIS_HOST` | Redis host | `redis` |
-| `FIREMUD_REDIS_PORT` | Redis port | `6379` |
-
-See `DatabaseAutoConfiguration` in the
-[Shared Libraries](../system-architecture-shared-libraries.md) for how these
-variables are consumed.
+It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
 
 ## Proto Files
 
