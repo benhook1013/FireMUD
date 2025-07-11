@@ -36,7 +36,8 @@ The World Management Service stores and manages game world data such as rooms, r
 
 ## Key Features
 
-- Region and location management with shard support.
+- Region and location management with shard support. Each region stores a
+  `shard_id` value so the world can span multiple servers.
 - Instance-based zones are treated as regular rooms; this service records which
   characters occupy each instance so private dungeons or housing do not affect
   the shared world map.
@@ -56,7 +57,15 @@ The World Management Service stores and manages game world data such as rooms, r
   including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.
 - `region.weather` column records the current weather state.
+- `region.shard_id` indicates which server shard hosts the region.
 - Redis caches hot rooms for active sessions to speed up lookups.
+
+### Multi-Server Shards
+
+Large worlds can span multiple server clusters. Each `region` is assigned a
+`shard_id` so the Game Session Service knows which cluster hosts the active
+state for that region. When a player crosses into a region on another shard the
+session handoff flow described in the Game Session Service design is invoked.
 
 ### gRPC APIs
 
@@ -123,4 +132,4 @@ generation engine on the next run.
 
 ## Future Enhancements
 
-- Support for multi-server world shards.
+- Additional shard balancing strategies.
