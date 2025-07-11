@@ -25,6 +25,8 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0")
     runtimeOnly("org.postgresql:postgresql:42.7.7")
+    testImplementation("org.testcontainers:junit-jupiter:1.19.7")
+    testImplementation("org.testcontainers:postgresql:1.19.7")
 }
 
 protobuf {
