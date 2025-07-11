@@ -50,7 +50,7 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 ### Script Lifecycle
 
-- Scripts reside in the Automation & Scripting Service database and are versioned independently from running game sessions.
+- Scripts reside in the Automation & Scripting Service database and are versioned along with other game data as described in the design service versioning process.
 - Events from the Game Session Service trigger script execution via gRPC.
 - The sandboxed engine limits CPU time and memory for each script to prevent
   runaway behavior.
