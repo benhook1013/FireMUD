@@ -47,7 +47,9 @@ class AccountGrpcServiceTest {
   void authenticateFailureReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
-    Mockito.when(accountService.authenticate(Mockito.eq(1L), Mockito.eq("demo"), Mockito.eq("bad"), Mockito.any()))
+    Mockito.when(
+            accountService.authenticate(
+                Mockito.eq(1L), Mockito.eq("demo"), Mockito.eq("bad"), Mockito.any()))
         .thenThrow(new IllegalArgumentException("invalid"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 

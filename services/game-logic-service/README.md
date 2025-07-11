@@ -29,7 +29,8 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
-After starting the services you can seed minimal test data with:
+After starting the services you can seed minimal test data from the repository
+root:
 
 ```bash
 ./dev-tools/seed-test-data.sh
