@@ -33,7 +33,8 @@ class AutomationScriptingServiceApplicationIntegrationTest {
   }
 
   @Configuration
-  @EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+  @EnableAutoConfiguration(
+      exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
   @Import(CommonAutoConfiguration.class)
   static class TestApp {}
 }
