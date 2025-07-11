@@ -106,4 +106,9 @@ public class TelnetServer {
     running.set(false);
     logger.info("Telnet server stopped");
   }
+
+  /** Expose the configured port for testing purposes. */
+  public int getPort() {
+    return port;
+  }
 }
