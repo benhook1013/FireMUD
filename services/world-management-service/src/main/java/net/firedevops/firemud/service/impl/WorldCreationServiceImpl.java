@@ -74,6 +74,9 @@ public class WorldCreationServiceImpl implements WorldCreationService {
     // TODO fetch data from Game Design Service. For now create a single region.
     Region region = new Region();
     region.setTenantId(tenantId);
+    // newly created worlds start on shard 0. Admin tooling can redistribute
+    // regions to other shards later for scaling.
+    region.setShardId(0);
     region.setName("Starter Region");
     regionRepository.save(region);
   }
