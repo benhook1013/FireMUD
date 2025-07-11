@@ -77,13 +77,15 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Deployed as a Kubernetes Deployment with horizontal scaling for log-processing
-  workloads.
-- Health endpoints under `/actuator/health` feed readiness and liveness probes.
-- Metrics and OpenTelemetry traces are scraped by Prometheus. Each pod runs a Fluent Bit
-  sidecar that forwards JSON logs to Elasticsearch for search.
-- Environment differences are outlined in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+
+## Environment Variables
+
+The service uses the configuration approach from
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
+Redis variables are not required.
 
 ## Saga Dashboard
 

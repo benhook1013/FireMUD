@@ -81,12 +81,15 @@ details on how Telnet connections are integrated into the platform.
 
 ## Operational Notes
 
-- Deployed alongside the gateway in the DMZ as a lightweight container.
-- Health is checked using a custom TCP probe defined in the Kubernetes manifest.
-- Logs are forwarded via Fluent Bit and metrics are exported for Prometheus via
-  a minimal collector endpoint.
-- Configuration for local Docker Compose versus production clusters is described
-  in [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+
+## Environment Variables
+
+The proxy uses minimal configuration. It still follows the scheme in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
+so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be present
+but are ignored.
 
 ## Metrics & Tracing
 
@@ -112,6 +115,33 @@ regenerated via `./gradlew generateProto` when the proto files change.
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check.
+- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected.
+- `PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse)` – delivers queued commands after a reconnect.
+
+All RPC definitions live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
+
+```bash
+grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
+```
+
+Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger.
+
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 

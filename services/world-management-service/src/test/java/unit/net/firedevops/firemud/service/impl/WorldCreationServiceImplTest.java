@@ -3,7 +3,8 @@ package net.firedevops.firemud.service.impl;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.Mockito.*;
 
-import net.firedevops.firemud.entity.Region;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.repository.RegionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,17 +12,20 @@ import org.junit.jupiter.api.Test;
 class WorldCreationServiceImplTest {
   private RegionRepository regionRepository;
   private WorldCreationServiceImpl service;
+  private MeterRegistry meterRegistry;
 
   @BeforeEach
   void setup() {
     regionRepository = mock(RegionRepository.class);
-    service = new WorldCreationServiceImpl(regionRepository);
+    meterRegistry = mock(MeterRegistry.class);
+    when(meterRegistry.counter(anyString())).thenReturn(mock(Counter.class));
+    service = new WorldCreationServiceImpl(regionRepository, meterRegistry);
   }
 
   @Test
   void createWorldRunsSaga() {
     when(regionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     assertDoesNotThrow(() -> service.createWorld(1L, 1L));
-    verify(regionRepository).save(any(Region.class));
+    verify(regionRepository).save(argThat(r -> r.getShardId() == 0));
   }
 }

@@ -50,7 +50,7 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 ### Script Lifecycle
 
-- Scripts reside in the Automation & Scripting Service database and are versioned independently from running game sessions.
+- Scripts reside in the Automation & Scripting Service database and are versioned along with other game data as described in the design service versioning process.
 - Events from the Game Session Service trigger script execution via gRPC.
 - The sandboxed engine limits CPU time and memory for each script to prevent
   runaway behavior.
@@ -86,13 +86,16 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Deployed as a Kubernetes Deployment with optional horizontal scaling.
-- Exposes Spring Boot health endpoints for readiness and liveness probing.
-- Prometheus and Fluent Bit collect metrics and logs for Elasticsearch analysis,
-  with traces emitted via OpenTelemetry.
-- Development under Docker Compose mirrors this setup using the same Spring
-  profiles as described in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+
+## Environment Variables
+
+This service follows the common scheme in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It uses the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
+variables to access its databases.
 
 ## Proto Files
 
@@ -117,6 +120,38 @@ stubs.
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### Configuration
+
+PostgreSQL and Redis connections are configured via the common `DatabaseAutoConfiguration` and `RedisProperties` classes. Refer to [Deployment Environments](../../infrastructure/deployment-environments.md) for default values. Local development typically uses the settings from `.env.sample`.
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`automation_scripting_service.proto`](../../../protos/automation-scripting/v1/automation_scripting_service.proto).
+
+```bash
+grpcurl -plaintext localhost:6565 automation_scripting.v1.AutomationScriptingService/Ping
+```
+
+Expected response:
+
+```json
+{
+  "message": "pong"
+}
+```
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)

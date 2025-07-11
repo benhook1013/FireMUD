@@ -9,5 +9,8 @@ public class ServiceEndpointsProperties {
   private String accountService;
   private String gameSessionService;
   private String gameDesignService;
+  private String gameLogicService;
+  private String worldManagementService;
+  private String entityManagementService;
   private String loggingAdminService;
 }
