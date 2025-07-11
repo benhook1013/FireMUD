@@ -41,3 +41,11 @@ fails, previously executed actions are compensated so the database remains
 consistent. See the
 [Versioning & Runtime Configuration](../../../design/architecture/system-architecture-versioning-runtime.md)
 document for the overall flow.
+
+## Local Development Notes
+
+`TestDataSeeder` populates a demo game, template, revision and version when the
+`dev` Spring profile is active. A simple smoke-test script verifies both REST and
+gRPC endpoints. Cross-service integration tests live under
+`src/test/java/crossservice` and can be executed once dependent services are
+available.
