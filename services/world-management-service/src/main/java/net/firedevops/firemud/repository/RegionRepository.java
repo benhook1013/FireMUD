@@ -1,5 +1,6 @@
 package net.firedevops.firemud.repository;
 
+import java.util.List;
 import net.firedevops.firemud.entity.Region;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -14,4 +15,8 @@ public interface RegionRepository extends JpaRepository<Region, Long> {
   @Transactional
   @Query("delete from Region r where r.tenantId = :tenantId")
   void deleteByTenantId(Long tenantId);
+
+  List<Region> findByTenantId(Long tenantId);
+
+  List<Region> findByTenantIdAndShardId(Long tenantId, Integer shardId);
 }
