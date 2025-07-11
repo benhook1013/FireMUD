@@ -32,6 +32,8 @@ connections. Typical variables in development are:
 | `SPRING_DATASOURCE_PASSWORD` | Database password |
 | `SPRING_REDIS_HOST` | Redis hostname |
 | `SPRING_REDIS_PORT` | Redis port |
+| `FIREMUD_AUTH_JWT_SECRET` | JWT signing secret |
+| `FIREMUD_AUTH_JWT_EXPIRATION_MS` | JWT expiration in milliseconds |
 
 Configuration values can also be set through profiles in `application.yml`.
 

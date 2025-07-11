@@ -23,6 +23,10 @@ UI at `/swagger-ui.html` when running locally.
 curl http://localhost:8080/ping
 ```
 
+All requests must include a valid JWT in the `Authorization` header. See the
+[Security Architecture](../../../design/architecture/system-architecture-security.md)
+for accepted claims.
+
 ### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../protos/world-management/v1/world_management_service.proto).
