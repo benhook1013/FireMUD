@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.v1.Character;
@@ -21,10 +22,18 @@ public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private final PingService pingService;
   private final CharacterService characterService;
+  private final MeterRegistry meterRegistry;
 
-  public EntityManagementGrpcService(PingService pingService, CharacterService characterService) {
+  public EntityManagementGrpcService(
+      PingService pingService, CharacterService characterService, MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   @Override
@@ -36,13 +45,7 @@ public class EntityManagementGrpcService
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       PingResponse response =
-          PingResponse.newBuilder()
-              .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
-              .build();
+          PingResponse.newBuilder().setError(error("INVALID_ARGUMENT", ex.getMessage())).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -67,22 +70,14 @@ public class EntityManagementGrpcService
     } catch (NumberFormatException ex) {
       ListCharactersResponse response =
           ListCharactersResponse.newBuilder()
-              .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       ListCharactersResponse response =
           ListCharactersResponse.newBuilder()
-              .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
