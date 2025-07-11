@@ -17,7 +17,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Exposes gRPC endpoints for other microservices.
 - Caches frequently accessed character data in Redis for quick lookups.
 - Applies **optimistic locking** to avoid conflicting updates on the same entity.
-- **Database writes are deferred and batched**, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is only updated during safe persistence boundaries (e.g. logout, autosave).
+- **Database writes are deferred and batched**, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is only updated when ticks complete.
 - This design reduces write frequency and contention, making optimistic locking a natural fit — most entities are updated by only one process at a time, and conflicts are rare.
 - Item transfers and other gameplay actions span services but execute within ticks
   using Redis scripts for rollback. Sagas are reserved for non-gameplay
