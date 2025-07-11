@@ -1,6 +1,6 @@
 # Social & Groups Service Task List
 
-- [ ] **Develop Social & Groups Service**
+- [ ] __Develop Social & Groups Service__
   - [x] Enable cross-game friend lists and social graph
   - [x] Support private messages, global chat, and guild channels
   - [x] Implement player-to-player mail system (asynchronous in-game messaging)
