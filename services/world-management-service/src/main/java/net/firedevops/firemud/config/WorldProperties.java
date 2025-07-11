@@ -9,4 +9,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class WorldProperties {
   /** Identifier of the shard this service instance hosts. */
   private int localShardId = 0;
+
+  /** TTL in seconds for room cache entries. */
+  private long roomCacheTtlSeconds = 60;
 }
