@@ -13,6 +13,8 @@ service AccountService {
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
+  rpc ExportAccount(ExportAccountRequest) returns (ExportAccountResponse);
+  rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
 }
 
 message PingRequest {}
@@ -63,6 +65,27 @@ message UpdateProfileRequest {
 }
 
 message UpdateProfileResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ExportAccountRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+}
+
+message ExportAccountResponse {
+  string account_json = 1;
+  string profile_json = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message DeleteAccountRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+}
+
+message DeleteAccountResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }

@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
@@ -9,6 +10,10 @@ import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
+import net.firedevops.firemud.account.v1.DeleteAccountRequest;
+import net.firedevops.firemud.account.v1.DeleteAccountResponse;
+import net.firedevops.firemud.account.v1.ExportAccountRequest;
+import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
@@ -178,5 +183,59 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void exportAccountErrorReturnsDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.exportAccountData(1L, 2L))
+        .thenThrow(new IllegalArgumentException("missing"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<ExportAccountResponse> ref = new AtomicReference<>();
+    service.exportAccount(
+        ExportAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ExportAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void deleteAccountSuccess() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<DeleteAccountResponse> ref = new AtomicReference<>();
+    service.deleteAccount(
+        DeleteAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(DeleteAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertTrue(ref.get().getSuccess());
   }
 }
