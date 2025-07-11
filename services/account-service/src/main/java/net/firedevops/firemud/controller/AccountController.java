@@ -2,10 +2,14 @@ package net.firedevops.firemud.controller;
 
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.service.AccountService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,5 +29,19 @@ public class AccountController {
       @Valid @RequestBody CreateAccountRequest request) {
     AccountDto dto = accountService.createAccount(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @GetMapping("/{accountId}/export")
+  public ResponseEntity<ApiResponse<AccountDataExportDto>> exportAccount(
+      @PathVariable Long accountId, Long tenantId) {
+    AccountDataExportDto data = accountService.exportAccountData(tenantId, accountId);
+    return ResponseEntity.ok(ApiResponse.success(data));
+  }
+
+  @DeleteMapping("/{accountId}")
+  public ResponseEntity<ApiResponse<Void>> deleteAccount(
+      @PathVariable Long accountId, Long tenantId) {
+    accountService.deleteAccount(tenantId, accountId);
+    return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

@@ -23,6 +23,10 @@ loggingAdmin:
 firemud:
   services:
     logging-admin-service: "logging-admin-service:6565"
+  grpc:
+    cert-chain: classpath:certs/client.crt
+    private-key: classpath:certs/client.key
+    ca-cert: classpath:certs/ca.crt
   auth:
     jwt-secret: changemechangemechangeme123456
     jwt-expiration-ms: 3600000

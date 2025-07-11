@@ -1,6 +1,6 @@
 # Social & Groups Service Task List
 
-- [ ] **Develop Social & Groups Service**
+- [ ] __Develop Social & Groups Service__
   - [x] Enable cross-game friend lists and social graph
   - [x] Support private messages, global chat, and guild channels
   - [x] Implement player-to-player mail system (asynchronous in-game messaging)
@@ -58,7 +58,7 @@ participate in CI.
 - [x] Use `firemud-common` protobuf types for shared messages
 - [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [x] _(N/A - Kubernetes DNS)_ Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
