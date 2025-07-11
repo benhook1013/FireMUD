@@ -1,0 +1,41 @@
+package net.firedevops.firemud.controller;
+
+import jakarta.validation.Valid;
+import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.dto.ProfileDto;
+import net.firedevops.firemud.dto.UpdateProfileRequest;
+import net.firedevops.firemud.service.AccountService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/profiles")
+public class ProfileController {
+  private final AccountService accountService;
+
+  public ProfileController(AccountService accountService) {
+    this.accountService = accountService;
+  }
+
+  @GetMapping("/{accountId}")
+  public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
+      @PathVariable Long accountId, Long tenantId) {
+    ProfileDto dto = accountService.getProfile(tenantId, accountId);
+    return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @PutMapping("/{accountId}")
+  public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
+      @PathVariable Long accountId, @Valid @RequestBody UpdateProfileRequest request) {
+    ProfileDto dto =
+        accountService.updateProfile(
+            new UpdateProfileRequest(
+                request.tenantId(), accountId, request.displayName(), request.bio()));
+    return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+}

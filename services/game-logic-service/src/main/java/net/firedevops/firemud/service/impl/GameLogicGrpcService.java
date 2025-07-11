@@ -1,8 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
@@ -11,6 +10,7 @@ import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.logic.dto.CommandResult;
 import net.firedevops.firemud.logic.service.CommandService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC endpoints for the Game Logic Service. */
@@ -18,10 +18,18 @@ import org.lognet.springboot.grpc.GRpcService;
 public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceImplBase {
   private final PingService pingService;
   private final CommandService commandService;
+  private final MeterRegistry meterRegistry;
 
-  public GameLogicGrpcService(PingService pingService, CommandService commandService) {
+  public GameLogicGrpcService(
+      PingService pingService, CommandService commandService, MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.commandService = commandService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   @Override
@@ -35,15 +43,12 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void executeCommand(
       ExecuteCommandRequest request, StreamObserver<ExecuteCommandResponse> responseObserver) {
     CommandResult result = commandService.handleCommand(request.getCommand());
+    ExecuteCommandResponse.Builder builder =
+        ExecuteCommandResponse.newBuilder().setResult(result.result());
     if (result.error() != null) {
-      StatusRuntimeException exception =
-          Status.INVALID_ARGUMENT.withDescription(result.error().message()).asRuntimeException();
-      responseObserver.onError(exception);
-      return;
+      builder.setError(error(result.error().code(), result.error().message()));
     }
-    ExecuteCommandResponse response =
-        ExecuteCommandResponse.newBuilder().setResult(result.result()).build();
-    responseObserver.onNext(response);
+    responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
   }
 }

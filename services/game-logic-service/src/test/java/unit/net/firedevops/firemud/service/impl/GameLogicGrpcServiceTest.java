@@ -1,12 +1,10 @@
 package net.firedevops.firemud.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
@@ -27,7 +25,8 @@ class GameLogicGrpcServiceTest {
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
-    GameLogicGrpcService service = new GameLogicGrpcService(pingService, commandService);
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(pingService, commandService, new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> holder = new AtomicReference<>();
     service.ping(
@@ -56,28 +55,29 @@ class GameLogicGrpcServiceTest {
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
-    GameLogicGrpcService service = new GameLogicGrpcService(pingService, commandService);
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(pingService, commandService, new SimpleMeterRegistry());
 
-    AtomicReference<Throwable> error = new AtomicReference<>();
+    AtomicReference<ExecuteCommandResponse> holder = new AtomicReference<>();
     service.executeCommand(
         ExecuteCommandRequest.newBuilder().setCommand("foo").build(),
         new StreamObserver<>() {
           @Override
           public void onNext(ExecuteCommandResponse value) {
-            fail("should not succeed");
+            holder.set(value);
           }
 
           @Override
           public void onError(Throwable t) {
-            error.set(t);
+            fail(t);
           }
 
           @Override
           public void onCompleted() {}
         });
 
-    assertTrue(error.get() instanceof StatusRuntimeException);
-    StatusRuntimeException ex = (StatusRuntimeException) error.get();
-    assertEquals(Status.INVALID_ARGUMENT.getCode(), ex.getStatus().getCode());
+    assertEquals("Unknown action", holder.get().getResult());
+    assertEquals("UNKNOWN_COMMAND", holder.get().getError().getCode());
+    assertEquals("Command not recognized", holder.get().getError().getMessage());
   }
 }

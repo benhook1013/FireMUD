@@ -77,6 +77,14 @@ details on shared infrastructure components.
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
+## Environment Variables
+
+This service uses the shared configuration described in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
+variables.
+
 ## Proto Files
 
 Service interface definitions are stored in
@@ -100,6 +108,33 @@ proto files, run `./gradlew generateProto` to update generated sources.
 - [Security Architecture](../system-architecture-security.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`entity_management_service.proto`](../../../protos/entity-management/v1/entity_management_service.proto).
+- `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – builds a new player character.
+- `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates stats or equipment.
+- `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity.
+
+```bash
+grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
+```
+
+### Tick Locking
+
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{entityId}` key described in the [Redis Architecture](../../../design/architecture/system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)

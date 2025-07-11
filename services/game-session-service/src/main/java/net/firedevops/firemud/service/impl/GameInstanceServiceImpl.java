@@ -1,12 +1,16 @@
 package net.firedevops.firemud.service.impl;
 
+import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.saga.SagaBuilder;
+import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.mapper.GameInstanceMapper;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.GameInstanceService;
+import net.firedevops.firemud.service.SagaRunner;
 import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
@@ -20,14 +24,28 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private final GameInstanceRepository repository;
   private final GameInstanceMapper mapper;
   private final SessionStateService sessionStateService;
+  private final GameLogicClient gameLogicClient;
+  private final SagaRunner sagaRunner;
 
   public GameInstanceServiceImpl(
       GameInstanceRepository repository,
       GameInstanceMapper mapper,
-      SessionStateService sessionStateService) {
+      SessionStateService sessionStateService,
+      GameLogicClient gameLogicClient,
+      SagaRunner sagaRunner) {
     this.repository = repository;
     this.mapper = mapper;
     this.sessionStateService = sessionStateService;
+    this.gameLogicClient = gameLogicClient;
+    this.sagaRunner = sagaRunner;
+  }
+
+  // Constructor used in unit tests
+  public GameInstanceServiceImpl(
+      GameInstanceRepository repository,
+      GameInstanceMapper mapper,
+      SessionStateService sessionStateService) {
+    this(repository, mapper, sessionStateService, null, null);
   }
 
   @Override
@@ -54,6 +72,17 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("RUNNING");
     instance = repository.save(instance);
     GameInstanceDto dto = mapper.toDto(instance);
+
+    if (gameLogicClient != null && sagaRunner != null) {
+      var saga = new SagaBuilder().step("notifyGameLogic", () -> gameLogicClient.ping()).build();
+      try {
+        sagaRunner.run(saga);
+      } catch (SagaException e) {
+        logger.error("Saga failed during session start", e);
+        throw new IllegalStateException("Failed to start session", e);
+      }
+    }
+
     sessionStateService.saveState(dto);
     return dto;
   }

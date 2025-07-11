@@ -11,10 +11,16 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
+import net.firedevops.firemud.dto.ProfileDto;
+import net.firedevops.firemud.dto.UpdateProfileRequest;
 import net.firedevops.firemud.entity.Account;
+import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
+import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.service.AccountService;
+import net.firedevops.firemud.service.NotificationService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,16 +31,25 @@ public class AccountServiceImpl implements AccountService {
 
   private final AccountRepository accountRepository;
   private final AccountMapper accountMapper;
+  private final ProfileRepository profileRepository;
+  private final ProfileMapper profileMapper;
+  private final NotificationService notificationService;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.service.session.SessionService sessionService;
 
   public AccountServiceImpl(
       AccountRepository accountRepository,
       AccountMapper accountMapper,
+      ProfileRepository profileRepository,
+      ProfileMapper profileMapper,
+      NotificationService notificationService,
       JwtUtil jwtUtil,
       net.firedevops.firemud.service.session.SessionService sessionService) {
     this.accountRepository = accountRepository;
     this.accountMapper = accountMapper;
+    this.profileRepository = profileRepository;
+    this.profileMapper = profileMapper;
+    this.notificationService = notificationService;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
   }
@@ -51,6 +66,10 @@ public class AccountServiceImpl implements AccountService {
     account.setPasswordHash(hashPassword(request.password()));
     account.setRole("player");
     account = accountRepository.save(account);
+    Profile profile = new Profile();
+    profile.setAccount(account);
+    profile.setTenantId(account.getTenantId());
+    profileRepository.save(profile);
     return accountMapper.toDto(account);
   }
 
@@ -79,6 +98,33 @@ public class AccountServiceImpl implements AccountService {
                 "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
     sessionService.storeSession(tenantId, account.getId(), token);
     return token;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.get_profile")
+  public ProfileDto getProfile(Long tenantId, Long accountId) {
+    Profile profile =
+        profileRepository
+            .findByAccountIdAndTenantId(accountId, tenantId)
+            .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
+    return profileMapper.toDto(profile);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.update_profile")
+  public ProfileDto updateProfile(UpdateProfileRequest request) {
+    Profile profile =
+        profileRepository
+            .findByAccountIdAndTenantId(request.accountId(), request.tenantId())
+            .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
+    profile.setDisplayName(request.displayName());
+    profile.setBio(request.bio());
+    profile = profileRepository.save(profile);
+    notificationService.sendNotification(
+        request.tenantId(), request.accountId(), "Profile updated");
+    return profileMapper.toDto(profile);
   }
 
   private String hashPassword(String password) {
