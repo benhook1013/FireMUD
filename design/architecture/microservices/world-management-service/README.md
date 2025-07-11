@@ -29,8 +29,9 @@ The World Management Service stores and manages game world data such as rooms, r
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
-- All gRPC operations require JWT authentication validated via the Account
-  Service's JWKS endpoint and use mutual TLS between services, per the
+- Gameplay gRPC operations do not validate JWTs directly. The Game Session
+  Service authenticates players and binds claims into `SessionContext`. All
+  traffic still uses mutual TLS as described in the
   [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -141,7 +142,9 @@ The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger
 curl http://localhost:8080/ping
 ```
 
-All requests must include a valid JWT in the `Authorization` header. See the [Security Architecture](../system-architecture-security.md) for accepted claims.
+Requests to this service come from other internal services. Player identity is
+established by the Game Session Service, so no JWT header is required here. See
+the [Security Architecture](../system-architecture-security.md) for details.
 
 #### gRPC
 

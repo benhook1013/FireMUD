@@ -80,6 +80,11 @@ Access to services is governed by roles from the JWT:
 - ✅ **Meta/control services** (e.g. Game Design, Admin, Account) validate JWTs to authorize access
 - 🚫 **Gameplay services** (e.g. Game Logic, Entity, World) do **not** validate JWTs — they rely on the Game Session Service to enforce access
 
+All meta services use a shared `AuthTokenInterceptor` that extracts claims from
+the `Authorization` header and stores them in a thread-local `SessionContext`.
+Service methods read roles from this context, often via the `@RequireAdminRole`
+annotation. Gameplay services never read or propagate these claims.
+
 ---
 
 ## 🔄 Mid-Session Role Updates

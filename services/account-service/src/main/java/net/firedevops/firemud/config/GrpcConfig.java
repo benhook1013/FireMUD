@@ -5,6 +5,8 @@ import io.opentelemetry.api.trace.Tracer;
 import net.firedevops.firemud.common.grpc.LoggingInterceptor;
 import net.firedevops.firemud.common.grpc.MetricsInterceptor;
 import net.firedevops.firemud.common.grpc.TracingInterceptor;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.JwtUtil;
 import org.lognet.springboot.grpc.GRpcGlobalInterceptor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,5 +29,11 @@ public class GrpcConfig {
   @GRpcGlobalInterceptor
   public TracingInterceptor tracingInterceptor(Tracer tracer) {
     return new TracingInterceptor(tracer);
+  }
+
+  @Bean
+  @GRpcGlobalInterceptor
+  public AuthTokenInterceptor authTokenInterceptor(JwtUtil jwtUtil) {
+    return new AuthTokenInterceptor(jwtUtil);
   }
 }
