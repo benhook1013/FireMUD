@@ -15,3 +15,8 @@ management:
     health:
       probes:
         enabled: true
+
+script:
+  quota:
+    limit: 50
+    windowSeconds: 60

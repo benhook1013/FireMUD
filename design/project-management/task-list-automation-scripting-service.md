@@ -12,9 +12,9 @@
   - [x] Implement NPC formations & squad AI
   - [x] Create sandboxed script runtime *(see [Scripting & Automation Framework](../architecture/system-architecture-scripting.md))*
   - [x] Support hot reloading of scripts published by the Game Design Service *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
-  - [ ] Provide web UI for script creation and testing
+  - [x] Provide web UI for script creation and testing
   - [ ] Add advanced AI modules for complex behaviors
-  - [ ] Enforce fairness quotas and per-script resource limits
+  - [x] Enforce fairness quotas and per-script resource limits
 
 ## Reusable Microservice Checklist
 
