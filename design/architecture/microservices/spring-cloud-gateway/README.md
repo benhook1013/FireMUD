@@ -77,16 +77,16 @@ details on shared infrastructure components.
 The gateway reads configuration from environment variables so both Docker Compose
 and Kubernetes deployments behave consistently. It follows
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+The database variables
+([PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
+may be present for consistency but are ignored by this service.
+
 Important variables include:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `SERVER_PORT` | HTTP port exposed by the service | `8080` |
-
-The database variables
-([PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
-and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
-may be present for consistency but are ignored by this service.
 
 ## Proto Files
 
