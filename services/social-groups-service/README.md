@@ -25,6 +25,8 @@ doc for defaults.
 
 `firemud.services.logging-admin-service` specifies the gRPC endpoint for the
 Logging & Admin Service. The default value is `logging-admin-service:6565`.
+`firemud.grpc.cert-chain`, `firemud.grpc.private-key`, and `firemud.grpc.ca-cert`
+configure the mTLS certificates used for gRPC calls.
 
 ## API Documentation
 

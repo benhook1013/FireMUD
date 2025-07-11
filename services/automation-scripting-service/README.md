@@ -85,3 +85,9 @@ A lightweight dungeon generator is provided for early world creation. It generat
 `PveEncounterService` offers random encounters and environmental hazards. Events
 are selected from predefined lists based on the region type and a random seed so
 results can be reproduced during testing.
+
+### NPC Formations
+
+`NpcFormationService` groups NPCs into squads. Formations have a leader and a
+type (`LINE`, `WEDGE`, or `CIRCLE`). Squad members are persisted in the
+`npc_formation_member` table and can be queried to coordinate group behaviour.
