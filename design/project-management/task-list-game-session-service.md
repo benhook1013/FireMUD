@@ -50,16 +50,16 @@ participate in CI.
 
 ## 🔒 Authentication & Authorization
 
-- [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [ ] Check `globalRoles` and `scopedRoles` where applicable
-- [ ] Gameplay services rely on the Game Session Service for session validation
+- [x] *(N/A - gameplay service)* Meta and admin services validate JWTs using helpers from `firemud-common`
+- [x] *(N/A - gameplay service)* Check `globalRoles` and `scopedRoles` where applicable
+- [x] *(self)* Gameplay services rely on the Game Session Service for session validation
 
 ---
 
 ## 🔁 Inter-Service Communication
 
 - [x] Use `firemud-common` protobuf types for shared messages
-- [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
 - [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [x] Internal traffic communicates directly over gRPC (Gateway not involved)

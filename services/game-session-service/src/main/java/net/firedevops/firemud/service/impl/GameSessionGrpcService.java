@@ -1,7 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest;
@@ -22,6 +22,7 @@ import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.TickService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC endpoints for the Game Session Service. */
@@ -31,16 +32,24 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
   private final TickService tickService;
+  private final MeterRegistry meterRegistry;
 
   public GameSessionGrpcService(
       PingService pingService,
       GameInstanceService gameInstanceService,
       FeatureFlagService featureFlagService,
-      TickService tickService) {
+      TickService tickService,
+      MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.gameInstanceService = gameInstanceService;
     this.featureFlagService = featureFlagService;
     this.tickService = tickService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   @Override
@@ -55,26 +64,40 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   public void startSession(
       net.firedevops.firemud.gamesession.v1.StartSessionRequest request,
       StreamObserver<StartSessionResponse> responseObserver) {
-    StartSessionRequest dto =
-        new StartSessionRequest(Long.valueOf(request.getTenantId()), request.getVersionId(), 0L);
-    GameInstanceDto instance = gameInstanceService.startSession(dto);
-    StartSessionResponse response =
-        StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      StartSessionRequest dto =
+          new StartSessionRequest(Long.valueOf(request.getTenantId()), request.getVersionId(), 0L);
+      GameInstanceDto instance = gameInstanceService.startSession(dto);
+      StartSessionResponse response =
+          StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      StartSessionResponse response =
+          StartSessionResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
   public void stopSession(
       StopSessionRequest request, StreamObserver<StopSessionResponse> responseObserver) {
     try {
-      GameInstanceDto dto = gameInstanceService.stopSession(Long.parseLong(request.getSessionId()));
+      gameInstanceService.stopSession(Long.parseLong(request.getSessionId()));
       StopSessionResponse response = StopSessionResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.NOT_FOUND.withDescription(ex.getMessage()).asRuntimeException());
+      StopSessionResponse response =
+          StopSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -82,46 +105,78 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   public void restartSession(
       RestartSessionRequest request, StreamObserver<RestartSessionResponse> responseObserver) {
     try {
-      GameInstanceDto dto =
-          gameInstanceService.restartSession(Long.parseLong(request.getSessionId()));
+      gameInstanceService.restartSession(Long.parseLong(request.getSessionId()));
       RestartSessionResponse response =
           RestartSessionResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.NOT_FOUND.withDescription(ex.getMessage()).asRuntimeException());
+      RestartSessionResponse response =
+          RestartSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
   @Override
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
-    tickService.enqueueCommand(Long.valueOf(request.getSessionId()), request.getCommand());
-    EnqueueCommandResponse response = EnqueueCommandResponse.newBuilder().setAccepted(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      tickService.enqueueCommand(Long.valueOf(request.getSessionId()), request.getCommand());
+      EnqueueCommandResponse response =
+          EnqueueCommandResponse.newBuilder().setAccepted(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      EnqueueCommandResponse response =
+          EnqueueCommandResponse.newBuilder()
+              .setAccepted(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
   public void queryState(
       QueryStateRequest request, StreamObserver<QueryStateResponse> responseObserver) {
-    String state = tickService.queryState(Long.valueOf(request.getSessionId()));
-    QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson(state).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      String state = tickService.queryState(Long.valueOf(request.getSessionId()));
+      QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson(state).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      QueryStateResponse response =
+          QueryStateResponse.newBuilder().setError(error("NOT_FOUND", ex.getMessage())).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
-    featureFlagService.toggleFlag(
-        new net.firedevops.firemud.dto.ToggleFeatureFlagRequest(
-            Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
-    ToggleFeatureFlagResponse response =
-        ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      featureFlagService.toggleFlag(
+          new net.firedevops.firemud.dto.ToggleFeatureFlagRequest(
+              Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
+      ToggleFeatureFlagResponse response =
+          ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ToggleFeatureFlagResponse response =
+          ToggleFeatureFlagResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 }

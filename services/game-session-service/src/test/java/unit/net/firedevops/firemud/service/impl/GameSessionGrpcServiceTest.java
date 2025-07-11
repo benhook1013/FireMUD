@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
@@ -25,9 +26,10 @@ class GameSessionGrpcServiceTest {
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
     TickService tickService = Mockito.mock(TickService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
         new GameSessionGrpcService(
-            pingService, gameInstanceService, featureFlagService, tickService);
+            pingService, gameInstanceService, featureFlagService, tickService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -56,13 +58,14 @@ class GameSessionGrpcServiceTest {
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
     TickService tickService = Mockito.mock(TickService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.dto.StartSessionRequest.class)))
         .thenReturn(new GameInstanceDto(1L, 1L, "v1", 0L, "RUNNING"));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
-            pingService, gameInstanceService, featureFlagService, tickService);
+            pingService, gameInstanceService, featureFlagService, tickService, meterRegistry);
 
     AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
     service.startSession(
