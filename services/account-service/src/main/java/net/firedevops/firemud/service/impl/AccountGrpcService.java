@@ -8,6 +8,10 @@ import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.CreateAccountRequest;
 import net.firedevops.firemud.account.v1.CreateAccountResponse;
+import net.firedevops.firemud.account.v1.DeleteAccountRequest;
+import net.firedevops.firemud.account.v1.DeleteAccountResponse;
+import net.firedevops.firemud.account.v1.ExportAccountRequest;
+import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
@@ -147,6 +151,61 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setError(
                   net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                       .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  public void exportAccount(
+      ExportAccountRequest request, StreamObserver<ExportAccountResponse> responseObserver) {
+    try {
+      var data =
+          accountService.exportAccountData(
+              Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+      ExportAccountResponse response =
+          ExportAccountResponse.newBuilder()
+              .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
+              .setProfileJson(
+                  data.profile() != null
+                      ? JsonMapper.builder().build().writeValueAsString(data.profile())
+                      : "")
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ExportAccountResponse response =
+          ExportAccountResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("NOT_FOUND")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  public void deleteAccount(
+      DeleteAccountRequest request, StreamObserver<DeleteAccountResponse> responseObserver) {
+    try {
+      accountService.deleteAccount(
+          Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+      DeleteAccountResponse response = DeleteAccountResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      DeleteAccountResponse response =
+          DeleteAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("NOT_FOUND")
                       .setMessage(ex.getMessage())
                       .build())
               .build();
