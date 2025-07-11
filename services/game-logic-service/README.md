@@ -29,6 +29,12 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
+After starting the services you can seed minimal test data with:
+
+```bash
+./dev-tools/seed-test-data.sh
+```
+
 ## Environment Variables
 
 This service relies on the standard `FIREMUD_` prefixed variables for
