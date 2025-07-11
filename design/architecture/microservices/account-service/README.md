@@ -86,19 +86,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Deployed via Kubernetes as a horizontally scalable Deployment. Local
-  development uses Docker Compose with the same Spring profiles.
-- Exposes `/actuator/health` for readiness and liveness probes consumed by the
-  cluster.
-- Metrics are scraped by Prometheus from `/actuator/prometheus` and logs shipped through Fluent Bit to Elasticsearch. Traces are exported via OpenTelemetry to the collector service for visualization in Jaeger.
-- Configuration differences between environments are described in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
-
-## Proto Files
-
-The gRPC schemas for this service live in
-[../../../../protos/account/v1](../../../../protos/account/v1). Use
-`./gradlew generateProto` to regenerate Java stubs when the definitions change.
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## 📚 Related Documentation
 

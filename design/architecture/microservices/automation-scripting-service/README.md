@@ -86,13 +86,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Deployed as a Kubernetes Deployment with optional horizontal scaling.
-- Exposes Spring Boot health endpoints for readiness and liveness probing.
-- Prometheus and Fluent Bit collect metrics and logs for Elasticsearch analysis,
-  with traces emitted via OpenTelemetry.
-- Development under Docker Compose mirrors this setup using the same Spring
-  profiles as described in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Proto Files
 

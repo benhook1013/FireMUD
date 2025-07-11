@@ -94,13 +94,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment. WebSocket chat traffic scales horizontally
-  with multiple replicas.
-- The service publishes metrics scraped by Prometheus and forwards logs through
-  Fluent Bit to Elasticsearch with trace IDs from OpenTelemetry.
-- Health is monitored via `/actuator/health`; see
-  [Deployment Environments](../../infrastructure/deployment-environments.md) for
-  differences between local Docker Compose and production.
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 

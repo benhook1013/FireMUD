@@ -79,15 +79,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment with optional horizontal scaling controlled by
-  HPA.
-- Health and readiness are exposed via `/actuator/health` and monitored by the
-  cluster.
-- Metrics and traces integrate with Prometheus and OpenTelemetry, while logs are
-  forwarded through Fluent Bit to Elasticsearch.
-- Local Docker Compose uses the same Spring profiles; see
-  [Deployment Environments](../../infrastructure/deployment-environments.md) for
-  details.
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Proto Files
 
