@@ -316,7 +316,27 @@ paths:
                 type: object
                 properties:
                   data:
-                    $ref: '#/components/schemas/GuildAllianceDto'
+                  $ref: '#/components/schemas/GuildAllianceDto'
+  /voice/token:
+    post:
+      summary: Issue voice chat token
+      operationId: createVoiceToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceTokenRequestDto'
+      responses:
+        '200':
+          description: Voice token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/VoiceTokenDto'
     SendMessageRequestDto:
       type: object
       properties:
@@ -430,5 +450,26 @@ paths:
         ownerAccountId:
           type: integer
         createdAt:
+          type: string
+          format: date-time
+    VoiceTokenRequestDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        channelId:
+          type: string
+      required:
+        - tenantId
+        - accountId
+        - channelId
+    VoiceTokenDto:
+      type: object
+      properties:
+        token:
+          type: string
+        expiresAt:
           type: string
           format: date-time
