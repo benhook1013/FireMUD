@@ -13,7 +13,7 @@ This document describes the planned **visual editing front end** for the Game De
 1. A React single-page application runs under the `web-client` module and is served via the Gateway.
 2. Drag-and-drop editors render rooms, NPCs and items on a canvas. Changes are persisted via `SaveRevision` gRPC calls.
 3. The visual scripting editor represents nodes and connections in JSON which maps directly to the Automation & Scripting Service DSL.
-4. Authentication relies on the Account Service JWT flow. Requests include the `tenantId` to isolate data per project.
+4. Authentication relies on credentials exchanged with the Account Service. The resulting JWT is used internally for gRPC calls and is not stored in the browser. Requests include the `tenantId` to isolate data per project.
 
 ## Related Design
 

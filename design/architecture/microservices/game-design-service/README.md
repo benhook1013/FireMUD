@@ -26,11 +26,10 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
-- All APIs require JWT authentication. Tokens are parsed by a shared
-  `AuthTokenInterceptor` which stores claims in `SessionContext` for role checks.
-  Service-to-service traffic uses mutual TLS certificates managed by cert-manager
-  as described in the
-  [Security Architecture](../system-architecture-security.md).
+- All APIs require JWT authentication between services. Tokens are parsed by a
+  shared `AuthTokenInterceptor` which stores claims in `SessionContext` for role
+  checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager
+  as described in the [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features

@@ -7,13 +7,14 @@ Manages user accounts and authentication for the platform. Stores profile data a
 ### Responsibilities
 
 - Registration and login flows, including password resets
-- Issuing JWT tokens consumed by other microservices
+- Issuing short-lived JWT tokens for internal gRPC authorization between
+  meta/control services
 - Tracking profiles, achievements, and external account links
 - Managing subscription status and bans
 
 ## Architecture / Design Notes
 
-- Stateless authentication using JWT tokens.
+- Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
 - Passwords are hashed with strong salts and stored only in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
 - Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
@@ -60,7 +61,8 @@ Manages user accounts and authentication for the platform. Stores profile data a
 
 ### gRPC APIs
 
-- `CreateAccount` – registers a new user and returns an auth token on success.
+- `CreateAccount` – registers a new user and establishes a session for internal
+  services.
 - `Authenticate` – verifies credentials and issues a session token.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
@@ -138,7 +140,7 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication returns a JWT token which is stored in Redis for quick reconnects. Keys follow `session:{tenantId}:{token}` and expire after the duration configured by `session-expiration-ms` in `AuthProperties`.
+Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{token}` and expire according to `session-expiration-ms` in `AuthProperties`.
 
 ### Two-Factor Authentication
 
@@ -152,7 +154,7 @@ Admin and moderator accounts can enable a TOTP secret for additional protection.
 - `POST /accounts` – create a new account and profile.
 - `GET /accounts/{accountId}/export` – export all account data.
 - `DELETE /accounts/{accountId}` – remove an account permanently.
-- `POST /auth/login` – authenticate and return a JWT token.
+- `POST /auth/login` – authenticate and establish a session. The JWT returned is for internal service calls.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 
 Example account creation request:

@@ -1,6 +1,6 @@
 # 🖥️ Role-Based Admin UI
 
-Moderators and administrators interact with the service through a lightweight React interface. The UI authenticates via JWTs issued by the Account Service and enforces permissions based on the `globalRoles` and `scopedRoles` claims.
+Moderators and administrators interact with the service through a lightweight React interface. Credentials are exchanged with the Account Service, which issues JWTs for backend calls. These tokens remain server-side and permissions are enforced using the `globalRoles` and `scopedRoles` claims.
 
 ## Features
 

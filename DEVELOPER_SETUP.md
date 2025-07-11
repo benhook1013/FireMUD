@@ -129,11 +129,7 @@ Run `dev-tools/firemud-cli.sh` for shortcuts:
 
 An Insomnia project is included under `dev-tools/insomnia/`. From the
 **Import/Export** menu choose **Import From File** and select
-`firemud-insomnia.json` to quickly test login, registration, and gateway admin
-routes. The project defines a **Base Environment** with `base_url` and `jwt`
-variables so that you can reuse a JWT bearer token between requests. Open the
-environment editor and set the `jwt` value, then Insomnia will inject
-`Authorization: Bearer {{ jwt }}` on requests that require authentication.
+`firemud-insomnia.json` to quickly test login, registration, and gateway admin routes. The project defines a **Base Environment** with `base_url` and an optional `jwt` variable for admin endpoints. If you populate the variable, Insomnia injects `Authorization: Bearer {{ jwt }}` on calls that need authorization.
 
 WebSocket testing is also configured. Use the `WebSocket Login` request to send
 raw commands like:
@@ -151,11 +147,11 @@ need to share updates.
 
 The `dev-tools/kreya/.kreya-project.yaml` file configures Kreya to load all
 protos from `./protos/` and targets `localhost:6565` by default. Services such
-as `AccountService`, `EntityService`, and `PlayerService` are preconfigured. For
-endpoints that need authorization, JWT metadata is enabled. Open Kreya, choose
-**Open Project** and select the project file to invoke gRPC methods. When proto
-definitions change, update the project by pointing Kreya to the modified
-`.proto` files.
+as `AccountService`, `EntityService`, and `PlayerService` are preconfigured.
+JWT metadata is enabled only for admin endpoints; gameplay services do not
+require it. Open Kreya, choose **Open Project** and select the project file to
+invoke gRPC methods. When proto definitions change, update the project by
+pointing Kreya to the modified `.proto` files.
 
 ### Redis Debugging
 
