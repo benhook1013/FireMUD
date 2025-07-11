@@ -69,15 +69,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a stateless gateway Deployment in Kubernetes, typically exposed via a
-  load balancer service.
-- `/actuator/health` endpoints are used for readiness and liveness probes.
-- Prometheus scrapes metrics such as connection counts while Fluent Bit forwards
-  structured logs to Elasticsearch; tracing integrates with OpenTelemetry.
-- Metrics are published as `gateway.connections.total` and `gateway.connections.active` for Prometheus.
-- [Deployment Environments](../../infrastructure/deployment-environments.md)
-  explains how routes and certificates differ between Docker Compose and
-  production clusters.
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 
@@ -115,6 +108,45 @@ adding or removing routes at runtime.
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+- `POST /routes` – add or update a custom gateway route.
+- `DELETE /routes/{routeId}` – remove a gateway route.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+Add a route via REST:
+
+```bash
+curl -X POST http://localhost:8080/routes \
+  -H 'Content-Type: application/json' \
+  -d '{"routeId":"demo","uri":"http://example.com","predicates":[],"filters":[]}'
+```
+
+Remove it:
+
+```bash
+curl -X DELETE http://localhost:8080/routes/demo
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`gateway_management_service.proto`](../../../protos/spring-cloud-gateway/v1/gateway_management_service.proto).
+- `UpsertRoute(RouteDefinition) returns (RouteResponse)` – adds or updates a gateway route.
+- `RemoveRoute(RouteRequest) returns (RouteResponse)` – deletes a route.
+
+```bash
+grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementService/Ping
+```
+
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 

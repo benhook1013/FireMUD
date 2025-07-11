@@ -97,13 +97,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment. WebSocket chat traffic scales horizontally
-  with multiple replicas.
-- The service publishes metrics scraped by Prometheus and forwards logs through
-  Fluent Bit to Elasticsearch with trace IDs from OpenTelemetry.
-- Health is monitored via `/actuator/health`; see
-  [Deployment Environments](../../infrastructure/deployment-environments.md) for
-  differences between local Docker Compose and production.
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 
@@ -139,6 +134,53 @@ files change.
 - [Security Architecture](../system-architecture-security.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+- `POST /friends` – create a friend link.
+- `POST /mail` – send an asynchronous in-game mail message.
+- `POST /guilds/storage` – add an item to guild storage.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`social_groups_service.proto`](../../../protos/social-groups/v1/social_groups_service.proto).
+
+```bash
+grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
+```
+
+- `POST /chat` – send a chat message filtered for profanity.
+
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
+```
+
+### Metrics & Tracing
+
+Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are exported to the collector defined in the shared configuration. No additional setup is required when running `./gradlew bootRun`.
+
+### Voice Chat
+
+The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. When enabled, the REST API issues short-lived WebRTC tokens and records connection events so moderation actions can be traced. This feature is disabled by default and is intended for games that wish to offer in-client voice without relying on external tools.
+
+#### Example Request
+
+```bash
+curl -X POST http://localhost:8080/voice/token \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"accountId":100,"channelId":"guild-10"}'
+```
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)

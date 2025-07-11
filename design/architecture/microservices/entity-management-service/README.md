@@ -8,7 +8,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 - Persist characters, NPCs, and items with optimistic locking
 - Provide CRUD and query APIs for other services
-- Manage inventories and instanced zones
+- Manage inventories; location and instance data live in the World Management Service
 - Coordinate deferred writes through Game Session Service
 
 ## Architecture / Design Notes
@@ -40,16 +40,17 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Experience and level tracking.
 - NPC respawn scheduling with configurable delays.
 - Character creation templates pulled from the Game Design Service.
-- Supports instance-based spaces so characters can enter private dungeons or
-  personalized housing without affecting the main world state.
+- Supports instance-based spaces in conjunction with the World Management Service
+  so characters can enter private dungeons or personalized housing without affecting
+  the shared world state.
 
 ### Data Model
 
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
 - Many-to-many tables define inventory and equipment relationships.
-- `instance_member` table tracks which characters are present in optional
-  instance-based spaces.
+- Character location and instance membership are stored by the World Management
+  Service rather than this service.
 - Entity graphs cache inventory relationships for fast lookups.
 
 ### gRPC APIs
@@ -73,13 +74,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a scalable Deployment in Kubernetes, exposing `/actuator/health` for
-  readiness and liveness checks. Metrics are available at `/actuator/prometheus`.
-- Prometheus scrapes these metrics while Fluent Bit ships logs to
-  Elasticsearch; tracing integrates with OpenTelemetry.
-- Local Docker Compose uses the same Spring profiles to mimic production, as
-  documented in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 
@@ -112,6 +108,33 @@ proto files, run `./gradlew generateProto` to update generated sources.
 - [Security Architecture](../system-architecture-security.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`entity_management_service.proto`](../../../protos/entity-management/v1/entity_management_service.proto).
+- `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – builds a new player character.
+- `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates stats or equipment.
+- `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity.
+
+```bash
+grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
+```
+
+### Tick Locking
+
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{entityId}` key described in the [Redis Architecture](../../../design/architecture/system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)

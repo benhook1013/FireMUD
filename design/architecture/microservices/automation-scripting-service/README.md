@@ -86,13 +86,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Deployed as a Kubernetes Deployment with optional horizontal scaling.
-- Exposes Spring Boot health endpoints for readiness and liveness probing.
-- Prometheus and Fluent Bit collect metrics and logs for Elasticsearch analysis,
-  with traces emitted via OpenTelemetry.
-- Development under Docker Compose mirrors this setup using the same Spring
-  profiles as described in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 
@@ -125,6 +120,38 @@ stubs.
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### Configuration
+
+PostgreSQL and Redis connections are configured via the common `DatabaseAutoConfiguration` and `RedisProperties` classes. Refer to [Deployment Environments](../../infrastructure/deployment-environments.md) for default values. Local development typically uses the settings from `.env.sample`.
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`automation_scripting_service.proto`](../../../protos/automation-scripting/v1/automation_scripting_service.proto).
+
+```bash
+grpcurl -plaintext localhost:6565 automation_scripting.v1.AutomationScriptingService/Ping
+```
+
+Expected response:
+
+```json
+{
+  "message": "pong"
+}
+```
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)

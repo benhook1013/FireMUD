@@ -1,5 +1,9 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
@@ -19,12 +23,36 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class WorldCreationServiceImpl implements WorldCreationService {
   private final RegionRepository regionRepository;
+  private final MeterRegistry meterRegistry;
+
+  private Counter sagaStartedCounter;
+  private Counter sagaFailedCounter;
+
   private static final Logger logger = LoggingUtil.getLogger(WorldCreationServiceImpl.class);
+
+  @PostConstruct
+  void initMetrics() {
+    sagaStartedCounter = meterRegistry.counter("world_creation_saga_started_total");
+    sagaFailedCounter = meterRegistry.counter("world_creation_saga_failed_total");
+  }
+
+  private void ensureMetrics() {
+    if (sagaStartedCounter == null || sagaFailedCounter == null) {
+      initMetrics();
+    }
+  }
 
   @Override
   @Transactional
   public void createWorld(Long tenantId, Long versionId) throws SagaException {
-    logger.info("Creating world for tenant {} from version {}", tenantId, versionId);
+    String correlationId = UUID.randomUUID().toString();
+    ensureMetrics();
+    logger.info(
+        "Creating world for tenant {} from version {} correlationId={}",
+        tenantId,
+        versionId,
+        correlationId);
+    sagaStartedCounter.increment();
     SagaBuilder builder = new SagaBuilder();
     builder
         .step(
@@ -32,7 +60,14 @@ public class WorldCreationServiceImpl implements WorldCreationService {
             () -> copyDesignData(tenantId, versionId),
             () -> rollbackDesignCopy(tenantId))
         .step("scheduleEvents", () -> scheduleInitialEvents(tenantId));
-    builder.run();
+    try {
+      builder.run();
+    } catch (SagaException ex) {
+      sagaFailedCounter.increment();
+      logger.warn(
+          "World creation saga failed for tenant {} correlationId={}", tenantId, correlationId);
+      throw ex;
+    }
   }
 
   private void copyDesignData(Long tenantId, Long versionId) {

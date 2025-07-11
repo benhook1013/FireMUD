@@ -74,14 +74,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Deployed as a stateless Kubernetes Deployment with horizontal scaling enabled
-  for high concurrency.
-- `/actuator/health` is used for readiness and liveness probes in the cluster.
-- Prometheus collects command execution metrics while Fluent Bit forwards logs
-  to Elasticsearch with trace context from OpenTelemetry.
-- For environment-specific configuration see
-
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 
@@ -111,6 +105,37 @@ the generated code with `./gradlew generateProto` after making changes.
 - [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+- `POST /command` – submit a gameplay command body as plain text.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_logic_service.proto`](../../../protos/game-logic/v1/game_logic_service.proto).
+- `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` – process a command and return the result.
+
+```bash
+grpcurl -plaintext localhost:6565 game_logic.v1.GameLogicService/Ping
+```
+
+Expected response:
+
+```json
+{
+  "message": "pong"
+}
+```
+
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
