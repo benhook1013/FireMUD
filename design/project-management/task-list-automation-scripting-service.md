@@ -2,7 +2,7 @@
 
 - [ ] **Develop Automation & Scripting Service**
   - [x] Implement state-driven & event-driven NPC behaviors *(see [System Architecture: Scripting](../architecture/system-architecture-scripting.md))*
-  - [ ] Implement procedural world generation
+  - [x] Implement procedural world generation
   - [x] Implement scripted events for game mechanics and NPC interactions *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
   - [x] Implement AI memory & dynamic NPC behaviors (NPCs remember past player interactions) *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
   - [ ] Implement player vs. environment (PvE) mechanics (random encounters, environmental hazards)
