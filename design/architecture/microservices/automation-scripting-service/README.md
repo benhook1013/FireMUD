@@ -42,6 +42,8 @@ For details on how scripts are authored and executed safely, see [System Archite
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
 - `automation_queue` keys in Redis buffer triggered events until a script runs.
+- `automation_queue_enqueued_total` and `automation_queue_drained_total` metrics
+  track Redis queue activity.
 - `factions` and `faction_standing` tables track player reputation.
 
 ### Script Lifecycle
