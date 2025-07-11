@@ -64,27 +64,121 @@ components:
         - recipientAccountId
         - subject
         - content
-    MailMessageDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        senderAccountId:
-          type: integer
-        recipientAccountId:
-          type: integer
-        subject:
-          type: string
-        content:
-          type: string
-        sentAt:
-          type: string
-          format: date-time
-        readAt:
-          type: string
-          format: date-time
+      MailMessageDto:
+        type: object
+        properties:
+          id:
+            type: integer
+          tenantId:
+            type: integer
+          senderAccountId:
+            type: integer
+          recipientAccountId:
+            type: integer
+          subject:
+            type: string
+          content:
+            type: string
+          sentAt:
+            type: string
+            format: date-time
+          readAt:
+            type: string
+            format: date-time
+
+      SendMessageRequestDto:
+        type: object
+        properties:
+          tenantId:
+            type: integer
+          senderAccountId:
+            type: integer
+          channelId:
+            type: string
+          content:
+            type: string
+        required:
+          - tenantId
+          - senderAccountId
+          - content
+
+      ChatMessageDto:
+        type: object
+        properties:
+          id:
+            type: integer
+          tenantId:
+            type: integer
+          senderAccountId:
+            type: integer
+          content:
+            type: string
+          timestamp:
+            type: string
+            format: date-time
+          guildId:
+            type: integer
+          recipientAccountId:
+            type: integer
+
+      AddGuildStorageItemRequest:
+        type: object
+        properties:
+          tenantId:
+            type: integer
+          guildId:
+            type: integer
+          itemName:
+            type: string
+          quantity:
+            type: integer
+        required:
+          - tenantId
+          - guildId
+          - itemName
+
+      GuildStorageItemDto:
+        type: object
+        properties:
+          id:
+            type: integer
+          tenantId:
+            type: integer
+          guildId:
+            type: integer
+          itemName:
+            type: string
+          quantity:
+            type: integer
+
+      CreateAllianceRequest:
+        type: object
+        properties:
+          tenantId:
+            type: integer
+          guildId:
+            type: integer
+          allyGuildId:
+            type: integer
+        required:
+          - tenantId
+          - guildId
+          - allyGuildId
+
+      GuildAllianceDto:
+        type: object
+        properties:
+          id:
+            type: integer
+          tenantId:
+            type: integer
+          guildId:
+            type: integer
+          allyGuildId:
+            type: integer
+          createdAt:
+            type: string
+            format: date-time
 paths:
   /ping:
     get:
@@ -203,91 +297,3 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GuildAllianceDto'
-    SendMessageRequestDto:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        senderAccountId:
-          type: integer
-        channelId:
-          type: string
-        content:
-          type: string
-      required:
-        - tenantId
-        - senderAccountId
-        - content
-    ChatMessageDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        senderAccountId:
-          type: integer
-        content:
-          type: string
-        timestamp:
-          type: string
-          format: date-time
-        guildId:
-          type: integer
-        recipientAccountId:
-          type: integer
-    AddGuildStorageItemRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        guildId:
-          type: integer
-        itemName:
-          type: string
-        quantity:
-          type: integer
-      required:
-        - tenantId
-        - guildId
-        - itemName
-    GuildStorageItemDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        guildId:
-          type: integer
-        itemName:
-          type: string
-        quantity:
-          type: integer
-    CreateAllianceRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        guildId:
-          type: integer
-        allyGuildId:
-          type: integer
-      required:
-        - tenantId
-        - guildId
-        - allyGuildId
-    GuildAllianceDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        guildId:
-          type: integer
-        allyGuildId:
-          type: integer
-        createdAt:
-          type: string
-          format: date-time
