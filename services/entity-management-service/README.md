@@ -41,13 +41,6 @@ contain either `platformAdmin` or `moderator` in the `globalRoles` claim, or an
 `admin`/`moderator` role within the `scopedRoles` map. Include the token using
 the standard `Authorization: Bearer <token>` header.
 
-## Cross-Service Dependencies
-
-Entity data is scoped by `tenantId` as described in the
-[Multi-Tenancy design](../../design/architecture/system-architecture-multi-tenancy.md).
-The service relies on the **Game Design Service** for character templates and
-item definitions and coordinates runtime persistence with the
-**Game Session Service**.
 
 ## Proto Contracts
 

@@ -25,6 +25,8 @@ Provides chat, guild, and social networking features across games. Enables playe
 - Chat history and guild data are stored with a `tenantId` so conversations are
   isolated per game. Redis stream keys also include this prefix. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+- Cross-service calls always forward the `tenantId` so features remain isolated;
+  see [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details.
 - APIs require authenticated JWTs from the Account Service and all inter-service
   communication is encrypted via mutual TLS, following the
   [Security Architecture](../system-architecture-security.md).
@@ -82,18 +84,6 @@ default and can be enabled per tenant through configuration.
   - Logging & Admin Service consumes chat logs for moderation.
 - **External:** PostgreSQL for social data.
 
-### TenantId Handling & Cross-Service Dependencies
-
-All data models include a `tenantId` column so chat history and guild
-information remain isolated per game. Redis keys use the same prefix. The service
-validates this context on every request and forwards the identifier to other
-services, such as the Logging & Admin Service, to maintain isolation across the
-platform.
-
-> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
-[**Deployment Environments**](../../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
-details on shared infrastructure components.
 
 ## Operational Notes
 
