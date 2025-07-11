@@ -2,9 +2,15 @@ package net.firedevops.firemud.service;
 
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
+import net.firedevops.firemud.dto.ProfileDto;
+import net.firedevops.firemud.dto.UpdateProfileRequest;
 
 public interface AccountService {
   AccountDto createAccount(CreateAccountRequest request);
 
   String authenticate(Long tenantId, String username, String password, String otp);
+
+  ProfileDto getProfile(Long tenantId, Long accountId);
+
+  ProfileDto updateProfile(UpdateProfileRequest request);
 }
