@@ -49,4 +49,4 @@ document for the overall flow.
 gRPC endpoints. Cross-service integration tests live under
 `src/test/java/crossservice` and can be executed once dependent services are available.
 
-This stub exists only to link to the real design document. **Do not add design details here.*
+This stub exists only to link to the real design document. **Do not add design details here.**

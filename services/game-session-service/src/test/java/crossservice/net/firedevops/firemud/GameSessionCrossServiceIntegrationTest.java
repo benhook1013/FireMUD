@@ -3,7 +3,7 @@ package net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -15,14 +15,14 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /** Cross-service integration test verifying the service starts alongside the Game Logic Service. */
-@Testcontainers
-@Disabled("integration environment not configured")
+@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = GameSessionCrossServiceIntegrationTest.TestApp.class)
@@ -39,6 +39,9 @@ class GameSessionCrossServiceIntegrationTest {
 
   @Test
   void gameSessionRunsAlongsideGameLogicService() {
+    Assumptions.assumeTrue(
+        DockerClientFactory.instance().isDockerAvailable(),
+        "Docker not available, skipping cross-service test");
     assertThat(gameLogicService.isRunning()).isTrue();
 
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
