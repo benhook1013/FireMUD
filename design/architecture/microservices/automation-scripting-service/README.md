@@ -44,7 +44,9 @@ For details on how scripts are authored and executed safely, see [System Archite
 - `automation_queue` keys in Redis buffer triggered events until a script runs.
 - `automation_queue_enqueued_total` and `automation_queue_drained_total` metrics
   track Redis queue activity.
-- `factions` and `faction_standing` tables track player reputation.
+- Player reputation data is stored in the Social & Groups Service; see its
+  [data model](../social-groups-service/README.md#data-model) for the
+  `faction` and `faction_standing` tables.
 
 ### Script Lifecycle
 
@@ -63,13 +65,11 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 ## Faction & Reputation System
 
-NPCs belong to factions that track each player's reputation. Reputation scores
-range from negative to positive values and directly influence NPC aggression
-states. A higher reputation with a faction results in more neutral or friendly
-behaviour from its members, while negative reputation can make them hostile.
-
-Reputation changes are persisted in the `faction_standing` table and exposed via
-REST endpoints so other services can query or modify standings.
+NPC behaviour references player reputation to decide when to become hostile,
+flee, or surrender. These reputation scores are maintained by the Social &
+Groups Service rather than this service. See the
+[Social & Groups Service](../social-groups-service/README.md#data-model) for the
+`faction` and `faction_standing` tables that store reputation data.
 
 ## Dependencies
 
