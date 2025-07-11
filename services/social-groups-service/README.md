@@ -41,3 +41,13 @@ curl -X POST http://localhost:8080/friends \
   -H 'Content-Type: application/json' \
   -d '{"tenantId":1,"accountId":100,"friendAccountId":200}'
 ```
+
+### Cross-Service Integration Test
+
+The `src/test/java/crossservice` directory contains an integration test that
+starts the Social Groups Service alongside the Logging & Admin Service using
+Testcontainers. Run it manually once the dependent Docker images are built:
+
+```bash
+./gradlew :social-groups-service:test --tests "*CrossServiceIntegrationTest"
+```
