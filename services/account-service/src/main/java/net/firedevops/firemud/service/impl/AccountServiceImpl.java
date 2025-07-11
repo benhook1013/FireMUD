@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -39,6 +40,7 @@ public class AccountServiceImpl implements AccountService {
 
   @Override
   @Transactional
+  @Timed(value = "account.create")
   public AccountDto createAccount(CreateAccountRequest request) {
     logger.info("Creating account {}", request.username());
     Account account = new Account();
@@ -52,6 +54,7 @@ public class AccountServiceImpl implements AccountService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "account.authenticate")
   public String authenticate(Long tenantId, String username, String password) {
     Optional<Account> accountOpt = accountRepository.findByTenantIdAndUsername(tenantId, username);
     Account account =

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.LocalDateTime;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.PaymentIntentDto;
@@ -34,6 +35,7 @@ public class PaymentServiceImpl implements PaymentService {
 
   @Override
   @Transactional
+  @Timed(value = "payment.create_intent")
   public PaymentIntentDto createPaymentIntent(Long tenantId, Long accountId, Long amountCents) {
     logger.info("Create payment intent {} cents for account {}", amountCents, accountId);
     Account account = accountRepository.findById(accountId).orElseThrow();
@@ -49,6 +51,7 @@ public class PaymentServiceImpl implements PaymentService {
 
   @Override
   @Transactional
+  @Timed(value = "payment.create_subscription")
   public SubscriptionDto createSubscription(Long tenantId, Long accountId, String planId) {
     logger.info("Create subscription {} for account {}", planId, accountId);
     Account account = accountRepository.findById(accountId).orElseThrow();
