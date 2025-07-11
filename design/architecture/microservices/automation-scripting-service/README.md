@@ -169,6 +169,7 @@ Expected response:
 - Additional AI modules for advanced behaviors.
 - Procedural world generation hooks working in tandem with the World Management Service. The initial implementation uses a lightweight dungeon generator described in [System Architecture: Procedural Generation](../system-architecture-procedural-generation.md).
 - NPC fleeing and surrender logic.
-- NPC formations and squad AI for coordinated encounters.
+- NPC formations and squad AI for coordinated encounters. Implemented via
+  `NpcFormationService`.
 - Fairness quotas and per-script resource limits to prevent abuse, as outlined
   in [System Architecture: Scripting & Automation](../system-architecture-scripting.md#fairness--abuse-prevention-planned).
