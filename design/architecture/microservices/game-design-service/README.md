@@ -106,7 +106,7 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [User Journeys – World and Entity Design](../user-journeys.md#2-world-and-entity-design)
 - [User Journeys – Publish and Start a Game Instance](../user-journeys.md#4-publish-and-start-a-game-instance)
 - [User Journeys – Patch and Update a Live Game](../user-journeys.md#8-patch-and-update-a-live-game)
-- [Asset Storage Setup](../../../../services/game-design-service/design/asset-storage.md)
+- [Asset Storage Setup](asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
 - [Web-Based Visual Design Interface](web-visual-interface.md)
 - [Version Control for Design Assets](version-control.md)
@@ -123,6 +123,34 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+- `POST /assets` – upload a binary asset for a tenant.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_design_service.proto`](../../../protos/game-design/v1/game_design_service.proto).
+- `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a design change.
+- `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
+- `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.
+
+```bash
+grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping
+```
+
+### Saga Participation
+
+Publishing a game version is coordinated using the Saga utilities from `firemud-common`. The `VersionServiceImpl` builds a workflow that first persists the new version and then copies design data to downstream services. If any step fails, previously executed actions are compensated so the database remains consistent. See the [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) document for the overall flow.
 
 ## Future Enhancements
 

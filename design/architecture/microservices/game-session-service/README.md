@@ -107,6 +107,71 @@ Service definitions reside in
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### Configuration
+
+Environment variables configure the PostgreSQL and Redis connections via `DatabaseAutoConfiguration` and `RedisProperties`. Refer to [Deployment Environments](../../infrastructure/deployment-environments.md) for details. The `.env.sample` file contains example values.
+
+The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in the [Multi-Tenancy design](../system-architecture-multi-tenancy.md).
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+- `POST /sessions` – create a new game session from a published version.
+- `POST /sessions/{id}/stop` – stop a running session.
+- `POST /sessions/{id}/restart` – restart a stopped session.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+To start a session via REST:
+
+```bash
+curl -X POST http://localhost:8080/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":"demo","versionId":1}'
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_session_service.proto`](../../../protos/game-session/v1/game_session_service.proto).
+- `StartSession(StartSessionRequest) returns (StartSessionResponse)` – creates a new game instance.
+- `EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse)` – queues a player action.
+- `QueryState(QueryStateRequest) returns (QueryStateResponse)` – retrieves current game or player state.
+
+```bash
+grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping
+```
+
+Start a session via gRPC:
+
+```bash
+grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
+  localhost:6565 game_session.v1.GameSessionService/StartSession
+```
+
+### Additional Notes
+
+- See the "Cross-Region Sharding and Session Handoff" section in the central [Game Session Service design](../microservices/game-session-service/README.md) for how sessions migrate between clusters.
+- Metrics emitted by this service feed the operator [Analytics Dashboards](../microservices/logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
+
+### Runtime Feature Flags
+
+Feature flags are stored in the `feature_flag` table and can be toggled through the Logging & Admin Service. The Game Session Service exposes a gRPC `ToggleFeatureFlag` method so administrators can enable or disable experimental behavior without restarting a session.
+
+### Saga Participation
+
+Game startup and shutdown are coordinated using the shared `Saga` helpers from `firemud-common`. Each dependent service (World Management, Entity Management and Game Logic) confirms its part of the workflow before the session becomes active. Failures trigger compensating steps, ensuring consistent rollbacks. See [Transaction Strategies](../system-architecture-transactions.md) for background.
+
+### Redis Keys
+
+Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. Keys are removed when a session stops.
+
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [System Architecture Overview](../system-architecture-overview.md)

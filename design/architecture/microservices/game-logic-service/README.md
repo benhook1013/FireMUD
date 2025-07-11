@@ -118,6 +118,37 @@ the generated code with `./gradlew generateProto` after making changes.
 - [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+- `POST /command` – submit a gameplay command body as plain text.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_logic_service.proto`](../../../protos/game-logic/v1/game_logic_service.proto).
+- `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` – process a command and return the result.
+
+```bash
+grpcurl -plaintext localhost:6565 game_logic.v1.GameLogicService/Ping
+```
+
+Expected response:
+
+```json
+{
+  "message": "pong"
+}
+```
+
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
