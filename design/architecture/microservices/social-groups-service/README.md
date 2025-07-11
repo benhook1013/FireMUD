@@ -107,10 +107,6 @@ The service follows the conventions from
 It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
 
-See `DatabaseAutoConfiguration` in the
-[Shared Libraries](../system-architecture-shared-libraries.md) for how these
-variables are consumed.
-
 ## Proto Files
 
 The social APIs are defined in
