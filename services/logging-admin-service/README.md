@@ -37,6 +37,10 @@ Typical variables when running locally are:
 
 Values may also be provided through `application.yml` profiles.
 
+### Test Data
+
+Running with the `dev` profile automatically seeds a few example records. The `TestDataSeeder` creates a feature flag, log event, player report, and moderation action when the database tables are empty.
+
 ## Tenant Handling and Dependencies
 
 All log and moderation records contain a `tenantId` column to ensure operators only

@@ -1,19 +1,19 @@
 # Logging & Admin Service Task List
 
-- [ ] **Develop Logging & Admin Service**
-  - [x] Collect logs from all services and provide search dashboards
-  - [x] Allow players to report others for abuse/violations
-  - [x] Store logs for admin moderation and auditing
-  - [x] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
-    - [x] Provide analytics dashboards for operators
-    - [x] Define moderation policies including profanity filters
-  - [x] Integrate Alertmanager for automated alerts
-  - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
-  - [x] Evaluate adopting a zero-trust network model for internal traffic
-  - [x] Create **Saga Dashboard** to inspect workflow states and failures
-  - [x] Integrate saga metrics and timeout recovery
-  - [x] Use saga orchestrator for multi-service admin operations (bans, content revocation)
-  - [x] Build role-based admin UI
+- [x] **Develop Logging & Admin Service**
+- [x] Collect logs from all services and provide search dashboards
+- [x] Allow players to report others for abuse/violations
+- [x] Store logs for admin moderation and auditing
+- [x] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
+  - [x] Provide analytics dashboards for operators
+  - [x] Define moderation policies including profanity filters
+- [x] Integrate Alertmanager for automated alerts
+- [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
+- [x] Evaluate adopting a zero-trust network model for internal traffic
+- [x] Create **Saga Dashboard** to inspect workflow states and failures
+- [x] Integrate saga metrics and timeout recovery
+- [x] Use saga orchestrator for multi-service admin operations (bans, content revocation)
+- [x] Build role-based admin UI
 
 ## Reusable Microservice Checklist
 
@@ -61,7 +61,7 @@ participate in CI.
 
 - [x] Use `firemud-common` protobuf types for shared messages
 - [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
-- [ ] Register with service discovery via helpers in `firemud-common`
+- [x] Register with service discovery via helpers in `firemud-common`
 - [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
@@ -101,7 +101,7 @@ participate in CI.
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [x] Use Spring Boot Test and Testcontainers for integration tests
 - [x] Validate contracts with smoke tests (gRPC and REST)
-- [ ] Seed minimal test data for local workflows
+- [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests
 
