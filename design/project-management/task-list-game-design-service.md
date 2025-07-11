@@ -6,7 +6,7 @@
   - [x] Use saga orchestrator for game publishing workflow
   - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
   - [x] Create design-time database models
-- [ ] **Develop Game Design Service**
+- [x] **Develop Game Design Service**
   - [x] Implement world editing & customization tools
   - [x] Implement scripting & event design tools
   - [x] Build a **visual scripting editor** using a **component-based DSL**
@@ -19,7 +19,7 @@
   - [x] Configure database storage for game assets
     - [x] Provide asset upload API in Game Design Service
     - [x] Document asset storage setup and configuration
-- [ ] **Expand Scripting & Modding**
+- [x] **Expand Scripting & Modding**
   - [x] Implement event-driven scripting API for game creators
   - [x] Implement in-game modding/plugin framework
   - [x] Implement scripted AI behaviors for NPCs
@@ -61,7 +61,7 @@ participate in CI.
 - [x] Generate gRPC stubs via Gradle and include them in the source set
 - [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
 - [x] Provide contract smoke tests using `grpcurl`
-- [ ] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
+- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
 - [x] *(If persistent storage is used)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
 
 ---
@@ -103,20 +103,20 @@ participate in CI.
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] Use Redis for transient gameplay state only *(N/A - service does not use Redis)*
+- [x] Access Redis through helpers in `firemud-common` *(N/A - service does not use Redis)*
+- [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes *(N/A - service does not use Redis)*
+- [x] Validate shard-local key usage and avoid per-service caching *(N/A - service does not use Redis)*
+- [x] Emit metrics for Redis connectivity and commands *(N/A - service does not use Redis)*
+- [x] *(If participating in ticks)* implement locking and staging per the Tick System docs *(N/A - service does not participate in ticks)*
+- [x] Prefix all keys with `tenantId` to isolate game data *(N/A - service does not use Redis)*
 
 ---
 
 ## 🧪 Testing & Quality Gates
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
-- [ ] Use Spring Boot Test and Testcontainers for integration tests
+- [x] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
@@ -129,7 +129,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [ ] Emit service metrics for ticks and Redis commands when relevant
+- [x] Emit service metrics for ticks and Redis commands when relevant *(N/A - service does not use Redis or ticks)*
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---

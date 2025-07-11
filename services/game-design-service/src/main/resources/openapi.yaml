@@ -1,0 +1,132 @@
+openapi: 3.0.3
+info:
+  title: Game Design Service API
+  description: Tools for editing game assets and publishing versions
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://api.firemud.com
+security: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    GameTemplateDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        config:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    GameAssetDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        fileName:
+          type: string
+        contentType:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+paths:
+  /ping:
+    get:
+      summary: Health check endpoint
+      operationId: ping
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                    example: pong
+  /templates:
+    post:
+      summary: Create game template
+      operationId: createTemplate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameTemplateDto'
+      responses:
+        '200':
+          description: Created template
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GameTemplateDto'
+    get:
+      summary: List game templates
+      operationId: listTemplates
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GameTemplateDto'
+  /assets:
+    post:
+      summary: Upload asset
+      operationId: uploadAsset
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                tenantId:
+                  type: integer
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Uploaded asset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GameAssetDto'
