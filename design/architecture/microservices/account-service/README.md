@@ -71,6 +71,8 @@ Manages user accounts and authentication for the platform. Stores profile data a
 | ------ | ---------- | ------------------------- |
 | `POST` | `/accounts` | Create a new user account |
 | `GET`  | `/ping`    | Simple health check       |
+| `GET`  | `/profiles/{accountId}` | Retrieve profile information |
+| `PUT`  | `/profiles/{accountId}` | Update profile information   |
 
 ## Dependencies
 

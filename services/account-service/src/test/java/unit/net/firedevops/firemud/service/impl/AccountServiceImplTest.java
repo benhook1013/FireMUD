@@ -10,8 +10,12 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.entity.Account;
+import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
+import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.ProfileRepository;
+import net.firedevops.firemud.service.NotificationService;
 import net.firedevops.firemud.service.session.SessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +25,9 @@ import org.mockito.MockitoAnnotations;
 
 class AccountServiceImplTest {
   @Mock private AccountRepository accountRepository;
+  @Mock private ProfileRepository profileRepository;
+  @Mock private ProfileMapper profileMapper;
+  @Mock private NotificationService notificationService;
   @Mock private SessionService sessionService;
 
   private AccountServiceImpl service;
@@ -30,7 +37,15 @@ class AccountServiceImplTest {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
-    service = new AccountServiceImpl(accountRepository, mapper, jwtUtil, sessionService);
+    service =
+        new AccountServiceImpl(
+            accountRepository,
+            mapper,
+            profileRepository,
+            profileMapper,
+            notificationService,
+            jwtUtil,
+            sessionService);
   }
 
   @Test
@@ -66,6 +81,41 @@ class AccountServiceImplTest {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
     assertThrows(
         IllegalArgumentException.class, () -> service.authenticate(1L, "demo", "bad", null));
+  }
+
+  @Test
+  void getProfileReturnsDto() {
+    Account account = new Account();
+    account.setId(2L);
+    Profile profile = new Profile();
+    profile.setAccount(account);
+    profile.setTenantId(1L);
+    profile.setDisplayName("demo");
+    when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
+    when(profileMapper.toDto(profile))
+        .thenReturn(new net.firedevops.firemud.dto.ProfileDto(1L, 1L, 2L, "demo", null));
+
+    var dto = service.getProfile(1L, 2L);
+
+    assertEquals("demo", dto.displayName());
+  }
+
+  @Test
+  void updateProfileStoresChanges() {
+    Profile profile = new Profile();
+    profile.setAccount(new Account());
+    profile.setTenantId(1L);
+    when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
+    when(profileRepository.save(profile)).thenReturn(profile);
+    when(profileMapper.toDto(profile))
+        .thenReturn(new net.firedevops.firemud.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
+
+    var dto =
+        service.updateProfile(
+            new net.firedevops.firemud.dto.UpdateProfileRequest(1L, 2L, "demo", "bio"));
+
+    assertEquals("demo", dto.displayName());
+    org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
   }
 
   private static String hash(String password) {
