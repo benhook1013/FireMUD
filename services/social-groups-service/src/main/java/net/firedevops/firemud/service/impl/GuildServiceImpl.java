@@ -2,7 +2,10 @@ package net.firedevops.firemud.service.impl;
 
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.saga.SagaBuilder;
+import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.dto.AddGuildStorageItemRequest;
 import net.firedevops.firemud.dto.CreateAllianceRequest;
 import net.firedevops.firemud.dto.CreateGuildRequest;
@@ -19,6 +22,7 @@ import net.firedevops.firemud.repository.GuildAllianceRepository;
 import net.firedevops.firemud.repository.GuildRepository;
 import net.firedevops.firemud.repository.GuildStorageItemRepository;
 import net.firedevops.firemud.service.GuildService;
+import net.firedevops.firemud.service.SagaRunner;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +38,8 @@ public class GuildServiceImpl implements GuildService {
   private final GuildAllianceMapper allianceMapper;
   private final GuildRepository guildRepository;
   private final GuildMapper guildMapper;
+  private final LoggingAdminClient loggingAdminClient;
+  private final SagaRunner sagaRunner;
 
   @Override
   @Transactional
@@ -44,7 +50,29 @@ public class GuildServiceImpl implements GuildService {
     guild.setOwnerAccountId(request.ownerAccountId());
     guild.setName(request.name());
     guild.setCreatedAt(Instant.now());
-    return guildMapper.toDto(guildRepository.save(guild));
+
+    var saga =
+        new SagaBuilder()
+            .step(
+                "persistGuild",
+                () -> guildRepository.save(guild),
+                () -> guildRepository.delete(guild))
+            .step(
+                "logCreation",
+                () ->
+                    loggingAdminClient.reportChatViolation(
+                        request.tenantId(),
+                        request.ownerAccountId(),
+                        "Guild created: " + request.name()))
+            .build();
+    try {
+      sagaRunner.run(saga);
+    } catch (SagaException e) {
+      logger.warn("Guild creation saga failed", e);
+      throw new IllegalStateException("Guild creation failed", e);
+    }
+
+    return guildMapper.toDto(guild);
   }
 
   @Override

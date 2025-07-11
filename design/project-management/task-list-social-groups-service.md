@@ -72,10 +72,10 @@ participate in CI.
 
 ---
 
-## 🔄 Saga Participation _(if used)_
+-## 🔄 Saga Participation _(if used)_
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
+- [x] Use saga helpers from `firemud-common` for workflow steps
+- [x] Emit metrics and correlation IDs for compensation and retries
 - [x] Document saga participation in `design/README.md`
 
 ---
@@ -85,7 +85,7 @@ participate in CI.
 - [x] Use Redis for transient gameplay state only
 - [x] Access Redis through helpers in `firemud-common`
 - [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
+- [x] Validate shard-local key usage and avoid per-service caching
 - [x] Emit metrics for Redis connectivity and commands
 - [ ] _(If participating in ticks)_ implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
@@ -96,8 +96,8 @@ participate in CI.
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [x] Use Spring Boot Test and Testcontainers for integration tests
-- [ ] Validate contracts with smoke tests (gRPC and REST)
-- [ ] Seed minimal test data for local workflows
+- [x] Validate contracts with smoke tests (gRPC and REST)
+- [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] _(When workflows span services)_ add cross-service integration tests
 
