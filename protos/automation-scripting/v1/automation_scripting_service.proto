@@ -9,11 +9,47 @@ option java_multiple_files = true;
 
 service AutomationScriptingService {
   rpc Ping(PingRequest) returns (PingResponse);
+  rpc CreateFormation(CreateFormationRequest) returns (CreateFormationResponse);
+  rpc AddFormationMember(AddFormationMemberRequest) returns (AddFormationMemberResponse);
+  rpc ListFormationMembers(ListFormationMembersRequest) returns (ListFormationMembersResponse);
 }
 
 message PingRequest {}
 
 message PingResponse {
   string message = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CreateFormationRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string leader_npc_id = 3;
+  string formation_type = 4; // LINE, WEDGE, CIRCLE
+}
+
+message CreateFormationResponse {
+  string formation_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message AddFormationMemberRequest {
+  string tenant_id = 1;
+  string formation_id = 2;
+  string npc_id = 3;
+}
+
+message AddFormationMemberResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListFormationMembersRequest {
+  string tenant_id = 1;
+  string formation_id = 2;
+}
+
+message ListFormationMembersResponse {
+  repeated string npc_ids = 1;
   shared.v1.ErrorDetail error = 2;
 }
