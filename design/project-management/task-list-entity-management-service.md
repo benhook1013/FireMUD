@@ -86,17 +86,17 @@ participate in CI.
 - [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [x] Validate shard-local key usage and avoid per-service caching
 - [x] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] *(If participating in ticks)* implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
 
 ## 🧪 Testing & Quality Gates
 
-- [ ] Add unit tests for gRPC, REST (if present), and startup behaviour
-- [ ] Use Spring Boot Test and Testcontainers for integration tests
-- [ ] Validate contracts with smoke tests (gRPC and REST)
-- [ ] Seed minimal test data for local workflows
+- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
+- [x] Use Spring Boot Test and Testcontainers for integration tests
+- [x] Validate contracts with smoke tests (gRPC and REST)
+- [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests
 
