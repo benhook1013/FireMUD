@@ -67,7 +67,7 @@ For details on how scripts are authored and executed safely, see [System Archite
 
 NPC behaviour references player reputation to decide when to become hostile,
 flee, or surrender. These reputation scores are maintained by the Social &
-Groups Service rather than this service. See the
+Groups Service. See the
 [Social & Groups Service](../social-groups-service/README.md#data-model) for the
 `faction` and `faction_standing` tables that store reputation data.
 
