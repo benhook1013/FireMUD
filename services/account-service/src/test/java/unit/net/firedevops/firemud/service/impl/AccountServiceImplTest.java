@@ -14,7 +14,9 @@ import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
+import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.NotificationService;
 import net.firedevops.firemud.service.session.SessionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +31,8 @@ class AccountServiceImplTest {
   @Mock private ProfileMapper profileMapper;
   @Mock private NotificationService notificationService;
   @Mock private SessionService sessionService;
+  @Mock private PaymentTransactionRepository paymentTransactionRepository;
+  @Mock private SubscriptionRepository subscriptionRepository;
 
   private AccountServiceImpl service;
 
@@ -43,6 +47,8 @@ class AccountServiceImplTest {
             mapper,
             profileRepository,
             profileMapper,
+            paymentTransactionRepository,
+            subscriptionRepository,
             notificationService,
             jwtUtil,
             sessionService);

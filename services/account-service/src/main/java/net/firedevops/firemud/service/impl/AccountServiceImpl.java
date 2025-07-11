@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.ProfileDto;
@@ -18,7 +19,9 @@ import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
+import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.NotificationService;
 import org.slf4j.Logger;
@@ -33,6 +36,8 @@ public class AccountServiceImpl implements AccountService {
   private final AccountMapper accountMapper;
   private final ProfileRepository profileRepository;
   private final ProfileMapper profileMapper;
+  private final PaymentTransactionRepository paymentTransactionRepository;
+  private final SubscriptionRepository subscriptionRepository;
   private final NotificationService notificationService;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.service.session.SessionService sessionService;
@@ -42,6 +47,8 @@ public class AccountServiceImpl implements AccountService {
       AccountMapper accountMapper,
       ProfileRepository profileRepository,
       ProfileMapper profileMapper,
+      PaymentTransactionRepository paymentTransactionRepository,
+      SubscriptionRepository subscriptionRepository,
       NotificationService notificationService,
       JwtUtil jwtUtil,
       net.firedevops.firemud.service.session.SessionService sessionService) {
@@ -49,6 +56,8 @@ public class AccountServiceImpl implements AccountService {
     this.accountMapper = accountMapper;
     this.profileRepository = profileRepository;
     this.profileMapper = profileMapper;
+    this.paymentTransactionRepository = paymentTransactionRepository;
+    this.subscriptionRepository = subscriptionRepository;
     this.notificationService = notificationService;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
@@ -125,6 +134,38 @@ public class AccountServiceImpl implements AccountService {
     notificationService.sendNotification(
         request.tenantId(), request.accountId(), "Profile updated");
     return profileMapper.toDto(profile);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.export")
+  public AccountDataExportDto exportAccountData(Long tenantId, Long accountId) {
+    Account account =
+        accountRepository
+            .findById(accountId)
+            .filter(a -> a.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    Profile profile =
+        profileRepository.findByAccountIdAndTenantId(accountId, tenantId).orElse(null);
+    return new AccountDataExportDto(
+        accountMapper.toDto(account), profile != null ? profileMapper.toDto(profile) : null);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.delete")
+  public void deleteAccount(Long tenantId, Long accountId) {
+    Account account =
+        accountRepository
+            .findById(accountId)
+            .filter(a -> a.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    paymentTransactionRepository.deleteByAccountId(accountId);
+    subscriptionRepository.deleteByAccountId(accountId);
+    profileRepository
+        .findByAccountIdAndTenantId(accountId, tenantId)
+        .ifPresent(profileRepository::delete);
+    accountRepository.delete(account);
   }
 
   private String hashPassword(String password) {
