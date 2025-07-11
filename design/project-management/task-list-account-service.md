@@ -5,7 +5,7 @@
   - [x] Implement session management and persistent logins
   - [ ] Implement role-based access control (RBAC) for admins, moderators, and players
   - [ ] Enable external account linking (Google, Discord, Steam)
-  - [ ] Implement profile system with achievements, game history, and social features
+  - [x] Implement profile system with achievements, game history, and social features
   - [ ] Implement player data export & deletion (GDPR compliance)
   - [x] Expose JWKS endpoint for token verification
   - [ ] Use saga orchestrator for account creation workflow

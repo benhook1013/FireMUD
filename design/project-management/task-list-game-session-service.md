@@ -60,8 +60,8 @@ participate in CI.
 
 - [x] Use `firemud-common` protobuf types for shared messages
 - [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
-- [ ] Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] Register with service discovery via helpers in `firemud-common`
+- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
@@ -77,8 +77,8 @@ participate in CI.
 
 ## 🔄 Saga Participation *(if used)*
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
+- [x] Use saga helpers from `firemud-common` for workflow steps
+- [x] Emit metrics and correlation IDs for compensation and retries
 - [x] Document saga participation in `design/README.md`
 
 ---
@@ -98,8 +98,8 @@ participate in CI.
 ## 🧪 Testing & Quality Gates
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
-- [ ] Use Spring Boot Test and Testcontainers for integration tests
-- [ ] Validate contracts with smoke tests (gRPC and REST)
+- [x] Use Spring Boot Test and Testcontainers for integration tests
+- [x] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests

@@ -10,6 +10,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Apply combat rules, cooldowns, and environmental effects
 - Interact with entity and world services for context data
 - Push results back to the Game Session Service for distribution
+- Forward chat actions to the Social & Groups Service for delivery and
+  profanity checks
 
 ## Architecture / Design Notes
 
@@ -34,6 +36,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Command parsing and alias system.
 - Rule processing for combat and progression.
 - Emote and roleplay action handling.
+- In-game chat processing for say, tell, guild chat, and mail actions.
 - Event dispatcher for triggers and world events.
 - Effect stacking and cooldown calculation.
 - Environmental effect resolution (weather, lighting) influencing gameplay.
@@ -66,6 +69,7 @@ This service is largely stateless. It relies on:
   - World Management Service for room and region data.
   - Game Session Service supplies tick context and command queues.
   - Automation & Scripting Service triggers additional effects during rule execution.
+  - Social & Groups Service handles chat delivery and profanity filtering.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
@@ -79,17 +83,10 @@ details on shared infrastructure components.
 
 ## Environment Variables
 
-The service uses the standard configuration outlined in
+This service follows the conventions in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
-Key variables include:
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
-| `FIREMUD_POSTGRES_HOST` | PostgreSQL host | `postgres` |
-| `FIREMUD_POSTGRES_PORT` | PostgreSQL port | `5432` |
-| `FIREMUD_REDIS_HOST` | Redis host | `redis` |
-| `FIREMUD_REDIS_PORT` | Redis port | `6379` |
+It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
 
 ## Proto Files
 
@@ -112,6 +109,37 @@ the generated code with `./gradlew generateProto` after making changes.
 - [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+#### REST
+
+- `GET /ping` – basic health check returning `"pong"`.
+- `POST /command` – submit a gameplay command body as plain text.
+
+```bash
+curl http://localhost:8080/ping
+```
+
+#### gRPC
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_logic_service.proto`](../../../protos/game-logic/v1/game_logic_service.proto).
+- `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` – process a command and return the result.
+
+```bash
+grpcurl -plaintext localhost:6565 game_logic.v1.GameLogicService/Ping
+```
+
+Expected response:
+
+```json
+{
+  "message": "pong"
+}
+```
+
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 - [System Architecture Diagram](../system-architecture-diagram.md)

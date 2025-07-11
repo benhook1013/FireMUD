@@ -41,6 +41,22 @@ Sample response:
 }
 ```
 
+## Profile Endpoints
+
+Retrieve a profile:
+
+```bash
+curl http://localhost:8080/profiles/2?tenantId=1
+```
+
+Update a profile:
+
+```bash
+curl -X PUT http://localhost:8080/profiles/2 \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"accountId":2,"displayName":"demo","bio":"bio"}'
+```
+
 ## Environment Variables
 
 The service relies on standard Spring Boot properties for database and Redis

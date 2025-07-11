@@ -37,3 +37,5 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 ```
 
 - `POST /feature-flags/toggle` – enable or disable runtime flags.
+
+This stub exists only to link to the real design document. **Do not add design details here.**
