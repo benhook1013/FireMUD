@@ -1,0 +1,227 @@
+openapi: 3.0.3
+info:
+  title: Account Service API
+  description: API for user accounts and authentication
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://api.firemud.com
+security: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    CreateAccountRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+      required: [tenantId, username, email, password]
+    AccountDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        username:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+    LoginRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        username:
+          type: string
+        password:
+          type: string
+        otp:
+          type: string
+      required: [tenantId, username, password]
+    AuthTokenDto:
+      type: object
+      properties:
+        authToken:
+          type: string
+    ProfileDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        displayName:
+          type: string
+        bio:
+          type: string
+    UpdateProfileRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+        displayName:
+          type: string
+        bio:
+          type: string
+      required: [tenantId, accountId]
+paths:
+  /ping:
+    get:
+      summary: Health check endpoint
+      operationId: ping
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                example:
+                  data: pong
+  /auth/login:
+    post:
+      summary: Authenticate and return JWT
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Auth token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenDto'
+  /accounts:
+    post:
+      summary: Create a new account
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+      responses:
+        '200':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDto'
+  /accounts/{accountId}/export:
+    get:
+      summary: Export account data
+      operationId: exportAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Exported data
+  /accounts/{accountId}:
+    delete:
+      summary: Delete account
+      operationId: deleteAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Deletion success
+  /profiles/{accountId}:
+    get:
+      summary: Get profile
+      operationId: getProfile
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Profile data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileDto'
+    put:
+      summary: Update profile
+      operationId: updateProfile
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileDto'
+  /.well-known/jwks.json:
+    get:
+      summary: JWKS public keys
+      operationId: jwks
+      responses:
+        '200':
+          description: JSON Web Key Set
+          content:
+            application/json:
+              schema:
+                type: object

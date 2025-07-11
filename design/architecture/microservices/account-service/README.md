@@ -2,7 +2,7 @@
 
 ## Overview
 
-Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections.
+Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections. REST endpoints are documented in `openapi.yaml` within the service resources directory.
 
 ### Responsibilities
 
@@ -150,6 +150,8 @@ Admin and moderator accounts can enable a TOTP secret for additional protection.
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /accounts` – create a new account and profile.
+- `GET /accounts/{accountId}/export` – export all account data.
+- `DELETE /accounts/{accountId}` – remove an account permanently.
 - `POST /auth/login` – authenticate and return a JWT token.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 
