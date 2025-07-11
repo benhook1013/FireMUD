@@ -103,7 +103,7 @@ participate in CI.
 - [x] Validate contracts with smoke tests (gRPC and REST)
 - [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
-- [ ] *(When workflows span services)* add cross-service integration tests
+- [x] *(When workflows span services)* add cross-service integration tests
 
 ---
 
