@@ -66,6 +66,9 @@ Large worlds can span multiple server clusters. Each `region` is assigned a
 `shard_id` so the Game Session Service knows which cluster hosts the active
 state for that region. When a player crosses into a region on another shard the
 session handoff flow described in the Game Session Service design is invoked.
+Administrators can reassign regions between shards using the `RegionController`
+endpoint `POST /regions/{id}/move`, which updates the `shard_id` column for the
+specified region.
 
 ### gRPC APIs
 
