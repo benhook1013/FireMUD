@@ -46,9 +46,9 @@ participate in CI.
 
 ## 🔒 Authentication & Authorization
 
-- [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [ ] Check `globalRoles` and `scopedRoles` where applicable
-- [ ] Gameplay services rely on the Game Session Service for session validation
+- [x] *(N/A - proxy does not process JWTs)* Meta and admin services validate JWTs using helpers from `firemud-common`
+- [x] *(N/A - proxy performs no role checks)* Check `globalRoles` and `scopedRoles` where applicable
+- [x] Gameplay services rely on the Game Session Service for session validation
 
 ---
 
@@ -73,21 +73,21 @@ participate in CI.
 
 ## 🔄 Saga Participation *(if used)*
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] *(N/A - stateless proxy)* Use saga helpers from `firemud-common` for workflow steps
+- [x] *(N/A - stateless proxy)* Emit metrics and correlation IDs for compensation and retries
+- [x] *(N/A - stateless proxy)* Document saga participation in `design/README.md`
 
 ---
 
 ## 🔑 Redis Integration *(if used)*
 
-- [ ] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
-- [ ] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [ ] Prefix all keys with `tenantId` to isolate game data
+- [x] *(N/A - no Redis usage)* Use Redis for transient gameplay state only
+- [x] *(N/A - no Redis usage)* Access Redis through helpers in `firemud-common`
+- [x] *(N/A - no Redis usage)* Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
+- [x] *(N/A - no Redis usage)* Validate shard-local key usage and avoid per-service caching
+- [x] *(N/A - no Redis usage)* Emit metrics for Redis connectivity and commands
+- [x] *(N/A - no Redis usage)* *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] *(N/A - no Redis usage)* Prefix all keys with `tenantId` to isolate game data
 
 ---
 
@@ -95,7 +95,7 @@ participate in CI.
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [x] Use Spring Boot Test and Testcontainers for integration tests
-- [ ] Validate contracts with smoke tests (gRPC and REST)
+- [x] Validate contracts with smoke tests (gRPC and REST)
 - [x] *(N/A - stateless service)* Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests

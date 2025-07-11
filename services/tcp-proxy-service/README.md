@@ -19,6 +19,14 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
+## Smoke Test
+
+Run `./smoke-test.sh` while the service is running to verify that the REST and gRPC endpoints are responsive.
+
+```bash
+./smoke-test.sh
+```
+
 ## Configuration
 
 Environment variables used by the service:
