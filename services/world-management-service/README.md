@@ -46,6 +46,17 @@ Service depends on:
 - **Game Session Service** to deliver room information and world event updates.
 - **Automation & Scripting Service** to react to scheduled world changes.
 
+## Procedural Generation Rules
+
+Generation parameters can be tweaked at runtime using a small REST API. Rules
+are stored in the `generation_rule` table and apply per tenant.
+
+- `POST /generation/rules` – create or update a rule
+- `GET /generation/rules?tenantId=...` – list all rules for a tenant
+
+These endpoints allow fine-grained control over terrain variation and other
+generation options without redeploying the service.
+
 ## Travel and Pathfinding
 
 The service exposes pathfinding utilities used by NPCs and movement validation.
