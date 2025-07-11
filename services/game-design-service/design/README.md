@@ -51,4 +51,3 @@ gRPC endpoints. Cross-service integration tests live under
 available.
 
 This stub exists only to link to the real design document. **Do not add design details here.*
-

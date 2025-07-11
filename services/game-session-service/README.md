@@ -66,6 +66,16 @@ To run the entire stack:
 Running with the `dev` profile automatically seeds a demo manifest, feature flag,
 and game instance via `TestDataSeeder` when the database tables are empty.
 
+### Cross-Service Integration Test
+
+The `src/test/java/crossservice` directory contains an integration test that
+starts the Game Session Service alongside the Game Logic Service using
+Testcontainers. Run it manually once the dependent Docker images are built:
+
+```bash
+./gradlew :game-session-service:test --tests "*CrossServiceIntegrationTest"
+```
+
 ## Tenant Handling and Dependencies
 
 Every session row contains a `tenantId` column, and all Redis keys include this

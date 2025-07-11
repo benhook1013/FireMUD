@@ -100,9 +100,9 @@ participate in CI.
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [x] Use Spring Boot Test and Testcontainers for integration tests
 - [x] Validate contracts with smoke tests (gRPC and REST)
-- [ ] Seed minimal test data for local workflows
+- [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
-- [ ] *(When workflows span services)* add cross-service integration tests
+- [x] *(When workflows span services)* add cross-service integration tests
 
 ---
 
