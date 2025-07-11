@@ -55,6 +55,15 @@ Provides chat, guild, and social networking features across games. Enables playe
   through the Spring Cloud Gateway.
 - Guild and direct messages share a common persistence model for history.
 
+### Voice Chat Integration
+
+Voice chat is an optional feature built on top of a lightweight WebRTC gateway.
+The gateway establishes peer-to-peer connections between players and relays
+media streams when direct communication is not possible. The Social & Groups
+Service issues temporary WebRTC tokens and records basic session metadata so the
+Logging & Admin Service can audit voice activity. Voice chat is disabled by
+default and can be enabled per tenant through configuration.
+
 ### gRPC/REST APIs
 
 - `SendMessage` – publishes a chat message to an in-game channel or player.
