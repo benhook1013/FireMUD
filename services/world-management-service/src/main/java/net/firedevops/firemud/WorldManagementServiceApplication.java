@@ -5,14 +5,17 @@ import io.swagger.v3.oas.annotations.info.Info;
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
 import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.config.WorldConfig;
+import net.firedevops.firemud.config.GrpcClientProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Import;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @OpenAPIDefinition(info = @Info(title = "World Management Service", version = "v1"))
 @EnableScheduling
+@EnableConfigurationProperties(GrpcClientProperties.class)
 @Import({DatabaseAutoConfiguration.class, CommonAutoConfiguration.class, WorldConfig.class})
 public class WorldManagementServiceApplication {
   public static void main(String[] args) {

@@ -20,6 +20,12 @@ Once the service is running, the generated OpenAPI specification is available at
 `http://localhost:8080/v3/api-docs` and the Swagger UI at
 `http://localhost:8080/swagger-ui.html`.
 
+Run `smoke-test.sh` while the service is running to verify the REST and gRPC contracts:
+
+```bash
+./smoke-test.sh
+```
+
 ## Environment Variables
 
 The service relies on standard Spring Boot properties for PostgreSQL and Redis

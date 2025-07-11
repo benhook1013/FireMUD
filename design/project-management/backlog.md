@@ -5,7 +5,7 @@ This document lists outstanding tasks and known issues that have not yet been sc
 ## 🚧 Open Tasks
 
 - ~~Integrate pre-commit hooks for Checkstyle and SpotBugs~~ (done)
-- Establish base integration test setup using Testcontainers
+- ~~Establish base integration test setup using Testcontainers~~ (done)
 - ~~Summarize controller routes in service design docs~~
 - ~~Create cross-service integration example scripts demonstrating account creation and game session startup~~
 - Seed data for local development with sample worlds and characters
