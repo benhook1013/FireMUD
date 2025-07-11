@@ -24,6 +24,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-reconnection.md**](./system-architecture-reconnection.md) – Client reconnect flow across services.
 - [**system-architecture-ticks.md**](./system-architecture-ticks.md) – Tick system and runtime design.
 - [**system-architecture-scripting.md**](./system-architecture-scripting.md) – Automation and scripting framework.
+- [**system-architecture-procedural-generation.md**](./system-architecture-procedural-generation.md) – Basic dungeon generation used during world creation.
 - [**system-architecture-versioning-runtime.md**](./system-architecture-versioning-runtime.md) – Publishing versions and runtime flags.
 - [**system-architecture-multi-tenancy.md**](./system-architecture-multi-tenancy.md) – Hosting multiple games on shared infrastructure.
 - [**system-architecture-frontend.md**](./system-architecture-frontend.md) – React UI structure and state management.
