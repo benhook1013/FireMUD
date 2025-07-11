@@ -10,6 +10,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Apply combat rules, cooldowns, and environmental effects
 - Interact with entity and world services for context data
 - Push results back to the Game Session Service for distribution
+- Forward chat actions to the Social & Groups Service for delivery and
+  profanity checks
 
 ## Architecture / Design Notes
 
@@ -34,6 +36,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Command parsing and alias system.
 - Rule processing for combat and progression.
 - Emote and roleplay action handling.
+- In-game chat processing for say, tell, guild chat, and mail actions.
 - Event dispatcher for triggers and world events.
 - Effect stacking and cooldown calculation.
 - Environmental effect resolution (weather, lighting) influencing gameplay.
@@ -66,6 +69,7 @@ This service is largely stateless. It relies on:
   - World Management Service for room and region data.
   - Game Session Service supplies tick context and command queues.
   - Automation & Scripting Service triggers additional effects during rule execution.
+  - Social & Groups Service handles chat delivery and profanity filtering.
 
 > See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
