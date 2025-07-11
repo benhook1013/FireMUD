@@ -19,6 +19,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa:3.5.3")
     implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
     implementation(project(":common-library"))
+    implementation("org.springframework.boot:spring-boot-starter-aop:3.5.3")
     implementation("io.micrometer:micrometer-registry-prometheus:1.15.1")
     implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")

@@ -27,9 +27,10 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
   this value so character data for different games remains isolated; Redis keys
   mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
   document.
-- gRPC endpoints are secured with JWT tokens validated via the Account Service's
-  JWKS endpoint, and all traffic between services uses mutual TLS certificates as
-  outlined in the [Security Architecture](../system-architecture-security.md).
+- Gameplay-facing gRPC endpoints do not parse JWT tokens. The Game Session Service
+  injects identity context using `SessionContext` after validating tokens itself.
+  Traffic between services still uses mutual TLS certificates as outlined in the
+  [Security Architecture](../system-architecture-security.md).
 
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
