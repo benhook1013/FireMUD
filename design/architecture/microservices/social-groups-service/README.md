@@ -48,6 +48,9 @@ Provides chat, guild, and social networking features across games. Enables playe
 - `guild` and `guild_member` tables store group ownership and membership roles.
 - `friend_link` table tracks account or character friendships and blocks.
 - `mail_message` table stores asynchronous player mail.
+- `faction` and `faction_standing` tables maintain player reputation. The
+  [Automation & Scripting Service](../automation-scripting-service/README.md)
+  queries these standings to influence NPC behaviour.
 
 ### Chat Pipeline
 
