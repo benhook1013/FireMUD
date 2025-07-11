@@ -65,3 +65,11 @@ via gRPC.
 Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are
 exported to the collector defined in the shared configuration. No additional
 setup is required when running `./gradlew bootRun`.
+
+## Voice Chat
+
+The service can optionally integrate with a WebRTC gateway to provide voice
+channels for guilds and parties. When enabled, the REST API issues short-lived
+WebRTC tokens and records connection events so moderation actions can be traced.
+This feature is disabled by default and is intended for games that wish to offer
+in-client voice without relying on external tools.
