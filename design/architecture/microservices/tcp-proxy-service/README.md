@@ -85,8 +85,15 @@ details on how Telnet connections are integrated into the platform.
 - Health is checked using a custom TCP probe defined in the Kubernetes manifest.
 - Logs are forwarded via Fluent Bit and metrics are exported for Prometheus via
   a minimal collector endpoint.
-- Configuration for local Docker Compose versus production clusters is described
-  in [Deployment Environments](../../infrastructure/deployment-environments.md).
+  - Configuration for local Docker Compose versus production clusters is described
+    in [Deployment Environments](../../infrastructure/deployment-environments.md).
+
+## Environment Variables
+
+The proxy uses minimal configuration. It still follows the scheme in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
+so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be present
+but are ignored.
 
 ## Metrics & Tracing
 

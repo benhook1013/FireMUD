@@ -94,6 +94,14 @@ details on shared infrastructure components.
   profiles as described in
   [Deployment Environments](../../infrastructure/deployment-environments.md).
 
+## Environment Variables
+
+This service follows the common scheme in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It uses the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
+variables to access its databases.
+
 ## Proto Files
 
 API definitions are located in

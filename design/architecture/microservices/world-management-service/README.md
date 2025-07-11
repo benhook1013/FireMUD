@@ -78,10 +78,17 @@ details on shared infrastructure components.
   datasets.
 - Health endpoints (`/actuator/health`) are used for readiness and liveness
   checks.
-- Metrics and traces are collected by Prometheus and OpenTelemetry, and logs are
-  shipped via Fluent Bit to Elasticsearch.
-- Environment-specific configuration values are described in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+  - Metrics and traces are collected by Prometheus and OpenTelemetry, and logs are
+    shipped via Fluent Bit to Elasticsearch.
+  - Environment-specific configuration values are described in
+    [Deployment Environments](../../infrastructure/deployment-environments.md).
+
+## Environment Variables
+
+World Management Service uses the configuration scheme defined in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It depends on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
 
 ## Proto Files
 

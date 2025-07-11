@@ -78,11 +78,13 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ## Operational Notes
 
-Environment variables supply PostgreSQL and Redis connection details. The
-common library's `DatabaseAutoConfiguration` reads values from
-`FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` as described in the
-[Deployment Environments](../../infrastructure/deployment-environments.md)
-document.
+## Environment Variables
+
+This service follows the configuration scheme from
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
+variables.
 
 - Deployed in Kubernetes with multiple replicas; Redis provides the shared state needed for sticky sessions.
 - Exposes `/actuator/health` for readiness and liveness probes used by the cluster.

@@ -82,15 +82,18 @@ details on shared infrastructure components.
 ## Environment Variables
 
 The gateway reads configuration from environment variables so both Docker Compose
-and Kubernetes deployments behave consistently. Important variables include:
+and Kubernetes deployments behave consistently. It follows
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+Important variables include:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile to load (`dev` or `prod`) | `dev` |
 | `SERVER_PORT` | HTTP port exposed by the service | `8080` |
 
-The database variables (`FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*`) are included
-for consistency across services but are not used by the gateway.
+The database variables
+([PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
+may be present for consistency but are ignored by this service.
 
 ## Proto Files
 

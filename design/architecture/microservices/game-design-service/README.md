@@ -85,9 +85,16 @@ details on shared infrastructure components.
   cluster.
 - Metrics and traces integrate with Prometheus and OpenTelemetry, while logs are
   forwarded through Fluent Bit to Elasticsearch.
-- Local Docker Compose uses the same Spring profiles; see
-  [Deployment Environments](../../infrastructure/deployment-environments.md) for
-  details.
+  - Local Docker Compose uses the same Spring profiles; see
+    [Deployment Environments](../../infrastructure/deployment-environments.md) for
+    details.
+
+## Environment Variables
+
+Configuration uses the conventions defined in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+This service relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
+Redis variables are not used.
 
 ## Proto Files
 

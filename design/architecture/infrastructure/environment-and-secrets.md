@@ -34,6 +34,38 @@ FIREMUD_REDIS_PORT=6379
 
 Each service merges these variables with its own `application.yml` profile.
 
+### Common Application Settings
+
+The following variable is used by all Spring Boot services to select the
+appropriate configuration profile. Typically only `dev` and `prod` are used.
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
+
+### PostgreSQL Credentials
+
+Services connect to the shared PostgreSQL database using the following variables.
+These values are typically provided via Kubernetes Secrets in production.
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_POSTGRES_HOST` | Database host | `postgres` |
+| `FIREMUD_POSTGRES_PORT` | Database port | `5432` |
+| `FIREMUD_POSTGRES_DB` | Database name | `firemud` |
+| `FIREMUD_POSTGRES_USER` | Username | `firemud` |
+| `FIREMUD_POSTGRES_PASSWORD` | Password | `firemud` |
+
+### Redis Connection
+
+Redis stores transient queues and caches. Services that depend on Redis read
+these variables.
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_REDIS_HOST` | Redis host | `redis` |
+| `FIREMUD_REDIS_PORT` | Redis port | `6379` |
+
 ## 📚 Related Docs
 
 - [Deployment Environments](./deployment-environments.md)

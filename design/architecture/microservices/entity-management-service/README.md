@@ -81,6 +81,14 @@ details on shared infrastructure components.
   documented in
   [Deployment Environments](../../infrastructure/deployment-environments.md).
 
+## Environment Variables
+
+This service uses the shared configuration described in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
+variables.
+
 ## Proto Files
 
 Service interface definitions are stored in

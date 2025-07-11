@@ -91,8 +91,16 @@ details on shared infrastructure components.
 - Exposes `/actuator/health` for readiness and liveness probes consumed by the
   cluster.
 - Metrics are scraped by Prometheus from `/actuator/prometheus` and logs shipped through Fluent Bit to Elasticsearch. Traces are exported via OpenTelemetry to the collector service for visualization in Jaeger.
-- Configuration differences between environments are described in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+  - Configuration differences between environments are described in
+    [Deployment Environments](../../infrastructure/deployment-environments.md).
+
+## Environment Variables
+
+This service follows the standard scheme described in
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
+and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
+variables.
 
 ## Proto Files
 

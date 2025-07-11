@@ -82,8 +82,15 @@ details on shared infrastructure components.
 - Health endpoints under `/actuator/health` feed readiness and liveness probes.
 - Metrics and OpenTelemetry traces are scraped by Prometheus. Each pod runs a Fluent Bit
   sidecar that forwards JSON logs to Elasticsearch for search.
-- Environment differences are outlined in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+  - Environment differences are outlined in
+    [Deployment Environments](../../infrastructure/deployment-environments.md).
+
+## Environment Variables
+
+The service uses the configuration approach from
+[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
+It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
+Redis variables are not required.
 
 ## Saga Dashboard
 
