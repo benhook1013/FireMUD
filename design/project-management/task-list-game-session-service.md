@@ -1,6 +1,6 @@
 # Game Session Service Task List
 
-- [ ] **Expand Game Session Service**
+- [x] **Expand Game Session Service**
   - [x] Implement game instance lifecycle (start, stop, restart)
   - [x] Support multi-tenancy for hosted games
   - [x] Implement tick orchestration using Redis for command queues
@@ -58,11 +58,11 @@ participate in CI.
 
 ## 🔁 Inter-Service Communication
 
-- [ ] Use `firemud-common` protobuf types for shared messages
+- [x] Use `firemud-common` protobuf types for shared messages
 - [ ] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
 - [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
+- [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
 
@@ -88,9 +88,9 @@ participate in CI.
 - [x] Use Redis for transient gameplay state only
 - [x] Access Redis through helpers in `firemud-common`
 - [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
-- [ ] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] Validate shard-local key usage and avoid per-service caching
+- [x] Emit metrics for Redis connectivity and commands
+- [x] *(If participating in ticks)* implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
@@ -111,7 +111,7 @@ participate in CI.
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
 - [x] Use shared interceptors to propagate `traceId` and `correlationId`
- - [x] Emit service metrics for ticks and Redis commands when relevant
+- [x] Emit service metrics for ticks and Redis commands when relevant
 - [x] Expose `/actuator/prometheus` for scraping by Prometheus
 
 ---
