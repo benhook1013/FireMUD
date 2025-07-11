@@ -35,12 +35,13 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ## Key Features
 
 - World and room editors.
-- Ability and action design tools.
+- [Ability & Action Design Tools](ability-action-tools.md)
 - Scripting and event workflow creation.
 - Visual editor for building scripts in the same component-based DSL used by the
   Automation & Scripting Service.
 - [Game templates](game-templates.md) with predefined rulesets and administrators.
 - Version and patch note management for published games.
+- [Item & Equipment Balancing Tools](item-equipment-balancing.md)
 - Import/export of design assets for sharing between game worlds.
 
 ### Data Model
@@ -108,6 +109,8 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [User Journeys – Patch and Update a Live Game](../user-journeys.md#8-patch-and-update-a-live-game)
 - [Asset Storage Setup](asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
+- [Ability & Action Design Tools](ability-action-tools.md)
+- [Item & Equipment Balancing Tools](item-equipment-balancing.md)
 - [Web-Based Visual Design Interface](web-visual-interface.md)
 - [Version Control for Design Assets](version-control.md)
 - [In-Game Modding and Plugin Framework](modding-framework.md)
@@ -151,6 +154,10 @@ grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping
 ### Saga Participation
 
 Publishing a game version is coordinated using the Saga utilities from `firemud-common`. The `VersionServiceImpl` builds a workflow that first persists the new version and then copies design data to downstream services. If any step fails, previously executed actions are compensated so the database remains consistent. See the [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) document for the overall flow.
+
+## Local Development Notes
+
+`TestDataSeeder` populates a demo game, template, revision and version when the `dev` Spring profile is active. A simple smoke-test script verifies both REST and gRPC endpoints. Cross-service integration tests live under `src/test/java/crossservice` and can be executed once dependent services are available.
 
 ## Future Enhancements
 

@@ -18,5 +18,7 @@ management:
 
 world:
   local-shard-id: 0
+  room:
+    cache-ttl-seconds: 60
   instance:
     expiration-hours: 24

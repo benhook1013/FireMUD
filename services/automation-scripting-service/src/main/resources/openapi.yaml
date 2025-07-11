@@ -62,6 +62,29 @@ components:
         data:
           type: integer
           example: 10
+    CreateFormationRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        name:
+          type: string
+        leaderNpcId:
+          type: integer
+        formationType:
+          type: string
+      required:
+        - tenantId
+        - name
+        - leaderNpcId
+        - formationType
+    LongListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: integer
 paths:
   /ping:
     get:
@@ -106,3 +129,76 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReputationResponse'
+  /formations:
+    post:
+      summary: Create a new NPC formation
+      operationId: createFormation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFormationRequest'
+      responses:
+        '200':
+          description: Formation identifier
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: integer
+                    example: 1
+  /formations/{id}/members:
+    post:
+      summary: Add a member to a formation
+      operationId: addFormationMember
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: npcId
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: boolean
+                    example: true
+    get:
+      summary: List members of a formation
+      operationId: listFormationMembers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of NPC IDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LongListResponse'
