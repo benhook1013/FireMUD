@@ -19,6 +19,15 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
+Once the service is running you can execute a basic contract check:
+
+```bash
+./smoke-test.sh
+```
+
+Running with the `dev` profile automatically seeds a demo game, template,
+revision and version via `TestDataSeeder`.
+
 ## Environment Variables
 
 The service reads configuration from standard Spring Boot variables. Typical
