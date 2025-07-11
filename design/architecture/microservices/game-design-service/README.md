@@ -108,6 +108,9 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [User Journeys – Patch and Update a Live Game](../user-journeys.md#8-patch-and-update-a-live-game)
 - [Asset Storage Setup](../../../../services/game-design-service/design/asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
+- [Web-Based Visual Design Interface](web-visual-interface.md)
+- [Version Control for Design Assets](version-control.md)
+- [In-Game Modding and Plugin Framework](modding-framework.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Database Migrations](../system-architecture-database-migrations.md)
@@ -123,5 +126,6 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 
 ## Future Enhancements
 
-- Web-based visual design interface.
-- Version control integration for design assets.
+- [Web-based visual design interface](web-visual-interface.md)
+- [Version control integration for design assets](version-control.md)
+- [In-game modding and plugin framework](modding-framework.md)

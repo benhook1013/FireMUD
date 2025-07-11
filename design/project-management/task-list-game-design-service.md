@@ -14,14 +14,14 @@
   - [x] Implement ability & action design tools
   - [x] Implement item & equipment balancing tools
   - [x] Track version history and patch notes for published games
-  - [ ] Build a web-based visual design interface
-  - [ ] Integrate version control for design assets
+  - [x] Build a web-based visual design interface
+  - [x] Integrate version control for design assets
   - [x] Configure database storage for game assets
     - [x] Provide asset upload API in Game Design Service
     - [x] Document asset storage setup and configuration
 - [ ] **Expand Scripting & Modding**
   - [x] Implement event-driven scripting API for game creators
-  - [ ] Implement in-game modding/plugin framework
+  - [x] Implement in-game modding/plugin framework
   - [x] Implement scripted AI behaviors for NPCs
 
 ## Versioning & Runtime Configuration
