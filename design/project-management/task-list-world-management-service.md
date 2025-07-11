@@ -48,8 +48,8 @@ participate in CI.
 
 ## 🔒 Authentication & Authorization
 
-- [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [ ] Check `globalRoles` and `scopedRoles` where applicable
+- [x] Meta and admin services validate JWTs using helpers from `firemud-common`
+- [x] Check `globalRoles` and `scopedRoles` where applicable
 - [ ] Gameplay services rely on the Game Session Service for session validation
 
 ---
