@@ -155,6 +155,10 @@ grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping
 
 Publishing a game version is coordinated using the Saga utilities from `firemud-common`. The `VersionServiceImpl` builds a workflow that first persists the new version and then copies design data to downstream services. If any step fails, previously executed actions are compensated so the database remains consistent. See the [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) document for the overall flow.
 
+## Local Development Notes
+
+`TestDataSeeder` populates a demo game, template, revision and version when the `dev` Spring profile is active. A simple smoke-test script verifies both REST and gRPC endpoints. Cross-service integration tests live under `src/test/java/crossservice` and can be executed once dependent services are available.
+
 ## Future Enhancements
 
 - [Web-based visual design interface](web-visual-interface.md)
