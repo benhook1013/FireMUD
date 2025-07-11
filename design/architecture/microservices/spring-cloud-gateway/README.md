@@ -69,15 +69,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a stateless gateway Deployment in Kubernetes, typically exposed via a
-  load balancer service.
-- `/actuator/health` endpoints are used for readiness and liveness probes.
-- Prometheus scrapes metrics such as connection counts while Fluent Bit forwards
-  structured logs to Elasticsearch; tracing integrates with OpenTelemetry.
-- Metrics are published as `gateway.connections.total` and `gateway.connections.active` for Prometheus.
-- [Deployment Environments](../../infrastructure/deployment-environments.md)
-  explains how routes and certificates differ between Docker Compose and
-  production clusters.
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 

@@ -73,13 +73,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a scalable Deployment in Kubernetes, exposing `/actuator/health` for
-  readiness and liveness checks. Metrics are available at `/actuator/prometheus`.
-- Prometheus scrapes these metrics while Fluent Bit ships logs to
-  Elasticsearch; tracing integrates with OpenTelemetry.
-- Local Docker Compose uses the same Spring profiles to mimic production, as
-  documented in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Proto Files
 

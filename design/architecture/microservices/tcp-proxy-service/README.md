@@ -81,12 +81,8 @@ details on how Telnet connections are integrated into the platform.
 
 ## Operational Notes
 
-- Deployed alongside the gateway in the DMZ as a lightweight container.
-- Health is checked using a custom TCP probe defined in the Kubernetes manifest.
-- Logs are forwarded via Fluent Bit and metrics are exported for Prometheus via
-  a minimal collector endpoint.
-- Configuration for local Docker Compose versus production clusters is described
-  in [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Metrics & Tracing
 

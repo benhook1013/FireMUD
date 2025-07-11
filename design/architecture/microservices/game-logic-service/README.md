@@ -74,14 +74,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Deployed as a stateless Kubernetes Deployment with horizontal scaling enabled
-  for high concurrency.
-- `/actuator/health` is used for readiness and liveness probes in the cluster.
-- Prometheus collects command execution metrics while Fluent Bit forwards logs
-  to Elasticsearch with trace context from OpenTelemetry.
-- For environment-specific configuration see
-
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
 

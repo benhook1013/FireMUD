@@ -74,14 +74,8 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment with horizontal scaling to serve large world
-  datasets.
-- Health endpoints (`/actuator/health`) are used for readiness and liveness
-  checks.
-- Metrics and traces are collected by Prometheus and OpenTelemetry, and logs are
-  shipped via Fluent Bit to Elasticsearch.
-- Environment-specific configuration values are described in
-  [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Proto Files
 
