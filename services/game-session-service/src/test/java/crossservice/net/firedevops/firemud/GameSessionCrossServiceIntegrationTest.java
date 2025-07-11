@@ -3,7 +3,7 @@ package net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -15,43 +15,32 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers(disabledWithoutDocker = true)
+/** Cross-service integration test verifying the service starts alongside the Game Logic Service. */
+@Testcontainers
+@Disabled("integration environment not configured")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = GameSessionApplicationIntegrationTest.TestApp.class)
-class GameSessionApplicationIntegrationTest {
+    classes = GameSessionCrossServiceIntegrationTest.TestApp.class)
+class GameSessionCrossServiceIntegrationTest {
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
-
-  @Container
-  static GenericContainer<?> redis =
-      new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
-
-  @DynamicPropertySource
-  static void configure(DynamicPropertyRegistry registry) {
-    registry.add("firemud.postgres.host", postgres::getHost);
-    registry.add("firemud.postgres.port", () -> postgres.getMappedPort(5432));
-    registry.add("firemud.postgres.database", () -> postgres.getDatabaseName());
-    registry.add("firemud.postgres.username", postgres::getUsername);
-    registry.add("firemud.postgres.password", postgres::getPassword);
-    registry.add("firemud.redis.host", redis::getHost);
-    registry.add("firemud.redis.port", () -> redis.getMappedPort(6379));
-  }
+  static GenericContainer<?> gameLogicService =
+      new GenericContainer<>(DockerImageName.parse("ghcr.io/firedevops/game-logic-service:latest"))
+          .withExposedPorts(8080);
 
   @LocalServerPort private int port;
 
   @Autowired private TestRestTemplate restTemplate;
 
   @Test
-  void pingEndpointReturnsPong() {
+  void gameSessionRunsAlongsideGameLogicService() {
+    assertThat(gameLogicService.isRunning()).isTrue();
+
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
     assertThat(body).contains("pong");
   }
@@ -59,6 +48,6 @@ class GameSessionApplicationIntegrationTest {
   @Configuration
   @EnableAutoConfiguration(
       exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
-  @Import({CommonAutoConfiguration.class, DatabaseAutoConfiguration.class})
+  @Import({CommonAutoConfiguration.class})
   static class TestApp {}
 }
