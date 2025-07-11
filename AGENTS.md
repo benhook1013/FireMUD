@@ -1,42 +1,10 @@
-# AGENTS Guide for VSCode_Windsurf Repository
+# FireMUD AI Contribution Guide
 
-This repository contains documentation and design files for the FireMUD Game Platform. Use this guide when performing AI-assisted updates.
+Please read the following documents before using AI tooling or submitting code changes:
 
-## Directory Overview
+- [Global AI Rules](design/project-management/ai-rules-global.md)
+- [Local AI Rules](design/project-management/ai-rules-local.md)
 
-- `README.md` – main project overview
-- `FAQ.md` – frequently asked questions
-- `CONTRIBUTING.md` – placeholder for future contribution guidelines
-- `LICENSE.md` and `NOTICE.md` – legal information
-- `design/`
-  - `architecture/`
-    - `infrastructure/` – deployment and gateway docs
-    - `microservices/` – one folder per service (e.g., `account-service`, `automation-scripting-service`, `world-management-service`)
-    - `service-responsibility-matrix.md`
-    - `system-architecture-overview.md`
-  - `project-management/`
-    - `ai-rules-global.md`
-    - `ai-rules-local.md`
-    - planning docs such as `core-requirements.md`, `task-list.md`
-
-## AI Coding Guidelines
-
-Consult the following documents before writing or modifying code:
-
-- [ai-rules-global.md](design/project-management/ai-rules-global.md)
-- [ai-rules-local.md](design/project-management/ai-rules-local.md)
-
-These files describe style, architecture, and best practices for Java/Spring projects. The `.windsurfrules` file at the repository root contains the same content as `ai-rules-local.md`.
-
-## General Notes
-
-- Keep documentation organized within `design/`.
-- Use clear commit messages summarizing changes.
-- Format and lint code with `./gradlew spotlessApply lintMarkdownFix` before committing.
-- Run `pre-commit run --all-files` or `./gradlew check` locally to execute tests and static analysis before pushing.
-- Unit tests run via `./gradlew test` and are executed in CI through the `check` task.
-- Code quality tools (Checkstyle and SpotBugs) run during the `check` task, and JaCoCo produces coverage reports.
-- CI also performs a Trivy security scan.
-- When adding new features, include JUnit tests and instrument metrics and tracing as described in `design/architecture/system-architecture-logging-monitoring.md`.
-- Reuse the `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from `services/common-library` to ensure all gRPC endpoints emit logs, metrics, and spans consistently.
-- gRPC services must return structured `ErrorDetail` objects on application failures. Wrap response observers to log warnings, increment a `grpc.app_error` metric with the error code, and tag tracing spans. Use `onError()` only for transport or infrastructure issues.
+These files contain the full coding conventions and workflow requirements. The
+`.windsurfrules` file in this repository simply points to `ai-rules-local.md`
+for compatibility with Windsurf.
