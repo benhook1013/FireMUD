@@ -5,7 +5,7 @@
   - [x] Implement procedural world generation
   - [x] Implement scripted events for game mechanics and NPC interactions *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
   - [x] Implement AI memory & dynamic NPC behaviors (NPCs remember past player interactions) *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
-  - [ ] Implement player vs. environment (PvE) mechanics (random encounters, environmental hazards)
+  - [x] Implement player vs. environment (PvE) mechanics (random encounters, environmental hazards)
   - [x] Implement faction & reputation system (players gain faction reputation over time)
   - [x] Implement NPC aggression states (hostile, neutral, passive)
   - [x] Implement NPC fleeing/surrender logic
