@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
+import net.firedevops.firemud.config.WorldProperties;
 import net.firedevops.firemud.entity.Region;
 import net.firedevops.firemud.repository.RegionRepository;
 import net.firedevops.firemud.service.WorldCreationService;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class WorldCreationServiceImpl implements WorldCreationService {
   private final RegionRepository regionRepository;
   private final MeterRegistry meterRegistry;
+  private final WorldProperties worldProperties;
 
   private Counter sagaStartedCounter;
   private Counter sagaFailedCounter;
@@ -74,9 +76,9 @@ public class WorldCreationServiceImpl implements WorldCreationService {
     // TODO fetch data from Game Design Service. For now create a single region.
     Region region = new Region();
     region.setTenantId(tenantId);
-    // newly created worlds start on shard 0. Admin tooling can redistribute
-    // regions to other shards later for scaling.
-    region.setShardId(0);
+    // Newly created worlds start on the local shard. Admin tooling can
+    // redistribute regions later for scaling.
+    region.setShardId(worldProperties.getLocalShardId());
     region.setName("Starter Region");
     regionRepository.save(region);
   }

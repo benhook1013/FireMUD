@@ -17,5 +17,6 @@ management:
         enabled: true
 
 world:
+  local-shard-id: 0
   instance:
     expiration-hours: 24
