@@ -1,6 +1,6 @@
 # Social & Groups Service Task List
 
-- [ ] __Develop Social & Groups Service__
+- [x] __Develop Social & Groups Service__
   - [x] Enable cross-game friend lists and social graph
   - [x] Support private messages, global chat, and guild channels
   - [x] Implement player-to-player mail system (asynchronous in-game messaging)
@@ -87,7 +87,7 @@ participate in CI.
 - [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [x] Validate shard-local key usage and avoid per-service caching
 - [x] Emit metrics for Redis connectivity and commands
-- [ ] _(If participating in ticks)_ implement locking and staging per the Tick System docs
+- [x] _(If participating in ticks)_ implement locking and staging per the Tick System docs _(N/A - service does not participate in ticks)_
 - [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
@@ -99,7 +99,7 @@ participate in CI.
 - [x] Validate contracts with smoke tests (gRPC and REST)
 - [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
-- [ ] _(When workflows span services)_ add cross-service integration tests
+- [x] _(When workflows span services)_ add cross-service integration tests
 
 ---
 
