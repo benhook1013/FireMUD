@@ -77,7 +77,8 @@ paths:
                 properties:
                   data:
                     type: string
-                  example: pong
+              example:
+                data: pong
   /factions/{id}/reputation:
     patch:
       summary: Adjust player reputation for a faction
