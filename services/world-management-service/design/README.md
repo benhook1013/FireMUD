@@ -48,3 +48,11 @@ Expected response:
 World events are persisted in the `world_event` table and processed
 periodically by `WorldEventService`. A weather change event updates the
 `region.weather` column before notifying other services.
+
+## Saga Participation
+
+World creation for a new tenant runs as a Saga using the helper utilities from
+`firemud-common`. Each step is described in
+[world-creation-workflow.md](../../../design/architecture/microservices/world-management-service/world-creation-workflow.md)
+and can be rolled back if a later step fails. This ensures worlds are created
+consistently even when the workflow spans multiple services.
