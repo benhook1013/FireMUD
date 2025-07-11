@@ -4,7 +4,9 @@ import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AddGuildStorageItemRequest;
 import net.firedevops.firemud.dto.CreateAllianceRequest;
+import net.firedevops.firemud.dto.CreateGuildRequest;
 import net.firedevops.firemud.dto.GuildAllianceDto;
+import net.firedevops.firemud.dto.GuildDto;
 import net.firedevops.firemud.dto.GuildStorageItemDto;
 import net.firedevops.firemud.service.GuildService;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +22,13 @@ public class GuildController {
 
   public GuildController(GuildService guildService) {
     this.guildService = guildService;
+  }
+
+  @PostMapping
+  public ResponseEntity<ApiResponse<GuildDto>> createGuild(
+      @Valid @RequestBody CreateGuildRequest request) {
+    GuildDto dto = guildService.createGuild(request);
+    return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @PostMapping("/storage")

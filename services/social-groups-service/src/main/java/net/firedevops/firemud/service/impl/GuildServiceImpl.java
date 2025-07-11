@@ -5,13 +5,18 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.AddGuildStorageItemRequest;
 import net.firedevops.firemud.dto.CreateAllianceRequest;
+import net.firedevops.firemud.dto.CreateGuildRequest;
 import net.firedevops.firemud.dto.GuildAllianceDto;
+import net.firedevops.firemud.dto.GuildDto;
 import net.firedevops.firemud.dto.GuildStorageItemDto;
+import net.firedevops.firemud.entity.Guild;
 import net.firedevops.firemud.entity.GuildAlliance;
 import net.firedevops.firemud.entity.GuildStorageItem;
 import net.firedevops.firemud.mapper.GuildAllianceMapper;
+import net.firedevops.firemud.mapper.GuildMapper;
 import net.firedevops.firemud.mapper.GuildStorageItemMapper;
 import net.firedevops.firemud.repository.GuildAllianceRepository;
+import net.firedevops.firemud.repository.GuildRepository;
 import net.firedevops.firemud.repository.GuildStorageItemRepository;
 import net.firedevops.firemud.service.GuildService;
 import org.slf4j.Logger;
@@ -27,6 +32,20 @@ public class GuildServiceImpl implements GuildService {
   private final GuildStorageItemMapper storageMapper;
   private final GuildAllianceRepository allianceRepo;
   private final GuildAllianceMapper allianceMapper;
+  private final GuildRepository guildRepository;
+  private final GuildMapper guildMapper;
+
+  @Override
+  @Transactional
+  public GuildDto createGuild(CreateGuildRequest request) {
+    logger.info("Creating guild {}", request.name());
+    Guild guild = new Guild();
+    guild.setTenantId(request.tenantId());
+    guild.setOwnerAccountId(request.ownerAccountId());
+    guild.setName(request.name());
+    guild.setCreatedAt(Instant.now());
+    return guildMapper.toDto(guildRepository.save(guild));
+  }
 
   @Override
   @Transactional

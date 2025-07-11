@@ -257,6 +257,26 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/ChatMessageDto'
+  /guilds:
+    post:
+      summary: Create guild
+      operationId: createGuild
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGuildRequest'
+      responses:
+        '200':
+          description: Guild created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GuildDto'
   /guilds/storage:
     post:
       summary: Add item to guild storage
@@ -297,3 +317,118 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GuildAllianceDto'
+    SendMessageRequestDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        senderAccountId:
+          type: integer
+        channelId:
+          type: string
+        content:
+          type: string
+      required:
+        - tenantId
+        - senderAccountId
+        - content
+    ChatMessageDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        senderAccountId:
+          type: integer
+        content:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        guildId:
+          type: integer
+        recipientAccountId:
+          type: integer
+    AddGuildStorageItemRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        guildId:
+          type: integer
+        itemName:
+          type: string
+        quantity:
+          type: integer
+      required:
+        - tenantId
+        - guildId
+        - itemName
+    GuildStorageItemDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        guildId:
+          type: integer
+        itemName:
+          type: string
+        quantity:
+          type: integer
+    CreateAllianceRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        guildId:
+          type: integer
+        allyGuildId:
+          type: integer
+      required:
+        - tenantId
+        - guildId
+        - allyGuildId
+    GuildAllianceDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        guildId:
+          type: integer
+        allyGuildId:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    CreateGuildRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        ownerAccountId:
+          type: integer
+        name:
+          type: string
+      required:
+        - tenantId
+        - ownerAccountId
+        - name
+    GuildDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        name:
+          type: string
+        ownerAccountId:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
