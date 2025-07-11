@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.ChatMessageDto;
 import net.firedevops.firemud.dto.SendMessageRequestDto;
@@ -22,15 +23,22 @@ public class ChatServiceImpl implements ChatService {
   private final ChatMessageRepository repository;
   private final ChatMessageMapper mapper;
   private final ProfanityFilter profanityFilter;
+  private final LoggingAdminClient loggingAdminClient;
 
   @Override
   @Transactional
   public ChatMessageDto sendMessage(SendMessageRequestDto request) {
     logger.info("Chat message from {}", request.senderAccountId());
+    String filtered = profanityFilter.filter(request.content());
+    if (!filtered.equals(request.content())) {
+      loggingAdminClient.reportChatViolation(
+          request.tenantId(), request.senderAccountId(), "Filtered profanity");
+    }
+
     ChatMessage message = new ChatMessage();
     message.setTenantId(request.tenantId());
     message.setSenderAccountId(request.senderAccountId());
-    message.setContent(profanityFilter.filter(request.content()));
+    message.setContent(filtered);
     message.setTimestamp(Instant.now());
     message.setGuildId(null);
     message.setRecipientAccountId(null);

@@ -15,3 +15,7 @@ management:
     health:
       probes:
         enabled: true
+
+loggingAdmin:
+  host: logging-admin-service
+  port: 6565

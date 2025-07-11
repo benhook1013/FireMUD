@@ -57,6 +57,9 @@ curl -X POST http://localhost:8080/chat \
   -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
 ```
 
+Profanity violations are automatically reported to the Logging & Admin Service
+via gRPC.
+
 ## Metrics & Tracing
 
 Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are

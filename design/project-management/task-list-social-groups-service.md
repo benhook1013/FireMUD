@@ -6,8 +6,8 @@
   - [x] Implement player-to-player mail system (asynchronous in-game messaging)
   - [x] Allow players to form and manage guilds
   - [x] Implement guild ranking & permissions system
-  - [ ] Implement shared guild storage and alliance system
-  - [ ] Provide rich moderation tools for chat
+  - [x] Implement shared guild storage and alliance system
+  - [x] Provide rich moderation tools for chat
   - [ ] Add optional voice chat integration
   - [x] Use saga orchestrator for guild creation workflow
 
