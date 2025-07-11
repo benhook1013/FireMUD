@@ -16,7 +16,3 @@ management:
       probes:
         enabled: true
 
-firemud:
-  auth:
-    jwt-secret: changemechangemechangeme123456
-    jwt-expiration-ms: 3600000
