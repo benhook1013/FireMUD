@@ -34,6 +34,13 @@ using the following variables (see [Environment Variables & Secrets Management](
 | `FIREMUD_REDIS_HOST` | Redis host | `redis` |
 | `FIREMUD_REDIS_PORT` | Redis port | `6379` |
 
+## Authentication
+
+All REST endpoints require a JWT issued by the Account Service. The token must
+contain either `platformAdmin` or `moderator` in the `globalRoles` claim, or an
+`admin`/`moderator` role within the `scopedRoles` map. Include the token using
+the standard `Authorization: Bearer <token>` header.
+
 ## Cross-Service Dependencies
 
 Entity data is scoped by `tenantId` as described in the

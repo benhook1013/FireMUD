@@ -1,6 +1,6 @@
 # Entity Management Service Task List
 
-- [ ] **Develop Entity Management Service**
+- [x] **Develop Entity Management Service**
   - [x] Implement player character storage
   - [x] Implement NPC storage and data structures
   - [x] Implement item and inventory management
@@ -46,8 +46,8 @@ participate in CI.
 
 ## 🔒 Authentication & Authorization
 
-- [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [ ] Check `globalRoles` and `scopedRoles` where applicable
+- [x] Meta and admin services validate JWTs using helpers from `firemud-common`
+- [x] Check `globalRoles` and `scopedRoles` where applicable
 - [ ] Gameplay services rely on the Game Session Service for session validation
 
 ---
