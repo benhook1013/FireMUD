@@ -17,6 +17,12 @@ To run the entire stack:
 ./gradlew devUp
 ```
 
+After starting the services you can insert minimal test data with:
+
+```bash
+./dev-tools/seed-automation-scripting-data.sh
+```
+
 ## Configuration
 
 Connection settings are provided by `DatabaseAutoConfiguration` and
