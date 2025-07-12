@@ -30,4 +30,7 @@ public interface AccountService {
   void requestEmailVerification(Long tenantId, Long accountId);
 
   void verifyEmail(net.firedevops.firemud.dto.VerifyEmailRequest request);
+
+  /** Send the username associated with an email address. */
+  void sendUsernameReminder(net.firedevops.firemud.dto.UsernameRecoveryRequest request);
 }

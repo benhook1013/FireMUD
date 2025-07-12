@@ -1,0 +1,9 @@
+Hello,
+
+A username reminder was requested for this email address. Your username is:
+
+%s
+
+If you did not request this, you can safely ignore the message.
+
+-- FireMUD Team

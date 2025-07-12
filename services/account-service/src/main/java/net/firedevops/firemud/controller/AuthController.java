@@ -7,6 +7,7 @@ import net.firedevops.firemud.dto.AuthTokenDto;
 import net.firedevops.firemud.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.dto.LoginRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
+import net.firedevops.firemud.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.dto.VerifyEmailRequest;
 import net.firedevops.firemud.service.AccountService;
 import org.springframework.http.ResponseEntity;
@@ -57,6 +58,13 @@ public class AuthController {
   public ResponseEntity<ApiResponse<Void>> verifyEmail(
       @Valid @RequestBody VerifyEmailRequest request) {
     accountService.verifyEmail(request);
+    return ResponseEntity.ok(ApiResponse.success(null));
+  }
+
+  @PostMapping("/recover-username")
+  public ResponseEntity<ApiResponse<Void>> recoverUsername(
+      @Valid @RequestBody UsernameRecoveryRequest request) {
+    accountService.sendUsernameReminder(request);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

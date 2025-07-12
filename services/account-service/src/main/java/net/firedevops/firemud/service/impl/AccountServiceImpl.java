@@ -21,6 +21,7 @@ import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.dto.ProfileDto;
 import net.firedevops.firemud.dto.UpdateProfileRequest;
+import net.firedevops.firemud.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.dto.VerifyEmailRequest;
 import net.firedevops.firemud.entity.Account;
 import net.firedevops.firemud.entity.EmailVerificationToken;
@@ -328,6 +329,22 @@ public class AccountServiceImpl implements AccountService {
     entity.setProvider(request.provider());
     entity.setExternalId(request.externalId());
     externalAccountRepository.save(entity);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.username_reminder")
+  public void sendUsernameReminder(UsernameRecoveryRequest request) {
+    Account account =
+        accountRepository
+            .findByTenantIdAndEmail(request.tenantId(), request.email())
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    emailService.sendEmail(
+        account.getEmail(),
+        "Username Reminder",
+        String.format(readTemplate("username-reminder.txt"), account.getUsername()));
+    notificationService.sendNotification(
+        request.tenantId(), account.getId(), "Username reminder requested");
   }
 
   private String hashPassword(String password) {

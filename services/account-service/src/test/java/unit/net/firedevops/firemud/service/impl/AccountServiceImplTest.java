@@ -183,6 +183,28 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void sendUsernameReminderEmailsUsername() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setTenantId(1L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
+        .thenReturn(Optional.of(account));
+
+    service.sendUsernameReminder(
+        new net.firedevops.firemud.dto.UsernameRecoveryRequest(1L, "demo@example.com"));
+
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("demo@example.com"),
+            org.mockito.ArgumentMatchers.eq("Username Reminder"),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(notificationService)
+        .sendNotification(1L, 1L, "Username reminder requested");
+  }
+
+  @Test
   void linkExternalAccountSavesEntity() {
     Account account = new Account();
     account.setId(5L);
