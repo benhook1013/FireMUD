@@ -43,6 +43,9 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Version and patch note management for published games.
 - Supports script-only patch versions that reference a `baseVersionId` and
   generate a new `scriptPatchVersion` without requiring a full publish.
+- Does not track individual script definitions at runtime; only the patch
+  version metadata is recorded. Runtime services manage the active script
+  registry and are notified when a patch version is published.
 - [Item & Equipment Balancing Tools](item-equipment-balancing.md)
 - Import/export of design assets for sharing between game worlds.
 
