@@ -1,0 +1,59 @@
+package net.firedevops.firemud.service.impl;
+
+import java.time.Instant;
+import java.util.List;
+import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.dto.CharacterFriendDto;
+import net.firedevops.firemud.entity.Character;
+import net.firedevops.firemud.entity.CharacterFriend;
+import net.firedevops.firemud.entity.CharacterFriendKey;
+import net.firedevops.firemud.mapper.CharacterFriendMapper;
+import net.firedevops.firemud.repository.CharacterFriendRepository;
+import net.firedevops.firemud.repository.CharacterRepository;
+import net.firedevops.firemud.service.FriendService;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@RequiredArgsConstructor
+public class FriendServiceImpl implements FriendService {
+  private final CharacterFriendRepository repository;
+  private final CharacterRepository characterRepository;
+  private final CharacterFriendMapper mapper;
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<CharacterFriendDto> listFriends(Long characterId) {
+    return repository.findByIdCharacterId(characterId).stream().map(mapper::toDto).toList();
+  }
+
+  @Override
+  @Transactional
+  public CharacterFriendDto addFriend(Long characterId, Long friendId) {
+    CharacterFriendKey key = new CharacterFriendKey();
+    key.setCharacterId(characterId);
+    key.setFriendId(friendId);
+    CharacterFriend entity = repository.findById(key).orElse(null);
+    if (entity == null) {
+      Character character = characterRepository.findById(characterId).orElseThrow();
+      Character friend = characterRepository.findById(friendId).orElseThrow();
+      entity = new CharacterFriend();
+      entity.setId(key);
+      entity.setCharacter(character);
+      entity.setFriend(friend);
+      entity.setTenantId(character.getTenantId());
+      entity.setCreatedAt(Instant.now());
+    }
+    entity = repository.save(entity);
+    return mapper.toDto(entity);
+  }
+
+  @Override
+  @Transactional
+  public void removeFriend(Long characterId, Long friendId) {
+    CharacterFriendKey key = new CharacterFriendKey();
+    key.setCharacterId(characterId);
+    key.setFriendId(friendId);
+    repository.deleteById(key);
+  }
+}
