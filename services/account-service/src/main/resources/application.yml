@@ -5,6 +5,11 @@ spring:
     name: account-service
   flyway:
     enabled: true
+  mail:
+    host: localhost
+    port: 1025
+    username: ''
+    password: ''
 grpc:
   server:
     port: 6565
@@ -13,6 +18,10 @@ firemud:
   auth:
     jwt-expiration-ms: 3600000
     session-expiration-ms: 3600000
+  mail:
+    from: no-reply@firemud.local
+    verification-url: http://localhost:8080/auth/verify-email?token=%s
+    reset-url: http://localhost:8080/reset-password?token=%s
 
 management:
   endpoints:

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.util.Optional;
 import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.config.MailProperties;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
@@ -23,6 +24,7 @@ import net.firedevops.firemud.repository.ExternalAccountRepository;
 import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.repository.SubscriptionRepository;
+import net.firedevops.firemud.service.EmailService;
 import net.firedevops.firemud.service.NotificationService;
 import net.firedevops.firemud.service.SagaRunner;
 import net.firedevops.firemud.service.session.SessionService;
@@ -37,6 +39,8 @@ class AccountServiceImplTest {
   @Mock private ProfileRepository profileRepository;
   @Mock private ProfileMapper profileMapper;
   @Mock private NotificationService notificationService;
+  @Mock private EmailService emailService;
+  @Mock private MailProperties mailProperties;
   @Mock private LoggingAdminClient loggingAdminClient;
   @Mock private SessionService sessionService;
   @Mock private SagaRunner sagaRunner;
@@ -57,6 +61,8 @@ class AccountServiceImplTest {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
+    when(mailProperties.getResetUrl()).thenReturn("http://reset/%s");
+    when(mailProperties.getVerificationUrl()).thenReturn("http://verify/%s");
     service =
         new AccountServiceImpl(
             accountRepository,
@@ -69,6 +75,8 @@ class AccountServiceImplTest {
             passwordResetTokenRepository,
             emailVerificationTokenRepository,
             notificationService,
+            emailService,
+            mailProperties,
             loggingAdminClient,
             jwtUtil,
             sessionService,
@@ -157,6 +165,7 @@ class AccountServiceImplTest {
   void requestPasswordResetCreatesToken() {
     Account account = new Account();
     account.setId(1L);
+    account.setEmail("demo@example.com");
     when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
         .thenReturn(Optional.of(account));
 
@@ -164,6 +173,11 @@ class AccountServiceImplTest {
 
     org.mockito.Mockito.verify(passwordResetTokenRepository)
         .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.eq("demo@example.com"),
+            org.mockito.ArgumentMatchers.eq("Password Reset"),
+            org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.verify(notificationService)
         .sendNotification(1L, 1L, "Password reset requested");
   }
@@ -191,12 +205,18 @@ class AccountServiceImplTest {
     Account account = new Account();
     account.setId(6L);
     account.setTenantId(1L);
+    account.setEmail("demo@example.com");
     when(accountRepository.findById(6L)).thenReturn(Optional.of(account));
 
     service.requestEmailVerification(1L, 6L);
 
     org.mockito.Mockito.verify(emailVerificationTokenRepository)
         .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(emailService)
+        .sendEmail(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq("Email Verification"),
+            org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.verify(notificationService)
         .sendNotification(1L, 6L, "Email verification requested");
   }

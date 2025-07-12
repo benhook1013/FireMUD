@@ -1,0 +1,6 @@
+Hello,
+
+Please verify your email address by visiting the link below:
+%s
+
+Thank you for joining FireMUD!

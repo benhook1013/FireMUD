@@ -14,7 +14,7 @@
 - [ ] **Develop Email & Notification System**
   - [x] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages
-  - [ ] Configure SMTP provider and test templates
+  - [x] Configure SMTP provider and test templates
   - [x] Document email and notification design in `account-service/design/README.md`
   - [x] Add asynchronous NotificationService components with gRPC endpoints
 - [ ] **Develop Monetization & Payment Module**

@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.config.MailProperties;
 import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CompletePasswordResetRequest;
@@ -33,6 +34,7 @@ import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.AccountService;
+import net.firedevops.firemud.service.EmailService;
 import net.firedevops.firemud.service.NotificationService;
 import net.firedevops.firemud.service.SagaRunner;
 import org.slf4j.Logger;
@@ -53,6 +55,8 @@ public class AccountServiceImpl implements AccountService {
   private final PasswordResetTokenRepository passwordResetTokenRepository;
   private final EmailVerificationTokenRepository emailVerificationTokenRepository;
   private final NotificationService notificationService;
+  private final EmailService emailService;
+  private final MailProperties mailProperties;
   private final LoggingAdminClient loggingAdminClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.service.session.SessionService sessionService;
@@ -69,6 +73,8 @@ public class AccountServiceImpl implements AccountService {
       PasswordResetTokenRepository passwordResetTokenRepository,
       EmailVerificationTokenRepository emailVerificationTokenRepository,
       NotificationService notificationService,
+      EmailService emailService,
+      MailProperties mailProperties,
       LoggingAdminClient loggingAdminClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.service.session.SessionService sessionService,
@@ -83,6 +89,8 @@ public class AccountServiceImpl implements AccountService {
     this.passwordResetTokenRepository = passwordResetTokenRepository;
     this.emailVerificationTokenRepository = emailVerificationTokenRepository;
     this.notificationService = notificationService;
+    this.emailService = emailService;
+    this.mailProperties = mailProperties;
     this.loggingAdminClient = loggingAdminClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
@@ -232,6 +240,11 @@ public class AccountServiceImpl implements AccountService {
     token.setToken(java.util.UUID.randomUUID().toString());
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
     passwordResetTokenRepository.save(token);
+    String url = String.format(mailProperties.getResetUrl(), token.getToken());
+    emailService.sendEmail(
+        account.getEmail(),
+        "Password Reset",
+        String.format(readTemplate("password-reset.txt"), url));
     notificationService.sendNotification(
         request.tenantId(), account.getId(), "Password reset requested");
   }
@@ -268,6 +281,11 @@ public class AccountServiceImpl implements AccountService {
     token.setToken(java.util.UUID.randomUUID().toString());
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(24));
     emailVerificationTokenRepository.save(token);
+    String url = String.format(mailProperties.getVerificationUrl(), token.getToken());
+    emailService.sendEmail(
+        account.getEmail(),
+        "Email Verification",
+        String.format(readTemplate("email-verification.txt"), url));
     notificationService.sendNotification(tenantId, accountId, "Email verification requested");
   }
 
@@ -323,6 +341,17 @@ public class AccountServiceImpl implements AccountService {
       return sb.toString();
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException("SHA-256 not available", e);
+    }
+  }
+
+  private String readTemplate(String name) {
+    try (var in = getClass().getClassLoader().getResourceAsStream("templates/" + name)) {
+      if (in == null) {
+        throw new IllegalStateException("Missing template: " + name);
+      }
+      return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    } catch (java.io.IOException e) {
+      throw new IllegalStateException("Failed to read template", e);
     }
   }
 }
