@@ -11,6 +11,7 @@ import net.firedevops.firemud.dto.RoomDto;
 import net.firedevops.firemud.mapper.RoomMapper;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.RoomService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomResponse;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
@@ -18,7 +19,6 @@ import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC endpoints for the World Management Service. */
@@ -75,8 +75,7 @@ public class WorldManagementGrpcService
       }
     } catch (NumberFormatException ex) {
       GetRoomResponse response =
-          GetRoomResponse.newBuilder().setError(error("INVALID_ARGUMENT", "invalid id"))
-              .build();
+          GetRoomResponse.newBuilder().setError(error("INVALID_ARGUMENT", "invalid id")).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {

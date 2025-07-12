@@ -3,11 +3,11 @@ package net.firedevops.firemud.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.mapper.RoomMapper;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.RoomService;
-import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import org.junit.jupiter.api.Test;
@@ -26,7 +26,8 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, mapper, worldEventService, meterRegistry);
+        new WorldManagementGrpcService(
+            pingService, roomService, mapper, worldEventService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -57,7 +58,8 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, mapper, worldEventService, meterRegistry);
+        new WorldManagementGrpcService(
+            pingService, roomService, mapper, worldEventService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -92,7 +94,8 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, mapper, worldEventService, meterRegistry);
+        new WorldManagementGrpcService(
+            pingService, roomService, mapper, worldEventService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse> ref =
         new AtomicReference<>();
