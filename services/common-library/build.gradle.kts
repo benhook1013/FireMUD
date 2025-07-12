@@ -25,6 +25,8 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.11.5")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.11.5")
 
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.8.4")
+
     api("org.springframework.boot:spring-boot-starter-web:3.5.3")
     api("org.springframework.boot:spring-boot-starter-validation:3.5.3")
 }
