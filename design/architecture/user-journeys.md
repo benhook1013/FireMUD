@@ -1,6 +1,7 @@
 # 🔄 FireMUD User Journeys
 
 This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
+For step-by-step tooling instructions see the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ---
 
@@ -132,7 +133,7 @@ Player → Account Service → Logging & Admin Service
 
 ---
 
-## 10. Password Resets & Account Recovery
+## 11. Password Resets & Account Recovery
 
 Players occasionally lose access to their accounts. Recovery is performed
 through the [Account Service](./microservices/account-service/README.md),
@@ -146,7 +147,7 @@ Player → Account Service → Logging & Admin Service (audit)
 
 ---
 
-## 11. Switch Games or Manage Multiple Games
+## 12. Switch Games or Manage Multiple Games
 
 Players can participate in multiple games using the same platform account. The
 [Multi-Tenancy](./system-architecture-multi-tenancy.md) model stores character
@@ -158,7 +159,7 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ---
 
-## 12. Operational Recovery
+## 13. Operational Recovery
 
 When issues occur, operators follow the
 [Operational Runbooks](./system-architecture-runbooks.md) to restore services.
@@ -178,3 +179,5 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [Microservices Overview](./microservices/README.md)
+- [Game Creator Guide](../user-guides/game-creator-guide.md)
+- [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md)
