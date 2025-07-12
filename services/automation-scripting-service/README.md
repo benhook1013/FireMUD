@@ -2,7 +2,8 @@
 
 Design documentation lives at:
 [📄 Automation Scripting Service Design](../../design/architecture/microservices/automation-scripting-service/README.md)
-### Fairness Quotas
+
+## Fairness Quotas
 
 `ScriptQuotaService` limits how many times a script may execute within a
 configurable window. Counters are stored in Redis using keys of the form
