@@ -70,11 +70,11 @@ Redis keys follow strict naming conventions to ensure:
 
 | Redis Key                      | Description                              |
 |-------------------------------|------------------------------------------|
-| `tick:lock:{entityId}`        | Lock for entity during tick execution    |
-| `tick:pending:{regionId}`     | Staged results for a tick region         |
+| `tick:lock:{tenantId}:{entityId}` | Lock for entity during tick execution    |
+| `tick:pending:{tenantId}:{regionId}` | Staged results for a tick region         |
 | `room:{roomId}:occupants`     | Room occupancy snapshot                  |
 | `retry:{regionId}`            | Retry queue for failed actions           |
-| `timer:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
+| `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
 
 > 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
@@ -103,10 +103,10 @@ All Lua scripts are:
 
 ### Example Lock Workflow
 
-1. Acquire `tick:lock:{entityId}` using `SET NX PX` with a TTL equal to the tick duration.
-2. Stage updates under `tick:pending:{regionId}` via Lua script while the lock is held.
+1. Acquire `tick:lock:{tenantId}:{entityId}` using `SET NX PX` with a TTL equal to the tick duration.
+2. Stage updates under `tick:pending:{tenantId}:{regionId}` via Lua script while the lock is held.
 3. On successful commit the lock is released and staged data is flushed.
-4. If the lock expires, the next tick replays `tick:pending:{regionId}` and attempts the workflow again.
+4. If the lock expires, the next tick replays `tick:pending:{tenantId}:{regionId}` and attempts the workflow again.
 
 ---
 
