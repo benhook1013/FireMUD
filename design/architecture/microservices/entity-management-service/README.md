@@ -91,6 +91,10 @@ It requires the [PostgreSQL credentials](../../infrastructure/environment-and-se
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
 variables.
 
+See [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
+for TLS variables `FIREMUD_GRPC_CERT_CHAIN`, `FIREMUD_GRPC_PRIVATE_KEY`, `FIREMUD_GRPC_CA_CERT`
+and the `FIREMUD_SERVICES_*` service discovery settings.
+
 ## Proto Files
 
 Service interface definitions are stored in

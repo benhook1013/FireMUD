@@ -82,6 +82,10 @@ The database variables
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
 may be present for consistency but are ignored by this service.
 
+See [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
+for TLS variables `FIREMUD_GRPC_CERT_CHAIN`, `FIREMUD_GRPC_PRIVATE_KEY`, `FIREMUD_GRPC_CA_CERT`
+and the `FIREMUD_SERVICES_*` service discovery settings.
+
 Important variables include:
 
 | Variable | Purpose | Default |
