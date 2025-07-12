@@ -16,6 +16,11 @@ These notes summarize typical optimizations applied across FireMUD services.
   service caches character inventory graphs and the World Management service
   caches hot rooms with TTL-based eviction.
 
+- Database writes during gameplay are **deferred and batched**. The Game Session
+  Service coordinates commits at the end of each tick so the Entity Management
+  Service only persists changes once per tick. This reduces write frequency and
+  lock contention.
+
 ## Runtime Processing
 
 - Tick execution in the Game Session Service relies on Redis Lua scripts for
