@@ -2,8 +2,10 @@ package net.firedevops.firemud;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.telnet.TelnetServer;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -43,8 +45,13 @@ class TcpProxyCrossServiceIntegrationTest {
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
-    String wsUrl = "ws://" + gateway.getHost() + ":" + gateway.getMappedPort(8080) + "/ws";
-    registry.add("GATEWAY_WS_URL", () -> wsUrl);
+    if (DockerClientFactory.instance().isDockerAvailable()) {
+      registry.add(
+          "GATEWAY_WS_URL",
+          () -> "ws://" + gateway.getHost() + ":" + gateway.getMappedPort(8080) + "/ws");
+    } else {
+      registry.add("GATEWAY_WS_URL", () -> "ws://localhost:8080/ws");
+    }
   }
 
   @Test
@@ -55,7 +62,9 @@ class TcpProxyCrossServiceIntegrationTest {
     assertThat(gateway.isRunning()).isTrue();
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)) {
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)) {
       writer.println("look");
     }
 
