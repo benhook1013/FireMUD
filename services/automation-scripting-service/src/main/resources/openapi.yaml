@@ -16,46 +16,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
-    ScriptDefinitionDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        name:
-          type: string
-        version:
-          type: string
-        definition:
-          type: string
-    CreateScriptRequest:
-      type: object
-      properties:
-        tenantId:
-          type: integer
-        name:
-          type: string
-        version:
-          type: string
-        definition:
-          type: string
-      required:
-        - tenantId
-        - name
-        - version
-        - definition
-    FactionDto:
-      type: object
-      properties:
-        id:
-          type: integer
-        tenantId:
-          type: integer
-        name:
-          type: string
-        description:
-          type: string
     ReputationResponse:
       type: object
       properties:
