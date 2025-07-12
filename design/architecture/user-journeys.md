@@ -117,7 +117,7 @@ The service also exposes moderation tools such as bans or runtime feature toggle
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
 
-4. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+5. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
