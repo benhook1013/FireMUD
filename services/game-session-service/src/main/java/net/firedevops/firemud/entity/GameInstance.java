@@ -14,8 +14,8 @@ public class GameInstance {
   @Column(nullable = false)
   private Long tenantId;
 
-  @Column(nullable = false, length = 100)
-  private String versionId;
+  @Column(name = "runtime_version", nullable = false, length = 100)
+  private String runtimeVersion;
 
   @Column(name = "script_patch_version", length = 100)
   private String scriptPatchVersion;

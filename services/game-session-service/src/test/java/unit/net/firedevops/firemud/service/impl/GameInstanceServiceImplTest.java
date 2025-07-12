@@ -39,7 +39,7 @@ class GameInstanceServiceImplTest {
     GameInstance entity = new GameInstance();
     entity.setId(10L);
     entity.setTenantId(1L);
-    entity.setVersionId("v1");
+    entity.setRuntimeVersion("v1");
     entity.setOwnerAccountId(42L);
     entity.setStatus("RUNNING");
 
@@ -57,7 +57,7 @@ class GameInstanceServiceImplTest {
     GameInstance entity = new GameInstance();
     entity.setId(10L);
     entity.setTenantId(1L);
-    entity.setVersionId("v1");
+    entity.setRuntimeVersion("v1");
     entity.setOwnerAccountId(42L);
     entity.setStatus("RUNNING");
 

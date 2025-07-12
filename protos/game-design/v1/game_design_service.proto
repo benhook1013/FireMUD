@@ -61,7 +61,9 @@ message ListVersionsResponse {
 message Version {
   int64 id = 1;
   int32 version_number = 2;
-  string notes = 3;
+  string script_patch_version = 3;
+  bool is_script_only = 4;
+  string notes = 5;
 }
 
 message PingRequest {}
