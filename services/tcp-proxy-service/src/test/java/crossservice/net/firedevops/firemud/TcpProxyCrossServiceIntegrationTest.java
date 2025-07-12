@@ -46,6 +46,9 @@ class TcpProxyCrossServiceIntegrationTest {
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
     if (DockerClientFactory.instance().isDockerAvailable()) {
+      if (!gateway.isRunning()) {
+        gateway.start();
+      }
       registry.add(
           "GATEWAY_WS_URL",
           () -> "ws://" + gateway.getHost() + ":" + gateway.getMappedPort(8080) + "/ws");
