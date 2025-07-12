@@ -72,7 +72,7 @@ participate in CI.
 
 ---
 
--## 🔄 Saga Participation _(if used)_
+## 🔄 Saga Participation _(if used)_
 
 - [x] Use saga helpers from `firemud-common` for workflow steps
 - [x] Emit metrics and correlation IDs for compensation and retries
