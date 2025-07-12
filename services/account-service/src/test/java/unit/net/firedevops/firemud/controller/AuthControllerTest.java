@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.firedevops.firemud.dto.LoginRequest;
+import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.service.AccountService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,5 +37,18 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.authToken").value("tok123"));
+  }
+
+  @Test
+  void requestPasswordResetReturnsSuccess() throws Exception {
+    PasswordResetRequest req = new PasswordResetRequest(1L, "demo@example.com");
+
+    mockMvc
+        .perform(
+            post("/auth/request-password-reset")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"));
   }
 }

@@ -14,7 +14,9 @@ import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
+import net.firedevops.firemud.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.dto.CreateAccountRequest;
+import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.dto.ProfileDto;
 import net.firedevops.firemud.dto.UpdateProfileRequest;
 import net.firedevops.firemud.entity.Account;
@@ -22,6 +24,7 @@ import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.repository.SubscriptionRepository;
@@ -41,6 +44,7 @@ public class AccountServiceImpl implements AccountService {
   private final ProfileMapper profileMapper;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final SubscriptionRepository subscriptionRepository;
+  private final PasswordResetTokenRepository passwordResetTokenRepository;
   private final NotificationService notificationService;
   private final LoggingAdminClient loggingAdminClient;
   private final JwtUtil jwtUtil;
@@ -53,6 +57,7 @@ public class AccountServiceImpl implements AccountService {
       ProfileMapper profileMapper,
       PaymentTransactionRepository paymentTransactionRepository,
       SubscriptionRepository subscriptionRepository,
+      PasswordResetTokenRepository passwordResetTokenRepository,
       NotificationService notificationService,
       LoggingAdminClient loggingAdminClient,
       JwtUtil jwtUtil,
@@ -63,6 +68,7 @@ public class AccountServiceImpl implements AccountService {
     this.profileMapper = profileMapper;
     this.paymentTransactionRepository = paymentTransactionRepository;
     this.subscriptionRepository = subscriptionRepository;
+    this.passwordResetTokenRepository = passwordResetTokenRepository;
     this.notificationService = notificationService;
     this.loggingAdminClient = loggingAdminClient;
     this.jwtUtil = jwtUtil;
@@ -195,6 +201,42 @@ public class AccountServiceImpl implements AccountService {
         .findByAccountIdAndTenantId(accountId, tenantId)
         .ifPresent(profileRepository::delete);
     accountRepository.delete(account);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.request_password_reset")
+  public void requestPasswordReset(PasswordResetRequest request) {
+    net.firedevops.firemud.entity.Account account =
+        accountRepository
+            .findByTenantIdAndEmail(request.tenantId(), request.email())
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    net.firedevops.firemud.entity.PasswordResetToken token =
+        new net.firedevops.firemud.entity.PasswordResetToken();
+    token.setAccount(account);
+    token.setTenantId(request.tenantId());
+    token.setToken(java.util.UUID.randomUUID().toString());
+    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+    passwordResetTokenRepository.save(token);
+    notificationService.sendNotification(
+        request.tenantId(), account.getId(), "Password reset requested");
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.complete_password_reset")
+  public void completePasswordReset(CompletePasswordResetRequest request) {
+    net.firedevops.firemud.entity.PasswordResetToken token =
+        passwordResetTokenRepository
+            .findByTokenAndTenantId(request.token(), request.tenantId())
+            .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
+    if (token.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+      throw new IllegalArgumentException("Token expired");
+    }
+    net.firedevops.firemud.entity.Account account = token.getAccount();
+    account.setPasswordHash(hashPassword(request.newPassword()));
+    accountRepository.save(account);
+    passwordResetTokenRepository.delete(token);
   }
 
   private String hashPassword(String password) {

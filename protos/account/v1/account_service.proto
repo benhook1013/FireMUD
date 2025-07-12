@@ -15,6 +15,8 @@ service AccountService {
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
   rpc ExportAccount(ExportAccountRequest) returns (ExportAccountResponse);
   rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
+  rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
+  rpc CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse);
 }
 
 message PingRequest {}
@@ -86,6 +88,27 @@ message DeleteAccountRequest {
 }
 
 message DeleteAccountResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RequestPasswordResetRequest {
+  string tenant_id = 1;
+  string email = 2;
+}
+
+message RequestPasswordResetResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CompletePasswordResetRequest {
+  string tenant_id = 1;
+  string token = 2;
+  string new_password = 3;
+}
+
+message CompletePasswordResetResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }

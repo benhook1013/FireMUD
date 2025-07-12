@@ -20,6 +20,12 @@ public class WebConfig implements WebMvcConfigurer {
   public void addInterceptors(InterceptorRegistry registry) {
     registry
         .addInterceptor(jwtAuthInterceptor)
-        .excludePathPatterns("/auth/login", "/accounts", "/ping", "/.well-known/**");
+        .excludePathPatterns(
+            "/auth/login",
+            "/auth/request-password-reset",
+            "/auth/complete-password-reset",
+            "/accounts",
+            "/ping",
+            "/.well-known/**");
   }
 }

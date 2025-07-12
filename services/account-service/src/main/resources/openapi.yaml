@@ -83,6 +83,24 @@ components:
         bio:
           type: string
       required: [tenantId, accountId]
+    PasswordResetRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        email:
+          type: string
+      required: [tenantId, email]
+    CompletePasswordResetRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        token:
+          type: string
+        newPassword:
+          type: string
+      required: [tenantId, token, newPassword]
 paths:
   /ping:
     get:
@@ -114,9 +132,35 @@ paths:
         '200':
           description: Auth token
           content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthTokenDto'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthTokenDto'
+  /auth/request-password-reset:
+    post:
+      summary: Request password reset
+      operationId: requestPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '200':
+          description: Request accepted
+  /auth/complete-password-reset:
+    post:
+      summary: Complete password reset
+      operationId: completePasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletePasswordResetRequest'
+      responses:
+        '200':
+          description: Password updated
   /accounts:
     post:
       summary: Create a new account

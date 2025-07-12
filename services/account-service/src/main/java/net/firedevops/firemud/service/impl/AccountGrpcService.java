@@ -19,6 +19,8 @@ import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.security.RequireAdminRole;
+import net.firedevops.firemud.dto.CompletePasswordResetRequest;
+import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.PingService;
 import org.lognet.springboot.grpc.GRpcService;
@@ -208,6 +210,65 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setError(
                   net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                       .setCode("NOT_FOUND")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  public void requestPasswordReset(
+      net.firedevops.firemud.account.v1.RequestPasswordResetRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.RequestPasswordResetResponse>
+          responseObserver) {
+    try {
+      accountService.requestPasswordReset(
+          new PasswordResetRequest(Long.valueOf(request.getTenantId()), request.getEmail()));
+      var response =
+          net.firedevops.firemud.account.v1.RequestPasswordResetResponse.newBuilder()
+              .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      var response =
+          net.firedevops.firemud.account.v1.RequestPasswordResetResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  public void completePasswordReset(
+      net.firedevops.firemud.account.v1.CompletePasswordResetRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.CompletePasswordResetResponse>
+          responseObserver) {
+    try {
+      accountService.completePasswordReset(
+          new CompletePasswordResetRequest(
+              Long.valueOf(request.getTenantId()), request.getToken(), request.getNewPassword()));
+      var response =
+          net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
+              .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      var response =
+          net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
                       .setMessage(ex.getMessage())
                       .build())
               .build();

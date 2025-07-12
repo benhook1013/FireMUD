@@ -2,7 +2,9 @@ package net.firedevops.firemud.service;
 
 import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
+import net.firedevops.firemud.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.dto.CreateAccountRequest;
+import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.dto.ProfileDto;
 import net.firedevops.firemud.dto.UpdateProfileRequest;
 
@@ -18,4 +20,8 @@ public interface AccountService {
   AccountDataExportDto exportAccountData(Long tenantId, Long accountId);
 
   void deleteAccount(Long tenantId, Long accountId);
+
+  void requestPasswordReset(PasswordResetRequest request);
+
+  void completePasswordReset(CompletePasswordResetRequest request);
 }
