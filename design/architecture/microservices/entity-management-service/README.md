@@ -28,8 +28,9 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
   mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
   document.
 - Gameplay-facing gRPC endpoints do not parse JWT tokens. The Game Session Service
-  injects identity context using `SessionContext` after validating tokens itself.
-  Traffic between services still uses mutual TLS certificates as outlined in the
+  injects identity context using `SessionContext` and may request a new JWT from
+  the Account Service if a player's roles change. It does not validate tokens for
+  gameplay. Traffic between services still uses mutual TLS certificates as outlined in the
   [Security Architecture](../system-architecture-security.md).
 
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
@@ -139,7 +140,7 @@ grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/P
 
 ### Tick Locking
 
-This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{entityId}` key described in the [Redis Architecture](../../../design/architecture/system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{tenantId}:{entityId}` key described in the [Redis Architecture](../../../design/architecture/system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)

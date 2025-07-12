@@ -27,6 +27,7 @@ public class WorldManagementGrpcService
   private final PingService pingService;
   private final RoomService roomService;
   private final RoomMapper roomMapper;
+  private final net.firedevops.firemud.service.WorldEventService worldEventService;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Override
@@ -61,11 +62,16 @@ public class WorldManagementGrpcService
   @Override
   public void updateWorldState(
       UpdateWorldStateRequest request, StreamObserver<UpdateWorldStateResponse> responseObserver) {
-    // TODO apply pending world updates once implemented
-    UpdateWorldStateResponse response =
-        UpdateWorldStateResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      worldEventService.processDueEvents();
+      UpdateWorldStateResponse response =
+          UpdateWorldStateResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
   }
 
   private String toJson(RoomDto dto) {

@@ -14,6 +14,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [Spring Cloud Gateway](task-list-spring-cloud-gateway.md)
 - [TCP Proxy Service](task-list-tcp-proxy-service.md)
 - [World Management Service](task-list-world-management-service.md)
+- [Backlog](backlog.md)
 
 - Common microservice tasks are included in each service list.
 

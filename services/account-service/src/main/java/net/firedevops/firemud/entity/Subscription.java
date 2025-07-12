@@ -27,4 +27,7 @@ public class Subscription {
 
   @Column(name = "ended_at")
   private LocalDateTime endedAt;
+
+  @Column(name = "tenant_id", nullable = false)
+  private Long tenantId;
 }

@@ -5,8 +5,6 @@ import io.opentelemetry.api.trace.Tracer;
 import net.firedevops.firemud.common.grpc.LoggingInterceptor;
 import net.firedevops.firemud.common.grpc.MetricsInterceptor;
 import net.firedevops.firemud.common.grpc.TracingInterceptor;
-import net.firedevops.firemud.common.security.AuthTokenInterceptor;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.security.GrpcJwtAuthInterceptor;
 import org.lognet.springboot.grpc.GRpcGlobalInterceptor;
 import org.springframework.context.annotation.Bean;

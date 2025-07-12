@@ -9,4 +9,3 @@ Key files include:
 - [**task-list.md**](./task-list.md) – Active and planned development tasks.
 - [**backlog.md**](./backlog.md) – Summary of outstanding tasks and known issues.
 - [**design-assumptions.md**](./design-assumptions.md) – Supporting materials and research notes.
-- [**issues-working.md**](./issues-working.md) – In-progress architecture decisions and open questions.

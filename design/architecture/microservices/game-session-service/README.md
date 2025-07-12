@@ -186,6 +186,19 @@ Session state needed for reconnect recovery is stored under `session:{tenantId}:
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
 
+### Cross-Service Integration Test
+
+An integration test under `src/test/java/crossservice` starts this service
+alongside the Game Logic Service using **Testcontainers**. Run it manually once
+the dependent Docker images are built:
+
+```bash
+./gradlew :game-session-service:test --tests "*CrossServiceIntegrationTest"
+```
+
+See [System Architecture Testing](../system-architecture-testing.md) for more
+details.
+
 ## Future Enhancements
 
 - Cross-region sharding for massive worlds.

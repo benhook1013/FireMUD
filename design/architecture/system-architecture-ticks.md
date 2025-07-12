@@ -32,7 +32,7 @@ This model ensures:
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
-- `tick:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline))
+- `tick:lock:{tenantId}:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline))
 - `SET NX PX` with expiry for exclusive ownership
 - Lua-based atomic checks to avoid race conditions
 
@@ -108,7 +108,7 @@ The **Game Session Service** manages orchestration, while gameplay rules are res
 
 ## 🧮 Tick Staging and Commit Flow
 
-State changes are first **staged in Redis** under keys like `tick:pending:{regionId}`:
+State changes are first **staged in Redis** under keys like `tick:pending:{tenantId}:{regionId}`:
 
 - Only committed if **all actions succeed**
 - Timeout or failed actions are **excluded** and **rescheduled with priority**
@@ -151,7 +151,7 @@ This guarantees **clean, deterministic ticks** and safe replays after crash or r
 
 Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time timers in milliseconds**, stored as:
 
-- `timer:{entityId}:{effectId}`
+- `timer:{tenantId}:{entityId}:{effectId}`
 
 Each tick scans timers for expirations and triggers corresponding events. If delayed, multiple may fire at once.
 

@@ -48,7 +48,10 @@ class ProfileControllerTest {
 
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
     mockMvc
-        .perform(get("/profiles/2").param("tenantId", "1").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .perform(
+            get("/profiles/2")
+                .param("tenantId", "1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.displayName").value("demo"));

@@ -13,14 +13,19 @@ class JwtUsageTest {
   @Test
   void noJwtReferencesInMainSources() throws IOException {
     try (Stream<Path> paths = Files.walk(Path.of("src/main/java"))) {
-      paths.filter(p -> p.toString().endsWith(".java"))
+      paths
+          .filter(p -> p.toString().endsWith(".java"))
           .forEach(
               p -> {
                 try {
                   String content = Files.readString(p, StandardCharsets.UTF_8);
                   assertFalse(content.contains("JwtUtil"), p + " should not reference JwtUtil");
-                  assertFalse(content.contains("SessionContext"), p + " should not reference SessionContext");
-                  assertFalse(content.contains("Authorization"), p + " should not mention Authorization header");
+                  assertFalse(
+                      content.contains("SessionContext"),
+                      p + " should not reference SessionContext");
+                  assertFalse(
+                      content.contains("Authorization"),
+                      p + " should not mention Authorization header");
                 } catch (IOException e) {
                   throw new RuntimeException(e);
                 }
