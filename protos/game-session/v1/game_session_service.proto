@@ -19,7 +19,7 @@ service GameSessionService {
 
 message StartSessionRequest {
   string tenant_id = 1;
-  string version_id = 2;
+  string runtime_version = 2;
   string script_patch_version = 3;
 }
 

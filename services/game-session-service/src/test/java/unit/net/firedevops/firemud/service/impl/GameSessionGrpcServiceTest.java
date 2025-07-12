@@ -71,7 +71,7 @@ class GameSessionGrpcServiceTest {
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
-            .setVersionId("v1")
+            .setRuntimeVersion("v1")
             .setScriptPatchVersion("")
             .build(),
         new StreamObserver<StartSessionResponse>() {

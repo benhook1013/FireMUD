@@ -43,7 +43,7 @@ public class TestDataSeeder implements ApplicationRunner {
     if (gameInstanceRepository.count() == 0) {
       GameInstance instance = new GameInstance();
       instance.setTenantId(1L);
-      instance.setVersionId("v1.0.0");
+      instance.setRuntimeVersion("v1.0.0");
       instance.setOwnerAccountId(1L);
       instance.setStatus("RUNNING");
       gameInstanceRepository.save(instance);

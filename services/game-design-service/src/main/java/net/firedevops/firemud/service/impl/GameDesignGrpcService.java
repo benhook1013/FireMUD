@@ -111,6 +111,9 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
                   net.firedevops.firemud.gamedesign.v1.Version.newBuilder()
                       .setId(v.id())
                       .setVersionNumber(v.versionNumber())
+                      .setScriptPatchVersion(
+                          v.scriptPatchVersion() == null ? "" : v.scriptPatchVersion())
+                      .setIsScriptOnly(v.scriptOnly())
                       .setNotes(v.notes() == null ? "" : v.notes())
                       .build()));
       responseObserver.onNext(builder.build());

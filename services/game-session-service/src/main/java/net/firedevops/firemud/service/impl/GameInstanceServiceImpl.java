@@ -64,7 +64,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     logger.info(
         "Starting game session for tenant {} version {} patch {}",
         request.tenantId(),
-        request.versionId(),
+        request.runtimeVersion(),
         request.scriptPatchVersion());
     repository
         .findFirstByOwnerAccountIdAndStatus(request.ownerAccountId(), "RUNNING")
@@ -80,7 +80,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             });
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
-    instance.setVersionId(request.versionId());
+    instance.setRuntimeVersion(request.runtimeVersion());
     instance.setScriptPatchVersion(request.scriptPatchVersion());
     instance.setOwnerAccountId(request.ownerAccountId());
     instance.setStatus("RUNNING");

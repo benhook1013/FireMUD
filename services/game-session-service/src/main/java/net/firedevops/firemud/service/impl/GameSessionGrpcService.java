@@ -68,7 +68,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
       StartSessionRequest dto =
           new StartSessionRequest(
               Long.valueOf(request.getTenantId()),
-              request.getVersionId(),
+              request.getRuntimeVersion(),
               request.getScriptPatchVersion(),
               0L);
       GameInstanceDto instance = gameInstanceService.startSession(dto);

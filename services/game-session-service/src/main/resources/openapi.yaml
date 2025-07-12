@@ -21,13 +21,13 @@ components:
       properties:
         tenantId:
           type: integer
-        versionId:
+        runtimeVersion:
           type: string
         ownerAccountId:
           type: integer
       required:
         - tenantId
-        - versionId
+        - runtimeVersion
         - ownerAccountId
     GameInstanceDto:
       type: object
@@ -36,7 +36,7 @@ components:
           type: integer
         tenantId:
           type: integer
-        versionId:
+        runtimeVersion:
           type: string
         ownerAccountId:
           type: integer
