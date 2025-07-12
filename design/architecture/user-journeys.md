@@ -3,6 +3,12 @@
 This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
 For step-by-step tooling instructions see the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
+## 🎯 Goals
+
+- Provide a quick reference for how a user moves through the system.
+- Map each step to the microservice that owns the logic or data.
+- Link back to deeper design docs for anyone who needs additional context.
+
 ---
 
 ## 1. Sign Up
@@ -126,7 +132,7 @@ The service also exposes moderation tools such as bans and runtime feature toggl
 Game Design Service (publish) → Game Session Service (restart)
 ```
 
-Example user-journey DSL entry for a hotfix:
+### Example Hotfix DSL
 
 ```yaml
 - action: hotfix_script
