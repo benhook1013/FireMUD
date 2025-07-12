@@ -3,8 +3,8 @@ package net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
@@ -20,7 +20,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-/** Cross-service integration test verifying Game Session Service starts alongside Automation Scripting Service. */
+/**
+ * Cross-service integration test verifying Game Session Service starts alongside Automation
+ * Scripting Service.
+ */
 @Testcontainers
 @Disabled("integration environment not configured")
 @SpringBootTest(
@@ -30,7 +33,8 @@ class AutomationScriptingCrossServiceIntegrationTest {
 
   @Container
   static GenericContainer<?> gameSessionService =
-      new GenericContainer<>(DockerImageName.parse("ghcr.io/firedevops/game-session-service:latest"))
+      new GenericContainer<>(
+              DockerImageName.parse("ghcr.io/firedevops/game-session-service:latest"))
           .withExposedPorts(8080);
 
   @LocalServerPort private int port;
@@ -46,7 +50,8 @@ class AutomationScriptingCrossServiceIntegrationTest {
   }
 
   @Configuration
-  @EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+  @EnableAutoConfiguration(
+      exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
   @Import(CommonAutoConfiguration.class)
   static class TestApp {}
 }
