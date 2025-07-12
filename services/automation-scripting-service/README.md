@@ -10,4 +10,5 @@ configurable window. Counters are stored in Redis using keys of the form
 `script_quota:{tenantId}:{scriptId}`. When the quota is exceeded the event is
 ignored and `script_quota_denied_total` is incremented.
 `sagas.active` metric.
+
 This README is a stub. **Do not place design details here.**

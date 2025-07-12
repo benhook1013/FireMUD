@@ -18,9 +18,9 @@ import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
+import net.firedevops.firemud.common.security.RequireAdminRole;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.common.security.RequireAdminRole;
 import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
