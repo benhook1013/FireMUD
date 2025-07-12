@@ -58,6 +58,7 @@ public class PaymentServiceImpl implements PaymentService {
     tx.setAccount(account);
     tx.setAmountCents(amountCents);
     tx.setCurrency("USD");
+    tx.setProviderId(intent.id());
     tx.setStatus(intent.status());
     tx.setTenantId(tenantId);
     tx = paymentTransactionRepository.save(tx);
@@ -95,5 +96,25 @@ public class PaymentServiceImpl implements PaymentService {
         sub.getStatus(),
         sub.getStartedAt(),
         sub.getEndedAt());
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "payment.refund")
+  public void refundPayment(Long tenantId, Long paymentId) {
+    PaymentTransaction tx =
+        paymentTransactionRepository
+            .findById(paymentId)
+            .filter(t -> t.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Payment not found"));
+
+    try {
+      stripeClient.createRefund(tx.getProviderId());
+    } catch (com.stripe.exception.StripeException e) {
+      throw new IllegalStateException("Stripe error", e);
+    }
+
+    tx.setStatus("refunded");
+    paymentTransactionRepository.save(tx);
   }
 }

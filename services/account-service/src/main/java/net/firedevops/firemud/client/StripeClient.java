@@ -3,6 +3,7 @@ package net.firedevops.firemud.client;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.param.PaymentIntentCreateParams;
+import com.stripe.param.RefundCreateParams;
 
 /** Simple wrapper around Stripe API calls. */
 public class StripeClient {
@@ -32,5 +33,12 @@ public class StripeClient {
             .build();
     com.stripe.model.PaymentIntent intent = com.stripe.model.PaymentIntent.create(params);
     return new IntentResult(intent.getId(), intent.getClientSecret(), intent.getStatus());
+  }
+
+  public void createRefund(String paymentIntentId) throws StripeException {
+    Stripe.apiKey = apiKey;
+    RefundCreateParams params =
+        RefundCreateParams.builder().setPaymentIntent(paymentIntentId).build();
+    com.stripe.model.Refund.create(params);
   }
 }

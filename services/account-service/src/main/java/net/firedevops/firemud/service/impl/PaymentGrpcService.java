@@ -6,6 +6,8 @@ import net.firedevops.firemud.account.v1.CreatePaymentIntentResponse;
 import net.firedevops.firemud.account.v1.CreateSubscriptionRequest;
 import net.firedevops.firemud.account.v1.CreateSubscriptionResponse;
 import net.firedevops.firemud.account.v1.PaymentServiceGrpc;
+import net.firedevops.firemud.account.v1.RefundPaymentRequest;
+import net.firedevops.firemud.account.v1.RefundPaymentResponse;
 import net.firedevops.firemud.dto.PaymentIntentDto;
 import net.firedevops.firemud.dto.SubscriptionDto;
 import net.firedevops.firemud.service.PaymentService;
@@ -67,6 +69,30 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     } catch (IllegalArgumentException ex) {
       CreateSubscriptionResponse response =
           CreateSubscriptionResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  public void refundPayment(
+      RefundPaymentRequest request, StreamObserver<RefundPaymentResponse> responseObserver) {
+    try {
+      paymentService.refundPayment(
+          Long.valueOf(request.getTenantId()), Long.valueOf(request.getPaymentId()));
+      RefundPaymentResponse response = RefundPaymentResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      RefundPaymentResponse response =
+          RefundPaymentResponse.newBuilder()
+              .setSuccess(false)
               .setError(
                   net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                       .setCode("INVALID_ARGUMENT")
