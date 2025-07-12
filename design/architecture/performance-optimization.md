@@ -46,6 +46,9 @@ These notes summarize typical optimizations applied across FireMUD services.
   and tick performance.
 - Service methods across all microservices use `@Timed` annotations so
   Prometheus can track request latency and call frequency.
+- Redis runs with **AOF persistence** and synchronous replication via `WAIT`
+  so tick state can be recovered quickly after failover. The Game Session
+  Service automatically replays staged commands on restart.
 
 ## Network Traffic
 
@@ -69,6 +72,11 @@ These notes summarize typical optimizations applied across FireMUD services.
   guide database indexing improvements.
 
 Following these patterns keeps resource usage low even as player counts grow.
+
+## Build Pipeline
+
+- Gradle's **configuration cache** and **parallel execution** are enabled via
+  `gradle.properties` to speed up local builds and CI workflows.
 
 ## 📚 Related Documentation
 
