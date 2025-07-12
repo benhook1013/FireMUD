@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
@@ -30,6 +31,7 @@ class AccountServiceImplTest {
   @Mock private ProfileRepository profileRepository;
   @Mock private ProfileMapper profileMapper;
   @Mock private NotificationService notificationService;
+  @Mock private LoggingAdminClient loggingAdminClient;
   @Mock private SessionService sessionService;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private SubscriptionRepository subscriptionRepository;
@@ -50,6 +52,7 @@ class AccountServiceImplTest {
             paymentTransactionRepository,
             subscriptionRepository,
             notificationService,
+            loggingAdminClient,
             jwtUtil,
             sessionService);
   }
