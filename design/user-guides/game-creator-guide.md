@@ -35,6 +35,7 @@ scriptService.schedule("onEnter", playerId, roomId, () -> {
 });
 ```
 
-## Further Resources
+## 📚 Related Documentation
 
 - [System Architecture: Scripting & Automation](../architecture/system-architecture-scripting.md)
+- [User Journeys](../architecture/user-journeys.md)

@@ -119,7 +119,7 @@ files change.
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Social Interaction](../user-journeys.md#6-social-interaction)
+- [User Journeys – Social Interaction](../user-journeys.md#7-social-interaction)
 - [Redis Architecture](../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)

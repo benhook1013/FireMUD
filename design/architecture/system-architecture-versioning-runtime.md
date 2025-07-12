@@ -38,7 +38,7 @@ memory and continue using the underlying `baseVersionId` for all other assets.
 
 ## 🚀 Version Activation & Rollback
 
-The **Game Session Service** controls which published version is active for each live game instance. See the [User Journeys](./user-journeys.md#3-publish-and-start-a-game-instance) document for the high level flow.
+The **Game Session Service** controls which published version is active for each live game instance. See the [User Journeys](./user-journeys.md#5-publish-and-start-a-game-instance) document for the high level flow.
 
 - When starting a game, it reads the desired `version_id` from a manifest or launch request.
 - Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.

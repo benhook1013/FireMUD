@@ -7,7 +7,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.Optional;
+import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.saga.SagaBuilder;
+import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
@@ -39,6 +42,7 @@ public class AccountServiceImpl implements AccountService {
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final SubscriptionRepository subscriptionRepository;
   private final NotificationService notificationService;
+  private final LoggingAdminClient loggingAdminClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.service.session.SessionService sessionService;
 
@@ -50,6 +54,7 @@ public class AccountServiceImpl implements AccountService {
       PaymentTransactionRepository paymentTransactionRepository,
       SubscriptionRepository subscriptionRepository,
       NotificationService notificationService,
+      LoggingAdminClient loggingAdminClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.service.session.SessionService sessionService) {
     this.accountRepository = accountRepository;
@@ -59,6 +64,7 @@ public class AccountServiceImpl implements AccountService {
     this.paymentTransactionRepository = paymentTransactionRepository;
     this.subscriptionRepository = subscriptionRepository;
     this.notificationService = notificationService;
+    this.loggingAdminClient = loggingAdminClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
   }
@@ -74,11 +80,34 @@ public class AccountServiceImpl implements AccountService {
     account.setEmail(request.email());
     account.setPasswordHash(hashPassword(request.password()));
     account.setRole("player");
-    account = accountRepository.save(account);
     Profile profile = new Profile();
-    profile.setAccount(account);
-    profile.setTenantId(account.getTenantId());
-    profileRepository.save(profile);
+    profile.setTenantId(request.tenantId());
+
+    SagaBuilder builder = new SagaBuilder();
+    builder
+        .step(
+            "persistAccount",
+            () -> {
+              Account saved = accountRepository.save(account);
+              account.setId(saved.getId());
+              profile.setAccount(saved);
+              profileRepository.save(profile);
+            },
+            () -> {
+              profileRepository.delete(profile);
+              accountRepository.delete(account);
+            })
+        .step(
+            "logCreation",
+            () -> loggingAdminClient.logAccountCreation(account.getTenantId(), account.getId()));
+
+    try {
+      builder.run();
+    } catch (SagaException e) {
+      logger.warn("Account creation saga failed", e);
+      throw new IllegalStateException("Account creation failed", e);
+    }
+
     return accountMapper.toDto(account);
   }
 

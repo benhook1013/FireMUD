@@ -136,7 +136,7 @@ stubs.
 - [Redis Architecture](../system-architecture-redis.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Add Automation & Scripting](../user-journeys.md#3-add-automation--scripting)
+- [User Journeys – Add Automation & Scripting](../user-journeys.md#4-add-automation--scripting)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
@@ -177,6 +177,14 @@ Expected response:
   "message": "pong"
 }
 ```
+
+### Fairness Quotas
+
+`ScriptQuotaService` limits how many times a script may execute within a
+configurable window. Counters are stored in Redis using keys of the form
+`script_quota:{tenantId}:{scriptId}`. When the quota is exceeded the event is
+ignored and `script_quota_denied_total` is incremented. Enforcement metrics are
+exported via the standard `sagas.active` gauge.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
