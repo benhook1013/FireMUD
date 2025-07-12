@@ -15,11 +15,12 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Use Spring Cache backed by Redis for expensive queries. The Entity Management
   service caches character inventory graphs and the World Management service
   caches hot rooms with TTL-based eviction.
-
 - Database writes during gameplay are **deferred and batched**. The Game Session
   Service coordinates commits at the end of each tick so the Entity Management
   Service only persists changes once per tick. This reduces write frequency and
   lock contention.
+- The Entity Management Service design calls for optimistic locking on entity
+  tables, but version columns have not yet been implemented.
 
 ## Runtime Processing
 
@@ -36,6 +37,9 @@ These notes summarize typical optimizations applied across FireMUD services.
   visibility into heavy script load.
 - Redis exporters publish Lua latency, lock contention and retry queue depth
   metrics so operators can spot hotspots in Grafana dashboards.
+- The Game Session Service records `game_session_commands_enqueued_total` and
+  `game_session_tick_duration_ms` metrics so operators can monitor throughput
+  and tick performance.
 
 ## Network Traffic
 
@@ -50,10 +54,11 @@ These notes summarize typical optimizations applied across FireMUD services.
   rates.
 - Spring Cloud Gateway applies Redis-backed request rate limiting to protect
   services from sudden spikes.
-- Redis caches common lookups to reduce database load. The World Management and
-  Social Groups services store hot rooms and recent chat messages in Redis with
-  metrics (`room_cache_hits_total`, `room_cache_misses_total`,
-  `chat_messages_published_total`).
+- Redis caches common lookups to reduce database load. The World Management
+  service stores hot rooms with configurable TTL and hit/miss metrics
+  (`room_cache_hits_total`, `room_cache_misses_total`). The Social Groups service
+  stores recent chat messages in Redis and records `chat_messages_published_total`.
+  A cache expiration policy for chat history is still TODO.
 
 Following these patterns keeps resource usage low even as player counts grow.
 
