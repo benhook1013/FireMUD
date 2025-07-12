@@ -173,6 +173,14 @@ Expected response:
 }
 ```
 
+### Fairness Quotas
+
+`ScriptQuotaService` limits how many times a script may execute within a
+configurable window. Counters are stored in Redis using keys of the form
+`script_quota:{tenantId}:{scriptId}`. When the quota is exceeded the event is
+ignored and `script_quota_denied_total` is incremented. Enforcement metrics are
+exported via the standard `sagas.active` gauge.
+
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
 
