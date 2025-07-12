@@ -22,6 +22,9 @@ firemud:
     from: no-reply@firemud.local
     verification-url: http://localhost:8080/auth/verify-email?token=%s
     reset-url: http://localhost:8080/reset-password?token=%s
+  payment:
+    stripe-api-key: test-key
+    platform-fee-percent: 5
 
 management:
   endpoints:

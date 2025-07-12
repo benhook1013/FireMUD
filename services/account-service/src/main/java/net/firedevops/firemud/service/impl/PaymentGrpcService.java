@@ -32,7 +32,7 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
       CreatePaymentIntentResponse response =
           CreatePaymentIntentResponse.newBuilder()
               .setIntentId(dto.id().toString())
-              .setClientSecret("test")
+              .setClientSecret(dto.clientSecret())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

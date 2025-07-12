@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.util.Optional;
+import net.firedevops.firemud.client.StripeClient;
 import net.firedevops.firemud.dto.PaymentIntentDto;
 import net.firedevops.firemud.entity.Account;
 import net.firedevops.firemud.entity.PaymentTransaction;
@@ -20,17 +21,18 @@ class PaymentServiceImplTest {
   @Mock private AccountRepository accountRepository;
   @Mock private PaymentTransactionRepository txRepo;
   @Mock private SubscriptionRepository subRepo;
+  @Mock private StripeClient stripeClient;
 
   private PaymentServiceImpl service;
 
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
-    service = new PaymentServiceImpl(accountRepository, txRepo, subRepo);
+    service = new PaymentServiceImpl(accountRepository, txRepo, subRepo, stripeClient);
   }
 
   @Test
-  void createPaymentIntentSetsTenantId() {
+  void createPaymentIntentSetsTenantId() throws Exception {
     Account account = new Account();
     account.setId(1L);
     account.setTenantId(2L);
@@ -42,10 +44,13 @@ class PaymentServiceImplTest {
               tx.setId(10L);
               return tx;
             });
+    when(stripeClient.createPaymentIntent(500L, "usd"))
+        .thenReturn(new StripeClient.IntentResult("pi", "secret", "pending"));
 
     PaymentIntentDto dto = service.createPaymentIntent(2L, 1L, 500L);
 
     assertEquals(10L, dto.id());
+    assertEquals("secret", dto.clientSecret());
     ArgumentCaptor<PaymentTransaction> captor = ArgumentCaptor.forClass(PaymentTransaction.class);
     verify(txRepo).save(captor.capture());
     assertEquals(2L, captor.getValue().getTenantId());
