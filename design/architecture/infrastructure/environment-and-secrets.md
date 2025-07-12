@@ -16,7 +16,9 @@ This document explains how configuration values and sensitive secrets are suppli
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
-- Secrets are provisioned by **cert-manager** and rotated automatically.
+- Secrets are provisioned by **cert-manager** and rotated automatically. The
+  sample `firemud-secret` manifest in `k8s/base/` contains placeholder values
+  only for local demos; production deployments must supply real credentials.
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
   stage.
@@ -80,16 +82,40 @@ provisioned by **cert-manager** and mounted from Kubernetes Secrets.
 During local development these values are generated automatically, so the
 variables may be omitted.
 
+### Authentication
+
+JWT tokens secure internal service calls. Production keys are provided via
+environment variables while development instances generate random secrets.
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
+| `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
+| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Server-side session TTL in milliseconds | `3600000` |
+
 ### Service Discovery
 
 The shared configuration library resolves other services using environment
 variables prefixed with `FIREMUD_SERVICES_`. Each variable holds a `host:port`
 pair for a target service. When undefined, Kubernetes DNS is used instead.
 
+Each variable is suffixed with `_SERVICE` to match the Spring configuration
+keys. Examples:
+
 ```bash
-FIREMUD_SERVICES_ACCOUNT=account-service:6565
-FIREMUD_SERVICES_GAME_LOGIC=game-logic-service:6565
+FIREMUD_SERVICES_GAME_LOGIC_SERVICE=game-logic-service:6565
+FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE=logging-admin-service:6565
 ```
+
+### Additional Service Settings
+
+Some configuration values apply only to specific services:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_LOGGINGADMIN_HOST` | Hostname for the Logging Admin service | `logging-admin-service` |
+| `FIREMUD_LOGGINGADMIN_PORT` | gRPC port for the Logging Admin service | `6565` |
+| `FIREMUD_VOICE_TOKEN_EXPIRATION_MS` | Expiration of voice chat tokens | `300000` |
 
 ## 📚 Related Docs
 
