@@ -19,11 +19,21 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/client.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/client.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
           envFrom:
             - configMapRef:
                 name: firemud-config
             - secretRef:
                 name: firemud-secret
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
           resources:
             requests:
               cpu: "100m"
@@ -55,6 +65,9 @@ spec:
               mountPath: /var/lib/docker/containers
               readOnly: true
       volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-tls
         - name: varlog
           hostPath:
             path: /var/log

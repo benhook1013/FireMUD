@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: firemud-grpc-tls
+stringData:
+  client.crt: |
+    -----BEGIN CERTIFICATE-----
+    example
+    -----END CERTIFICATE-----
+  client.key: |
+    -----BEGIN PRIVATE KEY-----
+    example
+    -----END PRIVATE KEY-----
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    example
+    -----END CERTIFICATE-----

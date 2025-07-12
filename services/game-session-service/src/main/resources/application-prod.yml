@@ -22,6 +22,6 @@ firemud:
   services:
     game-logic-service: ${FIREMUD_SERVICES_GAME_LOGIC_SERVICE}
   grpc:
-    cert-chain: classpath:certs/client.crt
-    private-key: classpath:certs/client.key
-    ca-cert: classpath:certs/ca.crt
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}

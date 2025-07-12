@@ -73,9 +73,9 @@ provisioned by **cert-manager** and mounted from Kubernetes Secrets.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `FIREMUD_GRPC_CERT_CHAIN` | PEM encoded certificate chain for this service | _(none)_ |
-| `FIREMUD_GRPC_PRIVATE_KEY` | Private key matching the certificate chain | _(none)_ |
-| `FIREMUD_GRPC_CA_CERT` | CA bundle used to verify peer services | _(none)_ |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Filesystem path to the certificate chain for this service | `classpath:certs/client.crt` |
+| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the certificate chain | `classpath:certs/client.key` |
+| `FIREMUD_GRPC_CA_CERT_PATH` | Filesystem path to the CA bundle used to verify peer services | `classpath:certs/ca.crt` |
 
 During local development these values are generated automatically, so the
 variables may be omitted.
