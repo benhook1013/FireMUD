@@ -106,6 +106,7 @@ The service follows the conventions from
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
 It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
+TLS certificates are supplied via `FIREMUD_GRPC_CERT_CHAIN`, `FIREMUD_GRPC_PRIVATE_KEY`, and `FIREMUD_GRPC_CA_CERT`. Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
 ## Proto Files
 
