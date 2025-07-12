@@ -242,6 +242,19 @@ Player → Account Service → Logging & Admin Service (audit)
 
 ---
 
+## 18. Deployment & Environment Configuration
+
+FireMUD can be deployed locally using **Docker Compose** or to production via **Kubernetes**:
+
+1. **Local Development** – Run `./gradlew devUp` to start all services with Docker Compose. Configuration values are loaded from an `.env` file. See [Deployment Environments](./infrastructure/deployment-environments.md).
+2. **Production** – Kubernetes manifests load configuration through `ConfigMap` and `Secret` objects. Refer to [Environment & Secrets Management](./infrastructure/environment-and-secrets.md) for details.
+
+```plaintext
+Developer → Docker Compose / Kubernetes → Running Services
+```
+
+---
+
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
 
 ## 📚 Related Documentation
@@ -276,3 +289,5 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
 - [Security Architecture](./system-architecture-security.md)
+- [Deployment Environments](./infrastructure/deployment-environments.md)
+- [Environment & Secrets Management](./infrastructure/environment-and-secrets.md)
