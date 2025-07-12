@@ -16,6 +16,14 @@ These notes summarize typical optimizations applied across FireMUD services.
   service caches character inventory graphs and the World Management service
   caches hot rooms with TTL-based eviction.
 
+## Runtime Processing
+
+- Tick execution in the Game Session Service relies on Redis Lua scripts for
+  atomic command staging, commit and rollback. This minimizes network round
+  trips and guarantees consistent state across crashes. See
+  [Tick System and Runtime Design](./system-architecture-ticks.md) for
+  details.
+
 ## Network Traffic
 
 - gRPC calls should enable compression and keep-alive pings to reduce latency.
