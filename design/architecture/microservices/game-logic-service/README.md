@@ -27,9 +27,10 @@ Executes the core gameplay rules and command parsing. It processes player action
 - All commands are scoped by `tenantId` so that rules execute only against data
   for the active game instance. The Game Session Service passes this context on
   every request. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
-- Gameplay gRPC requests do not include JWTs. The Game Session Service validates
-  player sessions and stores claims in `SessionContext`. Communications use
-  mutual TLS certificates as outlined in the
+- Gameplay gRPC requests do not include JWTs. The Game Session Service provides
+  player identity from Redis via `SessionContext`. It may refresh a JWT from the
+  Account Service if roles change but does not validate tokens for gameplay.
+  Communications use mutual TLS certificates as outlined in the
   [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
