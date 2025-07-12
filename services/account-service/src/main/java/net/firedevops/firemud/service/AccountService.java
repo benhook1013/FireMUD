@@ -24,4 +24,6 @@ public interface AccountService {
   void requestPasswordReset(PasswordResetRequest request);
 
   void completePasswordReset(CompletePasswordResetRequest request);
+
+  void linkExternalAccount(net.firedevops.firemud.dto.LinkExternalAccountRequest request);
 }

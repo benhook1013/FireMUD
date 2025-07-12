@@ -59,6 +59,10 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - `session` keys in Redis map temporary session tokens to account IDs for quick
   reconnects.
 
+External accounts allow players to log in via Google, Discord, or Steam. Each
+link stores the provider name and external ID so the platform account can be
+resolved during authentication.
+
 ### gRPC APIs
 
 - `CreateAccount` – registers a new user and establishes a session for internal

@@ -4,7 +4,7 @@
   - [ ] Implement user registration and authentication (OAuth2, JWT)
   - [x] Implement session management and persistent logins
   - [x] Implement role-based access control (RBAC) for admins, moderators, and players
-  - [ ] Enable external account linking (Google, Discord, Steam)
+  - [x] Enable external account linking (Google, Discord, Steam)
   - [x] Implement profile system with achievements, game history, and social features
   - [x] Implement player data export & deletion (GDPR compliance)
   - [x] Expose JWKS endpoint for token verification
