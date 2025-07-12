@@ -6,6 +6,7 @@ import net.firedevops.firemud.client.AutomationScriptingClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
+import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.dto.VersionDto;
 import net.firedevops.firemud.entity.Game;
 import net.firedevops.firemud.entity.Version;
@@ -26,6 +27,7 @@ public class VersionServiceImpl implements VersionService {
   private final GameRepository gameRepository;
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
+  private final SagaRunner sagaRunner;
 
   @Override
   @Transactional
@@ -50,7 +52,7 @@ public class VersionServiceImpl implements VersionService {
         },
         () -> versionRepository.delete(version));
     // Steps to copy data to other services would go here
-    builder.run();
+    sagaRunner.run(builder.build());
     return versionMapper.toDto(version);
   }
 
@@ -85,7 +87,7 @@ public class VersionServiceImpl implements VersionService {
           versionRepository.save(version);
         },
         () -> versionRepository.delete(version));
-    builder.run();
+    sagaRunner.run(builder.build());
     scriptingClient.notifyScriptVersionUpdate(gameId, scriptPatchVersion, List.of());
     return versionMapper.toDto(version);
   }

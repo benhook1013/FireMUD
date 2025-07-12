@@ -3,11 +3,11 @@ package net.firedevops.firemud.service.impl;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
+import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.config.WorldProperties;
 import net.firedevops.firemud.entity.Region;
 import net.firedevops.firemud.repository.RegionRepository;
@@ -27,6 +27,7 @@ public class WorldCreationServiceImpl implements WorldCreationService {
   private final MeterRegistry meterRegistry;
   private final WorldProperties worldProperties;
   private final net.firedevops.firemud.client.GameDesignClient gameDesignClient;
+  private final SagaRunner sagaRunner;
 
   private Counter sagaStartedCounter;
   private Counter sagaFailedCounter;
@@ -48,13 +49,8 @@ public class WorldCreationServiceImpl implements WorldCreationService {
   @Override
   @Transactional
   public void createWorld(Long tenantId, Long versionId) throws SagaException {
-    String correlationId = UUID.randomUUID().toString();
     ensureMetrics();
-    logger.info(
-        "Creating world for tenant {} from version {} correlationId={}",
-        tenantId,
-        versionId,
-        correlationId);
+    logger.info("Creating world for tenant {} from version {}", tenantId, versionId);
     sagaStartedCounter.increment();
     SagaBuilder builder = new SagaBuilder();
     builder
@@ -64,11 +60,10 @@ public class WorldCreationServiceImpl implements WorldCreationService {
             () -> rollbackDesignCopy(tenantId))
         .step("scheduleEvents", () -> scheduleInitialEvents(tenantId));
     try {
-      builder.run();
+      sagaRunner.run(builder.build());
     } catch (SagaException ex) {
       sagaFailedCounter.increment();
-      logger.warn(
-          "World creation saga failed for tenant {} correlationId={}", tenantId, correlationId);
+      logger.warn("World creation saga failed for tenant {}", tenantId);
       throw ex;
     }
   }

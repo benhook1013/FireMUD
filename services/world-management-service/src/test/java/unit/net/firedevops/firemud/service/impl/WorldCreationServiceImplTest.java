@@ -15,18 +15,31 @@ class WorldCreationServiceImplTest {
   private MeterRegistry meterRegistry;
   private net.firedevops.firemud.config.WorldProperties worldProperties;
   private net.firedevops.firemud.client.GameDesignClient gameDesignClient;
+  private net.firedevops.firemud.common.saga.SagaRunner sagaRunner;
 
   @BeforeEach
-  void setup() {
+  void setup() throws Exception {
     regionRepository = mock(RegionRepository.class);
     meterRegistry = mock(MeterRegistry.class);
     when(meterRegistry.counter(anyString())).thenReturn(mock(Counter.class));
     worldProperties = new net.firedevops.firemud.config.WorldProperties();
     worldProperties.setLocalShardId(0);
     gameDesignClient = mock(net.firedevops.firemud.client.GameDesignClient.class);
+    sagaRunner = mock(net.firedevops.firemud.common.saga.SagaRunner.class);
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              try {
+                ((net.firedevops.firemud.common.saga.Saga) inv.getArgument(0)).run();
+              } catch (net.firedevops.firemud.common.saga.SagaException e) {
+                throw new RuntimeException(e);
+              }
+              return null;
+            })
+        .when(sagaRunner)
+        .run(org.mockito.ArgumentMatchers.any());
     service =
         new WorldCreationServiceImpl(
-            regionRepository, meterRegistry, worldProperties, gameDesignClient);
+            regionRepository, meterRegistry, worldProperties, gameDesignClient, sagaRunner);
   }
 
   @Test

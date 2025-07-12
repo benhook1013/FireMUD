@@ -21,4 +21,8 @@ public class SagaMetrics {
   public void decrement() {
     active.decrementAndGet();
   }
+
+  public void setActive(int count) {
+    active.set(count);
+  }
 }
