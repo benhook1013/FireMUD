@@ -24,7 +24,11 @@ function App() {
       <Button variant="outlined" onClick={() => setMode('game')} sx={{ mr: 1 }}>
         Game Editor
       </Button>
-      <Button variant="outlined" onClick={() => setMode('script')} sx={{ mr: 1 }}>
+      <Button
+        variant="outlined"
+        onClick={() => setMode('script')}
+        sx={{ mr: 1 }}
+      >
         Script Editor
       </Button>
       <Button variant="outlined" onClick={() => setMode('demo')}>
@@ -35,10 +39,7 @@ function App() {
         {mode === 'script' && <ScriptEditor />}
         {mode === 'demo' && (
           <>
-            <Button
-              variant="contained"
-              onClick={() => setCount((c) => c + 1)}
-            >
+            <Button variant="contained" onClick={() => setCount((c) => c + 1)}>
               count is {count}
             </Button>
             <p>
