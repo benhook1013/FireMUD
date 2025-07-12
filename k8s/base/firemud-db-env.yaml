@@ -17,4 +17,5 @@ metadata:
 stringData:
   FIREMUD_POSTGRES_USER: firemud
   FIREMUD_POSTGRES_PASSWORD: firemud
+  FIREMUD_AUTH_JWT_SECRET: changeit-changeit-changeit-changeit
 

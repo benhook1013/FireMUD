@@ -1,0 +1,33 @@
+# Production configuration for social-groups-service
+spring:
+  application:
+    name: social-groups-service
+  flyway:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+loggingAdmin:
+  host: ${FIREMUD_LOGGINGADMIN_HOST:logging-admin-service}
+  port: ${FIREMUD_LOGGINGADMIN_PORT:6565}
+
+firemud:
+  services:
+    logging-admin-service: ${FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE}
+  grpc:
+    cert-chain: classpath:certs/client.crt
+    private-key: classpath:certs/client.key
+    ca-cert: classpath:certs/ca.crt
+  auth:
+    jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
+    jwt-expiration-ms: ${FIREMUD_AUTH_JWT_EXPIRATION_MS:3600000}
+  voice:
+    token-expiration-ms: ${FIREMUD_VOICE_TOKEN_EXPIRATION_MS:300000}

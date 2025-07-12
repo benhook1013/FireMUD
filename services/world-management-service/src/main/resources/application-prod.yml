@@ -1,0 +1,23 @@
+# Production configuration for world-management-service
+spring:
+  application:
+    name: world-management-service
+  flyway:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+world:
+  local-shard-id: ${WORLD_LOCAL_SHARD_ID:0}
+  room:
+    cache-ttl-seconds: ${WORLD_ROOM_CACHE_TTL_SECONDS:60}
+  instance:
+    expiration-hours: ${WORLD_INSTANCE_EXPIRATION_HOURS:24}

@@ -13,7 +13,6 @@ grpc:
 
 firemud:
   auth:
-    jwt-secret: changeit-changeit-changeit-changeit
     jwt-expiration-ms: 3600000
 
 management:
@@ -45,6 +44,10 @@ spring:
             redis-rate-limiter.replenishRate: 20
             redis-rate-limiter.burstCapacity: 40
 
+firemud:
+  auth:
+    jwt-secret: changeit-changeit-changeit-changeit
+
 ---
 
 spring:
@@ -63,3 +66,6 @@ spring:
           args:
             redis-rate-limiter.replenishRate: 20
             redis-rate-limiter.burstCapacity: 40
+firemud:
+  auth:
+    jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
