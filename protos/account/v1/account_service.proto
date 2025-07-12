@@ -17,6 +17,7 @@ service AccountService {
   rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
   rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
   rpc CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse);
+  rpc LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse);
 }
 
 message PingRequest {}
@@ -109,6 +110,18 @@ message CompletePasswordResetRequest {
 }
 
 message CompletePasswordResetResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message LinkExternalAccountRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string provider = 3;
+  string external_id = 4;
+}
+
+message LinkExternalAccountResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }

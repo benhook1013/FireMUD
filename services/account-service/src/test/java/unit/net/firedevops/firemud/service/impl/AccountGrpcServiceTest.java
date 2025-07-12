@@ -238,4 +238,36 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertTrue(ref.get().getSuccess());
   }
+
+  @Test
+  void linkExternalAccountSuccess() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> ref =
+        new AtomicReference<>();
+    service.linkExternalAccount(
+        net.firedevops.firemud.account.v1.LinkExternalAccountRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setProvider("google")
+            .setExternalId("abc")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.account.v1.LinkExternalAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertTrue(ref.get().getSuccess());
+  }
 }
