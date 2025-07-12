@@ -1,6 +1,7 @@
 # 🔄 FireMUD User Journeys
 
 This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
+It complements the [System Architecture Overview](./system-architecture-overview.md) and [System Context Diagram](./system-context-diagram.md) to show how users traverse the overall platform.
 For step-by-step tooling instructions see the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ## 🎯 Goals
@@ -201,13 +202,15 @@ Admin → Runbooks → Kubernetes / Docker → Services Restored
 
 ## 14. Branding and Customization
 
-Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. See [Game Customization Options](./game-customization-options.md) for details.
+Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. The web client loads tenant-specific assets as described in [Frontend Architecture](./system-architecture-frontend.md). See [Game Customization Options](./game-customization-options.md) for details.
 
 ---
 
 ## 15. Playtesting & Analytics
 
 Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+
+---
 
 ## 16. Testing & Continuous Delivery
 
@@ -217,6 +220,8 @@ Before launch or after major updates, creators invite testers to staged environm
 ```plaintext
 GitHub → CI Workflow → Container Registry → Kubernetes
 ```
+
+---
 
 ## 17. Account Data Export & Deletion
 
@@ -243,6 +248,8 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Game Creator Guide](../user-guides/game-creator-guide.md)
 - [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md)
 - [Game Customization Options](./game-customization-options.md)
+- [Frontend Architecture](./system-architecture-frontend.md)
+- [Repository Structure](./repository-structure.md)
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
 - [Performance Optimization Guidelines](./performance-optimization.md)
 - [CI/CD Pipeline](./system-architecture-cicd.md)
