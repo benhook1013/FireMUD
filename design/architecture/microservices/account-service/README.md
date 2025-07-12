@@ -2,7 +2,7 @@
 
 ## Overview
 
-Manages user accounts and authentication for the platform. Stores profile data and issues tokens so the Game Session Service can validate connections. REST endpoints are documented in `openapi.yaml` within the service resources directory.
+Manages user accounts and authentication for the platform. It stores profile data and is the sole service that creates and signs JWTs. These tokens authorize access to meta/control services. The Game Session Service relies on Redis session context for gameplay and may request an updated token when a player's roles change. REST endpoints are documented in `openapi.yaml` within the service resources directory.
 
 ### Responsibilities
 

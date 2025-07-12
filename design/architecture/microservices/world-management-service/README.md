@@ -30,8 +30,9 @@ The World Management Service stores and manages game world data such as rooms, r
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Gameplay gRPC operations do not validate JWTs directly. The Game Session
-  Service authenticates players and binds claims into `SessionContext`. All
-  traffic still uses mutual TLS as described in the
+  Service binds player identity from Redis into `SessionContext`. It may request
+  an updated JWT from the Account Service when roles change but does not perform
+  token validation during gameplay. All traffic still uses mutual TLS as described in the
   [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 

@@ -20,7 +20,10 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 ## 🔧 Utility Packages
 
 - **Logging Utilities** – SLF4J wrappers and helpers for correlation IDs.
-- **Security Utilities** – `JwtUtil` for token creation/verification plus `AuthTokenInterceptor` and `SessionContext` for centrally managing JWT claims. See the [Authentication Design](./system-architecture-authentication.md).
+- **Security Utilities** – `JwtUtil` for verifying tokens (and building them
+  within the Account Service only) plus `AuthTokenInterceptor` and
+  `SessionContext` for centrally accessing JWT claims in meta or control
+  services. See the [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.

@@ -28,8 +28,9 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
   mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
   document.
 - Gameplay-facing gRPC endpoints do not parse JWT tokens. The Game Session Service
-  injects identity context using `SessionContext` after validating tokens itself.
-  Traffic between services still uses mutual TLS certificates as outlined in the
+  injects identity context using `SessionContext` and may request a new JWT from
+  the Account Service if a player's roles change. It does not validate tokens for
+  gameplay. Traffic between services still uses mutual TLS certificates as outlined in the
   [Security Architecture](../system-architecture-security.md).
 
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.

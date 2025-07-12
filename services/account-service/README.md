@@ -21,7 +21,9 @@ Or start all services:
 ```
 
 ## REST Authentication Endpoint
-The `/auth/login` route establishes a session for meta/control services. The JWT returned is used internally for service calls:
+
+The `/auth/login` route establishes a session for meta/control services. The JWT returned is used internally for service calls.
+
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \

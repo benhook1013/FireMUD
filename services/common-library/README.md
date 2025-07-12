@@ -38,7 +38,9 @@ For structured logging, obtain service-specific loggers via `LoggingUtil`:
 private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
 ```
 
-`JwtUtil` offers helper methods for creating and verifying JWT tokens.
+`JwtUtil` provides helpers for verifying JWT tokens and building new ones for
+the Account Service. Other services use it only for validation when executing
+admin or control operations.
 
 See the [design document](../../design/architecture/system-architecture-shared-libraries.md) for more details and additional utilities.
 
