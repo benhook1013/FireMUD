@@ -142,8 +142,10 @@ paths:
                 properties:
                   data:
                     type: string
-                example:
-                  data: pong
+              example:
+                data: pong
+        '400':
+          description: Bad request
   /auth/login:
     post:
       summary: Authenticate and return JWT
@@ -158,9 +160,11 @@ paths:
         '200':
           description: Auth token
           content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AuthTokenDto'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenDto'
+        '400':
+          description: Invalid credentials
   /auth/request-password-reset:
     post:
       summary: Request password reset
@@ -174,6 +178,8 @@ paths:
       responses:
         '200':
           description: Request accepted
+        '400':
+          description: Invalid request
   /auth/complete-password-reset:
     post:
       summary: Complete password reset
@@ -187,6 +193,8 @@ paths:
       responses:
         '200':
           description: Password updated
+        '400':
+          description: Invalid token
   /auth/request-email-verification:
     post:
       summary: Request email verification
@@ -230,6 +238,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountDto'
+        '400':
+          description: Invalid account data
   /accounts/{accountId}/export:
     get:
       summary: Export account data
@@ -248,6 +258,8 @@ paths:
       responses:
         '200':
           description: Exported data
+        '400':
+          description: Invalid account ID
   /accounts/{accountId}/external:
     post:
       summary: Link external account
@@ -285,6 +297,8 @@ paths:
       responses:
         '200':
           description: Deletion success
+        '400':
+          description: Invalid account ID
   /profiles/{accountId}:
     get:
       summary: Get profile
@@ -307,6 +321,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProfileDto'
+        '400':
+          description: Account not found
     put:
       summary: Update profile
       operationId: updateProfile
@@ -329,6 +345,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProfileDto'
+        '400':
+          description: Invalid profile data
   /.well-known/jwks.json:
     get:
       summary: JWKS public keys
@@ -340,3 +358,5 @@ paths:
             application/json:
               schema:
                 type: object
+        '400':
+          description: Bad request

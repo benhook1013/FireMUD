@@ -3,13 +3,14 @@ package net.firedevops.firemud.common.grpc;
 import io.grpc.*;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import java.util.Objects;
 
 /** Records gRPC call metrics using Micrometer. */
 public class MetricsInterceptor implements ServerInterceptor {
   private final MeterRegistry registry;
 
   public MetricsInterceptor(MeterRegistry registry) {
-    this.registry = registry;
+    this.registry = Objects.requireNonNull(registry);
   }
 
   @Override

@@ -7,8 +7,8 @@ import io.lettuce.core.resource.DefaultClientResources;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.Objects;
 import javax.sql.DataSource;
-import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -20,10 +20,14 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 @Configuration
 @EnableConfigurationProperties({PostgresProperties.class, RedisProperties.class})
-@RequiredArgsConstructor
 public class DatabaseAutoConfiguration {
   private final PostgresProperties postgres;
   private final RedisProperties redis;
+
+  public DatabaseAutoConfiguration(PostgresProperties postgres, RedisProperties redis) {
+    this.postgres = Objects.requireNonNull(postgres);
+    this.redis = Objects.requireNonNull(redis);
+  }
 
   @Bean
   public DataSource dataSource() {

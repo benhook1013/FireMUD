@@ -101,9 +101,12 @@ During gameplay, players form groups and communicate via the
 
 Operators monitor the game and enforce rules using the
 [Logging & Admin Service](./microservices/logging-admin-service/README.md).
-Logs and metrics flow into Elasticsearch and Prometheus as described in
-[Logging & Monitoring](./system-architecture-logging-monitoring.md). For usage examples see the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
-The service also exposes moderation tools such as bans or runtime feature toggles.
+Logs, metrics, and traces flow into **Elasticsearch**, **Prometheus**, and **Jaeger** as described in
+[Logging & Monitoring](./system-architecture-logging-monitoring.md) and
+[Tracing](./system-architecture-tracing.md).
+For usage examples see the
+[Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+The service also exposes moderation tools such as bans and runtime feature toggles.
 
 ---
 
@@ -180,8 +183,8 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 When issues occur, operators follow the
 [Operational Runbooks](./system-architecture-runbooks.md) to restore services.
-Database snapshots and Redis persistence are described in
-[Backup & Disaster Recovery](./system-architecture-backup-recovery.md).
+See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for
+database snapshots and Redis persistence.
 
 ```plaintext
 Admin → Runbooks → Kubernetes / Docker → Services Restored
@@ -225,3 +228,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [CI/CD Pipeline](./system-architecture-cicd.md)
 - [Testing Strategy](./system-architecture-testing.md)
 - [System Context Diagram](./system-context-diagram.md)
+- [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
+- [Tracing](./system-architecture-tracing.md)
+- [Operational Runbooks](./system-architecture-runbooks.md)
+- [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
