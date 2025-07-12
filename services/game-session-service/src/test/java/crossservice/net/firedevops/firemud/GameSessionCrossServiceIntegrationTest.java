@@ -3,7 +3,9 @@ package net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -17,7 +19,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
@@ -28,10 +29,30 @@ import org.testcontainers.utility.DockerImageName;
     classes = GameSessionCrossServiceIntegrationTest.TestApp.class)
 class GameSessionCrossServiceIntegrationTest {
 
-  @Container
-  static GenericContainer<?> gameLogicService =
+  private static GenericContainer<?> gameLogicService =
       new GenericContainer<>(DockerImageName.parse("ghcr.io/firedevops/game-logic-service:latest"))
           .withExposedPorts(8080);
+
+  private static boolean containerStarted;
+
+  @BeforeAll
+  static void startContainer() {
+    if (DockerClientFactory.instance().isDockerAvailable()) {
+      try {
+        gameLogicService.start();
+        containerStarted = true;
+      } catch (Exception e) {
+        containerStarted = false;
+      }
+    }
+  }
+
+  @AfterAll
+  static void stopContainer() {
+    if (containerStarted) {
+      gameLogicService.stop();
+    }
+  }
 
   @LocalServerPort private int port;
 
@@ -40,8 +61,8 @@ class GameSessionCrossServiceIntegrationTest {
   @Test
   void gameSessionRunsAlongsideGameLogicService() {
     Assumptions.assumeTrue(
-        DockerClientFactory.instance().isDockerAvailable(),
-        "Docker not available, skipping cross-service test");
+        DockerClientFactory.instance().isDockerAvailable() && containerStarted,
+        "Required container not available, skipping cross-service test");
     assertThat(gameLogicService.isRunning()).isTrue();
 
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
