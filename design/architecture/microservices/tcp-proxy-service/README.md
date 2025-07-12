@@ -148,6 +148,19 @@ Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
 
+### Cross-Service Integration Test
+
+The `src/test/java/crossservice` directory contains an integration test that
+launches this service alongside Spring Cloud Gateway with **Testcontainers**.
+Run it after the Gateway image is built:
+
+```bash
+./gradlew :tcp-proxy-service:test --tests "*CrossServiceIntegrationTest"
+```
+
+See [System Architecture Testing](../system-architecture-testing.md) for more
+information.
+
 ## Future Enhancements
 
 - Additional abuse heuristics and advanced command filtering.
