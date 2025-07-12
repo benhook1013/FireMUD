@@ -4,8 +4,8 @@ import io.grpc.stub.StreamObserver;
 import net.firedevops.firemud.account.v1.NotificationServiceGrpc;
 import net.firedevops.firemud.account.v1.SendNotificationRequest;
 import net.firedevops.firemud.account.v1.SendNotificationResponse;
-import net.firedevops.firemud.service.NotificationService;
 import net.firedevops.firemud.common.security.RequireAdminRole;
+import net.firedevops.firemud.service.NotificationService;
 import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService

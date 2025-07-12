@@ -3,7 +3,7 @@
 - [ ] **Develop Account Service**
   - [ ] Implement user registration and authentication (OAuth2, JWT)
   - [x] Implement session management and persistent logins
-  - [ ] Implement role-based access control (RBAC) for admins, moderators, and players
+  - [x] Implement role-based access control (RBAC) for admins, moderators, and players
   - [ ] Enable external account linking (Google, Discord, Steam)
   - [x] Implement profile system with achievements, game history, and social features
   - [x] Implement player data export & deletion (GDPR compliance)
@@ -69,8 +69,8 @@ participate in CI.
 
 ## 🔒 Authentication & Authorization
 
-- [ ] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [ ] Check `globalRoles` and `scopedRoles` where applicable
+- [x] Meta and admin services validate JWTs using helpers from `firemud-common`
+- [x] Check `globalRoles` and `scopedRoles` where applicable
 - [ ] Gameplay services rely on the Game Session Service for session validation
 
 ---
@@ -81,7 +81,7 @@ participate in CI.
 - [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [ ] Register with service discovery via helpers in `firemud-common`
 - [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [ ] Internal traffic communicates directly over gRPC (Gateway not involved)
+  - [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
 

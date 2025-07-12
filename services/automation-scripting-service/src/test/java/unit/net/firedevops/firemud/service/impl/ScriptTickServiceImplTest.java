@@ -3,13 +3,12 @@ package net.firedevops.firemud.service.impl;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
-import net.firedevops.firemud.service.tick.ScriptTickService;
 import net.firedevops.firemud.service.quota.ScriptQuotaService;
+import net.firedevops.firemud.service.tick.ScriptTickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
