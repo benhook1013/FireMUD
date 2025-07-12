@@ -8,7 +8,7 @@
   - [x] Implement profile system with achievements, game history, and social features
   - [x] Implement player data export & deletion (GDPR compliance)
   - [x] Expose JWKS endpoint for token verification
-  - [ ] Use saga orchestrator for account creation workflow
+  - [x] Use saga orchestrator for account creation workflow
   - [ ] Implement self-service account recovery
   - [x] Add optional 2FA for admin and moderator roles
 - [ ] **Develop Email & Notification System**
@@ -71,7 +71,7 @@ participate in CI.
 
 - [x] Meta and admin services validate JWTs using helpers from `firemud-common`
 - [x] Check `globalRoles` and `scopedRoles` where applicable
-- [ ] Gameplay services rely on the Game Session Service for session validation
+- [x] *(N/A - meta service)* Gameplay services rely on the Game Session Service for session validation
 
 ---
 
@@ -79,8 +79,8 @@ participate in CI.
 
 - [x] Use `firemud-common` protobuf types for shared messages
 - [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
-- [ ] Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] Register with service discovery via helpers in `firemud-common`
+- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
   - [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
@@ -97,7 +97,7 @@ participate in CI.
 ## 🔄 Saga Participation *(if used)*
 
 - [x] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
+- [x] Emit metrics and correlation IDs for compensation and retries
 - [x] Document saga participation in `design/README.md`
 
 ---
@@ -105,11 +105,11 @@ participate in CI.
 ## 🔑 Redis Integration *(if used)*
 
 - [x] Use Redis for transient gameplay state only
-- [ ] Access Redis through helpers in `firemud-common`
+- [x] Access Redis through helpers in `firemud-common`
 - [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [ ] Validate shard-local key usage and avoid per-service caching
+- [x] Validate shard-local key usage and avoid per-service caching
 - [x] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] *(N/A - not a tick participant)* implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
 
 ---
@@ -119,7 +119,7 @@ participate in CI.
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [x] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
-- [ ] Seed minimal test data for local workflows
+- [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [ ] *(When workflows span services)* add cross-service integration tests
 

@@ -34,6 +34,7 @@ import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.NotificationService;
+import net.firedevops.firemud.service.SagaRunner;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,6 +56,7 @@ public class AccountServiceImpl implements AccountService {
   private final LoggingAdminClient loggingAdminClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.service.session.SessionService sessionService;
+  private final SagaRunner sagaRunner;
 
   public AccountServiceImpl(
       AccountRepository accountRepository,
@@ -69,7 +71,8 @@ public class AccountServiceImpl implements AccountService {
       NotificationService notificationService,
       LoggingAdminClient loggingAdminClient,
       JwtUtil jwtUtil,
-      net.firedevops.firemud.service.session.SessionService sessionService) {
+      net.firedevops.firemud.service.session.SessionService sessionService,
+      SagaRunner sagaRunner) {
     this.accountRepository = accountRepository;
     this.accountMapper = accountMapper;
     this.profileRepository = profileRepository;
@@ -83,6 +86,7 @@ public class AccountServiceImpl implements AccountService {
     this.loggingAdminClient = loggingAdminClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
+    this.sagaRunner = sagaRunner;
   }
 
   @Override
@@ -116,9 +120,9 @@ public class AccountServiceImpl implements AccountService {
         .step(
             "logCreation",
             () -> loggingAdminClient.logAccountCreation(account.getTenantId(), account.getId()));
-
+    var saga = builder.build();
     try {
-      builder.run();
+      sagaRunner.run(saga);
     } catch (SagaException e) {
       logger.warn("Account creation saga failed", e);
       throw new IllegalStateException("Account creation failed", e);

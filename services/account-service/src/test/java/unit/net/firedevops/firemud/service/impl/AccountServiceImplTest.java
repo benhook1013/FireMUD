@@ -24,6 +24,7 @@ import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.NotificationService;
+import net.firedevops.firemud.service.SagaRunner;
 import net.firedevops.firemud.service.session.SessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,7 @@ class AccountServiceImplTest {
   @Mock private NotificationService notificationService;
   @Mock private LoggingAdminClient loggingAdminClient;
   @Mock private SessionService sessionService;
+  @Mock private SagaRunner sagaRunner;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private SubscriptionRepository subscriptionRepository;
   @Mock private ExternalAccountRepository externalAccountRepository;
@@ -51,7 +53,7 @@ class AccountServiceImplTest {
   private AccountServiceImpl service;
 
   @BeforeEach
-  void setup() {
+  void setup() throws net.firedevops.firemud.common.saga.SagaException {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
@@ -69,11 +71,19 @@ class AccountServiceImplTest {
             notificationService,
             loggingAdminClient,
             jwtUtil,
-            sessionService);
+            sessionService,
+            sagaRunner);
+    org.mockito.Mockito.doAnswer(
+            inv -> {
+              ((net.firedevops.firemud.common.saga.Saga) inv.getArgument(0)).run();
+              return null;
+            })
+        .when(sagaRunner)
+        .run(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
-  void createAccountPersistsEntity() {
+  void createAccountPersistsEntity() throws net.firedevops.firemud.common.saga.SagaException {
     CreateAccountRequest request =
         new CreateAccountRequest(1L, "demo", "demo@example.com", "password");
     Account saved = new Account();
@@ -83,6 +93,7 @@ class AccountServiceImplTest {
     AccountDto dto = service.createAccount(request);
 
     assertEquals(1L, dto.id());
+    org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
   }
 
   @Test

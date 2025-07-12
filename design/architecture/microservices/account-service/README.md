@@ -104,6 +104,7 @@ This service follows the standard scheme described in
 It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection)
 variables.
+TLS certificates are supplied via `FIREMUD_GRPC_CERT_CHAIN`, `FIREMUD_GRPC_PRIVATE_KEY`, and `FIREMUD_GRPC_CA_CERT`. Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
 ## Proto Files
 
@@ -120,6 +121,7 @@ The gRPC schemas for this service live in
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [User Journeys – Sign Up](../user-journeys.md#1-sign-up)
 - [User Journeys](../user-journeys.md#10-purchases-and-subscriptions) – payment and subscription workflow.
+- [User Journeys – Account Data Export & Deletion](../user-journeys.md#17-account-data-export--deletion)
 - [Redis Architecture](../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)

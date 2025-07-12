@@ -218,6 +218,19 @@ Before launch or after major updates, creators invite testers to staged environm
 GitHub → CI Workflow → Container Registry → Kubernetes
 ```
 
+## 17. Account Data Export & Deletion
+
+Players may request a full data export or permanently delete an account through
+the [Account Service](./microservices/account-service/README.md). Exported data
+is provided in JSON format for portability. Deletions require confirmation and
+are recorded by the
+[Logging & Admin Service](./microservices/logging-admin-service/README.md) for
+audit purposes.
+
+```plaintext
+Player → Account Service → Logging & Admin Service (audit)
+```
+
 ---
 
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
