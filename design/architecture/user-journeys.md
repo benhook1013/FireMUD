@@ -32,7 +32,7 @@ Account Service (user) → Game Design Service (new game)
 
 ---
 
--## 3. World and Entity Design
+## 3. World and Entity Design
 
 Creators refine the world and its inhabitants using several services:
 
