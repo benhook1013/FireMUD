@@ -5,7 +5,16 @@ import java.util.List;
 
 /** Fluent builder for defining saga workflows. */
 public class SagaBuilder {
+  private final String name;
   private final List<SagaStep> steps = new ArrayList<>();
+
+  public SagaBuilder() {
+    this("default");
+  }
+
+  public SagaBuilder(String name) {
+    this.name = name;
+  }
 
   public SagaBuilder step(String name, SagaAction action) {
     steps.add(new SagaStep(name, action, null));
@@ -18,7 +27,7 @@ public class SagaBuilder {
   }
 
   public Saga build() {
-    return new Saga(steps);
+    return new Saga(name, steps);
   }
 
   /** Convenience method to build and immediately run the saga. */

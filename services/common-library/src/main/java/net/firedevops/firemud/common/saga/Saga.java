@@ -9,10 +9,20 @@ import java.util.List;
  * are compensated in reverse order.
  */
 public class Saga {
+  private final String name;
   private final List<SagaStep> steps;
 
-  Saga(List<SagaStep> steps) {
+  Saga(String name, List<SagaStep> steps) {
+    this.name = name;
     this.steps = new ArrayList<>(steps);
+  }
+
+  public String getName() {
+    return name;
+  }
+
+  public List<SagaStep> getSteps() {
+    return Collections.unmodifiableList(steps);
   }
 
   /** Executes the saga. */

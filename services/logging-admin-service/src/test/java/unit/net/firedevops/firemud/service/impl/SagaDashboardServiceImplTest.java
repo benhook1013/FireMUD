@@ -4,8 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import net.firedevops.firemud.common.saga.persistence.SagaInstance;
 import net.firedevops.firemud.dto.SagaInstanceDto;
-import net.firedevops.firemud.entity.SagaInstance;
 import net.firedevops.firemud.mapper.SagaMapper;
 import net.firedevops.firemud.metrics.SagaMetrics;
 import net.firedevops.firemud.repository.SagaInstanceRepository;

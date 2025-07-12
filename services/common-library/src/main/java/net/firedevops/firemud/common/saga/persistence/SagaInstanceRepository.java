@@ -1,6 +1,5 @@
-package net.firedevops.firemud.repository;
+package net.firedevops.firemud.common.saga.persistence;
 
-import net.firedevops.firemud.common.saga.persistence.SagaInstance;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 

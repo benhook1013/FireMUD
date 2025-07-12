@@ -60,7 +60,7 @@ public class GuildServiceImpl implements GuildService {
     guild.setCreatedAt(Instant.now());
 
     var saga =
-        new SagaBuilder()
+        new SagaBuilder("createGuild")
             .step(
                 "persistGuild",
                 () -> guildRepository.save(guild),

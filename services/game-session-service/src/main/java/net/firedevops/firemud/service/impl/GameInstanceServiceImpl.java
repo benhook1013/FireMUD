@@ -94,7 +94,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         .increment();
 
     if (gameLogicClient != null && sagaRunner != null) {
-      var saga = new SagaBuilder().step("notifyGameLogic", () -> gameLogicClient.ping()).build();
+      var saga =
+          new SagaBuilder("startSession")
+              .step("notifyGameLogic", () -> gameLogicClient.ping())
+              .build();
       try {
         sagaRunner.run(saga);
       } catch (SagaException e) {

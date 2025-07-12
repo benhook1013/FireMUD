@@ -18,6 +18,7 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-api:1.38.0")
     implementation("org.mapstruct:mapstruct:1.6.3")
     implementation("org.springframework.boot:spring-boot-starter-data-redis:3.5.3")
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-jdbc:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-validation:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-web:3.5.3")

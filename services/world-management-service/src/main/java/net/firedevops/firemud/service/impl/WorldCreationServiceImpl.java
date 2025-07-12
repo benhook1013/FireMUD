@@ -52,7 +52,7 @@ public class WorldCreationServiceImpl implements WorldCreationService {
     ensureMetrics();
     logger.info("Creating world for tenant {} from version {}", tenantId, versionId);
     sagaStartedCounter.increment();
-    SagaBuilder builder = new SagaBuilder();
+    SagaBuilder builder = new SagaBuilder("createWorld");
     builder
         .step(
             "copyDesign",
