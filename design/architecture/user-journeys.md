@@ -38,6 +38,7 @@ Creators refine the world and its inhabitants using several services:
 - **Game Design Service** – Versioned templates, ability editors, and runtime flag definitions.
 - **World Management Service** – Maps, regions, and procedural generation rules ([see procedural generation](./system-architecture-procedural-generation.md)).
 - **Entity Management Service** – Player characters, NPCs, items, and inventory.
+- **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 
 ```plaintext
@@ -74,7 +75,7 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 Players connect through the networking layer:
 
-1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
+1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for the dual-client flow.
 2. **Session Management** – The Game Session Service retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
 3. **Authentication** – Login credentials are validated by the Game Session Service.
    See [Authentication & Authorization](./system-architecture-authentication.md)
@@ -84,7 +85,7 @@ Players connect through the networking layer:
 Client → Proxy/Gateway → Game Session Service → Game Logic Service / Entity & World services
 ```
 
-The Game Session Service handles login, session recovery, and active gameplay. Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
+The Game Session Service handles login, session recovery, and active gameplay. Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
 
 ---
 
@@ -233,6 +234,10 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Performance Optimization Guidelines](./performance-optimization.md)
 - [CI/CD Pipeline](./system-architecture-cicd.md)
 - [Testing Strategy](./system-architecture-testing.md)
+- [Multi-Tenancy](./system-architecture-multi-tenancy.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
+- [MCP Support](./system-architecture-mcp-support.md)
 - [System Context Diagram](./system-context-diagram.md)
 - [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
 - [Tracing](./system-architecture-tracing.md)
