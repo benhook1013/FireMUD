@@ -3,4 +3,8 @@
     <Match>
         <Source name=".*[\\/]build[\\/]generated[\\/].*"/>
     </Match>
+    <!-- Exclude protobuf generated v1 classes -->
+    <Match>
+        <Class name="~.*\\.v1\\..*" />
+    </Match>
 </FindBugsFilter>
