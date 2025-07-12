@@ -208,6 +208,8 @@ paths:
       responses:
         '200':
           description: Request accepted
+        '400':
+          description: Invalid request
   /auth/verify-email:
     post:
       summary: Verify email token
@@ -221,6 +223,8 @@ paths:
       responses:
         '200':
           description: Email verified
+        '400':
+          description: Invalid verification token
   /accounts:
     post:
       summary: Create a new account
@@ -279,6 +283,8 @@ paths:
       responses:
         '200':
           description: Linked
+        '400':
+          description: Invalid account or external data
   /accounts/{accountId}:
     delete:
       summary: Delete account

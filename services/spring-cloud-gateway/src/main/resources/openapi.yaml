@@ -42,6 +42,8 @@ paths:
                   data:
                     type: string
                     example: pong
+        '400':
+          description: Bad request
   /routes:
     post:
       summary: Add or update a gateway route
@@ -62,6 +64,8 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GatewayRoute'
+        '400':
+          description: Invalid route configuration
   /routes/{routeId}:
     delete:
       summary: Remove a gateway route
@@ -83,3 +87,5 @@ paths:
                   data:
                     type: string
                     example: removed
+        '400':
+          description: Invalid route ID

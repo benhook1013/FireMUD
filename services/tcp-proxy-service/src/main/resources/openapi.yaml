@@ -25,3 +25,5 @@ paths:
                   data:
                     type: string
                     example: pong
+        '400':
+          description: Bad request

@@ -102,6 +102,8 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GameInstanceDto'
+        '400':
+          description: Invalid session ID
   /sessions/{sessionId}/restart:
     post:
       summary: Restart a stopped session
@@ -122,3 +124,5 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GameInstanceDto'
+        '400':
+          description: Invalid session ID

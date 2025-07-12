@@ -106,6 +106,23 @@ jobs:
           npm run lint
           npm run format -- -c
 
+      - name: Cache Chrome .deb
+        id: cache-chrome
+        uses: actions/cache@v3
+        with:
+          path: ./google-chrome-stable_current_amd64.deb
+          key: chrome-deb-v1
+
+      - name: Install wget & Download Chrome .deb (if not cached)
+        if: steps.cache-chrome.outputs.cache-hit != 'true'
+        run: |
+          sudo apt update
+          sudo apt install -y wget
+          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+
+      - name: Install Chrome
+        run: sudo apt install -y ./google-chrome-stable_current_amd64.deb
+
       - name: ♿ Run Accessibility Audit
         run: |
           cd web-client
