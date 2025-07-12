@@ -9,4 +9,5 @@ public record AccountDto(
     @NotNull Long tenantId,
     @NotNull @Size(max = 50) String username,
     @NotNull @Email @Size(max = 100) String email,
-    @NotNull @Size(max = 20) String role) {}
+    @NotNull @Size(max = 20) String role,
+    boolean emailVerified) {}

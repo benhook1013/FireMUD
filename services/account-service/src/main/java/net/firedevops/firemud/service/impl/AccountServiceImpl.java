@@ -19,11 +19,14 @@ import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.dto.ProfileDto;
 import net.firedevops.firemud.dto.UpdateProfileRequest;
+import net.firedevops.firemud.dto.VerifyEmailRequest;
 import net.firedevops.firemud.entity.Account;
+import net.firedevops.firemud.entity.EmailVerificationToken;
 import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.repository.ExternalAccountRepository;
 import net.firedevops.firemud.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.repository.PaymentTransactionRepository;
@@ -47,6 +50,7 @@ public class AccountServiceImpl implements AccountService {
   private final SubscriptionRepository subscriptionRepository;
   private final ExternalAccountRepository externalAccountRepository;
   private final PasswordResetTokenRepository passwordResetTokenRepository;
+  private final EmailVerificationTokenRepository emailVerificationTokenRepository;
   private final NotificationService notificationService;
   private final LoggingAdminClient loggingAdminClient;
   private final JwtUtil jwtUtil;
@@ -61,6 +65,7 @@ public class AccountServiceImpl implements AccountService {
       SubscriptionRepository subscriptionRepository,
       ExternalAccountRepository externalAccountRepository,
       PasswordResetTokenRepository passwordResetTokenRepository,
+      EmailVerificationTokenRepository emailVerificationTokenRepository,
       NotificationService notificationService,
       LoggingAdminClient loggingAdminClient,
       JwtUtil jwtUtil,
@@ -73,6 +78,7 @@ public class AccountServiceImpl implements AccountService {
     this.subscriptionRepository = subscriptionRepository;
     this.externalAccountRepository = externalAccountRepository;
     this.passwordResetTokenRepository = passwordResetTokenRepository;
+    this.emailVerificationTokenRepository = emailVerificationTokenRepository;
     this.notificationService = notificationService;
     this.loggingAdminClient = loggingAdminClient;
     this.jwtUtil = jwtUtil;
@@ -241,6 +247,41 @@ public class AccountServiceImpl implements AccountService {
     account.setPasswordHash(hashPassword(request.newPassword()));
     accountRepository.save(account);
     passwordResetTokenRepository.delete(token);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.request_email_verification")
+  public void requestEmailVerification(Long tenantId, Long accountId) {
+    Account account =
+        accountRepository
+            .findById(accountId)
+            .filter(a -> a.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    EmailVerificationToken token = new EmailVerificationToken();
+    token.setAccount(account);
+    token.setTenantId(tenantId);
+    token.setToken(java.util.UUID.randomUUID().toString());
+    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(24));
+    emailVerificationTokenRepository.save(token);
+    notificationService.sendNotification(tenantId, accountId, "Email verification requested");
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.verify_email")
+  public void verifyEmail(VerifyEmailRequest request) {
+    EmailVerificationToken token =
+        emailVerificationTokenRepository
+            .findByTokenAndTenantId(request.token(), request.tenantId())
+            .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
+    if (token.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+      throw new IllegalArgumentException("Token expired");
+    }
+    Account account = token.getAccount();
+    account.setEmailVerified(true);
+    accountRepository.save(account);
+    emailVerificationTokenRepository.delete(token);
   }
 
   @Override

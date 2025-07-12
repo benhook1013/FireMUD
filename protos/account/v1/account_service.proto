@@ -18,6 +18,8 @@ service AccountService {
   rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
   rpc CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse);
   rpc LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse);
+  rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse);
+  rpc VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse);
 }
 
 message PingRequest {}
@@ -122,6 +124,26 @@ message LinkExternalAccountRequest {
 }
 
 message LinkExternalAccountResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RequestEmailVerificationRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+}
+
+message RequestEmailVerificationResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message VerifyEmailRequest {
+  string tenant_id = 1;
+  string token = 2;
+}
+
+message VerifyEmailResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }

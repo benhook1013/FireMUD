@@ -3,6 +3,7 @@ package net.firedevops.firemud.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -12,10 +13,12 @@ import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.entity.Account;
+import net.firedevops.firemud.entity.EmailVerificationToken;
 import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.repository.ExternalAccountRepository;
 import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
@@ -39,6 +42,8 @@ class AccountServiceImplTest {
   @Mock private SubscriptionRepository subscriptionRepository;
   @Mock private ExternalAccountRepository externalAccountRepository;
 
+  @Mock private EmailVerificationTokenRepository emailVerificationTokenRepository;
+
   @Mock
   private net.firedevops.firemud.repository.PasswordResetTokenRepository
       passwordResetTokenRepository;
@@ -60,6 +65,7 @@ class AccountServiceImplTest {
             subscriptionRepository,
             externalAccountRepository,
             passwordResetTokenRepository,
+            emailVerificationTokenRepository,
             notificationService,
             loggingAdminClient,
             jwtUtil,
@@ -167,6 +173,38 @@ class AccountServiceImplTest {
         org.mockito.ArgumentCaptor.forClass(net.firedevops.firemud.entity.ExternalAccount.class);
     org.mockito.Mockito.verify(externalAccountRepository).save(captor.capture());
     assertEquals("abc", captor.getValue().getExternalId());
+  }
+
+  @Test
+  void requestEmailVerificationCreatesToken() {
+    Account account = new Account();
+    account.setId(6L);
+    account.setTenantId(1L);
+    when(accountRepository.findById(6L)).thenReturn(Optional.of(account));
+
+    service.requestEmailVerification(1L, 6L);
+
+    org.mockito.Mockito.verify(emailVerificationTokenRepository)
+        .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(notificationService)
+        .sendNotification(1L, 6L, "Email verification requested");
+  }
+
+  @Test
+  void verifyEmailSetsFlag() {
+    Account account = new Account();
+    account.setTenantId(1L);
+    EmailVerificationToken token = new EmailVerificationToken();
+    token.setAccount(account);
+    token.setTenantId(1L);
+    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+    when(emailVerificationTokenRepository.findByTokenAndTenantId("tok", 1L))
+        .thenReturn(Optional.of(token));
+
+    service.verifyEmail(new net.firedevops.firemud.dto.VerifyEmailRequest(1L, "tok"));
+
+    assertTrue(account.isEmailVerified());
+    org.mockito.Mockito.verify(emailVerificationTokenRepository).delete(token);
   }
 
   private static String hash(String password) {

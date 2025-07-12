@@ -309,4 +309,62 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onCompleted();
     }
   }
+
+  @Override
+  public void requestEmailVerification(
+      net.firedevops.firemud.account.v1.RequestEmailVerificationRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse>
+          responseObserver) {
+    try {
+      accountService.requestEmailVerification(
+          Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
+      var response =
+          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
+              .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      var response =
+          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  public void verifyEmail(
+      net.firedevops.firemud.account.v1.VerifyEmailRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse> responseObserver) {
+    try {
+      accountService.verifyEmail(
+          new net.firedevops.firemud.dto.VerifyEmailRequest(
+              Long.valueOf(request.getTenantId()), request.getToken()));
+      var response =
+          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
+              .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      var response =
+          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
 }

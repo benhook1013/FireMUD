@@ -160,6 +160,8 @@ Admin and moderator accounts can enable a TOTP secret for additional protection.
 - `DELETE /accounts/{accountId}` – remove an account permanently.
 - `POST /auth/login` – authenticate and establish a session. The JWT returned is for internal service calls.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
+- `POST /auth/request-email-verification` – send a verification email for the account.
+- `POST /auth/verify-email` – confirm the verification token.
 
 Example account creation request:
 
@@ -206,6 +208,8 @@ Example login response:
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`account_service.proto`](../../../protos/account/v1/account_service.proto).
 - `CreateAccount(CreateAccountRequest) returns (CreateAccountResponse)` – registers a new user.
 - `SendNotification(SendNotificationRequest) returns (SendNotificationResponse)` – deliver account notifications asynchronously.
+- `RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse)` – send a verification email for the account.
+- `VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse)` – confirm the email token.
 
 Call the gRPC method with:
 

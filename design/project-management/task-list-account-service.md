@@ -12,7 +12,7 @@
   - [ ] Implement self-service account recovery
   - [x] Add optional 2FA for admin and moderator roles
 - [ ] **Develop Email & Notification System**
-  - [ ] Implement email verification & password resets
+  - [x] Implement email verification & password resets
   - [ ] Implement in-game notification system for events & messages
   - [ ] Configure SMTP provider and test templates
   - [x] Document email and notification design in `account-service/design/README.md`

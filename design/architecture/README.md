@@ -10,7 +10,7 @@ The architecture section describes the platform infrastructure and each microser
 
 ## Directories & Responsibilities
 
- - [**infrastructure/**](./infrastructure/) – Deployment environments and secrets management.
+- [**infrastructure/**](./infrastructure/) – Deployment environments and secrets management.
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
 - [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
 - [**repository-structure.md**](./repository-structure.md) – Layout of Gradle modules and repository files.
