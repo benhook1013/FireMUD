@@ -1,4 +1,4 @@
-package net.firedevops.firemud.entity;
+package net.firedevops.firemud.common.saga.persistence;
 
 import jakarta.persistence.*;
 import java.time.Instant;
@@ -6,23 +6,17 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "saga_step")
-public class SagaStep {
+@Table(name = "saga_instance")
+public class SagaInstance {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Column(name = "instance_id", nullable = false)
-  private Long instanceId;
-
-  @Column(nullable = false, length = 100)
-  private String name;
+  @Column(name = "saga_name", nullable = false, length = 100)
+  private String sagaName;
 
   @Column(nullable = false, length = 20)
-  private String status;
-
-  @Column(nullable = false)
-  private int attempt;
+  private String state;
 
   @Column(name = "created_at", nullable = false)
   private Instant createdAt;

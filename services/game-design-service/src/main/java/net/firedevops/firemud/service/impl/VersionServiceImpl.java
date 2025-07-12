@@ -44,7 +44,7 @@ public class VersionServiceImpl implements VersionService {
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(gameId));
 
-    SagaBuilder builder = new SagaBuilder();
+    SagaBuilder builder = new SagaBuilder("publishVersion");
     builder.step(
         "persistVersion",
         () -> {
@@ -80,7 +80,7 @@ public class VersionServiceImpl implements VersionService {
     version.setBaseVersionId(baseVersionId);
     version.setScriptOnly(true);
 
-    SagaBuilder builder = new SagaBuilder();
+    SagaBuilder builder = new SagaBuilder("publishScriptPatch");
     builder.step(
         "persistVersion",
         () -> {

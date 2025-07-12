@@ -24,7 +24,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   public ScriptDefinitionDto updateScript(ScriptDefinitionDto dto) throws SagaException {
     ScriptDefinition entity = mapper.toEntity(dto);
     var saga =
-        new SagaBuilder()
+        new SagaBuilder("updateScript")
             .step("persistScript", () -> repository.save(entity), () -> repository.delete(entity))
             .build();
     sagaRunner.run(saga);

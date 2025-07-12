@@ -111,7 +111,7 @@ public class AccountServiceImpl implements AccountService {
     Profile profile = new Profile();
     profile.setTenantId(request.tenantId());
 
-    SagaBuilder builder = new SagaBuilder();
+    SagaBuilder builder = new SagaBuilder("accountCreation");
     builder
         .step(
             "persistAccount",
