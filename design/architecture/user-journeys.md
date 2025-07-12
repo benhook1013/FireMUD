@@ -36,9 +36,9 @@ Account Service (user) → Game Design Service (new game)
 
 Creators refine the world and its inhabitants using several services:
 
-- **[Game Design Service](./microservices/game-design-service/README.md)** – Versioned templates, ability editors, and runtime flag definitions.
-- **[World Management Service](./microservices/world-management-service/README.md)** – Maps, regions, and procedural generation rules ([see procedural generation](./system-architecture-procedural-generation.md)).
-- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Player characters, NPCs, items, and inventory.
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors, and runtime flag definitions.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data. Scheduled world events notify other services when the environment changes.
+- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 
@@ -76,7 +76,7 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 Players connect through the networking layer:
 
-1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for the dual-client flow.
+1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details.
 2. **Session Management** – The [Game Session Service](./microservices/game-session-service/README.md) retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
 3. **Authentication** – Login credentials are validated by the [Game Session Service](./microservices/game-session-service/README.md).
    See [Authentication & Authorization](./system-architecture-authentication.md)
@@ -264,3 +264,5 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Tracing](./system-architecture-tracing.md)
 - [Operational Runbooks](./system-architecture-runbooks.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
+- [Gateway Architecture](./system-architecture-gateway.md)
+- [Security Architecture](./system-architecture-security.md)
