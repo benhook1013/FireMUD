@@ -10,8 +10,8 @@ import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.dto.ScriptDefinitionDto;
-import net.firedevops.firemud.service.ScriptDefinitionService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.ScriptDefinitionService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
@@ -21,7 +21,8 @@ public class AutomationScriptingGrpcService
   private final PingService pingService;
   private final ScriptDefinitionService scriptService;
 
-  public AutomationScriptingGrpcService(PingService pingService, ScriptDefinitionService scriptService) {
+  public AutomationScriptingGrpcService(
+      PingService pingService, ScriptDefinitionService scriptService) {
     this.pingService = pingService;
     this.scriptService = scriptService;
   }

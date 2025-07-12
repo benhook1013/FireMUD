@@ -3,7 +3,7 @@
 Design documentation lives at:
 [📄 Automation Scripting Service Design](../../design/architecture/microservices/automation-scripting-service/README.md)
 
-### Script Upload Workflow
+## Script Upload Workflow
 
 Scripts are uploaded via the `UpdateScript` gRPC method. The operation runs as a
 Saga using `SagaBuilder` and `SagaRunner` from the shared library so that
