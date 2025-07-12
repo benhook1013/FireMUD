@@ -38,5 +38,11 @@
 }
 
 .read-the-docs {
-  color: #888;
+  color: #333;
+}
+
+@media (prefers-color-scheme: dark) {
+  .read-the-docs {
+    color: #ccc;
+  }
 }
