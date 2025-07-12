@@ -4,12 +4,17 @@ These notes summarize typical optimizations applied across FireMUD services.
 
 ## Database Queries
 
-- Index common search fields such as `tenant_id` and foreign keys. Migrations in
-  each service create the needed indexes.
+- Index common search fields such as `tenant_id` and foreign keys. Several
+  services add indexes in Flyway migrations (for example the saga tables and game
+  asset tables). Additional indexes should be added where missing.
 - Avoid N+1 queries using JPA entity graphs or join fetches. The Entity
   Management service uses `@EntityGraph` for inventory lookups.
 - Prefer pagination for large result sets. **TODO:** current endpoints generally
   return full lists.
+
+- Use Spring Cache backed by Redis for expensive queries. The Entity Management
+  service caches character inventory graphs and the World Management service
+  caches hot rooms with TTL-based eviction.
 
 ## Network Traffic
 
@@ -19,6 +24,9 @@ These notes summarize typical optimizations applied across FireMUD services.
   service configuration.
 - The Gateway should apply connection pooling and cache static assets. There is
   no explicit configuration yet.
+- gRPC and REST endpoints are instrumented with Micrometer metrics and
+  OpenTelemetry tracing using shared interceptors to monitor latency and error
+  rates.
 - Redis caches common lookups to reduce database load. The World Management and
   Social Groups services store hot rooms and recent chat messages in Redis with
   metrics (`room_cache_hits_total`, `room_cache_misses_total`,
