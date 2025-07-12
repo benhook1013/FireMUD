@@ -32,6 +32,7 @@ Creators refine the world and its inhabitants using several services:
 - **Game Design Service** – Versioned templates, ability editors, and runtime flag definitions.
 - **World Management Service** – Maps, regions, and procedural generation rules.
 - **Entity Management Service** – Player characters, NPCs, items, and inventory.
+- [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 
 ```plaintext
 Game Design ↔ World Management ↔ Entity Management
@@ -101,8 +102,8 @@ During gameplay, players form groups and communicate via the
 Operators monitor the game and enforce rules using the
 [Logging & Admin Service](./microservices/logging-admin-service/README.md).
 Logs and metrics flow into Elasticsearch and Prometheus as described in
-[Logging & Monitoring](./system-architecture-logging-monitoring.md). The service
-also exposes moderation tools such as bans or runtime feature toggles.
+[Logging & Monitoring](./system-architecture-logging-monitoring.md). For usage examples see the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+The service also exposes moderation tools such as bans or runtime feature toggles.
 
 ---
 
@@ -115,6 +116,8 @@ also exposes moderation tools such as bans or runtime feature toggles.
 4. **Restart Game Instance** – Administrators instruct the Game Session Service
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
+
+4. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
@@ -186,6 +189,18 @@ Admin → Runbooks → Kubernetes / Docker → Services Restored
 
 ---
 
+## 14. Branding and Customization
+
+Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. See [Game Customization Options](./game-customization-options.md) for details.
+
+---
+
+## 15. Playtesting & Analytics
+
+Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+
+---
+
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
 
 ## 📚 Related Documentation
@@ -195,3 +210,6 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Microservices Overview](./microservices/README.md)
 - [Game Creator Guide](../user-guides/game-creator-guide.md)
 - [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md)
+- [Game Customization Options](./game-customization-options.md)
+- [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
+- [Performance Optimization Guidelines](./performance-optimization.md)
