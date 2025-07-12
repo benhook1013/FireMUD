@@ -13,7 +13,6 @@ grpc:
 
 firemud:
   auth:
-    jwt-secret: changeit-changeit-changeit-changeit
     jwt-expiration-ms: 3600000
 
 management:
