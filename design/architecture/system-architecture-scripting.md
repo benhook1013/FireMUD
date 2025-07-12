@@ -33,6 +33,7 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 
 - Script definitions are stored in the **Game Design Service** and versioned alongside other game assets.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
+- Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly.
 - Previous versions remain available for rollback or auditing.
 
 ## 🛡️ Fairness & Abuse Prevention

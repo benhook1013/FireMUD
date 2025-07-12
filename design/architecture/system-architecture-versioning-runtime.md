@@ -17,6 +17,25 @@ The **Game Design Service** stores the authoritative game configuration (world l
 
 Published versions are immutable; further changes require publishing a new `version_id`.
 
+### Script-Only Patch Versions
+
+Minor fixes to NPC behavior or quest logic often only touch automation scripts.
+To avoid a full world restart, the Game Design Service can publish a **script-only patch version**.
+These records include a `baseVersionId` pointing to the immutable data version
+and a `scriptPatchVersion` value such as `v42-script.3`:
+
+```json
+{
+  "isScriptOnly": true,
+  "baseVersionId": "v42",
+  "versionId": "v42-script.3"
+}
+```
+
+Script-only versions appear in version history and audit logs but do not trigger
+a data copy or world restart. Runtime services reload the affected scripts in
+memory and continue using the underlying `baseVersionId` for all other assets.
+
 ## 🚀 Version Activation & Rollback
 
 The **Game Session Service** controls which published version is active for each live game instance. See the [User Journeys](./user-journeys.md#5-publish-and-start-a-game-instance) document for the high level flow.

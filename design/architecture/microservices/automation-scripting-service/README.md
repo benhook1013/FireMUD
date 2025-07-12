@@ -24,6 +24,9 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - AI computations are optimized for large worlds using tick-based batching.
 - Script definitions are versioned and can be hot reloaded without downtime as
   described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
+- The service listens for a `NotifyScriptVersionUpdate` event and reloads the
+  specified scripts in memory, validating compatibility before updating the
+  runtime registry.
 - Uploading or replacing scripts via the `UpdateScript` gRPC method is handled as a Saga workflow so that failures
     can be rolled back. The service uses the shared `SagaBuilder` and
     `SagaRunner` helpers to persist the script and emit `sagas.active` metrics
@@ -77,6 +80,8 @@ random when the Game Session Service requests a PvE interaction.
 - `UpdateScript` – uploads or replaces a script definition for later use.
 - `GetScriptStatus` – queries whether a script is queued or running for a given
   entity.
+- `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version`
+  is available; the service reloads affected scripts and updates its registry.
 
 ## Faction & Reputation System
 
