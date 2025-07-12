@@ -51,4 +51,32 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
   }
+
+  @Test
+  void requestEmailVerificationReturnsSuccess() throws Exception {
+    net.firedevops.firemud.dto.AccountRefRequest req =
+        new net.firedevops.firemud.dto.AccountRefRequest(1L, 2L);
+
+    mockMvc
+        .perform(
+            post("/auth/request-email-verification")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void verifyEmailReturnsSuccess() throws Exception {
+    net.firedevops.firemud.dto.VerifyEmailRequest req =
+        new net.firedevops.firemud.dto.VerifyEmailRequest(1L, "tok");
+
+    mockMvc
+        .perform(
+            post("/auth/verify-email")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
 }

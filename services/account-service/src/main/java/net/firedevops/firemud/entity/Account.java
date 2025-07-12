@@ -28,4 +28,7 @@ public class Account {
 
   @Column(name = "two_factor_secret", length = 64)
   private String twoFactorSecret;
+
+  @Column(name = "email_verified", nullable = false)
+  private boolean emailVerified = false;
 }

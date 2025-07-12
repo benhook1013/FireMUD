@@ -111,6 +111,22 @@ components:
         externalId:
           type: string
       required: [tenantId, provider, externalId]
+    AccountRefRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        accountId:
+          type: integer
+      required: [tenantId, accountId]
+    VerifyEmailRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        token:
+          type: string
+      required: [tenantId, token]
 paths:
   /ping:
     get:
@@ -179,6 +195,32 @@ paths:
           description: Password updated
         '400':
           description: Invalid token
+  /auth/request-email-verification:
+    post:
+      summary: Request email verification
+      operationId: requestEmailVerification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountRefRequest'
+      responses:
+        '200':
+          description: Request accepted
+  /auth/verify-email:
+    post:
+      summary: Verify email token
+      operationId: verifyEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '200':
+          description: Email verified
   /accounts:
     post:
       summary: Create a new account

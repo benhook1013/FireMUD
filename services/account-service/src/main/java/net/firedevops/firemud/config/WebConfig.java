@@ -24,6 +24,8 @@ public class WebConfig implements WebMvcConfigurer {
             "/auth/login",
             "/auth/request-password-reset",
             "/auth/complete-password-reset",
+            "/auth/request-email-verification",
+            "/auth/verify-email",
             "/accounts",
             "/ping",
             "/.well-known/**");
