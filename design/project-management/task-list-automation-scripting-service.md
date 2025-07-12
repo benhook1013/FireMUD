@@ -92,7 +92,7 @@ participate in CI.
 - [x] Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
 - [x] Validate shard-local key usage and avoid per-service caching
 - [x] Emit metrics for Redis connectivity and commands
-- [ ] *(If participating in ticks)* implement locking and staging per the Tick System docs
+- [x] *(If participating in ticks)* implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
 
 ---

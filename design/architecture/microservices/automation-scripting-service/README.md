@@ -66,6 +66,9 @@ random when the Game Session Service requests a PvE interaction.
 - Events from the Game Session Service trigger script execution via gRPC.
 - The sandboxed engine limits CPU time and memory for each script to prevent
   runaway behavior.
+- Tick execution uses `ScriptTickService` to stage, commit, and roll back events
+  in Redis. Locks `tick:lock:{tenantId}:{scriptId}` ensure only one tick runs at
+  a time. See [Tick System and Runtime Design](../system-architecture-ticks.md).
 
 ### gRPC APIs
 
