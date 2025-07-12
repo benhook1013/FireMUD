@@ -1,7 +1,7 @@
 # Account Service Task List
 
 - [ ] **Develop Account Service**
-  - [ ] Implement user registration and authentication (OAuth2, JWT)
+  - [x] Implement user registration and authentication (OAuth2, JWT)
   - [x] Implement session management and persistent logins
   - [x] Implement role-based access control (RBAC) for admins, moderators, and players
   - [x] Enable external account linking (Google, Discord, Steam)
@@ -13,12 +13,12 @@
   - [x] Add optional 2FA for admin and moderator roles
 - [ ] **Develop Email & Notification System**
   - [x] Implement email verification & password resets
-  - [ ] Implement in-game notification system for events & messages
+  - [x] Implement in-game notification system for events & messages
   - [x] Configure SMTP provider and test templates
   - [x] Document email and notification design in `account-service/design/README.md`
   - [x] Add asynchronous NotificationService components with gRPC endpoints
 - [ ] **Develop Monetization & Payment Module**
-  - [ ] Integrate Stripe or similar for in-game purchases
+  - [x] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
   - [ ] Enforce platform fee on transactions
   - [ ] Implement refund & chargeback handling
