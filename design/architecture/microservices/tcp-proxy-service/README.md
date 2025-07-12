@@ -109,7 +109,7 @@ regenerated via `./gradlew generateProto` when the proto files change.
 - [Reconnection Strategy](../system-architecture-reconnection.md)
 - [Security Architecture](../system-architecture-security.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../user-journeys.md#6-player-login-and-gameplay)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)

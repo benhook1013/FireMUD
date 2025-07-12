@@ -111,7 +111,7 @@ the generated code with `./gradlew generateProto` after making changes.
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../user-journeys.md#6-player-login-and-gameplay)
 - [Testing Strategy](../system-architecture-testing.md)
 - [CI/CD Pipeline](../system-architecture-cicd.md)
 
