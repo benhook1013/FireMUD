@@ -1,7 +1,12 @@
 package net.firedevops.firemud.service.impl;
 
 import java.time.Instant;
+import net.firedevops.firemud.client.AccountClient;
+import net.firedevops.firemud.client.GameSessionClient;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.saga.SagaBuilder;
+import net.firedevops.firemud.common.saga.SagaException;
+import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.dto.ApplyModerationActionRequest;
 import net.firedevops.firemud.dto.ModerationActionDto;
 import net.firedevops.firemud.entity.ModerationAction;
@@ -18,11 +23,21 @@ public class ModerationServiceImpl implements ModerationService {
 
   private final ModerationActionRepository repository;
   private final ModerationActionMapper mapper;
+  private final AccountClient accountClient;
+  private final GameSessionClient gameSessionClient;
+  private final SagaRunner sagaRunner;
 
   public ModerationServiceImpl(
-      ModerationActionRepository repository, ModerationActionMapper mapper) {
+      ModerationActionRepository repository,
+      ModerationActionMapper mapper,
+      AccountClient accountClient,
+      GameSessionClient gameSessionClient,
+      SagaRunner sagaRunner) {
     this.repository = repository;
     this.mapper = mapper;
+    this.accountClient = accountClient;
+    this.gameSessionClient = gameSessionClient;
+    this.sagaRunner = sagaRunner;
   }
 
   @Override
@@ -36,7 +51,24 @@ public class ModerationServiceImpl implements ModerationService {
     entity.setAction(request.action());
     entity.setReason(request.reason());
     entity.setCreatedAt(Instant.now());
-    entity = repository.save(entity);
-    return mapper.toDto(entity);
+    final ModerationAction[] ref = new ModerationAction[] {entity};
+
+    SagaBuilder builder = new SagaBuilder("adminBan");
+    builder
+        .step(
+            "recordAction", () -> ref[0] = repository.save(ref[0]), () -> repository.delete(ref[0]))
+        .step(
+            "deleteAccount",
+            () -> accountClient.deleteAccount(request.tenantId(), request.accountId()))
+        .step("stopSession", () -> gameSessionClient.stopSession(request.accountId()));
+
+    try {
+      sagaRunner.run(builder.build());
+    } catch (SagaException e) {
+      logger.warn("Admin operation saga failed", e);
+      throw new IllegalStateException("Moderation action failed", e);
+    }
+
+    return mapper.toDto(ref[0]);
   }
 }
