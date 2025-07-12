@@ -30,6 +30,12 @@ These notes summarize typical optimizations applied across FireMUD services.
   details.
 - The Automation & Scripting Service batches NPC logic in tick cycles and
   enforces per-script quotas via Redis to avoid runaway automation.
+  Quota enforcement metrics (`script_quota_allowed_total`,
+  `script_quota_denied_total`) and automation queue metrics
+  (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide
+  visibility into heavy script load.
+- Redis exporters publish Lua latency, lock contention and retry queue depth
+  metrics so operators can spot hotspots in Grafana dashboards.
 
 ## Network Traffic
 
