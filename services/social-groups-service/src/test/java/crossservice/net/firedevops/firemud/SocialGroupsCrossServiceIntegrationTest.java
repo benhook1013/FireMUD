@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
 import net.firedevops.firemud.config.AuthConfig;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -18,7 +20,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
@@ -32,11 +33,29 @@ import org.testcontainers.utility.DockerImageName;
     classes = SocialGroupsCrossServiceIntegrationTest.TestApp.class)
 class SocialGroupsCrossServiceIntegrationTest {
 
-  @Container
   static GenericContainer<?> loggingAdminService =
       new GenericContainer<>(
               DockerImageName.parse("ghcr.io/firedevops/logging-admin-service:latest"))
           .withExposedPorts(8080);
+
+  @BeforeAll
+  static void startContainer() {
+    if (!DockerClientFactory.instance().isDockerAvailable()) {
+      Assumptions.assumeTrue(false, "Docker not available, skipping cross-service test");
+    }
+    try {
+      loggingAdminService.start();
+    } catch (Exception e) {
+      Assumptions.assumeTrue(false, "Unable to start Logging Admin container: " + e.getMessage());
+    }
+  }
+
+  @AfterAll
+  static void stopContainer() {
+    if (loggingAdminService.isRunning()) {
+      loggingAdminService.stop();
+    }
+  }
 
   @LocalServerPort private int port;
 
@@ -44,9 +63,6 @@ class SocialGroupsCrossServiceIntegrationTest {
 
   @Test
   void socialGroupsRunsAlongsideLoggingAdminService() {
-    Assumptions.assumeTrue(
-        DockerClientFactory.instance().isDockerAvailable(),
-        "Docker not available, skipping cross-service test");
     assertThat(loggingAdminService.isRunning()).isTrue();
 
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
