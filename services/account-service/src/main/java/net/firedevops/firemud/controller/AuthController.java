@@ -3,7 +3,9 @@ package net.firedevops.firemud.controller;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AuthTokenDto;
+import net.firedevops.firemud.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.dto.LoginRequest;
+import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.service.AccountService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,5 +28,19 @@ public class AuthController {
         accountService.authenticate(
             request.tenantId(), request.username(), request.password(), request.otp());
     return ResponseEntity.ok(ApiResponse.success(new AuthTokenDto(token)));
+  }
+
+  @PostMapping("/request-password-reset")
+  public ResponseEntity<ApiResponse<Void>> requestPasswordReset(
+      @Valid @RequestBody PasswordResetRequest request) {
+    accountService.requestPasswordReset(request);
+    return ResponseEntity.ok(ApiResponse.success(null));
+  }
+
+  @PostMapping("/complete-password-reset")
+  public ResponseEntity<ApiResponse<Void>> completePasswordReset(
+      @Valid @RequestBody CompletePasswordResetRequest request) {
+    accountService.completePasswordReset(request);
+    return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

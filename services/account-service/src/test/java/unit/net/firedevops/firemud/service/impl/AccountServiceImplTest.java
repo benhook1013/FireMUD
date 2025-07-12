@@ -10,6 +10,7 @@ import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
+import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.entity.Account;
 import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
@@ -36,6 +37,10 @@ class AccountServiceImplTest {
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private SubscriptionRepository subscriptionRepository;
 
+  @Mock
+  private net.firedevops.firemud.repository.PasswordResetTokenRepository
+      passwordResetTokenRepository;
+
   private AccountServiceImpl service;
 
   @BeforeEach
@@ -51,6 +56,7 @@ class AccountServiceImplTest {
             profileMapper,
             paymentTransactionRepository,
             subscriptionRepository,
+            passwordResetTokenRepository,
             notificationService,
             loggingAdminClient,
             jwtUtil,
@@ -125,6 +131,21 @@ class AccountServiceImplTest {
 
     assertEquals("demo", dto.displayName());
     org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
+  }
+
+  @Test
+  void requestPasswordResetCreatesToken() {
+    Account account = new Account();
+    account.setId(1L);
+    when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
+        .thenReturn(Optional.of(account));
+
+    service.requestPasswordReset(new PasswordResetRequest(1L, "demo@example.com"));
+
+    org.mockito.Mockito.verify(passwordResetTokenRepository)
+        .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(notificationService)
+        .sendNotification(1L, 1L, "Password reset requested");
   }
 
   private static String hash(String password) {
