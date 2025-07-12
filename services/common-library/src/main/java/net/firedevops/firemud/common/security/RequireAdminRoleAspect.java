@@ -16,7 +16,8 @@ public class RequireAdminRoleAspect {
     List<String> roles = SessionContext.getGlobalRoles();
     boolean allowed = roles.contains("platformAdmin") || roles.contains("moderator");
     if (!allowed) {
-      throw new StatusRuntimeException(Status.PERMISSION_DENIED.withDescription("Admin role required"));
+      throw new StatusRuntimeException(
+          Status.PERMISSION_DENIED.withDescription("Admin role required"));
     }
   }
 }

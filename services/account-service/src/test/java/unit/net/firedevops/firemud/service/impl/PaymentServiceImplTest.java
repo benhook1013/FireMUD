@@ -1,0 +1,63 @@
+package net.firedevops.firemud.service.impl;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+import java.util.Optional;
+import net.firedevops.firemud.dto.PaymentIntentDto;
+import net.firedevops.firemud.entity.Account;
+import net.firedevops.firemud.entity.PaymentTransaction;
+import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.PaymentTransactionRepository;
+import net.firedevops.firemud.repository.SubscriptionRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+class PaymentServiceImplTest {
+  @Mock private AccountRepository accountRepository;
+  @Mock private PaymentTransactionRepository txRepo;
+  @Mock private SubscriptionRepository subRepo;
+
+  private PaymentServiceImpl service;
+
+  @BeforeEach
+  void setup() {
+    MockitoAnnotations.openMocks(this);
+    service = new PaymentServiceImpl(accountRepository, txRepo, subRepo);
+  }
+
+  @Test
+  void createPaymentIntentSetsTenantId() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setTenantId(2L);
+    when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
+    when(txRepo.save(any()))
+        .thenAnswer(
+            invocation -> {
+              PaymentTransaction tx = invocation.getArgument(0);
+              tx.setId(10L);
+              return tx;
+            });
+
+    PaymentIntentDto dto = service.createPaymentIntent(2L, 1L, 500L);
+
+    assertEquals(10L, dto.id());
+    ArgumentCaptor<PaymentTransaction> captor = ArgumentCaptor.forClass(PaymentTransaction.class);
+    verify(txRepo).save(captor.capture());
+    assertEquals(2L, captor.getValue().getTenantId());
+  }
+
+  @Test
+  void createSubscriptionFailsForWrongTenant() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setTenantId(5L); // different tenant
+    when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalArgumentException.class, () -> service.createSubscription(2L, 1L, "plan"));
+  }
+}

@@ -30,5 +30,4 @@ public class GrpcServerConfig {
   public TracingInterceptor tracingInterceptor(Tracer tracer) {
     return new TracingInterceptor(tracer);
   }
-
 }

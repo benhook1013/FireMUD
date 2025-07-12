@@ -38,12 +38,17 @@ public class PaymentServiceImpl implements PaymentService {
   @Timed(value = "payment.create_intent")
   public PaymentIntentDto createPaymentIntent(Long tenantId, Long accountId, Long amountCents) {
     logger.info("Create payment intent {} cents for account {}", amountCents, accountId);
-    Account account = accountRepository.findById(accountId).orElseThrow();
+    Account account =
+        accountRepository
+            .findById(accountId)
+            .filter(a -> a.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     PaymentTransaction tx = new PaymentTransaction();
     tx.setAccount(account);
     tx.setAmountCents(amountCents);
     tx.setCurrency("USD");
     tx.setStatus("pending");
+    tx.setTenantId(tenantId);
     tx = paymentTransactionRepository.save(tx);
     return new PaymentIntentDto(
         tx.getId(), tenantId, accountId, tx.getAmountCents(), tx.getCurrency());
@@ -54,12 +59,17 @@ public class PaymentServiceImpl implements PaymentService {
   @Timed(value = "payment.create_subscription")
   public SubscriptionDto createSubscription(Long tenantId, Long accountId, String planId) {
     logger.info("Create subscription {} for account {}", planId, accountId);
-    Account account = accountRepository.findById(accountId).orElseThrow();
+    Account account =
+        accountRepository
+            .findById(accountId)
+            .filter(a -> a.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     Subscription sub = new Subscription();
     sub.setAccount(account);
     sub.setPlanId(planId);
     sub.setStatus("active");
     sub.setStartedAt(LocalDateTime.now());
+    sub.setTenantId(tenantId);
     sub = subscriptionRepository.save(sub);
     return new SubscriptionDto(
         sub.getId(),

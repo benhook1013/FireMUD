@@ -160,8 +160,8 @@ public class AccountServiceImpl implements AccountService {
             .findById(accountId)
             .filter(a -> a.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-    paymentTransactionRepository.deleteByAccountId(accountId);
-    subscriptionRepository.deleteByAccountId(accountId);
+    paymentTransactionRepository.deleteByAccountId(accountId, tenantId);
+    subscriptionRepository.deleteByAccountId(accountId, tenantId);
     profileRepository
         .findByAccountIdAndTenantId(accountId, tenantId)
         .ifPresent(profileRepository::delete);
