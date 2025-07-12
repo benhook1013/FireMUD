@@ -110,4 +110,24 @@ Player → Account Service → Logging & Admin Service
 
 ---
 
+## 10. Password Resets & Account Recovery
+
+Players occasionally lose access to their accounts. Recovery is performed
+through the [Account Service](./microservices/account-service/README.md),
+which issues password reset emails and temporary login tokens. Suspicious
+attempts are logged by the
+[Logging & Admin Service](./microservices/logging-admin-service/README.md).
+
+```plaintext
+Player → Account Service → Logging & Admin Service (audit)
+```
+
+---
+
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](./system-architecture-overview.md)
+- [Service Responsibility Matrix](./service-responsibility-matrix.md)
+- [Microservices Overview](./microservices/README.md)

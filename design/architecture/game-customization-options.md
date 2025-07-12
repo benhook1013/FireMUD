@@ -19,3 +19,9 @@ This brief document summarizes the ways a hosted game can change its look and fe
 - Scripts are versioned alongside other game data and can be hot reloaded by the Automation & Scripting Service.
 
 These options allow extensive personalization while keeping the underlying platform maintainable.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](./system-architecture-overview.md)
+- [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
+- [Game Design Service](./microservices/game-design-service/README.md)

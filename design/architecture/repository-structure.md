@@ -37,3 +37,8 @@ root
 - `docker-compose.yml` – Local development environment.
 
 Proto definitions live under `protos/` organized by service and version as described in the gRPC design document. Database migration scripts for each service reside in `src/main/resources/db/migration/`.
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](./system-architecture-overview.md)
+- [Microservices Overview](./microservices/README.md)
