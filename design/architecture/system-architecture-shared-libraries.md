@@ -60,3 +60,33 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
 5. Deploy artifacts to GitHub Packages via CI/CD. If needed, publish a separate `firemud-protos` artifact containing only the shared gRPC definitions.
 
 This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
+
+## Example Usage
+
+Controllers typically return results wrapped with `ApiResponse`:
+
+```java
+return ResponseEntity.ok(ApiResponse.success(data));
+```
+
+Structured logging is available via `LoggingUtil`:
+
+```java
+private static final Logger logger = LoggingUtil.getLogger(MyClass.class);
+```
+
+`JwtUtil` helps verify tokens and is used by the Account Service when issuing new ones.
+
+## Saga Orchestration
+
+The library also provides a lightweight saga engine for multi-step workflows. Flows are defined with `SagaBuilder` and may include compensation actions:
+
+```java
+new SagaBuilder()
+    .step("createAccount", accountClient::createAccount,
+        () -> accountClient.deleteAccount(id))
+    .step("provisionCharacter", entityClient::createPlayer)
+    .run();
+```
+
+Saga state is stored in the bundled `saga_instance` and `saga_step` tables.

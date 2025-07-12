@@ -181,6 +181,19 @@ curl -X POST http://localhost:8080/voice/token \
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
 
+### Cross-Service Integration Test
+
+An integration test under `src/test/java/crossservice` starts this service with
+the Logging & Admin Service using **Testcontainers**. Execute it once dependent
+images are available:
+
+```bash
+./gradlew :social-groups-service:test --tests "*CrossServiceIntegrationTest"
+```
+
+Refer to [System Architecture Testing](../system-architecture-testing.md) for
+guidance.
+
 ## Future Enhancements
 
 - Rich moderation tools for chat including profanity filtering and moderator dashboards.
