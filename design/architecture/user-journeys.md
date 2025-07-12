@@ -14,7 +14,7 @@ For step-by-step tooling instructions see the [Game Creator Guide](../user-guide
 
 ## 1. Sign Up
 
-Players register for an account through the [Account Service](./microservices/account-service/README.md).
+Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and login flows are outlined in [Authentication & Authorization](./system-architecture-authentication.md).
 
 ```plaintext
 Player → Account Service
@@ -32,13 +32,13 @@ Account Service (user) → Game Design Service (new game)
 
 ---
 
-## 3. World and Entity Design
+-## 3. World and Entity Design
 
 Creators refine the world and its inhabitants using several services:
 
-- **Game Design Service** – Versioned templates, ability editors, and runtime flag definitions.
-- **World Management Service** – Maps, regions, and procedural generation rules ([see procedural generation](./system-architecture-procedural-generation.md)).
-- **Entity Management Service** – Player characters, NPCs, items, and inventory.
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Versioned templates, ability editors, and runtime flag definitions.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Maps, regions, and procedural generation rules ([see procedural generation](./system-architecture-procedural-generation.md)).
+- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Player characters, NPCs, items, and inventory.
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 
@@ -77,8 +77,8 @@ Game Design Service (publish) → Game Session Service (start instance)
 Players connect through the networking layer:
 
 1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for the dual-client flow.
-2. **Session Management** – The Game Session Service retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
-3. **Authentication** – Login credentials are validated by the Game Session Service.
+2. **Session Management** – The [Game Session Service](./microservices/game-session-service/README.md) retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
+3. **Authentication** – Login credentials are validated by the [Game Session Service](./microservices/game-session-service/README.md).
    See [Authentication & Authorization](./system-architecture-authentication.md)
    for supported `LOGIN` commands and token handling.
 
@@ -86,7 +86,7 @@ Players connect through the networking layer:
 Client → Proxy/Gateway → Game Session Service → Game Logic Service / Entity & World services
 ```
 
-The Game Session Service handles login, session recovery, and active gameplay. Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
+The [Game Session Service](./microservices/game-session-service/README.md) handles login, session recovery, and active gameplay. Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
 
 ---
 
@@ -97,8 +97,7 @@ During gameplay, players form groups and communicate via the
 
 - Chat rooms, guilds, and friend lists are synchronized in real time.
 - In-game chat commands (say, tell, guild chat, mail) are first validated by the
-  Game Logic Service against the World Management and Entity Management
-  services.
+  [Game Logic Service](./microservices/game-logic-service/README.md) against the [World Management Service](./microservices/world-management-service/README.md) and [Entity Management Service](./microservices/entity-management-service/README.md).
 - The Social & Groups Service performs profanity checks, logs communication, and
   delivers messages. Account-level friends automatically appear in-game when the
   feature is enabled.
@@ -120,11 +119,11 @@ The service also exposes moderation tools such as bans and runtime feature toggl
 
 ## 9. Patch and Update a Live Game
 
-1. **Iterate on Content** – Creators modify worlds, items, or rules using the Game Design Service.
+1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
-3. **Publish a Script Patch** – For quick fixes, the Game Design Service emits a
+3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
    `scriptPatchVersion` like `v42-script.3` linked to the current version.
-4. **Restart Game Instance** – Administrators instruct the Game Session Service
+4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
 
@@ -179,7 +178,9 @@ Player → Account Service → Logging & Admin Service (audit)
 
 Players can participate in multiple games using the same platform account. The
 [Multi-Tenancy](./system-architecture-multi-tenancy.md) model stores character
-progress per `tenantId`.
+progress per `tenantId`. Account selection and tenant setup are managed through the
+[Account Service](./microservices/account-service/README.md) and
+[Game Design Service](./microservices/game-design-service/README.md).
 
 ```plaintext
 Account Service → Game Design Service (select tenant) → Game Session Service

@@ -50,3 +50,4 @@ corresponding versioned proto folders.
 - [Infrastructure Overview](../infrastructure/README.md)
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+- [User Journeys](../user-journeys.md)
