@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.RoomDto;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC endpoints for the World Management Service. */
@@ -28,14 +30,30 @@ public class WorldManagementGrpcService
   private final RoomService roomService;
   private final RoomMapper roomMapper;
   private final net.firedevops.firemud.service.WorldEventService worldEventService;
+  private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
+  }
 
   @Override
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
-    String msg = pingService.ping();
-    PingResponse response = PingResponse.newBuilder().setMessage(msg).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      String msg = pingService.ping();
+      PingResponse response = PingResponse.newBuilder().setMessage(msg).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PingResponse response =
+          PingResponse.newBuilder().setError(error("INVALID_ARGUMENT", ex.getMessage())).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
   }
 
   @Override
@@ -50,12 +68,22 @@ public class WorldManagementGrpcService
         responseObserver.onNext(response);
         responseObserver.onCompleted();
       } else {
-        responseObserver.onError(
-            Status.NOT_FOUND.withDescription("room not found").asRuntimeException());
+        GetRoomResponse response =
+            GetRoomResponse.newBuilder().setError(error("NOT_FOUND", "room not found")).build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
       }
     } catch (NumberFormatException ex) {
-      responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription("invalid id").asRuntimeException());
+      GetRoomResponse response =
+          GetRoomResponse.newBuilder().setError(error("INVALID_ARGUMENT", "invalid id"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetRoomResponse response =
+          GetRoomResponse.newBuilder().setError(error("NOT_FOUND", ex.getMessage())).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -66,6 +94,14 @@ public class WorldManagementGrpcService
       worldEventService.processDueEvents();
       UpdateWorldStateResponse response =
           UpdateWorldStateResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      UpdateWorldStateResponse response =
+          UpdateWorldStateResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
