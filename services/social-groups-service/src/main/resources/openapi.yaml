@@ -221,6 +221,51 @@ components:
         expiresAt:
           type: string
           format: date-time
+    AddGuildMemberRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        guildId:
+          type: integer
+        accountId:
+          type: integer
+        role:
+          type: string
+      required:
+        - tenantId
+        - guildId
+        - accountId
+        - role
+    UpdateGuildMemberRoleRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        guildId:
+          type: integer
+        accountId:
+          type: integer
+        role:
+          type: string
+      required:
+        - tenantId
+        - guildId
+        - accountId
+        - role
+    GuildMemberDto:
+      type: object
+      properties:
+        id:
+          type: integer
+        tenantId:
+          type: integer
+        guildId:
+          type: integer
+        accountId:
+          type: integer
+        role:
+          type: string
 paths:
   /ping:
     get:
@@ -369,6 +414,72 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GuildAllianceDto'
+        '400':
+          description: Invalid request
+  /guilds/members:
+    post:
+      summary: Add guild member
+      operationId: addGuildMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddGuildMemberRequest'
+      responses:
+        '200':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GuildMemberDto'
+        '400':
+          description: Invalid request
+  /guilds/members/role:
+    post:
+      summary: Update guild member role
+      operationId: updateGuildMemberRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGuildMemberRoleRequest'
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GuildMemberDto'
+        '400':
+          description: Invalid request
+  /guilds/members/remove:
+    post:
+      summary: Remove guild member
+      operationId: removeGuildMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddGuildMemberRequest'
+      responses:
+        '200':
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
         '400':
           description: Invalid request
   /voice/token:
