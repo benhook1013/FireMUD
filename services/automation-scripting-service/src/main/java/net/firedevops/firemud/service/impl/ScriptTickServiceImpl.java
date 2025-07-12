@@ -9,6 +9,7 @@ import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.service.tick.ScriptTickService;
+import net.firedevops.firemud.service.quota.ScriptQuotaService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
@@ -25,6 +26,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
+  private final net.firedevops.firemud.service.quota.ScriptQuotaService quotaService;
 
   @Value("${automation.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -54,6 +56,10 @@ public class ScriptTickServiceImpl implements ScriptTickService {
 
   @Override
   public void enqueueEvent(Long tenantId, Long scriptId, String eventJson) {
+    if (!quotaService.tryAcquire(tenantId, scriptId)) {
+      logger.warn("Script quota exceeded for {}:{}", tenantId, scriptId);
+      return;
+    }
     redisTemplate.opsForList().rightPush(queueKey(tenantId, scriptId), eventJson);
     enqueueCounter.increment();
     logger.debug("Queued script event for {}:{}", tenantId, scriptId);
