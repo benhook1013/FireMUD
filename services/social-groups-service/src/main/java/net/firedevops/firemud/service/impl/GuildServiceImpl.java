@@ -116,7 +116,32 @@ public class GuildServiceImpl implements GuildService {
     member.setGuildId(request.guildId());
     member.setAccountId(request.accountId());
     member.setRole(request.role());
-    return guildMemberMapper.toDto(guildMemberRepository.save(member));
+
+    var saga =
+        new SagaBuilder("addGuildMember")
+            .step(
+                "persistMember",
+                () -> {
+                  GuildMember saved = guildMemberRepository.save(member);
+                  member.setId(saved.getId());
+                },
+                () -> guildMemberRepository.delete(member))
+            .step(
+                "logAdd",
+                () ->
+                    loggingAdminClient.reportChatViolation(
+                        request.tenantId(),
+                        request.accountId(),
+                        "Joined guild " + request.guildId()))
+            .build();
+    try {
+      sagaRunner.run(saga);
+    } catch (SagaException e) {
+      logger.warn("Add member saga failed", e);
+      throw new IllegalStateException("Add member failed", e);
+    }
+
+    return guildMemberMapper.toDto(member);
   }
 
   @Override
@@ -136,21 +161,71 @@ public class GuildServiceImpl implements GuildService {
                         && m.getAccountId().equals(request.accountId()))
             .findFirst()
             .orElseThrow();
-    member.setRole(request.role());
-    return guildMemberMapper.toDto(guildMemberRepository.save(member));
+    String originalRole = member.getRole();
+    var saga =
+        new SagaBuilder("updateGuildMemberRole")
+            .step(
+                "updateMember",
+                () -> {
+                  member.setRole(request.role());
+                  guildMemberRepository.save(member);
+                },
+                () -> {
+                  member.setRole(originalRole);
+                  guildMemberRepository.save(member);
+                })
+            .step(
+                "logUpdate",
+                () ->
+                    loggingAdminClient.reportChatViolation(
+                        request.tenantId(),
+                        request.accountId(),
+                        "Updated guild role to " + request.role()))
+            .build();
+    try {
+      sagaRunner.run(saga);
+    } catch (SagaException e) {
+      logger.warn("Update member role saga failed", e);
+      throw new IllegalStateException("Update member role failed", e);
+    }
+
+    return guildMemberMapper.toDto(member);
   }
 
   @Override
   @Transactional
   public void removeMember(long tenantId, long guildId, long accountId) {
     logger.info("Removing member {} from guild {}", accountId, guildId);
-    guildMemberRepository.findAll().stream()
-        .filter(
-            m ->
-                m.getTenantId().equals(tenantId)
-                    && m.getGuildId().equals(guildId)
-                    && m.getAccountId().equals(accountId))
-        .findFirst()
-        .ifPresent(guildMemberRepository::delete);
+    GuildMember member =
+        guildMemberRepository.findAll().stream()
+            .filter(
+                m ->
+                    m.getTenantId().equals(tenantId)
+                        && m.getGuildId().equals(guildId)
+                        && m.getAccountId().equals(accountId))
+            .findFirst()
+            .orElse(null);
+    if (member == null) {
+      return;
+    }
+
+    var saga =
+        new SagaBuilder("removeGuildMember")
+            .step(
+                "deleteMember",
+                () -> guildMemberRepository.delete(member),
+                () -> guildMemberRepository.save(member))
+            .step(
+                "logRemove",
+                () ->
+                    loggingAdminClient.reportChatViolation(
+                        tenantId, accountId, "Left guild " + guildId))
+            .build();
+    try {
+      sagaRunner.run(saga);
+    } catch (SagaException e) {
+      logger.warn("Remove member saga failed", e);
+      throw new IllegalStateException("Remove member failed", e);
+    }
   }
 }
