@@ -5,4 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface ScriptDefinitionRepository extends JpaRepository<ScriptDefinition, Long> {}
+public interface ScriptDefinitionRepository extends JpaRepository<ScriptDefinition, Long> {
+  java.util.List<ScriptDefinition> findByTenantIdAndNameIn(
+      Long tenantId, java.util.List<String> names);
+}

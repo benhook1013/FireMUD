@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
@@ -26,18 +27,21 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private final SessionStateService sessionStateService;
   private final GameLogicClient gameLogicClient;
   private final SagaRunner sagaRunner;
+  private final MeterRegistry meterRegistry;
 
   public GameInstanceServiceImpl(
       GameInstanceRepository repository,
       GameInstanceMapper mapper,
       SessionStateService sessionStateService,
       GameLogicClient gameLogicClient,
-      SagaRunner sagaRunner) {
+      SagaRunner sagaRunner,
+      MeterRegistry meterRegistry) {
     this.repository = repository;
     this.mapper = mapper;
     this.sessionStateService = sessionStateService;
     this.gameLogicClient = gameLogicClient;
     this.sagaRunner = sagaRunner;
+    this.meterRegistry = meterRegistry;
   }
 
   // Constructor used in unit tests
@@ -45,7 +49,13 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       GameInstanceRepository repository,
       GameInstanceMapper mapper,
       SessionStateService sessionStateService) {
-    this(repository, mapper, sessionStateService, null, null);
+    this(
+        repository,
+        mapper,
+        sessionStateService,
+        null,
+        null,
+        new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
   }
 
   @Override
@@ -76,6 +86,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("RUNNING");
     instance = repository.save(instance);
     GameInstanceDto dto = mapper.toDto(instance);
+    meterRegistry
+        .counter(
+            "game_sessions_started_total",
+            "script_patch_version",
+            request.scriptPatchVersion() == null ? "none" : request.scriptPatchVersion())
+        .increment();
 
     if (gameLogicClient != null && sagaRunner != null) {
       var saga = new SagaBuilder().step("notifyGameLogic", () -> gameLogicClient.ping()).build();
