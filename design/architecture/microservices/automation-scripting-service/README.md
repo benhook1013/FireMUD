@@ -80,6 +80,11 @@ Groups Service. See the
 [Social & Groups Service](../social-groups-service/README.md#data-model) for the
 `faction` and `faction_standing` tables that store reputation data.
 
+The service includes an **NpcMoraleService** which adjusts an NPC's
+`AggressionState` based on its current health, morale, and reputation. When these
+values fall below configurable thresholds the NPC may become `FLEEING` or
+`SURRENDERED`, allowing encounters to end without a kill.
+
 ## Dependencies
 
 - **Internal:**

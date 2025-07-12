@@ -3,7 +3,6 @@ package net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.config.AuthConfig;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,6 +56,6 @@ class EntityManagementCrossServiceIntegrationTest {
   @Configuration
   @EnableAutoConfiguration(
       exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
-  @Import({CommonAutoConfiguration.class, AuthConfig.class})
+  @Import(CommonAutoConfiguration.class)
   static class TestApp {}
 }

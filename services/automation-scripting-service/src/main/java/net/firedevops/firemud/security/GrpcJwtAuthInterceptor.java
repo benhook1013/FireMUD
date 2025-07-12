@@ -37,8 +37,8 @@ public class GrpcJwtAuthInterceptor implements ServerInterceptor {
       List<String> globalRoles = claims.getBody().get("globalRoles", List.class);
       Map<String, List<String>> scopedRoles = claims.getBody().get("scopedRoles", Map.class);
       boolean hasGlobal =
-          globalRoles != null &&
-              (globalRoles.contains("platformAdmin") || globalRoles.contains("moderator"));
+          globalRoles != null
+              && (globalRoles.contains("platformAdmin") || globalRoles.contains("moderator"));
       boolean hasScoped = false;
       if (scopedRoles != null) {
         for (List<String> roles : scopedRoles.values()) {
