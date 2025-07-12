@@ -73,7 +73,21 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 ---
 
-## 6. Player Login and Gameplay
+## 6. Character Creation & Selection
+
+Players create or select a character before entering the world:
+
+1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account.
+2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md).
+3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service.
+
+```plaintext
+Account Service → Game Design Service → Entity Management Service
+```
+
+---
+
+## 7. Player Login and Gameplay
 
 Players connect through the networking layer:
 
@@ -91,7 +105,7 @@ The [Game Session Service](./microservices/game-session-service/README.md) handl
 
 ---
 
-## 7. Social Interaction
+## 8. Social Interaction
 
 During gameplay, players form groups and communicate via the
 [Social & Groups Service](./microservices/social-groups-service/README.md):
@@ -105,7 +119,7 @@ During gameplay, players form groups and communicate via the
 
 ---
 
-## 8. Monitoring and Moderation
+## 9. Monitoring and Moderation
 
 Operators monitor the game and enforce rules using the
 [Logging & Admin Service](./microservices/logging-admin-service/README.md).
@@ -118,7 +132,7 @@ The service also exposes moderation tools such as bans and runtime feature toggl
 
 ---
 
-## 9. Patch and Update a Live Game
+## 10. Patch and Update a Live Game
 
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
@@ -150,7 +164,7 @@ Game Design Service (publish) → Game Session Service (restart)
 
 ---
 
-## 10. Purchases and Subscriptions
+## 11. Purchases and Subscriptions
 
 1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles purchases and subscription renewals via Stripe.
 2. **Audit and Compliance** – Transactions are logged through the
@@ -163,7 +177,7 @@ Player → Account Service → Logging & Admin Service
 
 ---
 
-## 11. Password Resets & Account Recovery
+## 12. Password Resets & Account Recovery
 
 Players occasionally lose access to their accounts. Recovery is performed
 through the [Account Service](./microservices/account-service/README.md),
@@ -177,7 +191,7 @@ Player → Account Service → Logging & Admin Service (audit)
 
 ---
 
-## 12. Switch Games or Manage Multiple Games
+## 13. Switch Games or Manage Multiple Games
 
 Players can participate in multiple games using the same platform account. The
 [Multi-Tenancy](./system-architecture-multi-tenancy.md) model stores character
@@ -191,7 +205,7 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ---
 
-## 13. Operational Recovery
+## 14. Operational Recovery
 
 When issues occur, operators follow the
 [Operational Runbooks](./system-architecture-runbooks.md) to restore services.
@@ -204,19 +218,19 @@ Admin → Runbooks → Kubernetes / Docker → Services Restored
 
 ---
 
-## 14. Branding and Customization
+## 15. Branding and Customization
 
 Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. The web client loads tenant-specific assets as described in [Frontend Architecture](./system-architecture-frontend.md). See [Game Customization Options](./game-customization-options.md) for details.
 
 ---
 
-## 15. Playtesting & Analytics
+## 16. Playtesting & Analytics
 
 Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 
 ---
 
-## 16. Testing & Continuous Delivery
+## 17. Testing & Continuous Delivery
 
 1. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
 2. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md).
@@ -227,7 +241,7 @@ GitHub → CI Workflow → Container Registry → Kubernetes
 
 ---
 
-## 17. Account Data Export & Deletion
+## 18. Account Data Export & Deletion
 
 Players may request a full data export or permanently delete an account through
 the [Account Service](./microservices/account-service/README.md). Exported data
@@ -242,7 +256,7 @@ Player → Account Service → Logging & Admin Service (audit)
 
 ---
 
-## 18. Deployment & Environment Configuration
+## 19. Deployment & Environment Configuration
 
 FireMUD can be deployed locally using **Docker Compose** or to production via **Kubernetes**:
 
