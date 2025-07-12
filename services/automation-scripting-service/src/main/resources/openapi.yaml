@@ -102,6 +102,8 @@ paths:
                     type: string
               example:
                 data: pong
+        '400':
+          description: Bad request
   /factions/{id}/reputation:
     patch:
       summary: Adjust player reputation for a faction
@@ -129,6 +131,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReputationResponse'
+        '400':
+          description: Invalid reputation update
   /formations:
     post:
       summary: Create a new NPC formation
@@ -150,6 +154,8 @@ paths:
                   data:
                     type: integer
                     example: 1
+        '400':
+          description: Invalid formation data
   /formations/{id}/members:
     post:
       summary: Add a member to a formation
@@ -181,6 +187,8 @@ paths:
                   data:
                     type: boolean
                     example: true
+        '400':
+          description: Invalid member data
     get:
       summary: List members of a formation
       operationId: listFormationMembers
@@ -202,3 +210,5 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LongListResponse'
+        '400':
+          description: Invalid formation ID

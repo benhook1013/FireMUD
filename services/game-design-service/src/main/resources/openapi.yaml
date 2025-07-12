@@ -63,6 +63,8 @@ paths:
                   data:
                     type: string
                     example: pong
+        '400':
+          description: Bad request
   /templates:
     post:
       summary: Create game template
@@ -83,6 +85,8 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GameTemplateDto'
+        '400':
+          description: Invalid template data
     get:
       summary: List game templates
       operationId: listTemplates
@@ -104,6 +108,8 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/GameTemplateDto'
+        '400':
+          description: Invalid tenant ID
   /assets:
     post:
       summary: Upload asset
@@ -130,3 +136,5 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/GameAssetDto'
+        '400':
+          description: Invalid asset data
