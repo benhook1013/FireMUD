@@ -142,7 +142,7 @@ The Account Service also manages billing records for purchases and subscriptions
 
 ### Email & Notification Design
 
-This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables specify SMTP credentials. The gRPC API is defined in [`notification_service.proto`](../../../protos/account/v1/notification_service.proto).
+This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables configure `spring.mail.*` along with `firemud.mail.from`, `firemud.mail.verification-url`, and `firemud.mail.reset-url`. The gRPC API is defined in [`notification_service.proto`](../../../protos/account/v1/notification_service.proto).
 
 ### Session Management
 
