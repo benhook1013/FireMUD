@@ -22,6 +22,16 @@ public class CharacterServiceImpl implements CharacterService {
   private static final int EXP_PER_LEVEL = 1000;
 
   @Override
+  @Transactional
+  @Timed(value = "character.create")
+  public CharacterDto create(CharacterDto dto) {
+    Character entity = characterMapper.toEntity(dto);
+    entity.setLevel(dto.level() > 0 ? dto.level() : 1);
+    entity = characterRepository.save(entity);
+    return characterMapper.toDto(entity);
+  }
+
+  @Override
   @Transactional(readOnly = true)
   @Cacheable(value = "characterGraph", key = "#characterId")
   @Timed(value = "character.get")
@@ -42,6 +52,16 @@ public class CharacterServiceImpl implements CharacterService {
     }
     characterRepository.save(character);
     return characterMapper.toDto(character);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "character.update")
+  public boolean updateEntity(Long characterId) {
+    Character character = characterRepository.findById(characterId).orElseThrow();
+    character.setLastLoginAt(java.time.Instant.now());
+    characterRepository.save(character);
+    return true;
   }
 
   @Override

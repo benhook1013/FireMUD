@@ -17,19 +17,19 @@ public class TickLockServiceImpl implements TickLockService {
   private long tickDurationMs;
 
   @Override
-  public boolean acquireLock(Long entityId) {
-    String key = lockKey(entityId);
+  public boolean acquireLock(Long tenantId, Long entityId) {
+    String key = lockKey(tenantId, entityId);
     Boolean result =
         redisTemplate.opsForValue().setIfAbsent(key, "1", Duration.ofMillis(tickDurationMs));
     return Boolean.TRUE.equals(result);
   }
 
   @Override
-  public void releaseLock(Long entityId) {
-    redisTemplate.delete(lockKey(entityId));
+  public void releaseLock(Long tenantId, Long entityId) {
+    redisTemplate.delete(lockKey(tenantId, entityId));
   }
 
-  private String lockKey(Long entityId) {
-    return "tick:lock:" + entityId;
+  private String lockKey(Long tenantId, Long entityId) {
+    return "tick:lock:" + tenantId + ":" + entityId;
   }
 }

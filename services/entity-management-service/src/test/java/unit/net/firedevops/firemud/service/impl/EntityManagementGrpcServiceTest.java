@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.service.CharacterService;
+import net.firedevops.firemud.service.InventoryService;
 import net.firedevops.firemud.service.PingService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -19,6 +20,7 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =
@@ -26,7 +28,8 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     EntityManagementGrpcService service =
-        new EntityManagementGrpcService(pingService, characterService, meterRegistry);
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -52,6 +55,7 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new IllegalArgumentException("bad"));
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =
@@ -59,7 +63,8 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     EntityManagementGrpcService service =
-        new EntityManagementGrpcService(pingService, characterService, meterRegistry);
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -85,6 +90,7 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new RuntimeException("boom"));
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =
@@ -92,7 +98,8 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     EntityManagementGrpcService service =
-        new EntityManagementGrpcService(pingService, characterService, meterRegistry);
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, meterRegistry);
 
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.ping(
@@ -119,6 +126,7 @@ class EntityManagementGrpcServiceTest {
   void listCharactersInvalidAccountIdReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =
@@ -126,7 +134,8 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     EntityManagementGrpcService service =
-        new EntityManagementGrpcService(pingService, characterService, meterRegistry);
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersResponse> ref =
         new AtomicReference<>();
@@ -155,6 +164,7 @@ class EntityManagementGrpcServiceTest {
   void listCharactersUnexpectedErrorReturnsInternal() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
     Mockito.when(characterService.listForAccount(1L)).thenThrow(new RuntimeException("boom"));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -163,7 +173,8 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     EntityManagementGrpcService service =
-        new EntityManagementGrpcService(pingService, characterService, meterRegistry);
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, meterRegistry);
 
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.listCharactersByAccount(

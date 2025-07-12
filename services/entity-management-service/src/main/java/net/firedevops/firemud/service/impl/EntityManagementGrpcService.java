@@ -6,12 +6,19 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.v1.Character;
+import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
+import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
+import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
 import net.firedevops.firemud.service.CharacterService;
+import net.firedevops.firemud.service.InventoryService;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
@@ -22,12 +29,17 @@ public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private final PingService pingService;
   private final CharacterService characterService;
+  private final InventoryService inventoryService;
   private final MeterRegistry meterRegistry;
 
   public EntityManagementGrpcService(
-      PingService pingService, CharacterService characterService, MeterRegistry meterRegistry) {
+      PingService pingService,
+      CharacterService characterService,
+      InventoryService inventoryService,
+      MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
+    this.inventoryService = inventoryService;
     this.meterRegistry = meterRegistry;
   }
 
@@ -77,6 +89,79 @@ public class EntityManagementGrpcService
     } catch (IllegalArgumentException ex) {
       ListCharactersResponse response =
           ListCharactersResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
+  }
+
+  @Override
+  public void createCharacter(
+      CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long accountId = Long.parseLong(request.getAccountId());
+      CharacterDto dto =
+          new CharacterDto(
+              null, tenantId, accountId, request.getName(), 1, 0, 10, 10, 10, 10, 100, 50);
+      CharacterDto created = characterService.create(dto);
+      CreateCharacterResponse response =
+          CreateCharacterResponse.newBuilder().setCharacterId(String.valueOf(created.id())).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      CreateCharacterResponse response =
+          CreateCharacterResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
+  }
+
+  @Override
+  public void updateEntity(
+      UpdateEntityRequest request, StreamObserver<UpdateEntityResponse> responseObserver) {
+    try {
+      long entityId = Long.parseLong(request.getEntityId());
+      boolean result = characterService.updateEntity(entityId);
+      UpdateEntityResponse response = UpdateEntityResponse.newBuilder().setSuccess(result).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      UpdateEntityResponse response =
+          UpdateEntityResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
+  }
+
+  @Override
+  public void queryInventory(
+      QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
+    try {
+      long characterId = Long.parseLong(request.getEntityId());
+      var entries = inventoryService.listInventory(characterId);
+      var itemIds = entries.stream().map(e -> String.valueOf(e.itemId())).toList();
+      QueryInventoryResponse response =
+          QueryInventoryResponse.newBuilder().addAllItemIds(itemIds).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      QueryInventoryResponse response =
+          QueryInventoryResponse.newBuilder()
               .setError(error("INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
