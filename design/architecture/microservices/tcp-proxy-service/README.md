@@ -90,6 +90,7 @@ The proxy uses minimal configuration. It still follows the scheme in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
 so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be present
 but are ignored.
+TLS certificates are supplied via `FIREMUD_GRPC_CERT_CHAIN`, `FIREMUD_GRPC_PRIVATE_KEY`, and `FIREMUD_GRPC_CA_CERT`. Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
 ## Metrics & Tracing
 
