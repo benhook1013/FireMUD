@@ -29,6 +29,10 @@ These notes summarize typical optimizations applied across FireMUD services.
   trips and guarantees consistent state across crashes. See
   [Tick System and Runtime Design](./system-architecture-ticks.md) for
   details.
+- Distributed tick locks in Redis use short TTLs to prevent deadlocks. Failed
+  actions are rolled back and retried automatically.
+- Tick regions execute independently so work can be parallelized across
+  threads and servers for better scalability and fault isolation.
 - The Automation & Scripting Service batches NPC logic in tick cycles and
   enforces per-script quotas via Redis to avoid runaway automation.
   Quota enforcement metrics (`script_quota_allowed_total`,
@@ -40,6 +44,8 @@ These notes summarize typical optimizations applied across FireMUD services.
 - The Game Session Service records `game_session_commands_enqueued_total` and
   `game_session_tick_duration_ms` metrics so operators can monitor throughput
   and tick performance.
+- Service methods across all microservices use `@Timed` annotations so
+  Prometheus can track request latency and call frequency.
 
 ## Network Traffic
 
@@ -59,6 +65,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   (`room_cache_hits_total`, `room_cache_misses_total`). The Social Groups service
   stores recent chat messages in Redis and records `chat_messages_published_total`.
   A cache expiration policy for chat history is still TODO.
+- High concurrency load tests with Gatling help determine scaling limits and
+  guide database indexing improvements.
 
 Following these patterns keeps resource usage low even as player counts grow.
 
