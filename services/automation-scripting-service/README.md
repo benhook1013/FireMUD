@@ -98,3 +98,11 @@ type (`LINE`, `WEDGE`, or `CIRCLE`). Squad members are persisted in the
 configurable window. Counters are stored in Redis using keys of the form
 `script_quota:{tenantId}:{scriptId}`. When the quota is exceeded the event is
 ignored and `script_quota_denied_total` is incremented.
+
+### Script Upload Workflow
+
+Scripts are uploaded via the `UpdateScript` gRPC method. The operation runs as a
+Saga using `SagaBuilder` and `SagaRunner` from the shared library so that
+failures can roll back the persisted record. A `correlationId` is attached to
+logs for each saga execution and the number of active sagas is exported via the
+`sagas.active` metric.
