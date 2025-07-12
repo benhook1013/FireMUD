@@ -23,6 +23,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   trips and guarantees consistent state across crashes. See
   [Tick System and Runtime Design](./system-architecture-ticks.md) for
   details.
+- The Automation & Scripting Service batches NPC logic in tick cycles and
+  enforces per-script quotas via Redis to avoid runaway automation.
 
 ## Network Traffic
 
@@ -35,6 +37,8 @@ These notes summarize typical optimizations applied across FireMUD services.
 - gRPC and REST endpoints are instrumented with Micrometer metrics and
   OpenTelemetry tracing using shared interceptors to monitor latency and error
   rates.
+- Spring Cloud Gateway applies Redis-backed request rate limiting to protect
+  services from sudden spikes.
 - Redis caches common lookups to reduce database load. The World Management and
   Social Groups services store hot rooms and recent chat messages in Redis with
   metrics (`room_cache_hits_total`, `room_cache_misses_total`,
