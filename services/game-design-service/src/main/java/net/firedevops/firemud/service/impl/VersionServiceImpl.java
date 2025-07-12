@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.client.AutomationScriptingClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -24,6 +25,7 @@ public class VersionServiceImpl implements VersionService {
   private final VersionRepository versionRepository;
   private final GameRepository gameRepository;
   private final VersionMapper versionMapper;
+  private final AutomationScriptingClient scriptingClient;
 
   @Override
   @Transactional
@@ -84,6 +86,7 @@ public class VersionServiceImpl implements VersionService {
         },
         () -> versionRepository.delete(version));
     builder.run();
+    scriptingClient.notifyScriptVersionUpdate(gameId, scriptPatchVersion, List.of());
     return versionMapper.toDto(version);
   }
 

@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
@@ -19,6 +20,7 @@ class GameInstanceServiceImplTest {
   private GameInstanceRepository repository;
   private GameInstanceMapper mapper;
   private SessionStateService stateService;
+  private SimpleMeterRegistry meterRegistry;
   private GameInstanceServiceImpl service;
 
   @BeforeEach
@@ -26,7 +28,9 @@ class GameInstanceServiceImplTest {
     repository = mock(GameInstanceRepository.class);
     mapper = mock(GameInstanceMapper.class);
     stateService = mock(SessionStateService.class);
-    service = new GameInstanceServiceImpl(repository, mapper, stateService);
+    meterRegistry = new SimpleMeterRegistry();
+    service =
+        new GameInstanceServiceImpl(repository, mapper, stateService, null, null, meterRegistry);
   }
 
   @Test

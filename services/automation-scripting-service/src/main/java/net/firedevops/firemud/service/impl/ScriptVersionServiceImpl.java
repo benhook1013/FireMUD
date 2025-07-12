@@ -1,8 +1,12 @@
 package net.firedevops.firemud.service.impl;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.entity.ScriptDefinition;
+import net.firedevops.firemud.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.service.ScriptVersionService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
@@ -16,6 +20,9 @@ import org.springframework.stereotype.Service;
 public class ScriptVersionServiceImpl implements ScriptVersionService {
   private static final Logger logger = LoggingUtil.getLogger(ScriptVersionServiceImpl.class);
 
+  private final ScriptDefinitionRepository repository;
+  private final Map<Long, Map<String, String>> registry = new ConcurrentHashMap<>();
+
   @Override
   public void notifyUpdate(Long gameId, String scriptPatchVersion, List<String> affectedScripts) {
     logger.info(
@@ -23,6 +30,15 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
         scriptPatchVersion,
         gameId,
         affectedScripts.size());
-    // TODO reload scripts and validate compatibility
+    if (affectedScripts.isEmpty()) {
+      logger.info("No scripts provided for patch {}", scriptPatchVersion);
+      return;
+    }
+    List<ScriptDefinition> defs = repository.findByTenantIdAndNameIn(gameId, affectedScripts);
+    Map<String, String> map = registry.computeIfAbsent(gameId, id -> new ConcurrentHashMap<>());
+    for (ScriptDefinition def : defs) {
+      map.put(def.getName(), def.getDefinition());
+    }
+    logger.info("Reloaded {} scripts for patch {}", defs.size(), scriptPatchVersion);
   }
 }
