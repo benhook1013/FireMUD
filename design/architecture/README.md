@@ -10,7 +10,7 @@ The architecture section describes the platform infrastructure and each microser
 
 ## Directories & Responsibilities
 
-- [**infrastructure/**](./infrastructure/) – Deployment environments, gateway design, and protocol bridging.
+ - [**infrastructure/**](./infrastructure/) – Deployment environments and secrets management.
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
 - [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
 - [**repository-structure.md**](./repository-structure.md) – Layout of Gradle modules and repository files.
@@ -21,6 +21,8 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-security.md**](./system-architecture-security.md) – Cross-service security and secret management.
 - [**system-architecture-grpc.md**](./system-architecture-grpc.md) – Conventions for proto layout and versioning.
 - [**system-architecture-redis.md**](./system-architecture-redis.md) – Redis deployment topology and usage patterns.
+- [**system-architecture-gateway.md**](./system-architecture-gateway.md) – Spring Cloud Gateway routing and WebSocket support.
+- [**system-architecture-protocol-bridging.md**](./system-architecture-protocol-bridging.md) – Bridging Telnet and WebSocket clients.
 - [**system-architecture-reconnection.md**](./system-architecture-reconnection.md) – Client reconnect flow across services.
 - [**system-architecture-ticks.md**](./system-architecture-ticks.md) – Tick system and runtime design.
 - [**system-architecture-scripting.md**](./system-architecture-scripting.md) – Automation and scripting framework.
