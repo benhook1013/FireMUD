@@ -27,6 +27,10 @@ FireMUD uses Docker Compose for local development and testing:
   - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
 
 💡 **Tip**: For more reliable startup coordination, use **Gateway retry filters** or utilities like `wait-for-it.sh`.
+The gateway now includes a default *Retry* filter in `application.yml` so failed
+requests to services are retried automatically during startup. Each service's
+Dockerfile runs `docker/start-service.sh`, which invokes `wait-for-it.sh` to
+pause startup until PostgreSQL and Redis are reachable.
 
 ---
 
