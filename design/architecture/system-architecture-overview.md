@@ -10,7 +10,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
 - **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service
-- **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./infrastructure/gateway-architecture.md) for deployment details and stateless behavior.
+- **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
    > 🛑 **Gameplay login is handled by the Game Session Service** — the Gateway may validate JWTs for admin endpoints, but gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input**, but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
@@ -160,8 +160,8 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
-- [Gateway Architecture](./infrastructure/gateway-architecture.md)
-- [Protocol Bridging](./infrastructure/protocol-bridging.md)
+- [Gateway Architecture](./system-architecture-gateway.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
 
 ### Runtime & Security

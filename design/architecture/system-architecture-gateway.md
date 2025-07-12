@@ -98,9 +98,9 @@ Spring profiles (`application-dev.yml`, `application-prod.yml`) are used to conf
 
 ## 📚 Related Documentation
 
-- [Infrastructure Overview](./README.md)
-- [Deployment Environments](./deployment-environments.md)
-- [Protocol Bridging](./protocol-bridging.md)
+- [Infrastructure Overview](./infrastructure/README.md)
+- [Deployment Environments](./infrastructure/deployment-environments.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [Reconnection Strategy](../system-architecture-reconnection.md)
 
 ---
