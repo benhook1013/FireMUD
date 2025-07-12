@@ -58,7 +58,7 @@ sourceSets {
 tasks.named<SpotBugsTask>("spotbugsMain") {
     dependsOn(tasks.named("compileJava"))
     classes = files(
-        fileTree("$buildDir/classes/java/main") {
+        fileTree(project.layout.buildDirectory.dir("classes/java/main")) {
             exclude("**/proto/**")
         }
     )
@@ -67,7 +67,7 @@ tasks.named<SpotBugsTask>("spotbugsMain") {
 tasks.named<SpotBugsTask>("spotbugsTest") {
     dependsOn(tasks.named("compileTestJava"))
     classes = files(
-        fileTree("$buildDir/classes/java/test") {
+        fileTree(project.layout.buildDirectory.dir("classes/java/test")) {
             exclude("**/proto/**")
         }
     )
