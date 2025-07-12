@@ -25,7 +25,10 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Script definitions are versioned and can be hot reloaded without downtime as
   described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
 - Uploading or replacing scripts is handled as a Saga workflow so that failures
-  can be rolled back. See [Transaction Strategies](../system-architecture-transactions.md).
+    can be rolled back. The service uses the shared `SagaBuilder` and
+    `SagaRunner` helpers to persist the script and emit `sagas.active` metrics
+    with a `correlationId` for troubleshooting. See
+    [Transaction Strategies](../system-architecture-transactions.md).
 - Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
   one game cannot access another's data. Redis queues also include the tenant
   prefix; see [Multi-Tenancy](../system-architecture-multi-tenancy.md).
