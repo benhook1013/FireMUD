@@ -101,6 +101,14 @@ components:
         newPassword:
           type: string
       required: [tenantId, token, newPassword]
+    UsernameRecoveryRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        email:
+          type: string
+      required: [tenantId, email]
     LinkExternalAccountRequest:
       type: object
       properties:
@@ -225,6 +233,21 @@ paths:
           description: Email verified
         '400':
           description: Invalid verification token
+  /auth/recover-username:
+    post:
+      summary: Send username reminder
+      operationId: recoverUsername
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsernameRecoveryRequest'
+      responses:
+        '200':
+          description: Email sent
+        '400':
+          description: Invalid request
   /accounts:
     post:
       summary: Create a new account
