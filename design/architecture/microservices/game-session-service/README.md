@@ -97,6 +97,10 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 variables.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `GAME_TICK_DURATION_MS` | Length of a single game tick in milliseconds | `1000` |
+
 ## Proto Files
 
 Service definitions reside in

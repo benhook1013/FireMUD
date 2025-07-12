@@ -107,15 +107,19 @@ FIREMUD_SERVICES_GAME_LOGIC_SERVICE=game-logic-service:6565
 FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE=logging-admin-service:6565
 ```
 
-### Additional Service Settings
+### Observability
 
-Some configuration values apply only to specific services:
+All services export OpenTelemetry spans. The collector endpoint can be overridden with:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `FIREMUD_LOGGINGADMIN_HOST` | Hostname for the Logging Admin service | `logging-admin-service` |
-| `FIREMUD_LOGGINGADMIN_PORT` | gRPC port for the Logging Admin service | `6565` |
-| `FIREMUD_VOICE_TOKEN_EXPIRATION_MS` | Expiration of voice chat tokens | `300000` |
+| `otel.endpoint` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
+
+### Additional Notes
+
+Service-specific settings such as SMTP credentials for the Account Service or
+`GAME_TICK_DURATION_MS` for the Game Session Service are documented in each
+service's design file. This document covers only shared configuration keys.
 
 ## 📚 Related Docs
 
