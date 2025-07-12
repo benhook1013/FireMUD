@@ -9,7 +9,6 @@ import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.service.tick.ScriptTickService;
-import net.firedevops.firemud.service.quota.ScriptQuotaService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
