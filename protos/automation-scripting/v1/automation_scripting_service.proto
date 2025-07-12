@@ -14,6 +14,8 @@ service AutomationScriptingService {
   rpc ListFormationMembers(ListFormationMembersRequest) returns (ListFormationMembersResponse);
   rpc UpdateScript(UpdateScriptRequest) returns (UpdateScriptResponse);
   rpc GetScriptStatus(GetScriptStatusRequest) returns (GetScriptStatusResponse);
+  rpc NotifyScriptVersionUpdate(NotifyScriptVersionUpdateRequest)
+      returns (NotifyScriptVersionUpdateResponse);
 }
 
 message PingRequest {}
@@ -77,4 +79,15 @@ message GetScriptStatusResponse {
   bool queued = 1;
   bool running = 2;
   shared.v1.ErrorDetail error = 3;
+}
+
+message NotifyScriptVersionUpdateRequest {
+  int64 game_id = 1;
+  string script_patch_version = 2;
+  repeated string affected_scripts = 3;
+}
+
+message NotifyScriptVersionUpdateResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
 }

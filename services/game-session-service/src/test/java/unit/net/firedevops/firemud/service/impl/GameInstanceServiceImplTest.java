@@ -31,7 +31,7 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionSavesState() {
-    StartSessionRequest request = new StartSessionRequest(1L, "v1", 42L);
+    StartSessionRequest request = new StartSessionRequest(1L, "v1", null, 42L);
     GameInstance entity = new GameInstance();
     entity.setId(10L);
     entity.setTenantId(1L);
@@ -40,7 +40,7 @@ class GameInstanceServiceImplTest {
     entity.setStatus("RUNNING");
 
     when(repository.save(any())).thenReturn(entity);
-    GameInstanceDto dto = new GameInstanceDto(10L, 1L, "v1", 42L, "RUNNING");
+    GameInstanceDto dto = new GameInstanceDto(10L, 1L, "v1", null, 42L, "RUNNING");
     when(mapper.toDto(entity)).thenReturn(dto);
 
     service.startSession(request);
@@ -59,7 +59,7 @@ class GameInstanceServiceImplTest {
 
     when(repository.findById(10L)).thenReturn(Optional.of(entity));
     when(repository.save(entity)).thenReturn(entity);
-    when(mapper.toDto(entity)).thenReturn(new GameInstanceDto(10L, 1L, "v1", 42L, "STOPPED"));
+    when(mapper.toDto(entity)).thenReturn(new GameInstanceDto(10L, 1L, "v1", null, 42L, "STOPPED"));
 
     service.stopSession(10L);
 

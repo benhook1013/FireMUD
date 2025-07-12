@@ -7,4 +7,5 @@ import jakarta.validation.constraints.Size;
 public record StartSessionRequest(
     @NotNull Long tenantId,
     @NotNull @Size(max = 100) String versionId,
+    String scriptPatchVersion,
     @NotNull Long ownerAccountId) {}

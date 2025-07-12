@@ -66,7 +66,11 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
       StreamObserver<StartSessionResponse> responseObserver) {
     try {
       StartSessionRequest dto =
-          new StartSessionRequest(Long.valueOf(request.getTenantId()), request.getVersionId(), 0L);
+          new StartSessionRequest(
+              Long.valueOf(request.getTenantId()),
+              request.getVersionId(),
+              request.getScriptPatchVersion(),
+              0L);
       GameInstanceDto instance = gameInstanceService.startSession(dto);
       StartSessionResponse response =
           StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();

@@ -10,6 +10,8 @@ import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
@@ -64,6 +66,29 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       VersionDto version = versionService.publishVersion(request.getGameId(), request.getNotes());
       responseObserver.onNext(
           PublishVersionResponse.newBuilder().setVersionId(version.id()).build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription("failed").withCause(ex).asRuntimeException());
+    }
+  }
+
+  @Override
+  public void publishScriptPatchVersion(
+      PublishScriptPatchRequest request,
+      StreamObserver<PublishScriptPatchResponse> responseObserver) {
+    try {
+      VersionDto version =
+          versionService.publishScriptPatchVersion(
+              request.getGameId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getNotes());
+      responseObserver.onNext(
+          PublishScriptPatchResponse.newBuilder().setVersionId(version.id()).build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onError(
