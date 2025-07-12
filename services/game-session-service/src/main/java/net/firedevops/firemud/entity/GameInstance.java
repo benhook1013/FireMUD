@@ -17,6 +17,9 @@ public class GameInstance {
   @Column(nullable = false, length = 100)
   private String versionId;
 
+  @Column(name = "script_patch_version", length = 100)
+  private String scriptPatchVersion;
+
   @Column(nullable = false)
   private Long ownerAccountId;
 

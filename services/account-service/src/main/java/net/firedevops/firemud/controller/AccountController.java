@@ -6,6 +6,7 @@ import net.firedevops.firemud.common.security.RequireAdminRole;
 import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
+import net.firedevops.firemud.dto.LinkExternalAccountRequest;
 import net.firedevops.firemud.service.AccountService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -44,6 +45,15 @@ public class AccountController {
   public ResponseEntity<ApiResponse<Void>> deleteAccount(
       @PathVariable Long accountId, Long tenantId) {
     accountService.deleteAccount(tenantId, accountId);
+    return ResponseEntity.ok(ApiResponse.success(null));
+  }
+
+  @PostMapping("/{accountId}/external")
+  public ResponseEntity<ApiResponse<Void>> linkExternalAccount(
+      @PathVariable Long accountId, @Valid @RequestBody LinkExternalAccountRequest request) {
+    accountService.linkExternalAccount(
+        new LinkExternalAccountRequest(
+            request.tenantId(), accountId, request.provider(), request.externalId()));
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

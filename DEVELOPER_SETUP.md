@@ -181,7 +181,7 @@ Environment‑specific settings live in Spring Boot profile files contained with
 More details on deployment environments and gateway routing can be found in the following design documents:
 
 - [Deployment Environments](design/architecture/infrastructure/deployment-environments.md)
-- [Gateway Architecture](design/architecture/infrastructure/gateway-architecture.md)
+- [Gateway Architecture](design/architecture/system-architecture-gateway.md)
 - [Infrastructure Overview](design/architecture/infrastructure/README.md) – explains TLS/mTLS certificates, multi-tenancy, and network boundaries.
 
 These documents explain how the compose setup differs from production and provide examples of the configuration files.
@@ -194,5 +194,5 @@ You are now ready to explore the codebase and contribute!
 
 - [Infrastructure Overview](design/architecture/infrastructure/README.md)
 - [Deployment Environments](design/architecture/infrastructure/deployment-environments.md)
-- [Gateway Architecture](design/architecture/infrastructure/gateway-architecture.md)
+- [Gateway Architecture](design/architecture/system-architecture-gateway.md)
 - [System Architecture Overview](design/architecture/system-architecture-overview.md)

@@ -24,6 +24,7 @@ import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.ExternalAccountRepository;
 import net.firedevops.firemud.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
@@ -44,6 +45,7 @@ public class AccountServiceImpl implements AccountService {
   private final ProfileMapper profileMapper;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final SubscriptionRepository subscriptionRepository;
+  private final ExternalAccountRepository externalAccountRepository;
   private final PasswordResetTokenRepository passwordResetTokenRepository;
   private final NotificationService notificationService;
   private final LoggingAdminClient loggingAdminClient;
@@ -57,6 +59,7 @@ public class AccountServiceImpl implements AccountService {
       ProfileMapper profileMapper,
       PaymentTransactionRepository paymentTransactionRepository,
       SubscriptionRepository subscriptionRepository,
+      ExternalAccountRepository externalAccountRepository,
       PasswordResetTokenRepository passwordResetTokenRepository,
       NotificationService notificationService,
       LoggingAdminClient loggingAdminClient,
@@ -68,6 +71,7 @@ public class AccountServiceImpl implements AccountService {
     this.profileMapper = profileMapper;
     this.paymentTransactionRepository = paymentTransactionRepository;
     this.subscriptionRepository = subscriptionRepository;
+    this.externalAccountRepository = externalAccountRepository;
     this.passwordResetTokenRepository = passwordResetTokenRepository;
     this.notificationService = notificationService;
     this.loggingAdminClient = loggingAdminClient;
@@ -237,6 +241,30 @@ public class AccountServiceImpl implements AccountService {
     account.setPasswordHash(hashPassword(request.newPassword()));
     accountRepository.save(account);
     passwordResetTokenRepository.delete(token);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "account.link_external")
+  public void linkExternalAccount(net.firedevops.firemud.dto.LinkExternalAccountRequest request) {
+    Account account =
+        accountRepository
+            .findById(request.accountId())
+            .filter(a -> a.getTenantId().equals(request.tenantId()))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+
+    if (externalAccountRepository.existsByTenantIdAndAccountIdAndProvider(
+        request.tenantId(), request.accountId(), request.provider())) {
+      throw new IllegalArgumentException("Account already linked");
+    }
+
+    net.firedevops.firemud.entity.ExternalAccount entity =
+        new net.firedevops.firemud.entity.ExternalAccount();
+    entity.setAccount(account);
+    entity.setTenantId(request.tenantId());
+    entity.setProvider(request.provider());
+    entity.setExternalId(request.externalId());
+    externalAccountRepository.save(entity);
   }
 
   private String hashPassword(String password) {

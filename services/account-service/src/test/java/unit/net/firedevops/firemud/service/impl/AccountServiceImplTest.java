@@ -16,6 +16,7 @@ import net.firedevops.firemud.entity.Profile;
 import net.firedevops.firemud.mapper.AccountMapper;
 import net.firedevops.firemud.mapper.ProfileMapper;
 import net.firedevops.firemud.repository.AccountRepository;
+import net.firedevops.firemud.repository.ExternalAccountRepository;
 import net.firedevops.firemud.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.repository.SubscriptionRepository;
@@ -36,6 +37,7 @@ class AccountServiceImplTest {
   @Mock private SessionService sessionService;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private SubscriptionRepository subscriptionRepository;
+  @Mock private ExternalAccountRepository externalAccountRepository;
 
   @Mock
   private net.firedevops.firemud.repository.PasswordResetTokenRepository
@@ -56,6 +58,7 @@ class AccountServiceImplTest {
             profileMapper,
             paymentTransactionRepository,
             subscriptionRepository,
+            externalAccountRepository,
             passwordResetTokenRepository,
             notificationService,
             loggingAdminClient,
@@ -146,6 +149,24 @@ class AccountServiceImplTest {
         .save(org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.verify(notificationService)
         .sendNotification(1L, 1L, "Password reset requested");
+  }
+
+  @Test
+  void linkExternalAccountSavesEntity() {
+    Account account = new Account();
+    account.setId(5L);
+    account.setTenantId(1L);
+    when(accountRepository.findById(5L)).thenReturn(Optional.of(account));
+    when(externalAccountRepository.existsByTenantIdAndAccountIdAndProvider(1L, 5L, "google"))
+        .thenReturn(false);
+
+    service.linkExternalAccount(
+        new net.firedevops.firemud.dto.LinkExternalAccountRequest(1L, 5L, "google", "abc"));
+
+    org.mockito.ArgumentCaptor<net.firedevops.firemud.entity.ExternalAccount> captor =
+        org.mockito.ArgumentCaptor.forClass(net.firedevops.firemud.entity.ExternalAccount.class);
+    org.mockito.Mockito.verify(externalAccountRepository).save(captor.capture());
+    assertEquals("abc", captor.getValue().getExternalId());
   }
 
   private static String hash(String password) {

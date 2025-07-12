@@ -72,7 +72,7 @@ The `game-session-service` is the central component responsible for:
 
 ## 📚 Related Documentation
 
-- [Infrastructure Overview](./README.md)
-- [Gateway Architecture](./gateway-architecture.md)
-- [Deployment Environments](./deployment-environments.md)
+- [Infrastructure Overview](./infrastructure/README.md)
+- [Gateway Architecture](./system-architecture-gateway.md)
+- [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Reconnection Strategy](../system-architecture-reconnection.md)

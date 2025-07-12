@@ -104,14 +104,14 @@ values fall below configurable thresholds the NPC may become `FLEEING` or
   - World Management Service receives world-state updates from scripts.
 - **External:** PostgreSQL for script storage and Redis for queuing automation tasks.
 
-> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
-[**Deployment Environments**](../../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+> See [**Gateway Architecture**](../system-architecture-gateway.md),
+[**Deployment Environments**](../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -150,7 +150,7 @@ stubs.
 
 ### Configuration
 
-PostgreSQL and Redis connections are configured via the common `DatabaseAutoConfiguration` and `RedisProperties` classes. Refer to [Deployment Environments](../../infrastructure/deployment-environments.md) for default values. Local development typically uses the settings from `.env.sample`.
+PostgreSQL and Redis connections are configured via the common `DatabaseAutoConfiguration` and `RedisProperties` classes. Refer to [Deployment Environments](../infrastructure/deployment-environments.md) for default values. Local development typically uses the settings from `.env.sample`.
 
 ### REST & gRPC Endpoints
 

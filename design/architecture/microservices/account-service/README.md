@@ -59,6 +59,10 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - `session` keys in Redis map temporary session tokens to account IDs for quick
   reconnects.
 
+External accounts allow players to log in via Google, Discord, or Steam. Each
+link stores the provider name and external ID so the platform account can be
+resolved during authentication.
+
 ### gRPC APIs
 
 - `CreateAccount` – registers a new user and establishes a session for internal
@@ -83,14 +87,14 @@ Manages user accounts and authentication for the platform. It stores profile dat
   - Game Session Service consumes tokens to create gameplay sessions.
 - **External:** PostgreSQL for account data, Redis for transient session data.
 
-> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
-[**Deployment Environments**](../../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+> See [**Gateway Architecture**](../system-architecture-gateway.md),
+[**Deployment Environments**](../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables

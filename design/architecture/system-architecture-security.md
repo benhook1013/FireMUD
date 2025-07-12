@@ -111,5 +111,5 @@ seamlessly with cert-manager for automatic rotation.
 
 - [Authentication & Authorization](./system-architecture-authentication.md)
 - [Redis Architecture](./system-architecture-redis.md)
-- [Gateway Architecture](./infrastructure/gateway-architecture.md)
+- [Gateway Architecture](./system-architecture-gateway.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)

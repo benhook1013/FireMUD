@@ -62,14 +62,14 @@ environments work out of the box.
   - TCP Proxy Service forwards Telnet traffic into the gateway.
 - **External:** Spring Cloud Gateway infrastructure.
 
-> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
-[**Deployment Environments**](../../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+> See [**Gateway Architecture**](../system-architecture-gateway.md),
+[**Deployment Environments**](../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables

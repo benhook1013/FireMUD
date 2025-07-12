@@ -11,6 +11,8 @@ service GameDesignService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse);
   rpc PublishVersion(PublishVersionRequest) returns (PublishVersionResponse);
+  rpc PublishScriptPatchVersion(PublishScriptPatchRequest)
+      returns (PublishScriptPatchResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
 }
 
@@ -31,6 +33,18 @@ message PublishVersionRequest {
 }
 
 message PublishVersionResponse {
+  int64 version_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PublishScriptPatchRequest {
+  int64 game_id = 1;
+  int64 base_version_id = 2;
+  string script_patch_version = 3;
+  string notes = 4;
+}
+
+message PublishScriptPatchResponse {
   int64 version_id = 1;
   shared.v1.ErrorDetail error = 2;
 }

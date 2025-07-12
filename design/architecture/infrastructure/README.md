@@ -13,8 +13,8 @@ This directory contains core documentation for the shared infrastructure that po
 | [System Context Diagram](../system-context-diagram.md) | Shows clients, DMZ components, internal services, and datastores. |
 | [Deployment Environments](./deployment-environments.md) | Describes how Docker Compose and Kubernetes are used in dev/prod setups.   |
 | [Environment & Secrets Management](./environment-and-secrets.md) | How services receive configuration values and handle sensitive data. |
-| [Gateway Architecture](./gateway-architecture.md)       | Details on Spring Cloud Gateway routing, WebSocket support, and service access. |
-| [Protocol Bridging](./protocol-bridging.md)             | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |
+| [Gateway Architecture](../system-architecture-gateway.md)       | Details on Spring Cloud Gateway routing, WebSocket support, and service access. |
+| [Protocol Bridging](../system-architecture-protocol-bridging.md)             | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |
 | [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md) | Conventions for service APIs. |
 | [Redis Architecture](../system-architecture-redis.md)   | Describes where Redis is deployed and how session state is stored. |
 | [Security Architecture](../system-architecture-security.md) | TLS termination, mTLS usage, and network policy overview. |
@@ -39,21 +39,10 @@ The log aggregation pipeline is summarized in [Logging & Monitoring](../system-a
 
 All service-level design documents should refer to this directory for shared infrastructure context, rather than duplicating gateway, deployment, or protocol behavior.
 
-For example:
-
-> See [**Gateway Architecture**](./gateway-architecture.md), [**Deployment Environments**](./deployment-environments.md), or [**Protocol Bridging**](./protocol-bridging.md) for relevant infrastructure details.
-> Redis-backed session state is described in detail in [**Redis Architecture**](../system-architecture-redis.md).
-> Observability integrations are summarized in [**Logging & Monitoring**](../system-architecture-logging-monitoring.md).
-> Client reconnection flow is covered in the [**Reconnection Strategy**](../system-architecture-reconnection.md).
-> TLS, certificate rotation, and network policies are detailed in the [**Security Architecture**](../system-architecture-security.md). Example manifests live in [`k8s/network-policies/`](../../../k8s/network-policies) and provide a default ingress policy for internal services.
-> Backup procedures and disaster recovery steps are outlined in [**Backup & Disaster Recovery**](../system-architecture-backup-recovery.md).
-> Service developers should follow the [**gRPC API Style & Versioning Guidelines**](../system-architecture-grpc.md) when defining new APIs.
-> Distributed workflows are explained in [**Transaction Strategies**](../system-architecture-transactions.md).
-
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Deployment Environments](./deployment-environments.md)
-- [Gateway Architecture](./gateway-architecture.md)
-- [Protocol Bridging](./protocol-bridging.md)
+- [Gateway Architecture](../system-architecture-gateway.md)
+- [Protocol Bridging](../system-architecture-protocol-bridging.md)
 - [Transaction Strategies](../system-architecture-transactions.md)

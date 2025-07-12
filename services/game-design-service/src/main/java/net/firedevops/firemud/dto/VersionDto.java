@@ -8,5 +8,8 @@ public record VersionDto(
     @NotNull Long tenantId,
     @NotNull Long gameId,
     int versionNumber,
+    String scriptPatchVersion,
+    Long baseVersionId,
+    boolean scriptOnly,
     String notes,
     LocalDateTime createdAt) {}

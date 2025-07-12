@@ -276,4 +276,37 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onCompleted();
     }
   }
+
+  @Override
+  public void linkExternalAccount(
+      net.firedevops.firemud.account.v1.LinkExternalAccountRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse>
+          responseObserver) {
+    try {
+      accountService.linkExternalAccount(
+          new net.firedevops.firemud.dto.LinkExternalAccountRequest(
+              Long.valueOf(request.getTenantId()),
+              Long.valueOf(request.getAccountId()),
+              request.getProvider(),
+              request.getExternalId()));
+      var response =
+          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
+              .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      var response =
+          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
 }

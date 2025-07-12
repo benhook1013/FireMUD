@@ -27,10 +27,10 @@ class GameInstanceControllerTest {
 
   @Test
   void startSessionReturnsDto() throws Exception {
-    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", 1L, "RUNNING");
+    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", null, 1L, "RUNNING");
     org.mockito.Mockito.when(gameInstanceService.startSession(org.mockito.ArgumentMatchers.any()))
         .thenReturn(dto);
-    StartSessionRequest request = new StartSessionRequest(1L, "v1", 1L);
+    StartSessionRequest request = new StartSessionRequest(1L, "v1", null, 1L);
     mockMvc
         .perform(
             post("/sessions")
@@ -42,7 +42,7 @@ class GameInstanceControllerTest {
 
   @Test
   void stopSessionReturnsDto() throws Exception {
-    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", 1L, "STOPPED");
+    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", null, 1L, "STOPPED");
     org.mockito.Mockito.when(gameInstanceService.stopSession(1L)).thenReturn(dto);
     mockMvc
         .perform(post("/sessions/1/stop"))
@@ -52,7 +52,7 @@ class GameInstanceControllerTest {
 
   @Test
   void restartSessionReturnsDto() throws Exception {
-    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", 1L, "RUNNING");
+    GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", null, 1L, "RUNNING");
     org.mockito.Mockito.when(gameInstanceService.restartSession(1L)).thenReturn(dto);
     mockMvc
         .perform(post("/sessions/1/restart"))

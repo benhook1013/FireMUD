@@ -101,6 +101,16 @@ components:
         newPassword:
           type: string
       required: [tenantId, token, newPassword]
+    LinkExternalAccountRequest:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        provider:
+          type: string
+        externalId:
+          type: string
+      required: [tenantId, provider, externalId]
 paths:
   /ping:
     get:
@@ -208,6 +218,25 @@ paths:
           description: Exported data
         '400':
           description: Invalid account ID
+  /accounts/{accountId}/external:
+    post:
+      summary: Link external account
+      operationId: linkExternalAccount
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkExternalAccountRequest'
+      responses:
+        '200':
+          description: Linked
   /accounts/{accountId}:
     delete:
       summary: Delete account

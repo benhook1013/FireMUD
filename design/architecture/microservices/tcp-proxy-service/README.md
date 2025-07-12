@@ -74,14 +74,14 @@ against malformed negotiation sequences and other legacy edge cases.
 The proxy is stateless. Any buffered input lives only in memory until forwarded
 to the Spring Cloud Gateway.
 
-> See [**Gateway Architecture**](../../infrastructure/gateway-architecture.md),
-[**Deployment Environments**](../../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../../infrastructure/protocol-bridging.md) for
+> See [**Gateway Architecture**](../system-architecture-gateway.md),
+[**Deployment Environments**](../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
 details on how Telnet connections are integrated into the platform.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
