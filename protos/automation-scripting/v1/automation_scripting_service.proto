@@ -12,6 +12,8 @@ service AutomationScriptingService {
   rpc CreateFormation(CreateFormationRequest) returns (CreateFormationResponse);
   rpc AddFormationMember(AddFormationMemberRequest) returns (AddFormationMemberResponse);
   rpc ListFormationMembers(ListFormationMembersRequest) returns (ListFormationMembersResponse);
+  rpc UpdateScript(UpdateScriptRequest) returns (UpdateScriptResponse);
+  rpc GetScriptStatus(GetScriptStatusRequest) returns (GetScriptStatusResponse);
 }
 
 message PingRequest {}
@@ -52,4 +54,27 @@ message ListFormationMembersRequest {
 message ListFormationMembersResponse {
   repeated string npc_ids = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message UpdateScriptRequest {
+  string tenant_id = 1;
+  string name = 2;
+  string version = 3;
+  string definition = 4;
+}
+
+message UpdateScriptResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetScriptStatusRequest {
+  string tenant_id = 1;
+  string script_name = 2;
+}
+
+message GetScriptStatusResponse {
+  bool queued = 1;
+  bool running = 2;
+  shared.v1.ErrorDetail error = 3;
 }

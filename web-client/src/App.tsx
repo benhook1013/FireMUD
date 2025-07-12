@@ -22,7 +22,11 @@ function App() {
       </header>
       <main>
         <h1>Vite + React</h1>
-        <Button variant="outlined" onClick={() => setMode('game')} sx={{ mr: 1 }}>
+        <Button
+          variant="outlined"
+          onClick={() => setMode('game')}
+          sx={{ mr: 1 }}
+        >
           Game Editor
         </Button>
         <Button
@@ -40,7 +44,10 @@ function App() {
           {mode === 'script' && <ScriptEditor />}
           {mode === 'demo' && (
             <>
-              <Button variant="contained" onClick={() => setCount((c) => c + 1)}>
+              <Button
+                variant="contained"
+                onClick={() => setCount((c) => c + 1)}
+              >
                 count is {count}
               </Button>
               <p>

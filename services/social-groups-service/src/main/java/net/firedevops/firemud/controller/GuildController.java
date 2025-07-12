@@ -2,12 +2,15 @@ package net.firedevops.firemud.controller;
 
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.dto.AddGuildMemberRequest;
 import net.firedevops.firemud.dto.AddGuildStorageItemRequest;
 import net.firedevops.firemud.dto.CreateAllianceRequest;
 import net.firedevops.firemud.dto.CreateGuildRequest;
 import net.firedevops.firemud.dto.GuildAllianceDto;
 import net.firedevops.firemud.dto.GuildDto;
+import net.firedevops.firemud.dto.GuildMemberDto;
 import net.firedevops.firemud.dto.GuildStorageItemDto;
+import net.firedevops.firemud.dto.UpdateGuildMemberRoleRequest;
 import net.firedevops.firemud.service.GuildService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -43,5 +46,26 @@ public class GuildController {
       @Valid @RequestBody CreateAllianceRequest request) {
     GuildAllianceDto dto = guildService.createAlliance(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @PostMapping("/members")
+  public ResponseEntity<ApiResponse<GuildMemberDto>> addMember(
+      @Valid @RequestBody AddGuildMemberRequest request) {
+    GuildMemberDto dto = guildService.addMember(request);
+    return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @PostMapping("/members/role")
+  public ResponseEntity<ApiResponse<GuildMemberDto>> updateMemberRole(
+      @Valid @RequestBody UpdateGuildMemberRoleRequest request) {
+    GuildMemberDto dto = guildService.updateMemberRole(request);
+    return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  @PostMapping("/members/remove")
+  public ResponseEntity<ApiResponse<String>> removeMember(
+      @Valid @RequestBody AddGuildMemberRequest request) {
+    guildService.removeMember(request.tenantId(), request.guildId(), request.accountId());
+    return ResponseEntity.ok(ApiResponse.success("removed"));
   }
 }

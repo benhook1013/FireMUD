@@ -1,6 +1,6 @@
 # Automation & Scripting Service Task List
 
-- [ ] **Develop Automation & Scripting Service**
+- [x] **Develop Automation & Scripting Service**
   - [x] Implement state-driven & event-driven NPC behaviors *(see [System Architecture: Scripting](../architecture/system-architecture-scripting.md))*
   - [x] Implement procedural world generation
   - [x] Implement scripted events for game mechanics and NPC interactions *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
@@ -54,7 +54,7 @@ participate in CI.
 
 - [x] Meta and admin services validate JWTs using helpers from `firemud-common`
 - [x] Check `globalRoles` and `scopedRoles` where applicable
-- [ ] Gameplay services rely on the Game Session Service for session validation
+- [x] Gameplay services rely on the Game Session Service for session validation
 
 ---
 
@@ -63,7 +63,7 @@ participate in CI.
 - [x] Use `firemud-common` protobuf types for shared messages
 - [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [x] Register with service discovery via helpers in `firemud-common`
-- [ ] Ensure gRPC calls use mTLS certificates issued by cert-manager
+- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
 - [x] Internal traffic communicates directly over gRPC (Gateway not involved)
 
 ---
@@ -79,9 +79,9 @@ participate in CI.
 
 ## 🔄 Saga Participation *(if used)*
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
-- [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] Use saga helpers from `firemud-common` for workflow steps
+- [x] Emit metrics and correlation IDs for compensation and retries
+- [x] Document saga participation in `design/README.md`
 
 ---
 
@@ -104,7 +104,7 @@ participate in CI.
 - [x] Validate contracts with smoke tests (gRPC and REST)
 - [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
-- [ ] *(When workflows span services)* add cross-service integration tests
+- [x] *(When workflows span services)* add cross-service integration tests
 
 ---
 
