@@ -45,6 +45,8 @@ Orchestrates live game sessions, including tick execution, player input validati
 - **Session Lifecycle Management** — creates, resumes, and terminates player sessions.
 - **Tick Orchestration** — drives the hybrid tick model for deterministic action processing.
 - **Runtime Configuration** — stores runtime flag values created in the Game Design Service and activates published game versions.
+- **Script Patch Awareness** — tracks an optional `script_patch_version` so live
+  sessions can reload updated scripts without restarting.
 - **Termination Handling** — cleans up resources and logs results when a game ends.
 - **Instance Initialization** — starts new games from published templates.
 - **Reconnection Handling** — resumes gameplay via Redis-backed session state as described in [Reconnection Strategy](../system-architecture-reconnection.md).
@@ -52,9 +54,10 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ### Data Model
 
-- `session` table tracks active games, associated `version_id`, and owner account.
+- `session` table tracks active games with a `runtime_version` referencing the published design version and an optional `script_patch_version` linked to that base version.
 - `feature_flag` table stores runtime configuration overrides per tenant.
 - Redis stores volatile queues, timers, and reconnect metadata.
+- Redis session state records the active `script_patch_version` so it can be restored for replay or debugging.
 
 ### Tick Execution Model
 
@@ -138,7 +141,7 @@ To start a session via REST:
 ```bash
 curl -X POST http://localhost:8080/sessions \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":"demo","versionId":1}'
+  -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVersion":"v42-script.3"}'
 ```
 
 #### gRPC
@@ -155,7 +158,7 @@ grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping
 Start a session via gRPC:
 
 ```bash
-grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
+grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVersion":"v42-script.3"}' \
   localhost:6565 game_session.v1.GameSessionService/StartSession
 ```
 
@@ -163,6 +166,8 @@ grpcurl -plaintext -d '{"tenantId":"demo","versionId":1}' \
 
 - See the "Cross-Region Sharding and Session Handoff" section in the central [Game Session Service design](../microservices/game-session-service/README.md) for how sessions migrate between clusters.
 - Metrics emitted by this service feed the operator [Analytics Dashboards](../microservices/logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
+- Logs and metrics include a `script_patch_version` label so operators know which
+  hotfix revision is currently active.
 
 ### Runtime Feature Flags
 

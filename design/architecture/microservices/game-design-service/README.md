@@ -41,6 +41,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
   Automation & Scripting Service.
 - [Game templates](game-templates.md) with predefined rulesets and administrators.
 - Version and patch note management for published games.
+- Supports script-only patch versions that reference a `baseVersionId` and
+  generate a new `scriptPatchVersion` without requiring a full publish.
 - [Item & Equipment Balancing Tools](item-equipment-balancing.md)
 - Import/export of design assets for sharing between game worlds.
 
@@ -57,6 +59,9 @@ Offers tools for building worlds, items, actions, and events that make up each g
 1. Creators use the web UI to craft worlds, items, and scripts.
 2. Changes are staged as revisions with metadata and author information.
 3. Revisions are grouped into versions that can be published to runtime.
+4. For quick fixes, designers create a script-only patch version which records a
+   `scriptPatchVersion` linked to an existing `baseVersionId` and notifies
+   runtime services to reload the modified scripts.
 
 ### gRPC APIs
 

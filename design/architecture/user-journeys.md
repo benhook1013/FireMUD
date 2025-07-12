@@ -91,10 +91,26 @@ Operators monitor the game and enforce rules using the [Logging & Admin Service]
 
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the Game Design Service.
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
-3. **Restart Game Instance** – Administrators instruct the Game Session Service to load the new `version_id`.
+3. **Publish a Script Patch** – For quick fixes, the Game Design Service emits a
+   `scriptPatchVersion` like `v42-script.3` linked to the current version.
+4. **Restart Game Instance** – Administrators instruct the Game Session Service
+   to load the new `version_id` when a full update is required. Script-only
+   patches are applied live without restarting.
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
+```
+
+Example user-journey DSL entry for a hotfix:
+
+```yaml
+- action: hotfix_script
+  version: "v42"
+  patchVersion: "v42-script.3"
+  scripts:
+    - "npc-barkeep"
+    - "docks-rat-encounter"
+  reason: "Live AI bug fix during event"
 ```
 
 ---
