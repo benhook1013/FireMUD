@@ -1,0 +1,21 @@
+# Production configuration for automation-scripting-service
+spring:
+  application:
+    name: automation-scripting-service
+  flyway:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+script:
+  quota:
+    limit: ${SCRIPT_QUOTA_LIMIT:50}
+    windowSeconds: ${SCRIPT_QUOTA_WINDOWSECONDS:60}
