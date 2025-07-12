@@ -9,18 +9,19 @@ import io.grpc.ServerCall;
 import io.grpc.Status;
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class GrpcJwtAuthInterceptorTest {
   private JwtUtil jwtUtil;
-  private GrpcJwtAuthInterceptor interceptor;
+  private AuthTokenInterceptor interceptor;
 
   @BeforeEach
   void setUp() {
     jwtUtil = new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000L);
-    interceptor = new GrpcJwtAuthInterceptor(jwtUtil);
+    interceptor = new AuthTokenInterceptor(jwtUtil);
   }
 
   @Test
