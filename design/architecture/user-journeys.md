@@ -4,18 +4,27 @@ This document outlines common flows for creators and players when interacting wi
 
 ---
 
-## 1. Sign Up and Game Creation
+## 1. Sign Up
 
-1. **Sign Up** – Players create an account through the [Account Service](./microservices/account-service/README.md).
-2. **Create a Game** – Newly registered creators use the [Game Design Service](./microservices/game-design-service/README.md) to start a fresh game project.
+Players register for an account through the [Account Service](./microservices/account-service/README.md).
 
 ```plaintext
-Player → Account Service → Game Design Service (new game)
+Player → Account Service
 ```
 
 ---
 
-## 2. World and Entity Design
+## 2. Game Creation
+
+After signing up, creators start a new project using the [Game Design Service](./microservices/game-design-service/README.md).
+
+```plaintext
+Account Service (user) → Game Design Service (new game)
+```
+
+---
+
+## 3. World and Entity Design
 
 Creators refine the world and its inhabitants using several services:
 
@@ -29,7 +38,7 @@ Game Design ↔ World Management ↔ Entity Management
 
 ---
 
-## 3. Add Automation & Scripting
+## 4. Add Automation & Scripting
 
 Dynamic behavior is implemented via the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md):
 
@@ -40,7 +49,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 
 ---
 
-## 4. Publish and Start a Game Instance
+## 5. Publish and Start a Game Instance
 
 Once the world is ready:
 
@@ -53,7 +62,7 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 ---
 
-## 5. Player Login and Gameplay
+## 6. Player Login and Gameplay
 
 Players connect through the networking layer:
 
@@ -71,7 +80,7 @@ The Game Session Service handles login, session recovery, and active gameplay. P
 
 ---
 
-## 6. Social Interaction
+## 7. Social Interaction
 
 During gameplay, players form groups and communicate via the
 [Social & Groups Service](./microservices/social-groups-service/README.md):
@@ -86,7 +95,7 @@ During gameplay, players form groups and communicate via the
 
 ---
 
-## 7. Monitoring and Moderation
+## 8. Monitoring and Moderation
 
 Operators monitor the game and enforce rules using the
 [Logging & Admin Service](./microservices/logging-admin-service/README.md).
@@ -96,7 +105,7 @@ also exposes moderation tools such as bans or runtime feature toggles.
 
 ---
 
-## 8. Patch and Update a Live Game
+## 9. Patch and Update a Live Game
 
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the Game Design Service.
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
@@ -110,7 +119,7 @@ Game Design Service (publish) → Game Session Service (restart)
 
 ---
 
-## 9. Purchases and Subscriptions
+## 10. Purchases and Subscriptions
 
 1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles purchases and subscription renewals via Stripe.
 2. **Audit and Compliance** – Transactions are logged through the

@@ -180,8 +180,8 @@ Session state needed for reconnect recovery is stored under `session:{tenantId}:
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Publish and Start a Game Instance](../user-journeys.md#4-publish-and-start-a-game-instance)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#5-player-login-and-gameplay)
+- [User Journeys – Publish and Start a Game Instance](../user-journeys.md#5-publish-and-start-a-game-instance)
+- [User Journeys – Player Login and Gameplay](../user-journeys.md#6-player-login-and-gameplay)
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
