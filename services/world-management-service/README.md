@@ -44,6 +44,12 @@ connections. Typical variables in development are:
 
 Configuration values can also be set through profiles in `application.yml`.
 
+### Test Data
+
+Running with the `dev` profile automatically seeds a minimal region and rooms.
+The `TestDataSeeder` inserts a demo region, zone, two rooms, and an exit when the
+database tables are empty.
+
 ## Tenant Handling and Dependencies
 
 All world tables include a `tenantId` column to keep game data isolated.

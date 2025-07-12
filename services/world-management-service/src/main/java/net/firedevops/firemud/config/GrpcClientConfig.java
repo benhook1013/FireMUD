@@ -12,7 +12,8 @@ public class GrpcClientConfig {
   @Bean
   public GameSessionClient gameSessionClient(
       net.firedevops.firemud.common.config.ServiceEndpointsProperties endpoints,
-      GrpcClientProperties properties) throws SSLException {
+      GrpcClientProperties properties)
+      throws SSLException {
     return new GameSessionClient(endpoints, properties);
   }
 }
