@@ -5,6 +5,8 @@ import io.grpc.stub.StreamObserver;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
+import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
@@ -12,6 +14,7 @@ import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.ScriptDefinitionService;
+import net.firedevops.firemud.service.ScriptVersionService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
@@ -20,11 +23,15 @@ public class AutomationScriptingGrpcService
     extends AutomationScriptingServiceGrpc.AutomationScriptingServiceImplBase {
   private final PingService pingService;
   private final ScriptDefinitionService scriptService;
+  private final ScriptVersionService scriptVersionService;
 
   public AutomationScriptingGrpcService(
-      PingService pingService, ScriptDefinitionService scriptService) {
+      PingService pingService,
+      ScriptDefinitionService scriptService,
+      ScriptVersionService scriptVersionService) {
     this.pingService = pingService;
     this.scriptService = scriptService;
+    this.scriptVersionService = scriptVersionService;
   }
 
   @Override
@@ -90,6 +97,18 @@ public class AutomationScriptingGrpcService
     // Placeholder implementation; scripts execute asynchronously
     GetScriptStatusResponse resp =
         GetScriptStatusResponse.newBuilder().setQueued(false).setRunning(false).build();
+    responseObserver.onNext(resp);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void notifyScriptVersionUpdate(
+      NotifyScriptVersionUpdateRequest request,
+      StreamObserver<NotifyScriptVersionUpdateResponse> responseObserver) {
+    scriptVersionService.notifyUpdate(
+        request.getGameId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
+    NotifyScriptVersionUpdateResponse resp =
+        NotifyScriptVersionUpdateResponse.newBuilder().setSuccess(true).build();
     responseObserver.onNext(resp);
     responseObserver.onCompleted();
   }

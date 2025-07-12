@@ -11,6 +11,7 @@ import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.ScriptDefinitionService;
+import net.firedevops.firemud.service.ScriptVersionService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -21,8 +22,9 @@ class AutomationScriptingGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     AutomationScriptingGrpcService service =
-        new AutomationScriptingGrpcService(pingService, scriptService);
+        new AutomationScriptingGrpcService(pingService, scriptService, versionService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -48,8 +50,9 @@ class AutomationScriptingGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new IllegalArgumentException("bad"));
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     AutomationScriptingGrpcService service =
-        new AutomationScriptingGrpcService(pingService, scriptService);
+        new AutomationScriptingGrpcService(pingService, scriptService, versionService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -77,8 +80,9 @@ class AutomationScriptingGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new RuntimeException("boom"));
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
     AutomationScriptingGrpcService service =
-        new AutomationScriptingGrpcService(pingService, scriptService);
+        new AutomationScriptingGrpcService(pingService, scriptService, versionService);
 
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.ping(

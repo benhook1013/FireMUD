@@ -52,7 +52,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Transactional
   public GameInstanceDto startSession(StartSessionRequest request) {
     logger.info(
-        "Starting game session for tenant {} version {}", request.tenantId(), request.versionId());
+        "Starting game session for tenant {} version {} patch {}",
+        request.tenantId(),
+        request.versionId(),
+        request.scriptPatchVersion());
     repository
         .findFirstByOwnerAccountIdAndStatus(request.ownerAccountId(), "RUNNING")
         .ifPresent(
@@ -68,6 +71,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
     instance.setVersionId(request.versionId());
+    instance.setScriptPatchVersion(request.scriptPatchVersion());
     instance.setOwnerAccountId(request.ownerAccountId());
     instance.setStatus("RUNNING");
     instance = repository.save(instance);

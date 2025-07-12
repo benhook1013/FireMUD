@@ -62,14 +62,18 @@ class GameSessionGrpcServiceTest {
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.dto.StartSessionRequest.class)))
-        .thenReturn(new GameInstanceDto(1L, 1L, "v1", 0L, "RUNNING"));
+        .thenReturn(new GameInstanceDto(1L, 1L, "v1", null, 0L, "RUNNING"));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService, gameInstanceService, featureFlagService, tickService, meterRegistry);
 
     AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
     service.startSession(
-        StartSessionRequest.newBuilder().setTenantId("1").setVersionId("v1").build(),
+        StartSessionRequest.newBuilder()
+            .setTenantId("1")
+            .setVersionId("v1")
+            .setScriptPatchVersion("")
+            .build(),
         new StreamObserver<StartSessionResponse>() {
           @Override
           public void onNext(StartSessionResponse value) {

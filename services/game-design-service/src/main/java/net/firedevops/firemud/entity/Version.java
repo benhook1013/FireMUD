@@ -22,6 +22,15 @@ public class Version {
   @Column(nullable = false)
   private int versionNumber;
 
+  @Column(name = "script_patch_version", length = 100)
+  private String scriptPatchVersion;
+
+  @Column(name = "base_version_id")
+  private Long baseVersionId;
+
+  @Column(name = "is_script_only")
+  private boolean scriptOnly;
+
   @Column(length = 255)
   private String notes;
 

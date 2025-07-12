@@ -53,6 +53,41 @@ public class VersionServiceImpl implements VersionService {
   }
 
   @Override
+  @Transactional
+  public VersionDto publishScriptPatchVersion(
+      Long gameId, Long baseVersionId, String scriptPatchVersion, String notes)
+      throws SagaException {
+    logger.info(
+        "Publishing script patch {} for game {} base {}",
+        scriptPatchVersion,
+        gameId,
+        baseVersionId);
+    Game game =
+        gameRepository
+            .findById(gameId)
+            .orElseThrow(() -> new IllegalArgumentException("game not found"));
+
+    Version version = new Version();
+    version.setGame(game);
+    version.setTenantId(game.getTenantId());
+    version.setNotes(notes);
+    version.setVersionNumber(calculateNextNumber(gameId));
+    version.setScriptPatchVersion(scriptPatchVersion);
+    version.setBaseVersionId(baseVersionId);
+    version.setScriptOnly(true);
+
+    SagaBuilder builder = new SagaBuilder();
+    builder.step(
+        "persistVersion",
+        () -> {
+          versionRepository.save(version);
+        },
+        () -> versionRepository.delete(version));
+    builder.run();
+    return versionMapper.toDto(version);
+  }
+
+  @Override
   @Transactional(readOnly = true)
   public List<VersionDto> listVersions(Long gameId) {
     Game game =

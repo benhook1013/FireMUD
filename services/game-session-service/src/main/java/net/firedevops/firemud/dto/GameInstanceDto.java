@@ -7,5 +7,6 @@ public record GameInstanceDto(
     Long id,
     @NotNull Long tenantId,
     @NotNull @Size(max = 100) String versionId,
+    String scriptPatchVersion,
     @NotNull Long ownerAccountId,
     @NotNull @Size(max = 20) String status) {}
