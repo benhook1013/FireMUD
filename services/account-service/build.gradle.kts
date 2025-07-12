@@ -26,6 +26,7 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-api:1.38.0")
     implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
+    implementation("com.stripe:stripe-java:24.14.0")
     implementation("com.github.bastiaanjansen:otp-java:2.1.0")
     implementation("io.jsonwebtoken:jjwt-api:0.11.5")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.11.5")

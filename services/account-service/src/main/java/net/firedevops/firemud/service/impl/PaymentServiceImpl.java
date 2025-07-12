@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.time.LocalDateTime;
+import net.firedevops.firemud.client.StripeClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.PaymentIntentDto;
 import net.firedevops.firemud.dto.SubscriptionDto;
@@ -23,14 +24,17 @@ public class PaymentServiceImpl implements PaymentService {
   private final AccountRepository accountRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
   private final SubscriptionRepository subscriptionRepository;
+  private final StripeClient stripeClient;
 
   public PaymentServiceImpl(
       AccountRepository accountRepository,
       PaymentTransactionRepository paymentTransactionRepository,
-      SubscriptionRepository subscriptionRepository) {
+      SubscriptionRepository subscriptionRepository,
+      StripeClient stripeClient) {
     this.accountRepository = accountRepository;
     this.paymentTransactionRepository = paymentTransactionRepository;
     this.subscriptionRepository = subscriptionRepository;
+    this.stripeClient = stripeClient;
   }
 
   @Override
@@ -43,15 +47,27 @@ public class PaymentServiceImpl implements PaymentService {
             .findById(accountId)
             .filter(a -> a.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    StripeClient.IntentResult intent;
+    try {
+      intent = stripeClient.createPaymentIntent(amountCents, "usd");
+    } catch (com.stripe.exception.StripeException e) {
+      throw new IllegalStateException("Stripe error", e);
+    }
+
     PaymentTransaction tx = new PaymentTransaction();
     tx.setAccount(account);
     tx.setAmountCents(amountCents);
     tx.setCurrency("USD");
-    tx.setStatus("pending");
+    tx.setStatus(intent.status());
     tx.setTenantId(tenantId);
     tx = paymentTransactionRepository.save(tx);
     return new PaymentIntentDto(
-        tx.getId(), tenantId, accountId, tx.getAmountCents(), tx.getCurrency());
+        tx.getId(),
+        tenantId,
+        accountId,
+        tx.getAmountCents(),
+        tx.getCurrency(),
+        intent.clientSecret());
   }
 
   @Override
