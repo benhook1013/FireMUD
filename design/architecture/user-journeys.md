@@ -39,6 +39,7 @@ Creators refine the world and its inhabitants using several services:
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors, and runtime flag definitions.
 - **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data. Scheduled world events notify other services when the environment changes.
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
+- **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 
@@ -127,7 +128,9 @@ The service also exposes moderation tools such as bans and runtime feature toggl
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
 
-5. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
+
+6. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
@@ -244,6 +247,8 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 ## 📚 Related Documentation
 
 - [System Architecture Overview](./system-architecture-overview.md)
+- [System Architecture Diagram](./system-architecture-diagram.md)
+- [System Context Diagram](./system-context-diagram.md)
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [Microservices Overview](./microservices/README.md)
 - [Game Creator Guide](../user-guides/game-creator-guide.md)
@@ -254,12 +259,17 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
 - [Performance Optimization Guidelines](./performance-optimization.md)
 - [CI/CD Pipeline](./system-architecture-cicd.md)
+- [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)
+- [Transaction Strategies](./system-architecture-transactions.md)
 - [Testing Strategy](./system-architecture-testing.md)
+- [Procedural Generation](./system-architecture-procedural-generation.md)
+- [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
+- [Shared Libraries Overview](./system-architecture-shared-libraries.md)
+- [Database Migrations](./system-architecture-database-migrations.md)
 - [Multi-Tenancy](./system-architecture-multi-tenancy.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [MCP Support](./system-architecture-mcp-support.md)
-- [System Context Diagram](./system-context-diagram.md)
 - [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
 - [Tracing](./system-architecture-tracing.md)
 - [Operational Runbooks](./system-architecture-runbooks.md)
