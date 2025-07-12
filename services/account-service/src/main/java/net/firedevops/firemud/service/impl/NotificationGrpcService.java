@@ -5,6 +5,7 @@ import net.firedevops.firemud.account.v1.NotificationServiceGrpc;
 import net.firedevops.firemud.account.v1.SendNotificationRequest;
 import net.firedevops.firemud.account.v1.SendNotificationResponse;
 import net.firedevops.firemud.service.NotificationService;
+import net.firedevops.firemud.common.security.RequireAdminRole;
 import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
@@ -16,6 +17,7 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
   }
 
   @Override
+  @RequireAdminRole
   public void sendNotification(
       SendNotificationRequest request, StreamObserver<SendNotificationResponse> responseObserver) {
     try {

@@ -10,12 +10,12 @@ public final class SessionContext {
 
   private static final ThreadLocal<ClaimsData> HOLDER = new ThreadLocal<>();
 
-  static void setContext(
+  public static void setContext(
       String accountId, List<String> globalRoles, Map<String, List<String>> scopedRoles) {
     HOLDER.set(new ClaimsData(accountId, globalRoles, scopedRoles));
   }
 
-  static void clear() {
+  public static void clear() {
     HOLDER.remove();
   }
 

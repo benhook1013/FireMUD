@@ -6,6 +6,7 @@ import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.service.AccountService;
+import net.firedevops.firemud.common.security.RequireAdminRole;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,6 +40,7 @@ public class AccountController {
   }
 
   @DeleteMapping("/{accountId}")
+  @RequireAdminRole
   public ResponseEntity<ApiResponse<Void>> deleteAccount(
       @PathVariable Long accountId, Long tenantId) {
     accountService.deleteAccount(tenantId, accountId);

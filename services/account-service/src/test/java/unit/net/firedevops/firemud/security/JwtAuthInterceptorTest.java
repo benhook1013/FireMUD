@@ -3,10 +3,12 @@ package net.firedevops.firemud.security;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -39,5 +41,8 @@ class JwtAuthInterceptorTest {
 
     assertTrue(result);
     assertEquals(200, response.getStatus());
+    assertEquals(List.of("platformAdmin"), SessionContext.getGlobalRoles());
+    interceptor.afterCompletion(request, response, new Object(), null);
+    assertTrue(SessionContext.getGlobalRoles().isEmpty());
   }
 }
