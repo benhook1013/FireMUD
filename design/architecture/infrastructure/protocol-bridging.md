@@ -70,17 +70,6 @@ The `game-session-service` is the central component responsible for:
 
 ---
 
-## 🤝 Integration Points
-
-Both connection types interface with:
-
-- **Player Management** — for identity, login, and session tracking.
-- **Game Design Service** — for game templates and version data.
-- **Game Session Service** — for starting or joining live game instances.
-- **World Management** — for game world data, rooms, NPCs, etc.
-
----
-
 ## 📚 Related Documentation
 
 - [Infrastructure Overview](./README.md)
