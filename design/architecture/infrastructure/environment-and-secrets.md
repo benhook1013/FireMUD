@@ -66,6 +66,31 @@ these variables.
 | `FIREMUD_REDIS_HOST` | Redis host | `redis` |
 | `FIREMUD_REDIS_PORT` | Redis port | `6379` |
 
+### gRPC TLS Certificates
+
+Mutual TLS protects all gRPC calls between services. Certificates are normally
+provisioned by **cert-manager** and mounted from Kubernetes Secrets.
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_GRPC_CERT_CHAIN` | PEM encoded certificate chain for this service | _(none)_ |
+| `FIREMUD_GRPC_PRIVATE_KEY` | Private key matching the certificate chain | _(none)_ |
+| `FIREMUD_GRPC_CA_CERT` | CA bundle used to verify peer services | _(none)_ |
+
+During local development these values are generated automatically, so the
+variables may be omitted.
+
+### Service Discovery
+
+The shared configuration library resolves other services using environment
+variables prefixed with `FIREMUD_SERVICES_`. Each variable holds a `host:port`
+pair for a target service. When undefined, Kubernetes DNS is used instead.
+
+```bash
+FIREMUD_SERVICES_ACCOUNT=account-service:6565
+FIREMUD_SERVICES_GAME_LOGIC=game-logic-service:6565
+```
+
 ## 📚 Related Docs
 
 - [Deployment Environments](./deployment-environments.md)
