@@ -39,17 +39,6 @@ The log aggregation pipeline is summarized in [Logging & Monitoring](../system-a
 
 All service-level design documents should refer to this directory for shared infrastructure context, rather than duplicating gateway, deployment, or protocol behavior.
 
-For example:
-
-> See [**Gateway Architecture**](../system-architecture-gateway.md), [**Deployment Environments**](./deployment-environments.md), or [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for relevant infrastructure details.
-> Redis-backed session state is described in detail in [**Redis Architecture**](../system-architecture-redis.md).
-> Observability integrations are summarized in [**Logging & Monitoring**](../system-architecture-logging-monitoring.md).
-> Client reconnection flow is covered in the [**Reconnection Strategy**](../system-architecture-reconnection.md).
-> TLS, certificate rotation, and network policies are detailed in the [**Security Architecture**](../system-architecture-security.md). Example manifests live in [`k8s/network-policies/`](../../../k8s/network-policies) and provide a default ingress policy for internal services.
-> Backup procedures and disaster recovery steps are outlined in [**Backup & Disaster Recovery**](../system-architecture-backup-recovery.md).
-> Service developers should follow the [**gRPC API Style & Versioning Guidelines**](../system-architecture-grpc.md) when defining new APIs.
-> Distributed workflows are explained in [**Transaction Strategies**](../system-architecture-transactions.md).
-
 ## 📚 Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
