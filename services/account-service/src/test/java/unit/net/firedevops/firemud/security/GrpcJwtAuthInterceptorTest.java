@@ -36,7 +36,8 @@ class GrpcJwtAuthInterceptorTest {
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
     TestServerCall call = new TestServerCall();
     Metadata headers = new Metadata();
-    headers.put(Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER), "Bearer " + token);
+    headers.put(
+        Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER), "Bearer " + token);
     ServerCall.Listener<?> listener =
         interceptor.interceptCall(call, headers, (c, h) -> new ServerCall.Listener<>() {});
     assertNotNull(listener);
