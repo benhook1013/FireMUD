@@ -232,6 +232,15 @@ Expected response:
 }
 ```
 
+### Saga Participation
+
+Account creation uses the shared `SagaBuilder` from `firemud-common` to persist
+the account record, create the profile, and log creation in the Logging & Admin
+Service. If any step fails, compensation actions roll back the database writes
+so the workflow remains consistent across services. See the
+[Transaction Strategies](../system-architecture-transactions.md) document for
+details on the saga pattern.
+
 ### Metrics & Tracing
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods expose `account.*`, `payment.*`, `notification.*`, and `session.*` timers via `@Timed` annotations. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger. No additional configuration is required when running via `./gradlew bootRun` as the default properties target `http://otel-collector:4317`.

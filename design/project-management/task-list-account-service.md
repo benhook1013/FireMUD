@@ -96,9 +96,9 @@ participate in CI.
 
 ## 🔄 Saga Participation *(if used)*
 
-- [ ] Use saga helpers from `firemud-common` for workflow steps
+- [x] Use saga helpers from `firemud-common` for workflow steps
 - [ ] Emit metrics and correlation IDs for compensation and retries
-- [ ] Document saga participation in `design/README.md`
+- [x] Document saga participation in `design/README.md`
 
 ---
 
@@ -117,7 +117,7 @@ participate in CI.
 ## 🧪 Testing & Quality Gates
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
-- [ ] Use Spring Boot Test and Testcontainers for integration tests
+- [x] Use Spring Boot Test and Testcontainers for integration tests
 - [ ] Validate contracts with smoke tests (gRPC and REST)
 - [ ] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
