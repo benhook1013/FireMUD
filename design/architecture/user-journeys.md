@@ -123,7 +123,21 @@ Player → Account Service → Logging & Admin Service
 
 ---
 
-## 10. Switch Games or Manage Multiple Games
+## 10. Password Resets & Account Recovery
+
+Players occasionally lose access to their accounts. Recovery is performed
+through the [Account Service](./microservices/account-service/README.md),
+which issues password reset emails and temporary login tokens. Suspicious
+attempts are logged by the
+[Logging & Admin Service](./microservices/logging-admin-service/README.md).
+
+```plaintext
+Player → Account Service → Logging & Admin Service (audit)
+```
+
+---
+
+## 11. Switch Games or Manage Multiple Games
 
 Players can participate in multiple games using the same platform account. The
 [Multi-Tenancy](./system-architecture-multi-tenancy.md) model stores character
@@ -135,7 +149,7 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ---
 
-## 11. Operational Recovery
+## 12. Operational Recovery
 
 When issues occur, operators follow the
 [Operational Runbooks](./system-architecture-runbooks.md) to restore services.
@@ -149,3 +163,9 @@ Admin → Runbooks → Kubernetes / Docker → Services Restored
 ---
 
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
+
+## 📚 Related Documentation
+
+- [System Architecture Overview](./system-architecture-overview.md)
+- [Service Responsibility Matrix](./service-responsibility-matrix.md)
+- [Microservices Overview](./microservices/README.md)
