@@ -30,7 +30,7 @@ Account Service (user) → Game Design Service (new game)
 Creators refine the world and its inhabitants using several services:
 
 - **Game Design Service** – Versioned templates, ability editors, and runtime flag definitions.
-- **World Management Service** – Maps, regions, and procedural generation rules.
+- **World Management Service** – Maps, regions, and procedural generation rules ([see procedural generation](./system-architecture-procedural-generation.md)).
 - **Entity Management Service** – Player characters, NPCs, items, and inventory.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 
@@ -69,7 +69,7 @@ Game Design Service (publish) → Game Session Service (start instance)
 Players connect through the networking layer:
 
 1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
-2. **Session Management** – The Game Session Service retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md).
+2. **Session Management** – The Game Session Service retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
 3. **Authentication** – Login credentials are validated by the Game Session Service.
    See [Authentication & Authorization](./system-architecture-authentication.md)
    for supported `LOGIN` commands and token handling.
@@ -117,7 +117,7 @@ The service also exposes moderation tools such as bans or runtime feature toggle
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
 
-4. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+5. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
@@ -199,6 +199,15 @@ Creators can change the look and feel of their games without altering the code b
 
 Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 
+## 16. Testing & Continuous Delivery
+
+1. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
+2. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md).
+
+```plaintext
+GitHub → CI Workflow → Container Registry → Kubernetes
+```
+
 ---
 
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
@@ -213,3 +222,6 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Game Customization Options](./game-customization-options.md)
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
 - [Performance Optimization Guidelines](./performance-optimization.md)
+- [CI/CD Pipeline](./system-architecture-cicd.md)
+- [Testing Strategy](./system-architecture-testing.md)
+- [System Context Diagram](./system-context-diagram.md)
