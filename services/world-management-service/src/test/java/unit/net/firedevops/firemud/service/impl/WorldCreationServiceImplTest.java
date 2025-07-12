@@ -14,6 +14,7 @@ class WorldCreationServiceImplTest {
   private WorldCreationServiceImpl service;
   private MeterRegistry meterRegistry;
   private net.firedevops.firemud.config.WorldProperties worldProperties;
+  private net.firedevops.firemud.client.GameDesignClient gameDesignClient;
 
   @BeforeEach
   void setup() {
@@ -22,7 +23,10 @@ class WorldCreationServiceImplTest {
     when(meterRegistry.counter(anyString())).thenReturn(mock(Counter.class));
     worldProperties = new net.firedevops.firemud.config.WorldProperties();
     worldProperties.setLocalShardId(0);
-    service = new WorldCreationServiceImpl(regionRepository, meterRegistry, worldProperties);
+    gameDesignClient = mock(net.firedevops.firemud.client.GameDesignClient.class);
+    service =
+        new WorldCreationServiceImpl(
+            regionRepository, meterRegistry, worldProperties, gameDesignClient);
   }
 
   @Test

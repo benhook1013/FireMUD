@@ -20,8 +20,9 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(pingService.ping()).thenReturn("pong");
     RoomService roomService = Mockito.mock(RoomService.class);
     RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
+    var worldEventService = Mockito.mock(net.firedevops.firemud.service.WorldEventService.class);
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, mapper);
+        new WorldManagementGrpcService(pingService, roomService, mapper, worldEventService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
