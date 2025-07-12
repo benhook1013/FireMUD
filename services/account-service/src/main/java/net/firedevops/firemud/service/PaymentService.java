@@ -7,4 +7,6 @@ public interface PaymentService {
   PaymentIntentDto createPaymentIntent(Long tenantId, Long accountId, Long amountCents);
 
   SubscriptionDto createSubscription(Long tenantId, Long accountId, String planId);
+
+  void refundPayment(Long tenantId, Long paymentId);
 }

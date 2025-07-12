@@ -10,6 +10,7 @@ option java_multiple_files = true;
 service PaymentService {
   rpc CreatePaymentIntent(CreatePaymentIntentRequest) returns (CreatePaymentIntentResponse);
   rpc CreateSubscription(CreateSubscriptionRequest) returns (CreateSubscriptionResponse);
+  rpc RefundPayment(RefundPaymentRequest) returns (RefundPaymentResponse);
 }
 
 message CreatePaymentIntentRequest {
@@ -32,5 +33,15 @@ message CreateSubscriptionRequest {
 
 message CreateSubscriptionResponse {
   string subscription_id = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RefundPaymentRequest {
+  string tenant_id = 1;
+  string payment_id = 2;
+}
+
+message RefundPaymentResponse {
+  bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }

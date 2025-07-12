@@ -24,6 +24,9 @@ public class PaymentTransaction {
   @Column(nullable = false, length = 20)
   private String status;
 
+  @Column(name = "provider_id", length = 50)
+  private String providerId;
+
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
 }

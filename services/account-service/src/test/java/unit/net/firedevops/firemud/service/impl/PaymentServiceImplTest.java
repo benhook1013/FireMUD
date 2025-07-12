@@ -65,4 +65,19 @@ class PaymentServiceImplTest {
 
     assertThrows(IllegalArgumentException.class, () -> service.createSubscription(2L, 1L, "plan"));
   }
+
+  @Test
+  void refundPaymentUpdatesStatus() throws Exception {
+    PaymentTransaction tx = new PaymentTransaction();
+    tx.setId(5L);
+    tx.setTenantId(2L);
+    tx.setProviderId("pi_123");
+    when(txRepo.findById(5L)).thenReturn(Optional.of(tx));
+
+    service.refundPayment(2L, 5L);
+
+    verify(stripeClient).createRefund("pi_123");
+    verify(txRepo).save(tx);
+    assertEquals("refunded", tx.getStatus());
+  }
 }
