@@ -1,14 +1,21 @@
 import { useState } from 'react';
 import { Box, TextField, Button } from '@mui/material';
+import { useRunScriptMutation } from './api/firemudApi';
 
 export default function ScriptEditor() {
   const [name, setName] = useState('');
   const [definition, setDefinition] = useState('');
 
-  const handleTest = () => {
-    // In a real implementation this would call the Automation Scripting Service
-    // via REST or gRPC. For now we simply display the payload.
-    alert(`Test running script "${name}" with definition:\n${definition}`);
+  const [runScript, { isLoading }] = useRunScriptMutation();
+
+  const handleTest = async () => {
+    try {
+      const result = await runScript({ name, definition }).unwrap();
+      alert(result.output);
+    } catch (err) {
+      alert('Failed to run script');
+      console.error(err);
+    }
   };
 
   return (
@@ -30,8 +37,8 @@ export default function ScriptEditor() {
         minRows={4}
         fullWidth
       />
-      <Button variant="contained" sx={{ mt: 1 }} onClick={handleTest}>
-        Test Run
+      <Button variant="contained" sx={{ mt: 1 }} onClick={handleTest} disabled={isLoading}>
+        {isLoading ? 'Running...' : 'Test Run'}
       </Button>
     </Box>
   );
