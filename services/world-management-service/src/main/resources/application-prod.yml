@@ -21,3 +21,9 @@ world:
     cache-ttl-seconds: ${WORLD_ROOM_CACHE_TTL_SECONDS:60}
   instance:
     expiration-hours: ${WORLD_INSTANCE_EXPIRATION_HOURS:24}
+
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+    min-response-size: 1024

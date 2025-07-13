@@ -7,6 +7,7 @@ import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.config.ChatProperties;
 import net.firedevops.firemud.dto.ChatMessageDto;
 import net.firedevops.firemud.dto.SendMessageRequestDto;
 import net.firedevops.firemud.entity.ChatMessage;
@@ -30,6 +31,7 @@ public class ChatServiceImpl implements ChatService {
   private final LoggingAdminClient loggingAdminClient;
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
+  private final ChatProperties chatProperties;
 
   private Counter publishCounter;
   private Counter redisErrorCounter;
@@ -62,6 +64,8 @@ public class ChatServiceImpl implements ChatService {
     try {
       String key = String.format("chat:%d:%s", request.tenantId(), request.channelId());
       redisTemplate.opsForList().leftPush(key, saved.getContent());
+      redisTemplate.expire(
+          key, java.time.Duration.ofSeconds(chatProperties.getHistoryTtlSeconds()));
     } catch (Exception e) {
       redisErrorCounter.increment();
       logger.warn("Failed to publish chat message to Redis", e);
