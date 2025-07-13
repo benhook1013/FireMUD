@@ -155,8 +155,13 @@ tasks.register("buildDockerImages") {
     )
 }
 
+tasks.register<Exec>("generateDevCerts") {
+    workingDir("dev-tools")
+    commandLine("bash", "generate-dev-certs.sh")
+}
+
 tasks.register<Exec>("devUp") {
-    dependsOn("buildDockerImages")
+    dependsOn("generateDevCerts", "buildDockerImages")
     commandLine("docker", "compose", "up", "--build")
 }
 
