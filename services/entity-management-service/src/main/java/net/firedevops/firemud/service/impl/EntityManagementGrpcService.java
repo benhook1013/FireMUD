@@ -9,8 +9,8 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersRequest;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
@@ -68,27 +68,28 @@ public class EntityManagementGrpcService
 
   @Override
   public void listCharactersByAccount(
-      ListCharactersRequest request, StreamObserver<ListCharactersResponse> responseObserver) {
+      ListCharactersByAccountRequest request,
+      StreamObserver<ListCharactersByAccountResponse> responseObserver) {
     try {
       long accountId = Long.parseLong(request.getAccountId());
       var characters =
           characterService.listForAccount(accountId).stream()
               .map(this::toProto)
               .collect(Collectors.toList());
-      ListCharactersResponse response =
-          ListCharactersResponse.newBuilder().addAllCharacters(characters).build();
+      ListCharactersByAccountResponse response =
+          ListCharactersByAccountResponse.newBuilder().addAllCharacters(characters).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
-      ListCharactersResponse response =
-          ListCharactersResponse.newBuilder()
+      ListCharactersByAccountResponse response =
+          ListCharactersByAccountResponse.newBuilder()
               .setError(error("INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
-      ListCharactersResponse response =
-          ListCharactersResponse.newBuilder()
+      ListCharactersByAccountResponse response =
+          ListCharactersByAccountResponse.newBuilder()
               .setError(error("INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);

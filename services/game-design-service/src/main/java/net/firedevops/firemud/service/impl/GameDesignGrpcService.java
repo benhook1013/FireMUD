@@ -10,8 +10,8 @@ import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
-import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchRequest;
-import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
+import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
@@ -78,8 +78,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   public void publishScriptPatchVersion(
-      PublishScriptPatchRequest request,
-      StreamObserver<PublishScriptPatchResponse> responseObserver) {
+      PublishScriptPatchVersionRequest request,
+      StreamObserver<PublishScriptPatchVersionResponse> responseObserver) {
     try {
       VersionDto version =
           versionService.publishScriptPatchVersion(
@@ -88,7 +88,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getScriptPatchVersion(),
               request.getNotes());
       responseObserver.onNext(
-          PublishScriptPatchResponse.newBuilder().setVersionId(version.id()).build());
+          PublishScriptPatchVersionResponse.newBuilder().setVersionId(version.id()).build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onError(

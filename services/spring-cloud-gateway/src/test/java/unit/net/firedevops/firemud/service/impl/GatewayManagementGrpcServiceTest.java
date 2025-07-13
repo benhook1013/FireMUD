@@ -8,9 +8,10 @@ import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gateway.v1.PingRequest;
 import net.firedevops.firemud.gateway.v1.PingResponse;
-import net.firedevops.firemud.gateway.v1.RouteDefinition;
-import net.firedevops.firemud.gateway.v1.RouteRequest;
-import net.firedevops.firemud.gateway.v1.RouteResponse;
+import net.firedevops.firemud.gateway.v1.RemoveRouteRequest;
+import net.firedevops.firemud.gateway.v1.RemoveRouteResponse;
+import net.firedevops.firemud.gateway.v1.UpsertRouteRequest;
+import net.firedevops.firemud.gateway.v1.UpsertRouteResponse;
 import net.firedevops.firemud.service.GatewayRoute;
 import net.firedevops.firemud.service.GatewayRouteService;
 import org.junit.jupiter.api.Test;
@@ -47,13 +48,14 @@ class GatewayManagementGrpcServiceTest {
     when(routeService.upsert(any())).thenReturn(new GatewayRoute("id", "http://u", null, null));
     GatewayManagementGrpcService service = new GatewayManagementGrpcService(routeService);
 
-    RouteDefinition req = RouteDefinition.newBuilder().setRouteId("id").setUri("http://u").build();
-    AtomicReference<RouteResponse> ref = new AtomicReference<>();
+    UpsertRouteRequest req =
+        UpsertRouteRequest.newBuilder().setRouteId("id").setUri("http://u").build();
+    AtomicReference<UpsertRouteResponse> ref = new AtomicReference<>();
     service.upsertRoute(
         req,
         new StreamObserver<>() {
           @Override
-          public void onNext(RouteResponse value) {
+          public void onNext(UpsertRouteResponse value) {
             ref.set(value);
           }
 
@@ -75,13 +77,13 @@ class GatewayManagementGrpcServiceTest {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
     GatewayManagementGrpcService service = new GatewayManagementGrpcService(routeService);
 
-    RouteDefinition req = RouteDefinition.newBuilder().build();
+    UpsertRouteRequest req = UpsertRouteRequest.newBuilder().build();
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.upsertRoute(
         req,
         new StreamObserver<>() {
           @Override
-          public void onNext(RouteResponse value) {}
+          public void onNext(UpsertRouteResponse value) {}
 
           @Override
           public void onError(Throwable t) {
@@ -103,13 +105,13 @@ class GatewayManagementGrpcServiceTest {
     when(routeService.remove("missing")).thenReturn(false);
     GatewayManagementGrpcService service = new GatewayManagementGrpcService(routeService);
 
-    RouteRequest req = RouteRequest.newBuilder().setRouteId("missing").build();
-    AtomicReference<RouteResponse> ref = new AtomicReference<>();
+    RemoveRouteRequest req = RemoveRouteRequest.newBuilder().setRouteId("missing").build();
+    AtomicReference<RemoveRouteResponse> ref = new AtomicReference<>();
     service.removeRoute(
         req,
         new StreamObserver<>() {
           @Override
-          public void onNext(RouteResponse value) {
+          public void onNext(RemoveRouteResponse value) {
             ref.set(value);
           }
 
