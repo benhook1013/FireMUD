@@ -32,10 +32,10 @@ class RoomServiceImplTest {
     valueOps = mock(ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     props = new WorldProperties();
+    props.getRoom().setCacheTtlSeconds(1);
     service =
         new RoomServiceImpl(repository, mapper, redisTemplate, new SimpleMeterRegistry(), props);
     service.initMetrics();
-    service.setCacheTtlSeconds(1);
   }
 
   @Test

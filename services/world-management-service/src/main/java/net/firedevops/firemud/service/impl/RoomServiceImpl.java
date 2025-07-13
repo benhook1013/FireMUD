@@ -36,7 +36,7 @@ public class RoomServiceImpl implements RoomService {
   void initMetrics() {
     cacheHitCounter = meterRegistry.counter("room_cache_hits_total");
     cacheMissCounter = meterRegistry.counter("room_cache_misses_total");
-    cacheTtlSeconds = worldProperties.getRoomCacheTtlSeconds();
+    cacheTtlSeconds = worldProperties.getRoom().getCacheTtlSeconds();
   }
 
   @Override
