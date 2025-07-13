@@ -11,8 +11,8 @@ import net.firedevops.firemud.repository.GameTemplateRepository;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 
 class GameTemplateServiceImplTest {

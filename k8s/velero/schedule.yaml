@@ -1,0 +1,32 @@
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: firemud-postgres-15m
+spec:
+  schedule: "*/15 * * * *"
+  template:
+    includedNamespaces:
+    - firemud
+    ttl: 24h
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: firemud-postgres-weekly
+spec:
+  schedule: "0 2 * * 0"
+  template:
+    includedNamespaces:
+    - firemud
+    ttl: 504h # 21 days
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: firemud-postgres-monthly
+spec:
+  schedule: "0 3 1 * *"
+  template:
+    includedNamespaces:
+    - firemud
+    ttl: 2160h # 90 days
