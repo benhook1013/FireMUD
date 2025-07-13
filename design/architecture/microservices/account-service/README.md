@@ -260,6 +260,18 @@ details on the saga pattern.
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods expose `account.*`, `payment.*`, `notification.*`, and `session.*` timers via `@Timed` annotations. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger. No additional configuration is required when running via `./gradlew bootRun` as the default properties target `http://otel-collector:4317`.
 
+### Cross-Service Integration Test
+
+An integration test under `src/test/java/crossservice` starts this service alongside
+the Logging & Admin Service using **Testcontainers**. Execute it once dependent
+images are available:
+
+```bash
+./gradlew :account-service:test --tests "*CrossServiceIntegrationTest"
+```
+
+See [System Architecture Testing](../system-architecture-testing.md) for more details.
+
 ## Future Enhancements
 
 - OAuth2 support for social logins.
