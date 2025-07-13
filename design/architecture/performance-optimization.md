@@ -71,6 +71,9 @@ These notes summarize typical optimizations applied across FireMUD services.
   rates.
 - Spring Cloud Gateway applies Redis-backed request rate limiting to protect
   services from sudden spikes.
+- The TCP Proxy Service buffers Telnet input and applies connection
+  throttling before forwarding traffic to the Gateway, preventing sudden client
+  bursts from overwhelming the backend.
 - Gateway connection metrics (`gateway.connections.total` and
   `gateway.connections.active`) help operators track usage and capacity.
 - Redis caches common lookups to reduce database load. The World Management
