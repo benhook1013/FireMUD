@@ -48,6 +48,29 @@ public class TickServiceImpl implements TickService {
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
 
+  private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys) {
+    int attempts = 0;
+    while (true) {
+      try {
+        return redisTemplate.execute(script, keys);
+      } catch (Exception ex) {
+        attempts++;
+        redisErrorCounter.increment();
+        if (attempts >= 3) {
+          logger.error("Redis script execution failed after {} attempts", attempts, ex);
+          throw ex;
+        }
+        logger.debug("Redis script execution failed, retrying attempt {}", attempts, ex);
+        try {
+          Thread.sleep(50L * attempts);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw new RuntimeException("Retry interrupted", ie);
+        }
+      }
+    }
+  }
+
   @PostConstruct
   void init() {
     this.enqueueCounter = meterRegistry.counter("game_session_commands_enqueued_total");
@@ -114,26 +137,25 @@ public class TickServiceImpl implements TickService {
         tickTimer.record(
             () ->
                 luaTimer.record(
-                    () -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId)))));
+                    () -> executeScriptWithRetry(commitScript, List.of(pendingKey(sessionId)))));
         awaitReplication();
       }
       tickTimer.record(
           () ->
               luaTimer.record(
                   () ->
-                      redisTemplate.execute(
+                      executeScriptWithRetry(
                           stageScript, List.of(queueKey(sessionId), pendingKey(sessionId)))));
       tickTimer.record(
           () ->
               luaTimer.record(
-                  () -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId)))));
+                  () -> executeScriptWithRetry(commitScript, List.of(pendingKey(sessionId)))));
       awaitReplication();
     } catch (Exception ex) {
-      redisErrorCounter.increment();
       logger.error("Tick processing failed, rolling back", ex);
       luaTimer.record(
           () ->
-              redisTemplate.execute(
+              executeScriptWithRetry(
                   rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId))));
       awaitReplication();
     } finally {
