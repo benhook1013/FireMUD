@@ -44,6 +44,7 @@ FIREMUD_POSTGRES_USER=firemud
 FIREMUD_POSTGRES_PASSWORD=firemud
 FIREMUD_REDIS_HOST=redis
 FIREMUD_REDIS_PORT=6379
+OTEL_ENDPOINT=http://otel-collector:4317
 ```
 
 Each deployment loads these variables using `envFrom`. Replace the sample

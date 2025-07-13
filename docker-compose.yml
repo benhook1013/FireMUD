@@ -16,6 +16,9 @@ x-service-healthcheck: &service-health
   timeout: 5s
   retries: 5
 
+x-service-volumes: &service-vols
+  - ./dev-tools/certs:/app/certs:ro
+
 services:
   account-service:
     build: ./services/account-service
@@ -25,6 +28,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -39,6 +44,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -53,6 +60,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -67,6 +76,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -81,6 +92,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -95,6 +108,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -109,6 +124,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -123,6 +140,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -137,6 +156,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -151,6 +172,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
@@ -165,6 +188,8 @@ services:
       <<: *service-env
     env_file:
       - .env
+    volumes:
+      - ./dev-tools/certs:/app/certs:ro
     restart: unless-stopped
     depends_on:
       - postgres
