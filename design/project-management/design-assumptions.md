@@ -58,4 +58,4 @@ This document outlines high-level design and technology assumptions for the Fire
 
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test
-- **Load Testing**: Gatling
+- **Load Testing**: Gatling (module `dev-tools/load-testing`)

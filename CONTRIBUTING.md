@@ -48,7 +48,7 @@ Hooks automatically format code, lint Markdown, and run static analysis before e
 
 - All functionality must be covered by unit tests.
 - Use **JUnit** with **Mockito** for backend unit tests and **Jest** for frontend components.
-- Integration tests rely on **Spring Test**, and we use **Gatling** for load testing.
+- Integration tests rely on **Spring Test**, and we use **Gatling** (see `dev-tools/load-testing`) for load testing.
 - Tests should run successfully with `./gradlew test`.
 - Ensure new tests pass and existing tests are not broken before submitting a PR.
 
