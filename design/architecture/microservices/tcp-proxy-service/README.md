@@ -96,6 +96,7 @@ Additional variables control the proxy runtime behaviour:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
+| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws` |
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |

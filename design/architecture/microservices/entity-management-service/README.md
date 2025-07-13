@@ -96,7 +96,8 @@ Additional variables specific to this service:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| *(none)* | This service relies only on the shared configuration variables. | *(none)* |
+| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
+| `FIREMUD_CHARACTER_CACHE_TTL_SECONDS` | TTL for cached character graphs in Redis (seconds) | `60` |
 
 ## Proto Files
 

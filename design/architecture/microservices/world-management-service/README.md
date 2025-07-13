@@ -108,6 +108,7 @@ Additional variables configure world data caching and sharding:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
+| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `WORLD_LOCAL_SHARD_ID` | Numeric identifier for this shard instance | `0` |
 | `WORLD_ROOM_CACHE_TTL_SECONDS` | Seconds to retain room data in the cache | `60` |
 | `WORLD_INSTANCE_EXPIRATION_HOURS` | Hours before a transient instance expires | `24` |
