@@ -55,7 +55,9 @@ flowchart TD
     Session -- gRPC --> Logging
 
     InternalServices --> Datastores
-    InternalServices --> Observability
+    InternalServices -- logs --> FluentBit
+    InternalServices -- metrics --> Prom
+    InternalServices -- traces --> OTel
     FluentBit --> ES
     Prom --> Alertmgr
     Prom --> Grafana
