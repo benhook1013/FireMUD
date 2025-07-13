@@ -27,7 +27,7 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.7")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
 }
 
 protobuf {
