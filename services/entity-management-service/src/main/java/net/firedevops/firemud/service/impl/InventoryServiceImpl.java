@@ -1,8 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.InventoryEntryDto;
 import net.firedevops.firemud.entity.Character;
@@ -14,6 +12,8 @@ import net.firedevops.firemud.repository.CharacterRepository;
 import net.firedevops.firemud.repository.InventoryEntryRepository;
 import net.firedevops.firemud.repository.ItemRepository;
 import net.firedevops.firemud.service.InventoryService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

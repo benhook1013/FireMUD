@@ -11,9 +11,9 @@ import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.service.CharacterService;
 import net.firedevops.firemud.service.InventoryService;
 import net.firedevops.firemud.service.PingService;
-import org.springframework.data.domain.Pageable;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.data.domain.Pageable;
 
 class EntityManagementGrpcServiceTest {
   @Test

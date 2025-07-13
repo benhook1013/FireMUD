@@ -4,9 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
-import net.firedevops.firemud.dto.InventoryEntryDto;
 import net.firedevops.firemud.entity.InventoryEntry;
 import net.firedevops.firemud.entity.InventoryKey;
 import net.firedevops.firemud.mapper.InventoryEntryMapper;
@@ -14,6 +11,8 @@ import net.firedevops.firemud.repository.InventoryEntryRepository;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 class InventoryServiceImplTest {
   @Test
