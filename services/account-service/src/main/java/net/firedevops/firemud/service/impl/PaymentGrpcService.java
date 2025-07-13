@@ -1,6 +1,8 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import net.firedevops.firemud.account.v1.CreateDonationRequest;
+import net.firedevops.firemud.account.v1.CreateDonationResponse;
 import net.firedevops.firemud.account.v1.CreatePaymentIntentRequest;
 import net.firedevops.firemud.account.v1.CreatePaymentIntentResponse;
 import net.firedevops.firemud.account.v1.CreateSubscriptionRequest;
@@ -69,6 +71,36 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     } catch (IllegalArgumentException ex) {
       CreateSubscriptionResponse response =
           CreateSubscriptionResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  public void createDonation(
+      CreateDonationRequest request, StreamObserver<CreateDonationResponse> responseObserver) {
+    try {
+      PaymentIntentDto dto =
+          paymentService.createDonation(
+              Long.valueOf(request.getTenantId()),
+              Long.valueOf(request.getAccountId()),
+              request.getAmountCents());
+      CreateDonationResponse response =
+          CreateDonationResponse.newBuilder()
+              .setIntentId(dto.id().toString())
+              .setClientSecret(dto.clientSecret())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      CreateDonationResponse response =
+          CreateDonationResponse.newBuilder()
               .setError(
                   net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                       .setCode("INVALID_ARGUMENT")
