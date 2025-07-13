@@ -2,12 +2,15 @@ name: Weekly Security Scan
 
 on:
   schedule:
-    - cron: '0 3 * * 0'
+    - cron: '0 3 * * 0'  # Weekly on Sundays at 03:00 UTC
+  workflow_dispatch:      # Enables manual trigger from GitHub Actions UI
 
 jobs:
   trivy-scan:
+    name: Trivy Scan for ${{ matrix.service }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service:
           - account-service
@@ -22,9 +25,13 @@ jobs:
           - tcp-proxy-service
           - world-management-service
     steps:
-      - uses: actions/checkout@v3
-      - name: Trivy container and dependency scan
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v3
+
+      - name: 🛡️ Trivy container and dependency scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ghcr.io/firemud/${{ matrix.service }}:latest
+          format: 'table'
+          output: 'trivy-report.txt'
           exit-code: '1'
