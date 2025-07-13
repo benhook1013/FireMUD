@@ -23,6 +23,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-redis.md**](./system-architecture-redis.md) – Redis deployment topology and usage patterns.
 - [**system-architecture-gateway.md**](./system-architecture-gateway.md) – Spring Cloud Gateway routing and WebSocket support.
 - [**system-architecture-protocol-bridging.md**](./system-architecture-protocol-bridging.md) – Bridging Telnet and WebSocket clients.
+- [**system-architecture-mcp-support.md**](./system-architecture-mcp-support.md) – Mud Client Protocol integration for external editors.
 - [**system-architecture-reconnection.md**](./system-architecture-reconnection.md) – Client reconnect flow across services.
 - [**system-architecture-ticks.md**](./system-architecture-ticks.md) – Tick system and runtime design.
 - [**system-architecture-scripting.md**](./system-architecture-scripting.md) – Automation and scripting framework.
