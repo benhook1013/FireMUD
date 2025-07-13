@@ -122,6 +122,8 @@ Spring property `otel.endpoint`):
 | -------- | ------- | ------- |
 | `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 
+Service design documents reference this table for the OpenTelemetry endpoint configuration.
+
 ### Additional Notes
 
 Service-specific settings such as SMTP credentials for the Account Service or

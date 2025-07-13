@@ -99,7 +99,6 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `GAME_TICK_DURATION_MS` | Length of a single game tick in milliseconds | `1000` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (host:port) for the Game Logic Service | *(none)* |
 

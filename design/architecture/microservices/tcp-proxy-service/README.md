@@ -96,7 +96,6 @@ Additional variables control the proxy runtime behaviour:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws` |
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
@@ -108,9 +107,8 @@ Additional variables control the proxy runtime behaviour:
 ## Metrics & Tracing
 
 Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The
-service exports OpenTelemetry spans to the collector defined by the
-`OTEL_ENDPOINT` environment variable (Spring property `otel.endpoint`) so
-traces appear in Jaeger.
+service exports OpenTelemetry spans to the collector defined by
+`OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)) so traces appear in Jaeger.
 
 ## Proto Files
 
