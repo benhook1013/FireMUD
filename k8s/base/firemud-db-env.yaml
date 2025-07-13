@@ -9,6 +9,7 @@ data:
   FIREMUD_POSTGRES_DB: firemud
   FIREMUD_REDIS_HOST: redis
   FIREMUD_REDIS_PORT: "6379"
+  OTEL_ENDPOINT: http://otel-collector:4317
 ---
 apiVersion: v1
 kind: Secret
