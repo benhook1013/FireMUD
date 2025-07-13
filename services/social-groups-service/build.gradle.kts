@@ -29,8 +29,8 @@ dependencies {
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
     runtimeOnly("org.postgresql:postgresql:42.7.7")
-    testImplementation("org.testcontainers:junit-jupiter:1.19.7")
-    testImplementation("org.testcontainers:postgresql:1.19.7")
+    testImplementation("org.testcontainers:junit-jupiter:1.21.3")
+    testImplementation("org.testcontainers:postgresql:1.21.3")
 }
 
 protobuf {

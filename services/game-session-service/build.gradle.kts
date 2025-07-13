@@ -24,8 +24,8 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-sdk:1.52.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.52.0")
     runtimeOnly("org.postgresql:postgresql:42.7.7")
-    testImplementation("org.testcontainers:junit-jupiter:1.19.7")
-    testImplementation("org.testcontainers:postgresql:1.19.7")
+    testImplementation("org.testcontainers:junit-jupiter:1.21.3")
+    testImplementation("org.testcontainers:postgresql:1.21.3")
 }
 
 protobuf {
