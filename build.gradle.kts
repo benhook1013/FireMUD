@@ -15,7 +15,7 @@ plugins {
     java
     id("com.github.node-gradle.node") version "7.1.0"
     id("com.google.protobuf") version "0.9.5" apply false
-    id("com.diffplug.spotless") version "7.0.4"
+    id("com.diffplug.spotless") version "7.1.0"
     id("checkstyle")
     id("com.github.spotbugs") version "6.2.2"
     jacoco
