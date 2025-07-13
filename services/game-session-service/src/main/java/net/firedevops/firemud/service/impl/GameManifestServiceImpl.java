@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.GameManifestDto;
 import net.firedevops.firemud.entity.GameManifest;
@@ -9,7 +10,6 @@ import net.firedevops.firemud.service.GameManifestService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import io.micrometer.core.annotation.Timed;
 
 @Service
 public class GameManifestServiceImpl implements GameManifestService {

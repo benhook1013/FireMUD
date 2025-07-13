@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.GameInstanceDto;
@@ -7,7 +8,6 @@ import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-import io.micrometer.core.annotation.Timed;
 
 /** Default Redis-backed implementation of {@link SessionStateService}. */
 @Service
