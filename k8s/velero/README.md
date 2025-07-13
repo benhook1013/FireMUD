@@ -36,6 +36,12 @@ kubectl apply -f verify-backups-cronjob.yaml -n velero
 
 If running backups locally, deploy MinIO on the cluster and configure Velero to use it as the backup storage location. The manifest `minio.yaml` starts a single-node MinIO instance with a `ClusterIP` service.
 
+Apply the manifest:
+
+```bash
+kubectl apply -f minio.yaml
+```
+
 Example `values-minio.yaml` config:
 
 ```yaml
@@ -70,4 +76,9 @@ mc alias set local http://minio.minio.svc.cluster.local:9000 myaccesskey mysecre
 mc mb local/firemud-backups
 ```
 
-Install Velero with these values after the MinIO bucket has been created.
+Install Velero with these values after the MinIO bucket has been created:
+
+```bash
+helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts
+helm install velero vmware-tanzu/velero -n velero --create-namespace -f values-minio.yaml
+```
