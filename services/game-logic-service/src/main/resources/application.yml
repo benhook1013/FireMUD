@@ -19,6 +19,11 @@ management:
 grpc:
   server:
     port: 6565
+    enableKeepAlive: true
+    keepAliveTime: 30s
+    keepAliveTimeout: 5s
+    permitKeepAliveWithoutCalls: true
+    compression: gzip
     security:
       enabled: true
       certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
@@ -32,7 +37,6 @@ firemud:
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
-    jwt-secret: changemechangemechangeme123456
     jwt-expiration-ms: 3600000
 
 server:

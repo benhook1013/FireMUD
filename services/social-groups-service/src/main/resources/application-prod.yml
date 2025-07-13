@@ -49,3 +49,11 @@ server:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
     min-response-size: 1024
+grpc:
+  server:
+    port: 6565
+    enableKeepAlive: true
+    keepAliveTime: 30s
+    keepAliveTimeout: 5s
+    permitKeepAliveWithoutCalls: true
+    compression: gzip

@@ -11,12 +11,16 @@ import net.firedevops.firemud.common.grpc.LoggingInterceptor;
 import net.firedevops.firemud.common.grpc.MetricsInterceptor;
 import net.firedevops.firemud.common.grpc.TracingInterceptor;
 import org.lognet.springboot.grpc.GRpcGlobalInterceptor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /** Registers global gRPC interceptors for logging, metrics and tracing. */
 @Configuration
 public class GrpcConfig {
+
+  @Value("${otel.endpoint:http://otel-collector:4317}")
+  private String otelEndpoint;
 
   @Bean
   @GRpcGlobalInterceptor
@@ -39,7 +43,7 @@ public class GrpcConfig {
   @Bean
   public OpenTelemetry openTelemetry() {
     OtlpGrpcSpanExporter exporter =
-        OtlpGrpcSpanExporter.builder().setEndpoint("http://otel-collector:4317").build();
+        OtlpGrpcSpanExporter.builder().setEndpoint(otelEndpoint).build();
     SdkTracerProvider provider =
         SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)).build();
     return OpenTelemetrySdk.builder().setTracerProvider(provider).build();

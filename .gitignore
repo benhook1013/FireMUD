@@ -13,6 +13,7 @@
 # Logs and temporary files
 *.log
 .DS_Store
+certs/
 
 # Gradle Wrapper
 **/build/

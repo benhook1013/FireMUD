@@ -13,6 +13,11 @@ spring:
 grpc:
   server:
     port: 6565
+    enableKeepAlive: true
+    keepAliveTime: 30s
+    keepAliveTimeout: 5s
+    permitKeepAliveWithoutCalls: true
+    compression: gzip
     security:
       enabled: true
       certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
