@@ -55,7 +55,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Events are forwarded to the Account Service for enforcement and stored for
   compliance purposes.
 
-### REST & gRPC APIs
+### REST & gRPC Endpoints
 
 #### REST
 
