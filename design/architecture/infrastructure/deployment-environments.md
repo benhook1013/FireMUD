@@ -72,14 +72,18 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA)
 - Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
 
-### 📈 Monitoring Stack
+---
+
+## 📈 Monitoring & Logging
+
+FireMUD uses the same observability stack in all environments. Docker Compose and Kubernetes both rely on the following components:
+
+### 🔧 Monitoring Stack
 
 - Prometheus scrapes metrics from all services.
 - Grafana dashboards visualize performance metrics.
 - Alertmanager notifies on failures or latency spikes.
 - OpenTelemetry spans are emitted by services for distributed tracing.
-
-See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the monitoring stack.
 
 ### 📜 Log Aggregation
 
@@ -87,7 +91,7 @@ See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for det
 - **Elasticsearch** stores structured log data for long-term retention.
 - **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
 
-See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the logging stack.
+See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the observability stack.
 
 ---
 
