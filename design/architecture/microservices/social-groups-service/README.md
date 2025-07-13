@@ -85,7 +85,7 @@ Service issues temporary WebRTC tokens and records basic session metadata so the
 Logging & Admin Service can audit voice activity. Voice chat is disabled by
 default and can be enabled per tenant through configuration.
 
-### gRPC/REST APIs
+### gRPC APIs
 
 - `SendMessage` – publishes a chat message to an in-game channel or player.
 - `SendAccountMessage` – delivers a direct message between account holders.
@@ -115,7 +115,6 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE` | `host:port` of the Logging Admin service | `logging-admin-service:6565` |
 | `FIREMUD_VOICE_TOKEN_EXPIRATION_MS` | Expiration of voice chat tokens | `300000` |
 

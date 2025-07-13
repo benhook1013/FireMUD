@@ -14,7 +14,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 - Velero backup schedules are installed automatically by the
   production Terraform modules using `k8s/velero/schedule.yaml`.
   Operators must configure Velero with access to an object storage bucket
-    (AWS S3, GCS, etc.). Copy `k8s/velero/values.example.yaml` to `values.yaml`
+    (AWS S3, GCS, or MinIO). Copy `k8s/velero/values.example.yaml` to `values.yaml`
     and adjust the provider and bucket. Example `values.yaml` snippet:
 
     ```yaml
@@ -23,6 +23,25 @@ This document defines the backup schedule and disaster recovery procedures for F
       backupStorageLocation:
         bucket: firemud-backups
         prefix: postgres
+      ```
+
+    For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml`
+    manifest and configure Velero with a local backup location:
+
+    ```yaml
+    configuration:
+      provider: aws
+      backupStorageLocation:
+        name: local
+        provider: aws
+        bucket: firemud-backups
+        config:
+          region: minio
+          s3Url: http://minio.minio.svc.cluster.local:9000
+          insecureSkipTLSVerify: true
+    credentials:
+      useSecret: true
+      existingSecret: velero-minio-creds
     ```
 
   - If the database service fails completely:

@@ -82,6 +82,9 @@ provisioned by **cert-manager** and mounted from Kubernetes Secrets.
 During local development these values are generated automatically, so the
 variables may be omitted.
 
+Docker Compose mounts `dev-tools/certs` into each service container at `/app/certs`
+so the default paths above resolve correctly.
+
 > **Note**: Certificate files should be loaded from the filesystem rather than
 > packaged inside the application. Avoid `classpath:` URIs so that TLS materials
 > can be mounted securely via volumes or Secrets.
@@ -121,6 +124,8 @@ Spring property `otel.endpoint`):
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
+
+Service design documents reference this table for the OpenTelemetry endpoint configuration.
 
 ### Additional Notes
 

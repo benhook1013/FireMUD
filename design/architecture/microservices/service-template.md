@@ -2,7 +2,11 @@
 
 ## Overview
 
-{{ Briefly describe the service's main purpose and responsibilities. }}
+{{ Briefly describe the service's main purpose. }}
+
+### Responsibilities
+
+{{ Bullet list of core responsibilities. }}
 
 ## Architecture / Design Notes
 
@@ -15,6 +19,20 @@
 - **{{ Feature 2 }}** — {{ One-liner description of the feature. }}
 - **{{ Feature 3 }}** — {{ One-liner description of the feature. }}
 
+### Data Model
+
+{{ Brief description of important tables or storage schemas. }}
+
+### gRPC APIs
+
+- `{{ Method }}` – {{ Brief description. }}
+
+### REST APIs
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET`  | `/ping` | Health check |
+
 ## Dependencies
 
 - **Internal:** {{ Other FireMUD services this one relies on. }}
@@ -26,6 +44,21 @@
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+
+## Environment Variables
+
+{{ Important environment variables and what they control. }}
+
+## Proto Files
+
+{{ Location of the protobuf definitions and how to regenerate stubs. }}
+
+## Additional Details
+
+### REST & gRPC Endpoints
+
+- `GET /ping` – health check.
+- `{{ RPC Method }}` – {{ brief description }}
 
 ## 📚 Related Documentation
 

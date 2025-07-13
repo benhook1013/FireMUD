@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Collections;
@@ -30,12 +31,14 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
   }
 
   @Override
+  @Timed(value = "automation.queue.enqueue")
   public void enqueueEvent(Long tenantId, Long entityId, String eventJson) {
     listOps.rightPush(queueKey(tenantId, entityId), eventJson);
     enqueueCounter.increment();
   }
 
   @Override
+  @Timed(value = "automation.queue.drain")
   public List<String> drainEvents(Long tenantId, Long entityId) {
     String key = queueKey(tenantId, entityId);
     List<Object> raw = listOps.range(key, 0, -1);

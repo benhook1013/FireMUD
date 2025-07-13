@@ -71,7 +71,7 @@ resolved during authentication.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
 
-### REST Endpoints
+### REST APIs
 
 | Method | Path       | Description               |
 | ------ | ---------- | ------------------------- |
@@ -110,7 +110,6 @@ Additional variables configure outbound email delivery:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `SMTP_HOST` | SMTP server hostname | `localhost` |
 | `SMTP_PORT` | SMTP server port | `1025` |
 | `SMTP_USERNAME` | Username for SMTP auth | *(empty)* |
