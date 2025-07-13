@@ -11,7 +11,6 @@ These notes summarize typical optimizations applied across FireMUD services.
   Management service uses `@EntityGraph` for inventory lookups.
 - Prefer pagination for large result sets. Core services expose pageable
   endpoints so huge lists are avoided.
-
 - Use Spring Cache backed by Redis for expensive queries. The Entity Management
   service caches character inventory graphs and the World Management service
   caches hot rooms with TTL-based eviction.

@@ -36,6 +36,14 @@ Script-only versions appear in version history and audit logs but do not trigger
 a data copy or world restart. Runtime services reload the affected scripts in
 memory and continue using the underlying `baseVersionId` for all other assets.
 
+### Schema Migrations vs Design Data
+
+Game versions contain **only** world data and scripts. Database schema changes
+remain the responsibility of each microservice and are applied via Flyway when a
+service container restarts during a platform deployment. Publishing a new design
+version therefore does not run Flyway migrations—it simply loads new data when a
+game instance starts or reloads scripts for patch versions.
+
 ## 🚀 Version Activation & Rollback
 
 The **Game Session Service** controls which published version is active for each live game instance. See the [User Journeys](./user-journeys.md#5-publish-and-start-a-game-instance) document for the high level flow.

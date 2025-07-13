@@ -62,7 +62,7 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
   - `"tenant-abc"` → `["admin", "designer"]`
   - `"tenant-def"` → `["moderator"]`
 
-> Tokens are short-lived and internal only. Gameplay context (e.g., `playerId`, `worldId`) is stored in Redis and sent via command envelopes.
+> Tokens are short-lived and internal only. Gameplay context (e.g., `playerId`, `tenantId`) is stored in Redis and sent via command envelopes.
 
 ---
 

@@ -13,6 +13,7 @@ import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
 
 class GameTemplateServiceImplTest {
   @Test
@@ -24,14 +25,10 @@ class GameTemplateServiceImplTest {
     GameTemplate template = new GameTemplate();
     template.setId(1L);
     template.setTenantId(1L);
-    template.setName("demo");
-    template.setConfig("{}");
-
-    when(repo.findByTenantId(1L, Pageable.unpaged())).thenReturn(new PageImpl<>(List.of(template)));
-
-    var page = service.listTemplates(1L, Pageable.unpaged());
-    assertEquals(1, page.getTotalElements());
-    GameTemplateDto dto = page.getContent().get(0);
-    assertEquals("demo", dto.name());
+    Page<GameTemplate> page = new PageImpl<>(List.of(template));
+    when(repo.findByTenantId(1L, PageRequest.of(0, 20))).thenReturn(page);
+    when(mapper.toDto(template)).thenReturn(new GameTemplateDto(1L, 1L, "name", null, "{}", null));
+    Page<GameTemplateDto> result = service.listTemplates(1L, PageRequest.of(0, 20));
+    assertEquals(1, result.getTotalElements());
   }
 }

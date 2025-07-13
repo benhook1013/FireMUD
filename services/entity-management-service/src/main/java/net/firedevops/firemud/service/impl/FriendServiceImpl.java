@@ -1,7 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
 import java.time.Instant;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.CharacterFriendDto;
 import net.firedevops.firemud.entity.Character;
@@ -11,6 +10,8 @@ import net.firedevops.firemud.mapper.CharacterFriendMapper;
 import net.firedevops.firemud.repository.CharacterFriendRepository;
 import net.firedevops.firemud.repository.CharacterRepository;
 import net.firedevops.firemud.service.FriendService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,8 +24,8 @@ public class FriendServiceImpl implements FriendService {
 
   @Override
   @Transactional(readOnly = true)
-  public List<CharacterFriendDto> listFriends(Long characterId) {
-    return repository.findByIdCharacterId(characterId).stream().map(mapper::toDto).toList();
+  public Page<CharacterFriendDto> listFriends(Long characterId, Pageable pageable) {
+    return repository.findByIdCharacterId(characterId, pageable).map(mapper::toDto);
   }
 
   @Override

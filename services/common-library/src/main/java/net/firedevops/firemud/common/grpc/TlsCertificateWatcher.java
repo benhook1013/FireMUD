@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.grpc;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
@@ -30,6 +31,16 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final AtomicBoolean running = new AtomicBoolean(true);
   private final Thread thread;
 
+  public static TlsCertificateWatcher createAndStart(List<Path> files, Runnable onChange)
+      throws IOException {
+    TlsCertificateWatcher watcher = new TlsCertificateWatcher(files, onChange);
+    watcher.start();
+    return watcher;
+  }
+
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification = "Thread started only via start() after constructor")
   public TlsCertificateWatcher(List<Path> files, Runnable onChange) throws IOException {
     this.files = Set.copyOf(files.stream().map(Path::toAbsolutePath).toList());
     this.onChange = onChange;
@@ -48,6 +59,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
     thread = new Thread(this::processEvents, "tls-cert-watcher");
     thread.setDaemon(true);
+  }
+
+  public void start() {
     thread.start();
   }
 

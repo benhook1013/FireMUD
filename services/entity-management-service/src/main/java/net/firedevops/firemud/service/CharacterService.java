@@ -1,8 +1,8 @@
 package net.firedevops.firemud.service;
 
+import net.firedevops.firemud.dto.CharacterDto;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import net.firedevops.firemud.dto.CharacterDto;
 
 public interface CharacterService {
   /** Returns a character with inventory entries cached in Redis. */
