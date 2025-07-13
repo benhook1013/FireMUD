@@ -7,8 +7,8 @@ This document describes the basic continuous integration and deployment strategy
 ## 🎯 Goals
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed.
-- **Build Docker images** and push them to a container registry.
-- **Deploy to Kubernetes** when changes are merged into designated branches (e.g., `main` or `release/*`).
+- **Build Docker images** and push them to GitHub Container Registry (GHCR).
+- **Deploy to Kubernetes manually** using the manifests in [`k8s/`](../../k8s/), with automation planned for the future.
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 
@@ -18,7 +18,7 @@ The main workflow runs formatting and lint checks followed by the Gradle `check`
 
 ## 🛠️ Workflow Structure
 
-Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch. A separate `docker-images.yml` workflow builds and publishes Docker images for all services using the `buildDockerImages` Gradle task:
+Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch. A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
 
 ```yaml
 name: CI
@@ -73,8 +73,12 @@ After tests pass, each service is packaged into a Docker image:
       - name: Build and Push
         uses: docker/build-push-action@v4
         with:
+          context: ./services/${{ matrix.service }}
           push: true
-          tags: ghcr.io/my-org/service:${{ github.sha }}
+          tags: |
+            ghcr.io/firemud/${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/firemud/${{ matrix.service }}:latest
+            ghcr.io/firemud/${{ matrix.service }}:${{ github.ref_name }}
 ```
 
 Images are tagged with the commit SHA and pushed to **GitHub Container Registry (GHCR)**.
@@ -89,30 +93,34 @@ this image so microservices share the same runtime configuration.
 
 ## 🚢 Deploying to Kubernetes
 
-For production branches, an additional job deploys the newly built images using Helm:
+At the moment FireMUD does not automatically deploy to Kubernetes. Operators
+apply the manifests in [`k8s/`](../../k8s/) or the provided Helm charts to roll
+out new versions. Cluster credentials and registry secrets are managed manually.
+When automated deployment is added, a workflow similar to the example below can
+be introduced.
 
 ```yaml
-  deploy:
-    needs: docker-build
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-      - name: Set up Helm
-        uses: azure/setup-helm@v3
-      - name: Deploy
-        run: |
-          helm upgrade --install my-service ./charts/my-service \
-            --set image.tag=${{ github.sha }}
+deploy:
+  needs: docker-build
+  if: github.ref == 'refs/heads/main'
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v3
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+    - name: Deploy
+      run: |
+        helm upgrade --install my-service ./charts/my-service \
+          --set image.tag=${{ github.sha }}
 ```
-
-Cluster credentials and registry secrets are stored as encrypted repository secrets so that the workflow can authenticate securely.
 
 ### Rollback Strategy
 
-New service versions are deployed alongside existing ones. If issues appear after a rollout, prior releases can be reinstated and the newer copies scaled down or removed.
+New service versions are deployed alongside existing ones. If issues appear after
+a rollout, prior releases can be reinstated and the newer copies scaled down or
+removed.
 
 ---
 
@@ -128,12 +136,12 @@ manual steps.
 ## 🔍 PR Preview Environments
 
 Pull requests spin up a short-lived Docker Compose stack so reviewers can test
-changes interactively. The `.github/workflows/preview.yml` workflow builds the
-service images with `./gradlew buildDockerImages` and launches them using
-`docker compose up`. A status comment is posted with a summary once the gateway
-passes its health check. The runner is discarded at the end of the job,
-removing the preview automatically. The workflow first copies `.env.sample` to
-`.env` so Docker Compose has default environment variables available.
+changes interactively. The `.github/workflows/preview.yml` workflow starts the
+stack with `./gradlew devUp`, which builds the service images and runs Docker
+Compose. A status comment is posted with a summary once the gateway passes its
+health check. The runner is discarded at the end of the job, removing the
+preview automatically. The workflow first copies `.env.sample` to `.env` so
+Docker Compose has default environment variables available.
 
 ---
 
