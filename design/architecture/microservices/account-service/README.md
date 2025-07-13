@@ -258,6 +258,11 @@ so the workflow remains consistent across services. See the
 [Transaction Strategies](../system-architecture-transactions.md) document for
 details on the saga pattern.
 
+Purchase workflows (one-time payments or donations) reuse this same runner. The
+`PurchaseWorkflowService` creates the payment intent and then records the
+transaction with the Logging & Admin Service. Should the log step fail, the
+saga automatically refunds the Stripe payment via a compensation action.
+
 ### Metrics & Tracing
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods expose `account.*`, `payment.*`, `notification.*`, and `session.*` timers via `@Timed` annotations. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger. No additional configuration is required when running via `./gradlew bootRun` as the default properties target `http://otel-collector:4317`.

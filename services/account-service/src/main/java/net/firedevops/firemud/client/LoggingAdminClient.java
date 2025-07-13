@@ -87,6 +87,18 @@ public class LoggingAdminClient implements AutoCloseable {
     stub.applyModerationAction(request);
   }
 
+  /** Log that a payment transaction occurred. */
+  public void logPayment(long tenantId, long accountId, long transactionId) {
+    ApplyModerationActionRequest request =
+        ApplyModerationActionRequest.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setAccountId(Long.toString(accountId))
+            .setAction("PAYMENT_TXN")
+            .setReason("txId=" + transactionId)
+            .build();
+    stub.applyModerationAction(request);
+  }
+
   @PreDestroy
   @Override
   public void close() throws IOException {
