@@ -100,7 +100,10 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test
 - **Load Testing**: Gatling
-- **Accessibility Audit**: axe-core CLI (requires Google Chrome)
+- **Accessibility Audit**: axe-core CLI (requires Google Chrome).
+  To run the audit locally, install Chrome as described in
+  [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility)
+  before executing `npm run accessibility`.
 
 ### Design Goals
 
