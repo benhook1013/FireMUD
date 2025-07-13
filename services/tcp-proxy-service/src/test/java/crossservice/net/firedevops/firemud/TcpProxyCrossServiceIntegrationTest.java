@@ -7,6 +7,7 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.telnet.TelnetServer;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -19,7 +20,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
@@ -31,11 +31,23 @@ import org.testcontainers.utility.DockerImageName;
     properties = {"TCP_PROXY_PORT=2323"})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
-  @Container
   static GenericContainer<?> gateway =
       new GenericContainer<>(
               DockerImageName.parse("ghcr.io/firedevops/spring-cloud-gateway:latest"))
           .withExposedPorts(8080);
+
+  private static boolean gatewayStarted = false;
+
+  static {
+    if (DockerClientFactory.instance().isDockerAvailable()) {
+      try {
+        gateway.start();
+        gatewayStarted = true;
+      } catch (Exception e) {
+        gatewayStarted = false;
+      }
+    }
+  }
 
   @LocalServerPort private int port;
 
@@ -45,10 +57,7 @@ class TcpProxyCrossServiceIntegrationTest {
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
-    if (DockerClientFactory.instance().isDockerAvailable()) {
-      if (!gateway.isRunning()) {
-        gateway.start();
-      }
+    if (gatewayStarted) {
       registry.add(
           "GATEWAY_WS_URL",
           () -> "ws://" + gateway.getHost() + ":" + gateway.getMappedPort(8080) + "/ws");
@@ -57,11 +66,18 @@ class TcpProxyCrossServiceIntegrationTest {
     }
   }
 
+  @AfterAll
+  static void stopGateway() {
+    if (gatewayStarted) {
+      gateway.stop();
+    }
+  }
+
   @Test
   void proxyStartsAlongsideGateway() throws Exception {
     Assumptions.assumeTrue(
-        DockerClientFactory.instance().isDockerAvailable(),
-        "Docker not available, skipping cross-service test");
+        DockerClientFactory.instance().isDockerAvailable() && gatewayStarted,
+        "Gateway container not available, skipping cross-service test");
     assertThat(gateway.isRunning()).isTrue();
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
