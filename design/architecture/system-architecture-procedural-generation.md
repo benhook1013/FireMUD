@@ -1,23 +1,130 @@
-# FireMUD System Architecture: Procedural Generation
+# 🧭 FireMUD System Architecture: Procedural Generation
 
-This document describes the basic approach for procedurally generating simple dungeon layouts. The Automation & Scripting Service exposes a generator used during world creation to seed rooms before designers fine tune them.
+This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features.
 
-## Algorithm Overview
+Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content, or fully generate open worlds without requiring hand-authored maps.
 
-1. Choose a random seed so generation is repeatable.
-2. Create a starting room and iterate until the requested room count is reached.
-3. For each new room, randomly pick an existing room and create a bidirectional exit between them.
-4. Ensure exits never exceed four per room (N/E/S/W) to keep navigation simple.
+---
 
-## Responsibilities
+## 🎯 Use Cases
 
-- Runs inside the Automation & Scripting Service.
-- Generates minimal room metadata which the World Management Service persists.
-- Designed for extensibility so terrain features can be added later.
+- 🏗️ **World Bootstrapping** – Initialize a new world map without manual design.
+- 🌀 **Dungeon Instances** – Generate instanced interiors on demand (e.g. for quests).
+- 🧱 **Design Templates** – Offer scaffolds for designers to expand on.
+- 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions.
 
-The generator is intentionally lightweight to keep early worlds simple while providing a template for future expansion.
+---
+
+## 🧩 Generator Types
+
+FireMUD currently supports the following generator types, with pluggable strategies planned:
+
+### 1. `SimpleDungeonGenerator`
+
+Creates compact room graphs with bidirectional exits — ideal for dungeons, interiors, or short instances.
+
+#### Algorithm:
+
+1. **Seeded Initialization**  
+   Select a random seed to ensure repeatable layout.
+
+2. **Create Starting Room**  
+   Designate a root room.
+
+3. **Iterative Expansion**  
+   Until room count is met:
+   - Choose a random existing room.
+   - Attempt to attach a new room via an available N/E/S/W exit.
+   - Limit exits per room to 4 to ensure simplicity.
+
+4. **Output Shape**  
+   Produces a flat graph of interconnected rooms with optional tags (`start`, `corridor`, etc.).
+
+> 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
+
+---
+
+### 2. `OverworldMapGenerator` (In Development)
+
+Generates biome-aware terrain maps with elevation, water features, forest density, and region partitioning. Room creation is configurable: either generate **sparse rooms** only at points of interest (POIs), or generate a **full grid of rooms** based on the terrain data.
+
+#### Generation Pipeline:
+
+| Step                     | Purpose                                     | Common Techniques                          |
+|--------------------------|---------------------------------------------|--------------------------------------------|
+| **Elevation Map**        | Define height (mountains, valleys)          | `Perlin Noise`, `Diamond-Square`           |
+| **Moisture Map**         | Define biome type (desert, swamp, forest)   | Gradient sampling, additional noise layer  |
+| **Biome Assignment**     | Use height + moisture to classify terrain   | Threshold tables or biome rulesets         |
+| **Region Partitioning**  | Divide into zones/factions                  | `Voronoi`, seeded points + expansion       |
+| **River/Lake Simulation**| Carve out natural water features            | Flow fields, downhill tracing              |
+| **Forest/Cave Generation** | Place dense blobs of trees or underground | Cellular automata                          |
+| **Feature Placement**    | Place towns, dungeons, landmarks            | `Poisson Disk Sampling`, seeded rules      |
+| **Connectivity Graph**   | Generate roads, rivers, and path exits      | A*, flow maps, elevation-aware routing     |
+| **Room Graph Export**    | Convert terrain grid into room data         | Either:
+  - Sparse: POIs and path nodes only  
+  - Full: 1:1 room per map cell              |
+
+> 🔧 The room generation mode (sparse vs full) is selectable per generation request, depending on the game’s desired level of detail and exploration density.
+
+---
+
+## 🧾 Output and Metadata (Common)
+
+All generators emit a normalized structure:
+
+| Field         | Description                                         |
+|---------------|-----------------------------------------------------|
+| `roomId`      | Unique identifier                                   |
+| `coordinates` | Grid location (used for spatial logic and editing) |
+| `exitMap`     | Map of direction → `roomId`                         |
+| `tags`        | Optional labels like `"start"`, `"town"`, etc.     |
+| `biome`       | Biome or terrain type (if applicable)              |
+| `elevation`   | Numeric terrain height (used for visuals or logic) |
+| `regionId`    | Optional grouping for partitioned maps             |
+
+In **full-grid mode**, every terrain tile becomes a room.  
+In **sparse mode**, only selected POIs and waypoints are emitted.
+
+---
+
+## 🧱 Service Responsibilities
+
+- **Automation & Scripting Service**
+  - Owns and executes all procedural generation logic
+  - Registers available generator types
+  - Exposes generation via API and scripting interfaces
+
+- **World Management Service**
+  - Persists generated rooms, biomes, and regions
+  - Assigns canonical `roomId`s and manages region mappings
+
+- **Game Session Service**
+  - Can request runtime instancing for dungeons, portals, or quests
+  - Integrates with tick state and Redis coordination
+
+---
+
+## ⚠️ Limitations and Roadmap
+
+| Area                     | Status                      |
+|--------------------------|-----------------------------|
+| Biome-based gameplay     | 🚧 Planned (e.g., movement cost, visibility) |
+| Terrain traversal rules  | 🚧 Planned per biome or elevation delta       |
+| Region-specific scripting| 🚧 Future integration with spawn rules, lore  |
+
+Planned enhancements:
+
+- Procedural POI lore naming and description generation
+- Seasonal or climate-based biome variations
+- Visual preview overlays in Game Editor
+- Runtime tuning parameters via scripting
+
+---
 
 ## 📚 Related Documentation
 
 - [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
 - [World Management Service](./microservices/world-management-service/README.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Game Session Service](./microservices/game-session-service/README.md)
