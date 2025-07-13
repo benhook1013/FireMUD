@@ -31,18 +31,18 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional
-  public VersionDto publishVersion(Long gameId, String notes) throws SagaException {
-    logger.info("Publishing version for game {}", gameId);
+  public VersionDto publishVersion(Long tenantId, String notes) throws SagaException {
+    logger.info("Publishing version for tenant {}", tenantId);
     Game game =
         gameRepository
-            .findById(gameId)
+            .findById(tenantId)
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
     version.setGame(game);
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
-    version.setVersionNumber(calculateNextNumber(gameId));
+    version.setVersionNumber(calculateNextNumber(tenantId));
 
     SagaBuilder builder = new SagaBuilder("publishVersion");
     builder.step(
@@ -59,23 +59,23 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional
   public VersionDto publishScriptPatchVersion(
-      Long gameId, Long baseVersionId, String scriptPatchVersion, String notes)
+      Long tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
       throws SagaException {
     logger.info(
-        "Publishing script patch {} for game {} base {}",
+        "Publishing script patch {} for tenant {} base {}",
         scriptPatchVersion,
-        gameId,
+        tenantId,
         baseVersionId);
     Game game =
         gameRepository
-            .findById(gameId)
+            .findById(tenantId)
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
     version.setGame(game);
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
-    version.setVersionNumber(calculateNextNumber(gameId));
+    version.setVersionNumber(calculateNextNumber(tenantId));
     version.setScriptPatchVersion(scriptPatchVersion);
     version.setBaseVersionId(baseVersionId);
     version.setScriptOnly(true);
@@ -94,10 +94,10 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional(readOnly = true)
-  public List<VersionDto> listVersions(Long gameId) {
+  public List<VersionDto> listVersions(Long tenantId) {
     Game game =
         gameRepository
-            .findById(gameId)
+            .findById(tenantId)
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
     return versionRepository.findAll().stream()
         .filter(v -> v.getGame().equals(game))
@@ -105,10 +105,10 @@ public class VersionServiceImpl implements VersionService {
         .toList();
   }
 
-  private int calculateNextNumber(Long gameId) {
+  private int calculateNextNumber(Long tenantId) {
     return (int)
             versionRepository.findAll().stream()
-                .filter(v -> v.getGame().getId().equals(gameId))
+                .filter(v -> v.getGame().getId().equals(tenantId))
                 .mapToInt(Version::getVersionNumber)
                 .max()
                 .orElse(0)

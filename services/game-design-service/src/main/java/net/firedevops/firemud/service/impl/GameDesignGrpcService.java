@@ -41,12 +41,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     try {
       RevisionDto dto =
           new RevisionDto(
-              null,
-              null,
-              request.getGameId(),
-              request.getAuthorAccountId(),
-              request.getData(),
-              null);
+              null, request.getTenantId(), request.getAuthorAccountId(), request.getData(), null);
       RevisionDto saved = revisionService.saveRevision(dto);
       responseObserver.onNext(SaveRevisionResponse.newBuilder().setRevisionId(saved.id()).build());
       responseObserver.onCompleted();
@@ -63,7 +58,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   public void publishVersion(
       PublishVersionRequest request, StreamObserver<PublishVersionResponse> responseObserver) {
     try {
-      VersionDto version = versionService.publishVersion(request.getGameId(), request.getNotes());
+      VersionDto version = versionService.publishVersion(request.getTenantId(), request.getNotes());
       responseObserver.onNext(
           PublishVersionResponse.newBuilder().setVersionId(version.id()).build());
       responseObserver.onCompleted();
@@ -83,7 +78,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     try {
       VersionDto version =
           versionService.publishScriptPatchVersion(
-              request.getGameId(),
+              request.getTenantId(),
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
               request.getNotes());
@@ -103,7 +98,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   public void listVersions(
       ListVersionsRequest request, StreamObserver<ListVersionsResponse> responseObserver) {
     try {
-      var versions = versionService.listVersions(request.getGameId());
+      var versions = versionService.listVersions(request.getTenantId());
       ListVersionsResponse.Builder builder = ListVersionsResponse.newBuilder();
       versions.forEach(
           v ->

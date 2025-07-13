@@ -81,9 +81,10 @@ public class GameDesignClient implements AutoCloseable {
     stub = GameDesignServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
-  /** Returns published versions for the given game. */
-  public ListVersionsResponse listVersions(long gameId) {
-    ListVersionsRequest request = ListVersionsRequest.newBuilder().setGameId(gameId).build();
+  /** Returns published versions for the given tenant. */
+  public ListVersionsResponse listVersions(long tenantId) {
+    ListVersionsRequest request =
+        ListVersionsRequest.newBuilder().setTenantId(tenantId).build();
     return stub.listVersions(request);
   }
 
