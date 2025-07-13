@@ -10,8 +10,18 @@ spring:
 grpc:
   server:
     port: 6565
+    security:
+      enabled: true
+      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
+      clientAuth: REQUIRE
 
 firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
     jwt-expiration-ms: 3600000
 
@@ -56,6 +66,10 @@ spring:
               basedOnPreviousValue: false
 
 firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
     jwt-secret: changeit-changeit-changeit-changeit
 
@@ -89,5 +103,9 @@ spring:
               factor: 2
               basedOnPreviousValue: false
 firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
