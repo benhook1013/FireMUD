@@ -11,8 +11,8 @@ import net.firedevops.firemud.repository.GameTemplateRepository;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 
 class GameTemplateServiceImplTest {
@@ -27,7 +27,6 @@ class GameTemplateServiceImplTest {
     template.setTenantId(1L);
     Page<GameTemplate> page = new PageImpl<>(List.of(template));
     when(repo.findByTenantId(1L, PageRequest.of(0, 20))).thenReturn(page);
-    when(mapper.toDto(template)).thenReturn(new GameTemplateDto(1L, 1L, "name", null, "{}", null));
     Page<GameTemplateDto> result = service.listTemplates(1L, PageRequest.of(0, 20));
     assertEquals(1, result.getTotalElements());
   }
