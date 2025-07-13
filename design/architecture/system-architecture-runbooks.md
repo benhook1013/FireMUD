@@ -40,6 +40,9 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      ```
 
    - Restart dependent services with `kubectl rollout restart`.
+   - For local development, run `dev-tools/restore-db.sh <backup-file>` and then
+     restart containers with `docker compose restart`.
+   - Scheduled backups are defined in `k8s/velero/schedule.yaml`.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
 3. **Full Cluster Restore**

@@ -11,6 +11,7 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **24 hours** of 15‑minute snapshots
   - **3 weekly** snapshots
   - **3 monthly** snapshots
+- Example Velero schedules are provided in `k8s/velero/schedule.yaml`.
 - If the database service fails completely:
   1. Restore the latest snapshot.
   2. Restart services to resume operation.
@@ -32,7 +33,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 
 ## 🐳 Local Development
 
-- Backups are restored manually using `pg_restore` from local snapshot files.
+- Backups are restored using `dev-tools/restore-db.sh` with a snapshot file.
 - Services are restarted with **Docker Compose**.
 - Redis starts empty and repopulates when services access the database.
 
@@ -43,7 +44,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 | Environment      | Steps |
 |------------------|-------------------------------------------------------------|
 | **Kubernetes**   | Restore PostgreSQL via Velero → restore other resources → restart pods → allow Redis to repopulate |
-| **Docker Compose** | `pg_restore` local backup → restart containers → Redis repopulates automatically |
+| **Docker Compose** | `dev-tools/restore-db.sh` snapshot → restart containers → Redis repopulates automatically |
 
 Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. Gameplay resumes after services restart and Redis repopulates from PostgreSQL.
 

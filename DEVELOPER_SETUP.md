@@ -162,6 +162,16 @@ Run `dev-tools/firemud-cli.sh` for shortcuts:
 ./dev-tools/firemud-cli.sh ping # test a running service
 ```
 
+### Backing Up the Local Database
+
+Use `dev-tools/backup-db.sh` to create a snapshot and
+`dev-tools/restore-db.sh` to restore one:
+
+```bash
+./dev-tools/backup-db.sh             # writes to ./backups
+./dev-tools/restore-db.sh backups/<file>
+```
+
 ## Manual Testing Tools
 
 ### Insomnia for REST and WebSocket

@@ -36,3 +36,18 @@ resource "helm_release" "redis" {
   namespace  = var.namespace
   values     = [file("${path.module}/redis-values.yaml")]
 }
+
+resource "helm_release" "velero" {
+  name       = "velero"
+  repository = "https://vmware-tanzu.github.io/helm-charts"
+  chart      = "velero"
+  namespace  = var.namespace
+  set {
+    name  = "configuration.provider"
+    value = var.velero_provider
+  }
+  set {
+    name  = "configuration.backupStorageLocation.name"
+    value = var.velero_bucket
+  }
+}
