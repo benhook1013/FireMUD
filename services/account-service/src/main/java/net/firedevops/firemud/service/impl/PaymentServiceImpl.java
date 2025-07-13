@@ -48,6 +48,7 @@ public class PaymentServiceImpl implements PaymentService {
             .filter(a -> a.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     long platformFee = stripeClient.calculatePlatformFee(amountCents);
+    long creatorShare = amountCents - platformFee;
     StripeClient.IntentResult intent;
     try {
       intent = stripeClient.createPaymentIntent(amountCents, "usd");
@@ -60,6 +61,7 @@ public class PaymentServiceImpl implements PaymentService {
     tx.setAmountCents(amountCents);
     tx.setCurrency("USD");
     tx.setPlatformFeeCents(platformFee);
+    tx.setCreatorShareCents(creatorShare);
     tx.setProviderId(intent.id());
     tx.setStatus(intent.status());
     tx.setDonation(false);
@@ -71,6 +73,7 @@ public class PaymentServiceImpl implements PaymentService {
         accountId,
         tx.getAmountCents(),
         tx.getPlatformFeeCents(),
+        tx.getCreatorShareCents(),
         tx.getCurrency(),
         intent.clientSecret(),
         false);
@@ -87,6 +90,7 @@ public class PaymentServiceImpl implements PaymentService {
             .filter(a -> a.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     long platformFee = stripeClient.calculatePlatformFee(amountCents);
+    long creatorShare = amountCents - platformFee;
     StripeClient.IntentResult intent;
     try {
       intent = stripeClient.createPaymentIntent(amountCents, "usd");
@@ -100,6 +104,7 @@ public class PaymentServiceImpl implements PaymentService {
     tx.setCurrency("USD");
     tx.setPlatformFeeCents(platformFee);
     tx.setProviderId(intent.id());
+    tx.setCreatorShareCents(creatorShare);
     tx.setStatus(intent.status());
     tx.setDonation(true);
     tx.setTenantId(tenantId);
@@ -110,6 +115,7 @@ public class PaymentServiceImpl implements PaymentService {
         accountId,
         tx.getAmountCents(),
         tx.getPlatformFeeCents(),
+        tx.getCreatorShareCents(),
         tx.getCurrency(),
         intent.clientSecret(),
         true);

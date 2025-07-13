@@ -28,10 +28,9 @@
   - [x] Define proto contracts for payment and subscription flows in the account proto namespace
   - [x] Add Flyway migration scripts for payment tables
   - [x] Document monetization design in `account-service/design/README.md`
-  - [ ] Implement virtual currency system (game-specific currencies)
-  - [ ] Implement premium hosting tiers & features for game creators
-  - [ ] Implement platform-controlled ad system (for free-to-play games)
-  - [ ] Implement revenue-sharing system for game creators
+  - [x] Implement virtual currency system (game-specific currencies)
+  - [x] Implement premium hosting tiers & features for game creators
+  - [x] Implement revenue-sharing system for game creators
 
 ## Reusable Microservice Checklist
 

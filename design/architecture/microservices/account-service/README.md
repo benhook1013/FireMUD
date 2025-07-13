@@ -155,6 +155,14 @@ The gRPC schemas for this service live in
 The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../design/project-management/core-requirements.md#2.8-moderation-administration--monetization). Planned entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../protos/account/v1/payment_service.proto).
 Donations are stored as one-time `payment_transaction` records with the `donation` flag set to `true`. A dedicated `CreateDonation` gRPC method issues a Stripe payment intent for these cases. Refunds call Stripe's API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows.
 
+### Virtual Currency & Revenue Sharing
+
+Each tenant may define game-specific currencies. Balances are stored in the `currency_balance` table keyed by account. The `VirtualCurrencyService` gRPC API allows services to add or spend currency for an account. Platform fees are deducted from each purchase and the remaining `creator_share_cents` is recorded on the `payment_transaction` row for revenue-sharing calculations.
+
+### Premium Hosting
+
+Premium hosting tiers are modeled as subscription plans with higher resource limits. Game creators can upgrade via the existing payment flows.
+
 ### Email & Notification Design
 
 This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables configure `spring.mail.*` along with `firemud.mail.from`, `firemud.mail.verification-url`, and `firemud.mail.reset-url`. The gRPC API is defined in [`notification_service.proto`](../../../protos/account/v1/notification_service.proto).

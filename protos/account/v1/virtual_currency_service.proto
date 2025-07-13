@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "shared/v1/errors.proto";
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+service VirtualCurrencyService {
+  rpc GetBalance(GetCurrencyBalanceRequest) returns (GetCurrencyBalanceResponse);
+  rpc AddCurrency(AddCurrencyRequest) returns (AddCurrencyResponse);
+  rpc SpendCurrency(SpendCurrencyRequest) returns (SpendCurrencyResponse);
+}
+
+message GetCurrencyBalanceRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string currency_code = 3;
+}
+
+message GetCurrencyBalanceResponse {
+  int64 balance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message AddCurrencyRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string currency_code = 3;
+  int64 amount = 4;
+}
+
+message AddCurrencyResponse {
+  int64 balance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message SpendCurrencyRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string currency_code = 3;
+  int64 amount = 4;
+}
+
+message SpendCurrencyResponse {
+  int64 balance = 1;
+  shared.v1.ErrorDetail error = 2;
+}
