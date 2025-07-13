@@ -36,7 +36,7 @@ public class AutomationScriptingClient implements AutoCloseable {
   void init() throws SSLException, IOException {
     reloadChannel();
     watcher =
-        new TlsCertificateWatcher(
+        TlsCertificateWatcher.createAndStart(
             List.of(
                 Path.of(tlsProps.getCertChain()),
                 Path.of(tlsProps.getPrivateKey()),
