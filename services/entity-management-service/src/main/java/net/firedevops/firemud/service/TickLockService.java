@@ -5,7 +5,7 @@ public interface TickLockService {
   /**
    * Acquire a tick lock for the entity. Returns true if obtained.
    *
-   * @param tenantId game identifier used to prefix the Redis key
+   * @param tenantId tenant identifier used to prefix the Redis key
    * @param entityId unique entity identifier
    * @return {@code true} if the lock was successfully acquired
    */
@@ -14,7 +14,7 @@ public interface TickLockService {
   /**
    * Release the previously acquired lock.
    *
-   * @param tenantId game identifier used to prefix the Redis key
+   * @param tenantId tenant identifier used to prefix the Redis key
    * @param entityId unique entity identifier
    */
   void releaseLock(Long tenantId, Long entityId);

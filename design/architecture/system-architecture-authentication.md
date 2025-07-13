@@ -52,7 +52,7 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 |---------------|-------------------------------------------------------------------------|
 | `accountId`   | Identity of the authenticated account                                   |
 | `globalRoles` | Cross-game privileges (e.g., `platformAdmin`, `moderator`)              |
-| `scopedRoles` | Map of `tenantId` (game ID) → roles (e.g., `"tenant-abc": ["admin", "designer"]`)     |
+| `scopedRoles` | Map of `tenantId` → roles (e.g., `"tenant-abc": ["admin", "designer"]`)     |
 
 ### 🧾 Example JWT Payload
 

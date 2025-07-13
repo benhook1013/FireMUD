@@ -7,7 +7,7 @@ This document explains how FireMUD hosts many independent games on shared infras
 ## 🔗 Account-to-Game Relationships
 
 - Players have a **single platform account** managed by the **Account Service**.
-- The same account can join multiple games. Each game is identified by a `tenantId` (game ID).
+- The same account can join multiple games. Each game is identified by a `tenantId`.
 - Character data and progress are scoped per `tenantId`; a player may have different characters in different games.
 - Authentication is global, but services always check the requested `tenantId` when retrieving or updating game data.
 
