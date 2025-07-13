@@ -2,6 +2,8 @@ package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.client.GameLogicClient;
+import net.firedevops.firemud.client.WorldManagementClient;
+import net.firedevops.firemud.client.EntityManagementClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -26,6 +28,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private final GameInstanceMapper mapper;
   private final SessionStateService sessionStateService;
   private final GameLogicClient gameLogicClient;
+  private final WorldManagementClient worldManagementClient;
+  private final EntityManagementClient entityManagementClient;
   private final SagaRunner sagaRunner;
   private final MeterRegistry meterRegistry;
 
@@ -34,12 +38,16 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       GameInstanceMapper mapper,
       SessionStateService sessionStateService,
       GameLogicClient gameLogicClient,
+      WorldManagementClient worldManagementClient,
+      EntityManagementClient entityManagementClient,
       SagaRunner sagaRunner,
       MeterRegistry meterRegistry) {
     this.repository = repository;
     this.mapper = mapper;
     this.sessionStateService = sessionStateService;
     this.gameLogicClient = gameLogicClient;
+    this.worldManagementClient = worldManagementClient;
+    this.entityManagementClient = entityManagementClient;
     this.sagaRunner = sagaRunner;
     this.meterRegistry = meterRegistry;
   }
@@ -53,6 +61,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         repository,
         mapper,
         sessionStateService,
+        null,
+        null,
         null,
         null,
         new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
@@ -93,9 +103,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             request.scriptPatchVersion() == null ? "none" : request.scriptPatchVersion())
         .increment();
 
-    if (gameLogicClient != null && sagaRunner != null) {
+    if (gameLogicClient != null
+        && worldManagementClient != null
+        && entityManagementClient != null
+        && sagaRunner != null) {
       var saga =
           new SagaBuilder("startSession")
+              .step("checkWorldService", () -> worldManagementClient.ping())
+              .step("checkEntityService", () -> entityManagementClient.ping())
               .step("notifyGameLogic", () -> gameLogicClient.ping())
               .build();
       try {
@@ -121,10 +136,15 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstance saved = repository.save(instance);
     sessionStateService.deleteState(instance.getTenantId(), instance.getId());
 
-    if (gameLogicClient != null && sagaRunner != null) {
+    if (gameLogicClient != null
+        && worldManagementClient != null
+        && entityManagementClient != null
+        && sagaRunner != null) {
       var saga =
           new SagaBuilder("stopSession")
               .step("notifyGameLogic", () -> gameLogicClient.ping())
+              .step("flushWorldService", () -> worldManagementClient.ping())
+              .step("flushEntityService", () -> entityManagementClient.ping())
               .build();
       try {
         sagaRunner.run(saga);
