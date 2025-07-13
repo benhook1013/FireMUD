@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entity.NpcMemory;
 import net.firedevops.firemud.model.AggressionState;
@@ -17,6 +18,7 @@ public class NpcAggressionServiceImpl implements NpcAggressionService {
 
   @Override
   @Transactional
+  @Timed(value = "npc.setAggressionState")
   public void setAggressionState(Long tenantId, Long npcId, AggressionState state) {
     NpcMemory mem =
         memoryRepository
@@ -35,6 +37,7 @@ public class NpcAggressionServiceImpl implements NpcAggressionService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "npc.getAggressionState")
   public AggressionState getAggressionState(Long tenantId, Long npcId) {
     return memoryRepository
         .findByNpcIdAndKeyAndTenantId(npcId, AGGRESSION_KEY, tenantId)

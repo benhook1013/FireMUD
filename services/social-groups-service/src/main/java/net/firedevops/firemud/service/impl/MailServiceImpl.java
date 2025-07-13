@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -12,7 +13,6 @@ import net.firedevops.firemud.service.MailService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import io.micrometer.core.annotation.Timed;
 
 @Service
 @RequiredArgsConstructor

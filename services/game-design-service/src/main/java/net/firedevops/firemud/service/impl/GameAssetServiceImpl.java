@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.io.IOException;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -23,6 +24,7 @@ public class GameAssetServiceImpl implements GameAssetService {
 
   @Override
   @Transactional
+  @Timed(value = "gamedesign.asset.upload")
   public GameAssetDto uploadAsset(Long tenantId, MultipartFile file) {
     logger.info("Uploading asset {}", file.getOriginalFilename());
     GameAsset entity = new GameAsset();

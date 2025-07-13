@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -80,6 +81,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   }
 
   @Override
+  @Timed(value = "automation.event.enqueue")
   public void enqueueEvent(Long tenantId, Long scriptId, String eventJson) {
     if (!quotaService.tryAcquire(tenantId, scriptId)) {
       logger.warn("Script quota exceeded for {}:{}", tenantId, scriptId);
@@ -91,6 +93,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   }
 
   @Override
+  @Timed(value = "automation.tick.process")
   public void processTick(Long tenantId, Long scriptId) {
     String lockKey = lockKey(tenantId, scriptId);
     Boolean acquired =

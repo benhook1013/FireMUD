@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import net.firedevops.firemud.dto.SagaInstanceDto;
 import net.firedevops.firemud.dto.SagaStepDto;
@@ -31,6 +32,7 @@ public class SagaDashboardServiceImpl implements SagaDashboardService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "saga.listInstances")
   public List<SagaInstanceDto> listInstances() {
     List<SagaInstanceDto> instances =
         instanceRepository.findAll().stream().map(mapper::toDto).toList();
@@ -40,6 +42,7 @@ public class SagaDashboardServiceImpl implements SagaDashboardService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "saga.listSteps")
   public List<SagaStepDto> listSteps(Long instanceId) {
     return stepRepository.findByInstanceId(instanceId).stream().map(mapper::toDto).toList();
   }

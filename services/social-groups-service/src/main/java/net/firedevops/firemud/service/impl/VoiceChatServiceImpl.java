@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ public class VoiceChatServiceImpl implements VoiceChatService {
   private long expirationMs;
 
   @Override
+  @Timed(value = "voice.token.create")
   public VoiceTokenDto createToken(VoiceTokenRequestDto request) {
     logger.info("Issuing voice token for account {}", request.accountId());
     String token =

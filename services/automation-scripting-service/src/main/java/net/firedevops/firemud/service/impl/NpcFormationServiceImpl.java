@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,7 @@ public class NpcFormationServiceImpl implements NpcFormationService {
 
   @Override
   @Transactional
+  @Timed(value = "formation.create")
   public Long createFormation(Long tenantId, String name, Long leaderNpcId, FormationType type) {
     NpcFormation formation = new NpcFormation();
     formation.setTenantId(tenantId);
@@ -31,6 +33,7 @@ public class NpcFormationServiceImpl implements NpcFormationService {
 
   @Override
   @Transactional
+  @Timed(value = "formation.addMember")
   public void addMember(Long tenantId, Long formationId, Long npcId) {
     NpcFormation formation = formationRepository.findById(formationId).orElseThrow();
     if (!formation.getTenantId().equals(tenantId)) {
@@ -44,6 +47,7 @@ public class NpcFormationServiceImpl implements NpcFormationService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "formation.getMembers")
   public List<Long> getMembers(Long tenantId, Long formationId) {
     return memberRepository.findByFormation_TenantIdAndFormation_Id(tenantId, formationId).stream()
         .map(NpcFormationMember::getNpcId)

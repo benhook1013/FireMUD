@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entity.Faction;
 import net.firedevops.firemud.entity.FactionStanding;
@@ -17,6 +18,7 @@ public class FactionServiceImpl implements FactionService {
 
   @Override
   @Transactional
+  @Timed(value = "faction.adjustReputation")
   public int adjustReputation(Long tenantId, Long playerId, Long factionId, int delta) {
     FactionStanding standing =
         standingRepository
@@ -37,6 +39,7 @@ public class FactionServiceImpl implements FactionService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "faction.getReputation")
   public int getReputation(Long tenantId, Long playerId, Long factionId) {
     return standingRepository
         .findByTenantIdAndPlayerIdAndFaction_Id(tenantId, playerId, factionId)

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.net.URI;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -32,6 +33,7 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
   }
 
   @Override
+  @Timed(value = "gateway.route.upsert")
   public GatewayRoute upsert(GatewayRoute route) {
     routes.put(route.routeId(), route);
 
@@ -53,6 +55,7 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
   }
 
   @Override
+  @Timed(value = "gateway.route.remove")
   public boolean remove(String routeId) {
     boolean existed = routes.remove(routeId) != null;
     writer.delete(Mono.just(routeId)).onErrorResume(e -> Mono.empty()).block();

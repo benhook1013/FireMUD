@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,6 +25,7 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
   private final Map<Long, Map<String, String>> registry = new ConcurrentHashMap<>();
 
   @Override
+  @Timed(value = "script.version.notify")
   public void notifyUpdate(Long tenantId, String scriptPatchVersion, List<String> affectedScripts) {
     logger.info(
         "Applying script patch {} for tenant {} affecting {} scripts",

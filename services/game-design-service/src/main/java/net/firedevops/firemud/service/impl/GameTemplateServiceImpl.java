@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.GameTemplateDto;
@@ -23,6 +24,7 @@ public class GameTemplateServiceImpl implements GameTemplateService {
 
   @Override
   @Transactional
+  @Timed(value = "gamedesign.template.create")
   public GameTemplateDto createTemplate(GameTemplateDto dto) {
     logger.info("Creating game template {}", dto.name());
     GameTemplate entity = mapper.toEntity(dto);
@@ -32,6 +34,7 @@ public class GameTemplateServiceImpl implements GameTemplateService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "gamedesign.template.list")
   public Page<GameTemplateDto> listTemplates(Long tenantId, Pageable pageable) {
     return repository.findByTenantId(tenantId, pageable).map(mapper::toDto);
   }

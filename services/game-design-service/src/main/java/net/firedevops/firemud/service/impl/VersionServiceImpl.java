@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.client.AutomationScriptingClient;
@@ -31,6 +32,7 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional
+  @Timed(value = "gamedesign.version.publish")
   public VersionDto publishVersion(Long tenantId, String notes) throws SagaException {
     logger.info("Publishing version for tenant {}", tenantId);
     Game game =
@@ -58,6 +60,7 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional
+  @Timed(value = "gamedesign.version.publishScriptPatch")
   public VersionDto publishScriptPatchVersion(
       Long tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
       throws SagaException {
@@ -94,6 +97,7 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "gamedesign.version.list")
   public List<VersionDto> listVersions(Long tenantId) {
     Game game =
         gameRepository

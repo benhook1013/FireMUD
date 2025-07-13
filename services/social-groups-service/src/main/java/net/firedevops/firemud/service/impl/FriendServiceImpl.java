@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -23,6 +24,7 @@ public class FriendServiceImpl implements FriendService {
 
   @Override
   @Transactional
+  @Timed(value = "friend.add")
   public FriendLinkDto addFriend(AddFriendRequest request) {
     logger.info("Adding friend {} -> {}", request.accountId(), request.friendAccountId());
     FriendLink link = new FriendLink();
