@@ -2,7 +2,7 @@
 
 This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
 It complements the [System Architecture Overview](./system-architecture-overview.md) and [System Context Diagram](./system-context-diagram.md) to show how users traverse the overall platform.
-For a breakdown of every service see the [Microservices Overview](./microservices/README.md).
+For a breakdown of every service see the [Microservices Overview](./microservices/README.md) and the [Service Responsibility Matrix](./service-responsibility-matrix.md).
 For step-by-step tooling instructions see the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ## 🎯 Goals
@@ -99,7 +99,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 Once the world is ready:
 
 1. **Publish a Version** – Creators publish the current design in the Game Design Service.
-2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (start instance)
