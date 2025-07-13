@@ -30,6 +30,15 @@ flowchart TD
         ES[(Elasticsearch)]
     end
 
+    subgraph Observability
+        FluentBit[Fluent Bit]
+        Prom[Prometheus]
+        OTel[OTel Collector]
+        Kibana[Kibana]
+        Grafana[Grafana]
+        Jaeger[Jaeger]
+    end
+
     MUD -- TCP --> TCPProxy
     Web -- wss/HTTP --> Gateway
     TCPProxy -- wss --> Gateway
@@ -45,6 +54,7 @@ flowchart TD
     Session -- gRPC --> Logging
 
     InternalServices --> Datastores
+    InternalServices --> Observability
 ```
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, and send structured logs to Elasticsearch.
@@ -55,3 +65,4 @@ All internal communication from the **Game Session Service** to downstream micro
 - [Microservices Overview](./microservices/README.md)
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
+- [Logging & Monitoring](./system-architecture-logging-monitoring.md)
