@@ -12,6 +12,32 @@ For step-by-step tooling instructions see the [Game Creator Guide](../user-guide
 
 ---
 
+## 📑 Quick Reference
+
+1. [Sign Up](#1-sign-up)
+2. [Game Creation](#2-game-creation)
+3. [World and Entity Design](#3-world-and-entity-design)
+4. [Add Automation & Scripting](#4-add-automation--scripting)
+5. [Publish and Start a Game Instance](#5-publish-and-start-a-game-instance)
+6. [Character Creation & Selection](#6-character-creation--selection)
+7. [Player Login and Gameplay](#7-player-login-and-gameplay)
+8. [Social Interaction](#8-social-interaction)
+9. [Monitoring and Moderation](#9-monitoring-and-moderation)
+10. [Patch and Update a Live Game](#10-patch-and-update-a-live-game)
+11. [Purchases and Subscriptions](#11-purchases-and-subscriptions)
+12. [Password Resets & Account Recovery](#12-password-resets--account-recovery)
+13. [Switch Games or Manage Multiple Games](#13-switch-games-or-manage-multiple-games)
+14. [Operational Recovery](#14-operational-recovery)
+15. [Branding and Customization](#15-branding-and-customization)
+16. [Playtesting & Analytics](#16-playtesting--analytics)
+17. [Testing & Continuous Delivery](#17-testing--continuous-delivery)
+18. [Account Data Export & Deletion](#18-account-data-export--deletion)
+19. [Deployment & Environment Configuration](#19-deployment--environment-configuration)
+20. [Observability & Debugging](#20-observability--debugging)
+21. [Extensibility & External Tools](#21-extensibility--external-tools)
+
+---
+
 ## 1. Sign Up
 
 Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and login flows are outlined in [Authentication & Authorization](./system-architecture-authentication.md).
@@ -96,6 +122,7 @@ Players connect through the networking layer:
 3. **Authentication** – Login credentials are validated by the [Game Session Service](./microservices/game-session-service/README.md).
    See [Authentication & Authorization](./system-architecture-authentication.md)
    for supported `LOGIN` commands and token handling.
+4. **Frontend** – The React client connects through the Gateway using the same WebSocket flow. Component structure and state management are detailed in the [Frontend Architecture](./system-architecture-frontend.md).
 
 ```plaintext
 Client → Proxy/Gateway → Game Session Service → Game Logic Service / Entity & World services
