@@ -1,9 +1,9 @@
 package net.firedevops.firemud.config;
 
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.client.EntityManagementClient;
 import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.client.WorldManagementClient;
-import net.firedevops.firemud.client.EntityManagementClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

@@ -21,7 +21,8 @@ public class EntityManagementClient implements AutoCloseable {
   private ManagedChannel channel;
   private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub;
 
-  public EntityManagementClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
+  public EntityManagementClient(
+      ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;
   }
