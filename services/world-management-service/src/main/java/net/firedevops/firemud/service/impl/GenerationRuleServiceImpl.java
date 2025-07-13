@@ -1,12 +1,13 @@
 package net.firedevops.firemud.service.impl;
 
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.GenerationRuleDto;
 import net.firedevops.firemud.entity.GenerationRule;
 import net.firedevops.firemud.mapper.GenerationRuleMapper;
 import net.firedevops.firemud.repository.GenerationRuleRepository;
 import net.firedevops.firemud.service.GenerationRuleService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,7 +27,7 @@ public class GenerationRuleServiceImpl implements GenerationRuleService {
 
   @Override
   @Transactional(readOnly = true)
-  public List<GenerationRuleDto> listRules(Long tenantId) {
-    return repository.findByTenantId(tenantId).stream().map(mapper::toDto).toList();
+  public Page<GenerationRuleDto> listRules(Long tenantId, Pageable pageable) {
+    return repository.findByTenantId(tenantId, pageable).map(mapper::toDto);
   }
 }

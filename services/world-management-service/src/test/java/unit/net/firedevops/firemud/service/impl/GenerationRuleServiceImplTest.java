@@ -11,6 +11,9 @@ import net.firedevops.firemud.repository.GenerationRuleRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 class GenerationRuleServiceImplTest {
   private GenerationRuleRepository repository;
@@ -44,9 +47,10 @@ class GenerationRuleServiceImplTest {
     rule.setTenantId(1L);
     rule.setName("max_rooms");
     rule.setValue("10");
-    when(repository.findByTenantId(1L)).thenReturn(List.of(rule));
-    List<GenerationRuleDto> result = service.listRules(1L);
-    assertEquals(1, result.size());
-    assertEquals("max_rooms", result.get(0).name());
+    Page<GenerationRule> page = new PageImpl<>(List.of(rule));
+    when(repository.findByTenantId(1L, PageRequest.of(0, 20))).thenReturn(page);
+    Page<GenerationRuleDto> result = service.listRules(1L, PageRequest.of(0, 20));
+    assertEquals(1, result.getTotalElements());
+    assertEquals("max_rooms", result.getContent().get(0).name());
   }
 }

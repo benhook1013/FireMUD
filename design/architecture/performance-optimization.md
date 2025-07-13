@@ -9,8 +9,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   asset tables). Additional indexes should be added where missing.
 - Avoid N+1 queries using JPA entity graphs or join fetches. The Entity
   Management service uses `@EntityGraph` for inventory lookups.
-- Prefer pagination for large result sets. **TODO:** current endpoints generally
-  return full lists.
+- Prefer pagination for large result sets. Most REST controllers now accept
+  `Pageable` parameters and return `Page<Dto>` responses.
 
 - Use Spring Cache backed by Redis for expensive queries. The Entity Management
   service caches character inventory graphs and the World Management service

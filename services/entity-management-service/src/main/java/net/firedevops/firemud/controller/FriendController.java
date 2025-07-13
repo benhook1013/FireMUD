@@ -1,12 +1,13 @@
 package net.firedevops.firemud.controller;
 
 import jakarta.validation.Valid;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AddFriendRequest;
 import net.firedevops.firemud.dto.CharacterFriendDto;
 import net.firedevops.firemud.service.FriendService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,9 +19,9 @@ public class FriendController {
   private final FriendService friendService;
 
   @GetMapping
-  public ResponseEntity<ApiResponse<List<CharacterFriendDto>>> list(
-      @PathVariable Long characterId) {
-    List<CharacterFriendDto> list = friendService.listFriends(characterId);
+  public ResponseEntity<ApiResponse<Page<CharacterFriendDto>>> list(
+      @PathVariable Long characterId, Pageable pageable) {
+    Page<CharacterFriendDto> list = friendService.listFriends(characterId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
 

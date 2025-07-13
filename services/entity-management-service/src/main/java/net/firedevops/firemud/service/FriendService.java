@@ -1,10 +1,11 @@
 package net.firedevops.firemud.service;
 
-import java.util.List;
 import net.firedevops.firemud.dto.CharacterFriendDto;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 public interface FriendService {
-  List<CharacterFriendDto> listFriends(Long characterId);
+  Page<CharacterFriendDto> listFriends(Long characterId, Pageable pageable);
 
   CharacterFriendDto addFriend(Long characterId, Long friendId);
 
