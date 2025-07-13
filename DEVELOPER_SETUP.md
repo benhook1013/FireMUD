@@ -172,6 +172,19 @@ Use `dev-tools/backup-db.sh` to create a snapshot and
 ./dev-tools/restore-db.sh backups/<file>
 ```
 
+### Optional Redis Persistence
+
+Redis normally starts empty between service restarts. If you want to keep the
+Append-Only File (AOF) across container launches, the compose stack mounts a
+`redis-data` volume. You can manually restore an AOF backup with:
+
+```bash
+./dev-tools/restore-redis-aof.sh backups/appendonly.aof
+```
+
+This helper is intended **only** for local development. Production Redis nodes
+rely on replication and automatically repopulate state from PostgreSQL.
+
 ## Manual Testing Tools
 
 ### Insomnia for REST and WebSocket

@@ -13,7 +13,17 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **3 monthly** snapshots
 - Velero backup schedules are installed automatically by the
   production Terraform modules using `k8s/velero/schedule.yaml`.
-- If the database service fails completely:
+  Operators must configure Velero with access to an object storage bucket
+    (AWS S3, GCS, etc.). Example `values.yaml` snippet:
+
+    ```yaml
+    configuration:
+      provider: aws
+      backupStorageLocation:
+        bucket: firemud-backups
+    ```
+
+  - If the database service fails completely:
   1. Restore the latest snapshot.
   2. Restart services to resume operation.
   3. Redis repopulates transient state from PostgreSQL on access.
@@ -23,6 +33,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 - Redis stores only **transient gameplay state**.
 - **AOF (Append‑Only File)** is enabled for crash recovery while the cluster is running.
 - Redis is **not restored** from backup during a cold start; it is repopulated from PostgreSQL after recovery.
+  In development a `redis-data` volume can persist the AOF between container restarts. Restore an AOF file with `dev-tools/restore-redis-aof.sh`.
 
 ## ☁️ Kubernetes Production
 
@@ -36,6 +47,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 ## 🐳 Local Development
 
 - Backups are restored using `dev-tools/restore-db.sh` with a snapshot file.
+- Create ad hoc snapshots with `dev-tools/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
 - Redis starts empty and repopulates when services access the database.
 
