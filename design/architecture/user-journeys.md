@@ -1,9 +1,6 @@
 # 🔄 FireMUD User Journeys
 
-This guide summarizes typical workflows for creators and players. Each numbered step links to the microservice or design document that manages that portion of the flow.
-Use it alongside the [System Architecture Overview](./system-architecture-overview.md) and [System Context Diagram](./system-context-diagram.md) to understand how users traverse the platform.
-For a breakdown of every service see the [Microservices Overview](./microservices/README.md) and the [Service Responsibility Matrix](./service-responsibility-matrix.md).
-Detailed tooling instructions live in the [Game Creator Guide](../user-guides/game-creator-guide.md).
+This guide summarizes typical workflows for creators and players. Each numbered step links to the microservice or design document that manages that portion of the flow. Use it alongside the [Architecture Overview](./README.md), the [System Architecture Overview](./system-architecture-overview.md) and the [System Context Diagram](./system-context-diagram.md) to understand how users traverse the platform. For a breakdown of every service see the [Microservices Overview](./microservices/README.md) and the [Service Responsibility Matrix](./service-responsibility-matrix.md). Detailed tooling instructions live in the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ## 🎯 Goals
 
@@ -328,6 +325,9 @@ observability stack:
    [Service Overview](../observability/grafana/service-overview.json).
 3. **Tracing** – Distributed traces are sent to **Jaeger** via the OpenTelemetry
    Collector as described in [Tracing](./system-architecture-tracing.md).
+4. **Kibana Dashboards** – Pre-built views like the
+   [Log Volume dashboard](../observability/kibana/log-volume.json) help monitor
+   logging rates.
 
 ```plaintext
 Service Logs → Elasticsearch → Kibana / Jaeger
@@ -375,6 +375,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 
 - [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md)
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
+- [Kibana Log Volume Dashboard](../observability/kibana/log-volume.json)
 - [Authentication & Authorization](./system-architecture-authentication.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
 - [CI/CD Pipeline](./system-architecture-cicd.md)
@@ -416,3 +417,4 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md)
 - [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md)
 - [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
+- [gRPC Protocol Documentation](../grpc-docs/grpc-api.md)
