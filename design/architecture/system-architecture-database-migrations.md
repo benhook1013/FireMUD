@@ -27,10 +27,6 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 
 Migrations are therefore applied consistently in every environment without manual steps.
 
-### ERD Diagrams
-
-CI runs `dev-tools/generate-erd.sh` after tests complete to create database diagrams. The script concatenates each service's migrations, converts them to DBML via `@dbml/cli`, and uploads the output as build artifacts.
-
 ---
 
 ## 📚 Related Documentation
