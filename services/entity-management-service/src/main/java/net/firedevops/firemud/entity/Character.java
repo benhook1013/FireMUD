@@ -63,4 +63,6 @@ public class Character {
 
   @Column(name = "last_login_at")
   private Instant lastLoginAt;
+
+  @Version private int version;
 }

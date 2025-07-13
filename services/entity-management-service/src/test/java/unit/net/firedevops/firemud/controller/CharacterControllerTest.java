@@ -1,11 +1,15 @@
 package net.firedevops.firemud.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.service.CharacterService;
 import org.junit.jupiter.api.Test;
@@ -24,12 +28,13 @@ class CharacterControllerTest {
   @Test
   void listReturnsCharacters() throws Exception {
     CharacterDto dto = new CharacterDto(1L, 1L, 1L, "Hero", 1, 0, 1, 1, 1, 1, 10, 5);
-    when(characterService.listForAccount(1L)).thenReturn(List.of(dto));
+    when(characterService.listForAccount(eq(1L), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(dto)));
 
     mockMvc
         .perform(get("/accounts/1/characters"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data[0].name").value("Hero"));
+        .andExpect(jsonPath("$.data.content[0].name").value("Hero"));
   }
 }

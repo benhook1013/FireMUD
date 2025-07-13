@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entity.Character;
 import net.firedevops.firemud.mapper.CharacterMapper;
@@ -25,10 +27,10 @@ class CharacterServiceImplListTest {
     c.setAccountId(1L);
     c.setName("Hero");
 
-    when(repo.findByAccountId(1L)).thenReturn(List.of(c));
+    when(repo.findByAccountId(1L, Pageable.unpaged())).thenReturn(new PageImpl<>(List.of(c)));
 
-    List<CharacterDto> result = service.listForAccount(1L);
-    assertEquals(1, result.size());
-    assertEquals("Hero", result.get(0).name());
+    var result = service.listForAccount(1L, Pageable.unpaged());
+    assertEquals(1, result.getTotalElements());
+    assertEquals("Hero", result.getContent().get(0).name());
   }
 }

@@ -1,7 +1,8 @@
 package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
-import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entity.Character;
@@ -67,9 +68,8 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "character.listForAccount")
-  public List<CharacterDto> listForAccount(Long accountId) {
-    return characterRepository.findByAccountId(accountId).stream()
-        .map(characterMapper::toDto)
-        .toList();
+  public Page<CharacterDto> listForAccount(Long accountId, Pageable pageable) {
+    return characterRepository.findByAccountId(accountId, pageable)
+        .map(characterMapper::toDto);
   }
 }

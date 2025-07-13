@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import net.firedevops.firemud.dto.InventoryEntryDto;
 import net.firedevops.firemud.entity.InventoryEntry;
 import net.firedevops.firemud.entity.InventoryKey;
@@ -29,10 +31,11 @@ class InventoryServiceImplTest {
     entry.setId(key);
     entry.setQuantity(3);
 
-    when(repo.findAll()).thenReturn(List.of(entry));
+    when(repo.findByIdCharacterId(1L, Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of(entry)));
 
-    List<InventoryEntryDto> result = service.listInventory(1L);
-    assertEquals(1, result.size());
-    assertEquals(3, result.get(0).quantity());
+    var result = service.listInventory(1L, Pageable.unpaged());
+    assertEquals(1, result.getTotalElements());
+    assertEquals(3, result.getContent().get(0).quantity());
   }
 }

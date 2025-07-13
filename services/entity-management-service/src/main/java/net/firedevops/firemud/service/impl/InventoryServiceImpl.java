@@ -1,7 +1,8 @@
 package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
-import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.InventoryEntryDto;
 import net.firedevops.firemud.entity.Character;
@@ -26,11 +27,8 @@ public class InventoryServiceImpl implements InventoryService {
 
   @Override
   @Timed(value = "inventory.list")
-  public List<InventoryEntryDto> listInventory(Long characterId) {
-    return repository.findAll().stream()
-        .filter(e -> e.getId().getCharacterId().equals(characterId))
-        .map(mapper::toDto)
-        .toList();
+  public Page<InventoryEntryDto> listInventory(Long characterId, Pageable pageable) {
+    return repository.findByIdCharacterId(characterId, pageable).map(mapper::toDto);
   }
 
   @Override

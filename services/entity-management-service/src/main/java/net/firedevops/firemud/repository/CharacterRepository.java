@@ -1,7 +1,8 @@
 package net.firedevops.firemud.repository;
 
-import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import net.firedevops.firemud.entity.Character;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -14,5 +15,5 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
   Optional<Character> findWithInventoryById(Long id);
 
   /** Returns all characters owned by the given account across all tenants. */
-  List<Character> findByAccountId(Long accountId);
+  Page<Character> findByAccountId(Long accountId, Pageable pageable);
 }
