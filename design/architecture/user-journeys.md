@@ -206,8 +206,9 @@ Hotfixes follow the steps in the [Hotfix Procedure](./system-architecture-runboo
 
 ## 11. Purchases and Subscriptions
 
-1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles purchases and subscription renewals via Stripe.
-2. **Audit and Compliance** – Transactions are logged through the
+1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles subscriptions, one‑time purchases, and optional donations via Stripe.
+2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Core Requirements](../project-management/core-requirements.md#2.8-moderation-administration--monetization).
+3. **Audit and Compliance** – Transactions are logged through the
    [Logging & Admin Service](./microservices/logging-admin-service/README.md) for
    reporting and refunds.
 
@@ -274,7 +275,7 @@ Before launch or after major updates, creators invite testers to staged environm
 ## 17. Testing & Continuous Delivery
 
 1. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
-2. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md).
+2. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation.
 3. **Database Migrations** – Schemas are migrated with Flyway on startup; see [Database Migrations](./system-architecture-database-migrations.md).
 
 ```plaintext
@@ -329,6 +330,7 @@ observability stack:
 4. **Kibana Dashboards** – Pre-built views like the
    [Log Volume dashboard](../observability/kibana/log-volume.json) help monitor
    logging rates.
+5. **Operator Dashboards** – Additional Grafana and Kibana views are described in the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) document.
 
 ```plaintext
 Service Logs → Elasticsearch → Kibana / Jaeger
