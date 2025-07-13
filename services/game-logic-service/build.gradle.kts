@@ -3,7 +3,7 @@ import com.github.spotbugs.snom.SpotBugsTask
 
 plugins {
     id("org.springframework.boot") version "3.5.3"
-    id("org.flywaydb.flyway") version "11.10.1"
+    id("org.flywaydb.flyway") version "11.10.2"
     id("com.google.protobuf")
 }
 
