@@ -1,10 +1,10 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import io.micrometer.core.annotation.Timed;
 import java.time.Duration;
 import java.util.List;
 import javax.annotation.PostConstruct;
@@ -14,6 +14,7 @@ import net.firedevops.firemud.service.TickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.scheduling.annotation.Async;
@@ -71,6 +72,19 @@ public class TickServiceImpl implements TickService {
     this.rollbackScript = RedisScript.of(rollbackSrc.getResource(), Long.class);
   }
 
+  private void awaitReplication() {
+    try {
+      redisTemplate.execute(
+          (RedisCallback<Object>)
+              connection -> {
+                connection.execute("WAIT", "1".getBytes(), "100".getBytes());
+                return null;
+              });
+    } catch (Exception e) {
+      logger.debug("WAIT replication failed", e);
+    }
+  }
+
   @Override
   @Timed(value = "gamesession.command.enqueue")
   public void enqueueCommand(Long sessionId, String command) {
@@ -101,6 +115,7 @@ public class TickServiceImpl implements TickService {
             () ->
                 luaTimer.record(
                     () -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId)))));
+        awaitReplication();
       }
       tickTimer.record(
           () ->
@@ -112,6 +127,7 @@ public class TickServiceImpl implements TickService {
           () ->
               luaTimer.record(
                   () -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId)))));
+      awaitReplication();
     } catch (Exception ex) {
       redisErrorCounter.increment();
       logger.error("Tick processing failed, rolling back", ex);
@@ -119,6 +135,7 @@ public class TickServiceImpl implements TickService {
           () ->
               redisTemplate.execute(
                   rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId))));
+      awaitReplication();
     } finally {
       long elapsed = (System.nanoTime() - start) / 1_000_000;
       if (elapsed > tickBudgetMs) {

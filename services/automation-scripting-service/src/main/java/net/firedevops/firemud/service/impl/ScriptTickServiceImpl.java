@@ -13,6 +13,7 @@ import net.firedevops.firemud.service.tick.ScriptTickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.scripting.support.ResourceScriptSource;
@@ -65,6 +66,19 @@ public class ScriptTickServiceImpl implements ScriptTickService {
     rollbackScript = RedisScript.of(rollbackSrc.getResource(), Long.class);
   }
 
+  private void awaitReplication() {
+    try {
+      redisTemplate.execute(
+          (RedisCallback<Object>)
+              connection -> {
+                connection.execute("WAIT", "1".getBytes(), "100".getBytes());
+                return null;
+              });
+    } catch (Exception e) {
+      logger.debug("WAIT replication failed", e);
+    }
+  }
+
   @Override
   public void enqueueEvent(Long tenantId, Long scriptId, String eventJson) {
     if (!quotaService.tryAcquire(tenantId, scriptId)) {
@@ -97,6 +111,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
                     () ->
                         redisTemplate.execute(
                             commitScript, List.of(pendingKey(tenantId, scriptId)))));
+        awaitReplication();
       }
       tickTimer.record(
           () ->
@@ -111,6 +126,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
                   () ->
                       redisTemplate.execute(
                           commitScript, List.of(pendingKey(tenantId, scriptId)))));
+      awaitReplication();
     } catch (Exception ex) {
       redisErrorCounter.increment();
       logger.error("Script tick failed, rolling back", ex);
@@ -119,6 +135,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
               redisTemplate.execute(
                   rollbackScript,
                   List.of(pendingKey(tenantId, scriptId), queueKey(tenantId, scriptId))));
+      awaitReplication();
     } finally {
       redisTemplate.delete(lockKey);
     }
