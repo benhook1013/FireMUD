@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-wipe-aof
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: redis
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: wipe
+          image: busybox
+          command: ["sh", "-c", "rm -f /mnt/redis/appendonly.aof"]
+          volumeMounts:
+            - name: redis-data
+              mountPath: /mnt/redis
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data
