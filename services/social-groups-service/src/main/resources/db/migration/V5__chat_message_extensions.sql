@@ -1,0 +1,2 @@
+ALTER TABLE chat_messages ADD COLUMN city_id BIGINT;
+ALTER TABLE chat_messages ADD COLUMN type VARCHAR(20) NOT NULL DEFAULT 'TELL';

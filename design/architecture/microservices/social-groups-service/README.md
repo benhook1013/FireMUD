@@ -26,8 +26,13 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   Entity Management services. The Game Logic Service invokes this service to
   deliver messages, run profanity checks, and log all communications for audit
   and moderation.
-- Messages are briefly cached in Redis streams to smooth bursts of activity and
-  enable delivery retries.
+- Messages are cached in Redis with type-specific TTLs so players can retrieve
+  recent history:
+  - Says: 2 hours or 50 messages per player
+  - Tells: 48 hours or 50 messages per player
+  - Guild/City chat: 48 hours or 50 messages per guild or city
+  - Account messages: 48 hours or 50 messages
+  Older messages remain in PostgreSQL for moderation and historical logs.
 - Guild creation and membership changes participate in Saga workflows so other
   services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
 - Chat history and guild data are stored with a `tenantId` so conversations are

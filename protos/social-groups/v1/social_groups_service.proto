@@ -26,6 +26,10 @@ message SendMessageRequest {
   string sender_id = 2;
   string channel_id = 3;
   string content = 4;
+  ChatType type = 5;
+  string recipient_id = 6;
+  string guild_id = 7;
+  string city_id = 8;
 }
 
 message SendMessageResponse {
@@ -66,4 +70,13 @@ message SendMailRequest {
 message SendMailResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+enum ChatType {
+  CHAT_TYPE_UNSPECIFIED = 0;
+  CHAT_TYPE_SAY = 1;
+  CHAT_TYPE_TELL = 2;
+  CHAT_TYPE_GUILD = 3;
+  CHAT_TYPE_CITY = 4;
+  CHAT_TYPE_ACCOUNT = 5;
 }

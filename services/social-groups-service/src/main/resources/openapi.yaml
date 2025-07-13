@@ -92,13 +92,23 @@ components:
           type: integer
         senderAccountId:
           type: integer
+        type:
+          type: string
+          enum: [SAY, TELL, GUILD, CITY, ACCOUNT]
         channelId:
           type: string
+        recipientAccountId:
+          type: integer
+        guildId:
+          type: integer
+        cityId:
+          type: integer
         content:
           type: string
       required:
         - tenantId
         - senderAccountId
+        - type
         - content
     ChatMessageDto:
       type: object
@@ -116,8 +126,12 @@ components:
           format: date-time
         guildId:
           type: integer
+        cityId:
+          type: integer
         recipientAccountId:
           type: integer
+        type:
+          type: string
     AddGuildStorageItemRequest:
       type: object
       properties:

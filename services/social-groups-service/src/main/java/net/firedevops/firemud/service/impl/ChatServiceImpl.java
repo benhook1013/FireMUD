@@ -11,6 +11,7 @@ import net.firedevops.firemud.config.ChatProperties;
 import net.firedevops.firemud.dto.ChatMessageDto;
 import net.firedevops.firemud.dto.SendMessageRequestDto;
 import net.firedevops.firemud.entity.ChatMessage;
+import net.firedevops.firemud.enums.ChatType;
 import net.firedevops.firemud.mapper.ChatMessageMapper;
 import net.firedevops.firemud.repository.ChatMessageRepository;
 import net.firedevops.firemud.service.ChatService;
@@ -57,19 +58,53 @@ public class ChatServiceImpl implements ChatService {
     message.setSenderAccountId(request.senderAccountId());
     message.setContent(filtered);
     message.setTimestamp(Instant.now());
-    message.setGuildId(null);
-    message.setRecipientAccountId(null);
+    message.setGuildId(request.guildId());
+    message.setRecipientAccountId(request.recipientAccountId());
+    message.setCityId(request.cityId());
+    message.setType(request.type());
     ChatMessage saved = repository.save(message);
     publishCounter.increment();
     try {
-      String key = String.format("chat:%d:%s", request.tenantId(), request.channelId());
+      String key;
+      ChatProperties.ChatCacheSettings settings;
+      if (request.type() == ChatType.SAY) {
+        key = String.format("say:%d:%d", request.tenantId(), request.recipientAccountId());
+        settings = chatProperties.getSays();
+      } else if (request.type() == ChatType.TELL) {
+        key = String.format("tell:%d:%d", request.tenantId(), request.recipientAccountId());
+        settings = chatProperties.getTells();
+      } else if (request.type() == ChatType.GUILD) {
+        key = String.format("guild:%d:%d", request.tenantId(), request.guildId());
+        settings = chatProperties.getGuild();
+      } else if (request.type() == ChatType.CITY) {
+        key = String.format("city:%d:%d", request.tenantId(), request.cityId());
+        settings = chatProperties.getCity();
+      } else {
+        key = String.format("account:%d:%d", request.tenantId(), request.recipientAccountId());
+        settings = chatProperties.getAccount();
+      }
+
       redisTemplate.opsForList().leftPush(key, saved.getContent());
-      redisTemplate.expire(
-          key, java.time.Duration.ofSeconds(chatProperties.getHistoryTtlSeconds()));
+      redisTemplate.expire(key, java.time.Duration.ofSeconds(settings.getHistoryTtlSeconds()));
+      redisTemplate.opsForList().trim(key, 0, settings.getMaxMessages() - 1);
     } catch (Exception e) {
       redisErrorCounter.increment();
       logger.warn("Failed to publish chat message to Redis", e);
     }
     return mapper.toDto(saved);
+  }
+
+  @Override
+  public java.util.List<String> getRecentTells(Long tenantId, Long accountId) {
+    String key = String.format("tell:%d:%d", tenantId, accountId);
+    try {
+      java.util.List<Object> raw = redisTemplate.opsForList().range(key, 0, -1);
+      return raw == null
+          ? java.util.Collections.emptyList()
+          : raw.stream().map(Object::toString).toList();
+    } catch (Exception e) {
+      logger.warn("Failed to fetch tell history", e);
+      return java.util.Collections.emptyList();
+    }
   }
 }

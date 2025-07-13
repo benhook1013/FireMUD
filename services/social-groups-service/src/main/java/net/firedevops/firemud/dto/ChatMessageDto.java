@@ -9,4 +9,6 @@ public record ChatMessageDto(
     String content,
     Instant timestamp,
     Long guildId,
-    Long recipientAccountId) {}
+    Long cityId,
+    Long recipientAccountId,
+    net.firedevops.firemud.enums.ChatType type) {}

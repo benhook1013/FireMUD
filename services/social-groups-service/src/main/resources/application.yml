@@ -33,7 +33,21 @@ firemud:
   voice:
     token-expiration-ms: 300000
   chat:
-    history-ttl-seconds: 3600
+    says:
+      history-ttl-seconds: 7200
+      max-messages: 50
+    tells:
+      history-ttl-seconds: 172800
+      max-messages: 50
+    guild:
+      history-ttl-seconds: 172800
+      max-messages: 50
+    city:
+      history-ttl-seconds: 172800
+      max-messages: 50
+    account:
+      history-ttl-seconds: 172800
+      max-messages: 50
 
 server:
   compression:

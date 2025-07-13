@@ -32,7 +32,21 @@ firemud:
   voice:
     token-expiration-ms: ${FIREMUD_VOICE_TOKEN_EXPIRATION_MS:300000}
   chat:
-    history-ttl-seconds: ${FIREMUD_CHAT_HISTORY_TTL_SECONDS:3600}
+    says:
+      history-ttl-seconds: ${FIREMUD_CHAT_SAYS_TTL_SECONDS:7200}
+      max-messages: ${FIREMUD_CHAT_SAYS_MAX_MESSAGES:50}
+    tells:
+      history-ttl-seconds: ${FIREMUD_CHAT_TELLS_TTL_SECONDS:172800}
+      max-messages: ${FIREMUD_CHAT_TELLS_MAX_MESSAGES:50}
+    guild:
+      history-ttl-seconds: ${FIREMUD_CHAT_GUILD_TTL_SECONDS:172800}
+      max-messages: ${FIREMUD_CHAT_GUILD_MAX_MESSAGES:50}
+    city:
+      history-ttl-seconds: ${FIREMUD_CHAT_CITY_TTL_SECONDS:172800}
+      max-messages: ${FIREMUD_CHAT_CITY_MAX_MESSAGES:50}
+    account:
+      history-ttl-seconds: ${FIREMUD_CHAT_ACCOUNT_TTL_SECONDS:172800}
+      max-messages: ${FIREMUD_CHAT_ACCOUNT_MAX_MESSAGES:50}
 
 server:
   compression:

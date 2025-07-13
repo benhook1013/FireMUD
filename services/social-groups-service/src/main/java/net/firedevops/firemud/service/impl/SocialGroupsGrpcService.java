@@ -48,7 +48,11 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new SendMessageRequestDto(
               Long.valueOf(request.getTenantId()),
               Long.valueOf(request.getSenderId()),
+              net.firedevops.firemud.enums.ChatType.valueOf(request.getType().name()),
               request.getChannelId(),
+              request.getRecipientId().isEmpty() ? null : Long.valueOf(request.getRecipientId()),
+              request.getGuildId().isEmpty() ? null : Long.valueOf(request.getGuildId()),
+              request.getCityId().isEmpty() ? null : Long.valueOf(request.getCityId()),
               request.getContent());
       chatService.sendMessage(dto);
       SendMessageResponse response = SendMessageResponse.newBuilder().setSuccess(true).build();
