@@ -2,6 +2,7 @@
 
 This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
 It complements the [System Architecture Overview](./system-architecture-overview.md) and [System Context Diagram](./system-context-diagram.md) to show how users traverse the overall platform.
+For a breakdown of every service see the [Microservices Overview](./microservices/README.md).
 For step-by-step tooling instructions see the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ## 🎯 Goals
@@ -14,27 +15,27 @@ For step-by-step tooling instructions see the [Game Creator Guide](../user-guide
 
 ## 📑 Quick Reference
 
-1. [Sign Up](#1-sign-up)
-2. [Game Creation](#2-game-creation)
-3. [World and Entity Design](#3-world-and-entity-design)
-4. [Add Automation & Scripting](#4-add-automation--scripting)
-5. [Publish and Start a Game Instance](#5-publish-and-start-a-game-instance)
-6. [Character Creation & Selection](#6-character-creation--selection)
-7. [Player Login and Gameplay](#7-player-login-and-gameplay)
-8. [Social Interaction](#8-social-interaction)
-9. [Monitoring and Moderation](#9-monitoring-and-moderation)
-10. [Patch and Update a Live Game](#10-patch-and-update-a-live-game)
-11. [Purchases and Subscriptions](#11-purchases-and-subscriptions)
-12. [Password Resets & Account Recovery](#12-password-resets--account-recovery)
-13. [Switch Games or Manage Multiple Games](#13-switch-games-or-manage-multiple-games)
-14. [Operational Recovery](#14-operational-recovery)
-15. [Branding and Customization](#15-branding-and-customization)
-16. [Playtesting & Analytics](#16-playtesting--analytics)
-17. [Testing & Continuous Delivery](#17-testing--continuous-delivery)
-18. [Account Data Export & Deletion](#18-account-data-export--deletion)
-19. [Deployment & Environment Configuration](#19-deployment--environment-configuration)
-20. [Observability & Debugging](#20-observability--debugging)
-21. [Extensibility & External Tools](#21-extensibility--external-tools)
+- [1. Sign Up](#1-sign-up)
+- [2. Game Creation](#2-game-creation)
+- [3. World and Entity Design](#3-world-and-entity-design)
+- [4. Add Automation & Scripting](#4-add-automation--scripting)
+- [5. Publish and Start a Game Instance](#5-publish-and-start-a-game-instance)
+- [6. Character Creation & Selection](#6-character-creation--selection)
+- [7. Player Login and Gameplay](#7-player-login-and-gameplay)
+- [8. Social Interaction](#8-social-interaction)
+- [9. Monitoring and Moderation](#9-monitoring-and-moderation)
+- [10. Patch and Update a Live Game](#10-patch-and-update-a-live-game)
+- [11. Purchases and Subscriptions](#11-purchases-and-subscriptions)
+- [12. Password Resets & Account Recovery](#12-password-resets--account-recovery)
+- [13. Switch Games or Manage Multiple Games](#13-switch-games-or-manage-multiple-games)
+- [14. Operational Recovery](#14-operational-recovery)
+- [15. Branding and Customization](#15-branding-and-customization)
+- [16. Playtesting & Analytics](#16-playtesting--analytics)
+- [17. Testing & Continuous Delivery](#17-testing--continuous-delivery)
+- [18. Account Data Export & Deletion](#18-account-data-export--deletion)
+- [19. Deployment & Environment Configuration](#19-deployment--environment-configuration)
+- [20. Observability & Debugging](#20-observability--debugging)
+- [21. Extensibility & External Tools](#21-extensibility--external-tools)
 
 ---
 
@@ -164,15 +165,16 @@ The service also exposes moderation tools such as bans and runtime feature toggl
 
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
-3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
+3. **Deploy Through CI/CD** – Updated images are pushed via the automated [CI/CD Pipeline](./system-architecture-cicd.md).
+4. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
    `scriptPatchVersion` like `v42-script.3` linked to the current version.
-4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
+5. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
 
-5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
+6. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
 
-6. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+7. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
@@ -189,6 +191,8 @@ Game Design Service (publish) → Game Session Service (restart)
     - "docks-rat-encounter"
   reason: "Live AI bug fix during event"
 ```
+
+Hotfixes follow the steps in the [Hotfix Procedure](./system-architecture-runbooks.md#-hotfix-procedure) to ensure minimal downtime.
 
 ---
 
@@ -317,6 +321,8 @@ observability stack:
 ```plaintext
 Service Logs → Elasticsearch → Kibana / Jaeger
 ```
+
+Common troubleshooting steps are documented in the [Operational Runbooks](./system-architecture-runbooks.md).
 
 ---
 
