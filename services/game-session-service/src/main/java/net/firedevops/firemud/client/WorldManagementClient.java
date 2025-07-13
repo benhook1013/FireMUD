@@ -5,12 +5,13 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
 import java.io.File;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.config.GrpcClientProperties;
-import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the World Management Service. */
@@ -21,7 +22,8 @@ public class WorldManagementClient implements AutoCloseable {
   private ManagedChannel channel;
   private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub;
 
-  public WorldManagementClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
+  public WorldManagementClient(
+      ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;
   }
@@ -40,8 +42,14 @@ public class WorldManagementClient implements AutoCloseable {
             .trustManager(new File(tlsProps.getCaCert()))
             .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
             .build();
-    channel = NettyChannelBuilder.forAddress(host, port).sslContext(sslContext).build();
-    stub = WorldManagementServiceGrpc.newBlockingStub(channel);
+    channel =
+        NettyChannelBuilder.forAddress(host, port)
+            .sslContext(sslContext)
+            .keepAliveTime(30, TimeUnit.SECONDS)
+            .keepAliveTimeout(5, TimeUnit.SECONDS)
+            .keepAliveWithoutCalls(true)
+            .build();
+    stub = WorldManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
   /** Simple ping to verify connectivity. */

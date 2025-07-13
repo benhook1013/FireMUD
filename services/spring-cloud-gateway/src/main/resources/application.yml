@@ -10,6 +10,11 @@ spring:
 grpc:
   server:
     port: 6565
+    enableKeepAlive: true
+    keepAliveTime: 30s
+    keepAliveTimeout: 5s
+    permitKeepAliveWithoutCalls: true
+    compression: gzip
     security:
       enabled: true
       certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
@@ -64,6 +69,11 @@ spring:
               maxBackoff: 500ms
               factor: 2
               basedOnPreviousValue: false
+      httpclient:
+        pool:
+          type: fixed
+          maxConnections: 500
+          acquireTimeout: 5000
 
 firemud:
   grpc:
@@ -102,6 +112,11 @@ spring:
               maxBackoff: 500ms
               factor: 2
               basedOnPreviousValue: false
+      httpclient:
+        pool:
+          type: fixed
+          maxConnections: 500
+          acquireTimeout: 5000
 firemud:
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
@@ -115,4 +130,9 @@ server:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
     min-response-size: 1024
+spring:
+  web:
+    resources:
+      cache:
+        period: 3600
 
