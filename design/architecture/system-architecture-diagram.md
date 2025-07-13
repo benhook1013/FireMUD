@@ -67,20 +67,6 @@ flowchart TD
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, and send structured logs to Elasticsearch.
 
-### Microservices
-
-- TCP Proxy Service
-- Spring Cloud Gateway
-- Game Session Service
-- Account Service
-- World Management Service
-- Entity Management Service
-- Game Logic Service
-- Game Design Service
-- Automation & Scripting Service
-- Social & Groups Service
-- Logging & Admin Service
-
 ## 📚 Related Documentation
 
 - [System Context Diagram](./system-context-diagram.md)
