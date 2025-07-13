@@ -123,6 +123,14 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 variables to access its databases.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+Additional variables tune the scripting engine:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` |
+| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` |
+| `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
+
 ## Proto Files
 
 API definitions are located in

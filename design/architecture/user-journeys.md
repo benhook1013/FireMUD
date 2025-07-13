@@ -37,6 +37,7 @@ For step-by-step tooling instructions see the [Game Creator Guide](../user-guide
 - [20. Observability & Debugging](#20-observability--debugging)
 - [21. Extensibility & External Tools](#21-extensibility--external-tools)
 - [22. Bug Reporting & Feature Requests](#22-bug-reporting--feature-requests)
+- [22. Platform Service Updates](#22-platform-service-updates)
 
 ---
 
@@ -175,16 +176,14 @@ and complex workflows are coordinated using the
 
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
-3. **Deploy Through CI/CD** – Updated images are pushed via the automated [CI/CD Pipeline](./system-architecture-cicd.md).
-4. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
+3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
    `scriptPatchVersion` like `v42-script.3` linked to the current version.
-5. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
+4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
-6. **Apply Database Migrations** – Schema changes run automatically via Flyway when each service restarts. See [Database Migrations](./system-architecture-database-migrations.md).
-7. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
+5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
 
-8. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+6. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
@@ -364,6 +363,25 @@ project management workflow:
 
 ```plaintext
 User → GitHub Issue → Maintainers
+```
+
+---
+
+## 22. Platform Service Updates
+
+Updating FireMUD itself follows the standard CI/CD workflow:
+
+1. **Build New Images** – GitHub Actions compiles each microservice and pushes
+   updated container images. See the [CI/CD Pipeline](./system-architecture-cicd.md).
+2. **Restart Services** – Kubernetes rolls the new images into the cluster,
+   restarting pods one by one.
+3. **Apply Schema Migrations** – Each service runs Flyway on startup to migrate
+   its database before the Spring application launches.
+4. **Verify Health** – Operators monitor metrics and logs to ensure the
+   deployment succeeded.
+
+```plaintext
+GitHub → Container Registry → Kubernetes → Service Startup (Flyway)
 ```
 
 ---
