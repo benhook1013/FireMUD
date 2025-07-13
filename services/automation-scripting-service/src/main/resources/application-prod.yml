@@ -20,6 +20,12 @@ script:
     limit: ${SCRIPT_QUOTA_LIMIT:50}
     windowSeconds: ${SCRIPT_QUOTA_WINDOWSECONDS:60}
 
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+    min-response-size: 1024
+
 grpc:
   server:
     port: 6565

@@ -5,4 +5,6 @@ import net.firedevops.firemud.dto.SendMessageRequestDto;
 
 public interface ChatService {
   ChatMessageDto sendMessage(SendMessageRequestDto request);
+
+  java.util.List<String> getRecentTells(Long tenantId, Long accountId);
 }

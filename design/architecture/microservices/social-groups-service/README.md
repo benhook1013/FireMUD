@@ -26,8 +26,13 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   Entity Management services. The Game Logic Service invokes this service to
   deliver messages, run profanity checks, and log all communications for audit
   and moderation.
-- Messages are briefly cached in Redis streams to smooth bursts of activity and
-  enable delivery retries.
+- Messages are cached in Redis with type-specific TTLs so players can retrieve
+  recent history:
+  - Says: 2 hours or 50 messages per player
+  - Tells: 48 hours or 50 messages per player
+  - Guild/City chat: 48 hours or 50 messages per guild or city
+  - Account messages: 48 hours or 50 messages
+  Older messages remain in PostgreSQL for moderation and historical logs.
 - Guild creation and membership changes participate in Saga workflows so other
   services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
 - Chat history and guild data are stored with a `tenantId` so conversations are
@@ -113,6 +118,21 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `FIREMUD_LOGGINGADMIN_HOST` | Hostname for the Logging Admin service | `logging-admin-service` |
 | `FIREMUD_LOGGINGADMIN_PORT` | gRPC port for the Logging Admin service | `6565` |
 | `FIREMUD_VOICE_TOKEN_EXPIRATION_MS` | Expiration of voice chat tokens | `300000` |
+
+Chat history cache behaviour can be tuned with the following variables:
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `FIREMUD_CHAT_SAYS_TTL_SECONDS` | `7200` | Seconds to keep `say` messages per player |
+| `FIREMUD_CHAT_SAYS_MAX_MESSAGES` | `50` | Max cached `say` messages per player |
+| `FIREMUD_CHAT_TELLS_TTL_SECONDS` | `172800` | Seconds to keep direct tells/messages |
+| `FIREMUD_CHAT_TELLS_MAX_MESSAGES` | `50` | Max cached tells/messages per player |
+| `FIREMUD_CHAT_GUILD_TTL_SECONDS` | `172800` | Seconds to keep guild chat per guild |
+| `FIREMUD_CHAT_GUILD_MAX_MESSAGES` | `50` | Max cached guild chat messages |
+| `FIREMUD_CHAT_CITY_TTL_SECONDS` | `172800` | Seconds to keep city chat per city |
+| `FIREMUD_CHAT_CITY_MAX_MESSAGES` | `50` | Max cached city chat messages |
+| `FIREMUD_CHAT_ACCOUNT_TTL_SECONDS` | `172800` | Seconds to keep account-to-account messages |
+| `FIREMUD_CHAT_ACCOUNT_MAX_MESSAGES` | `50` | Max cached account messages |
 
 ## Proto Files
 

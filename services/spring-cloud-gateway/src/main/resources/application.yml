@@ -109,3 +109,10 @@ firemud:
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
+
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+    min-response-size: 1024
+

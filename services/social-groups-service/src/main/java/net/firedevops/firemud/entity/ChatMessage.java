@@ -3,6 +3,7 @@ package net.firedevops.firemud.entity;
 import jakarta.persistence.*;
 import java.time.Instant;
 import lombok.Data;
+import net.firedevops.firemud.enums.ChatType;
 
 @Data
 @Entity
@@ -26,5 +27,11 @@ public class ChatMessage {
 
   @Column private Long guildId;
 
+  @Column private Long cityId;
+
   @Column private Long recipientAccountId;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false, length = 20)
+  private ChatType type;
 }

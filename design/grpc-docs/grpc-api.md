@@ -761,6 +761,10 @@
 | sender_id | [string](#string) |  |  |
 | channel_id | [string](#string) |  |  |
 | content | [string](#string) |  |  |
+| type | [ChatType](#social_groups-v1-ChatType) |  |  |
+| recipient_id | [string](#string) |  |  |
+| guild_id | [string](#string) |  |  |
+| city_id | [string](#string) |  |  |
 
 <a name="social_groups-v1-SendMessageResponse"></a>
 
@@ -769,6 +773,19 @@
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
+
+<a name="social_groups-v1-ChatType"></a>
+
+### ChatType
+
+| Name | Number |
+| ---- | ------ |
+| CHAT_TYPE_UNSPECIFIED | 0 |
+| CHAT_TYPE_SAY | 1 |
+| CHAT_TYPE_TELL | 2 |
+| CHAT_TYPE_GUILD | 3 |
+| CHAT_TYPE_CITY | 4 |
+| CHAT_TYPE_ACCOUNT | 5 |
 
 <a name="social_groups-v1-SocialGroupsService"></a>
 

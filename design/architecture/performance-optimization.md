@@ -80,7 +80,12 @@ These notes summarize typical optimizations applied across FireMUD services.
   service stores hot rooms with configurable TTL and hit/miss metrics
   (`room_cache_hits_total`, `room_cache_misses_total`). The Social Groups service
   stores recent chat messages in Redis and records `chat_messages_published_total`.
-  A cache expiration policy for chat history is still TODO.
+  Chat history caches expire based on message type:
+  - **Says:** 2 hours or 50 messages per player
+  - **Tells:** 48 hours or 50 messages per player
+  - **Guild/City:** 48 hours or 50 messages per guild or city
+  - **Account messages:** 48 hours or 50 messages
+  Older messages are persisted in PostgreSQL for long-term retrieval.
 - High concurrency load tests with Gatling help determine scaling limits and
   guide database indexing improvements.
 

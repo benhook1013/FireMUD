@@ -32,3 +32,25 @@ firemud:
     jwt-expiration-ms: 3600000
   voice:
     token-expiration-ms: 300000
+  chat:
+    says:
+      history-ttl-seconds: 7200
+      max-messages: 50
+    tells:
+      history-ttl-seconds: 172800
+      max-messages: 50
+    guild:
+      history-ttl-seconds: 172800
+      max-messages: 50
+    city:
+      history-ttl-seconds: 172800
+      max-messages: 50
+    account:
+      history-ttl-seconds: 172800
+      max-messages: 50
+
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+    min-response-size: 1024
