@@ -120,18 +120,18 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 
 Chat history cache behaviour can be tuned with the following variables:
 
-| Variable | Default | Description |
-| -------- | ------- | ----------- |
-| `FIREMUD_CHAT_SAYS_TTL_SECONDS` | `7200` | Seconds to keep `say` messages per player |
-| `FIREMUD_CHAT_SAYS_MAX_MESSAGES` | `50` | Max cached `say` messages per player |
-| `FIREMUD_CHAT_TELLS_TTL_SECONDS` | `172800` | Seconds to keep direct tells/messages |
-| `FIREMUD_CHAT_TELLS_MAX_MESSAGES` | `50` | Max cached tells/messages per player |
-| `FIREMUD_CHAT_GUILD_TTL_SECONDS` | `172800` | Seconds to keep guild chat per guild |
-| `FIREMUD_CHAT_GUILD_MAX_MESSAGES` | `50` | Max cached guild chat messages |
-| `FIREMUD_CHAT_CITY_TTL_SECONDS` | `172800` | Seconds to keep city chat per city |
-| `FIREMUD_CHAT_CITY_MAX_MESSAGES` | `50` | Max cached city chat messages |
-| `FIREMUD_CHAT_ACCOUNT_TTL_SECONDS` | `172800` | Seconds to keep account-to-account messages |
-| `FIREMUD_CHAT_ACCOUNT_MAX_MESSAGES` | `50` | Max cached account messages |
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_CHAT_SAYS_TTL_SECONDS` | Seconds to keep `say` messages per player | `7200` |
+| `FIREMUD_CHAT_SAYS_MAX_MESSAGES` | Max cached `say` messages per player | `50` |
+| `FIREMUD_CHAT_TELLS_TTL_SECONDS` | Seconds to keep direct tells/messages | `172800` |
+| `FIREMUD_CHAT_TELLS_MAX_MESSAGES` | Max cached tells/messages per player | `50` |
+| `FIREMUD_CHAT_GUILD_TTL_SECONDS` | Seconds to keep guild chat per guild | `172800` |
+| `FIREMUD_CHAT_GUILD_MAX_MESSAGES` | Max cached guild chat messages | `50` |
+| `FIREMUD_CHAT_CITY_TTL_SECONDS` | Seconds to keep city chat per city | `172800` |
+| `FIREMUD_CHAT_CITY_MAX_MESSAGES` | Max cached city chat messages | `50` |
+| `FIREMUD_CHAT_ACCOUNT_TTL_SECONDS` | Seconds to keep account-to-account messages | `172800` |
+| `FIREMUD_CHAT_ACCOUNT_MAX_MESSAGES` | Max cached account messages | `50` |
 
 ## Proto Files
 
