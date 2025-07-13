@@ -32,4 +32,6 @@ public class WorldEvent {
   private boolean processed = false;
 
   private LocalDateTime processedAt;
+
+  @Version private int version;
 }

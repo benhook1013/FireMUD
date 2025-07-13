@@ -1,6 +1,5 @@
 package net.firedevops.firemud.service.impl;
 
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.GameTemplateDto;
@@ -9,6 +8,8 @@ import net.firedevops.firemud.mapper.GameTemplateMapper;
 import net.firedevops.firemud.repository.GameTemplateRepository;
 import net.firedevops.firemud.service.GameTemplateService;
 import org.slf4j.Logger;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,10 +32,7 @@ public class GameTemplateServiceImpl implements GameTemplateService {
 
   @Override
   @Transactional(readOnly = true)
-  public List<GameTemplateDto> listTemplates(Long tenantId) {
-    return repository.findAll().stream()
-        .filter(t -> t.getTenantId().equals(tenantId))
-        .map(mapper::toDto)
-        .toList();
+  public Page<GameTemplateDto> listTemplates(Long tenantId, Pageable pageable) {
+    return repository.findByTenantId(tenantId, pageable).map(mapper::toDto);
   }
 }

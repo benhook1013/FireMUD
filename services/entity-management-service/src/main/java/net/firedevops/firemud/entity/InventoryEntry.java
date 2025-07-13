@@ -19,4 +19,6 @@ public class InventoryEntry {
 
   @Column(nullable = false)
   private int quantity;
+
+  @Version private int version;
 }

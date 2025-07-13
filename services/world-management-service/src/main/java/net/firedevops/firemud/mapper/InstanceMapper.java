@@ -11,5 +11,6 @@ public interface InstanceMapper {
   InstanceDto toDto(Instance entity);
 
   @Mapping(target = "zone.id", source = "zoneId")
+  @Mapping(target = "version", ignore = true)
   Instance toEntity(InstanceDto dto);
 }

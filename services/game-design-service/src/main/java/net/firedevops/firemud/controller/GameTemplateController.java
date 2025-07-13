@@ -1,11 +1,12 @@
 package net.firedevops.firemud.controller;
 
 import jakarta.validation.Valid;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.GameTemplateDto;
 import net.firedevops.firemud.service.GameTemplateService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,8 +29,9 @@ public class GameTemplateController {
   }
 
   @GetMapping
-  public ResponseEntity<ApiResponse<List<GameTemplateDto>>> list(@RequestParam Long tenantId) {
-    List<GameTemplateDto> templates = templateService.listTemplates(tenantId);
+  public ResponseEntity<ApiResponse<Page<GameTemplateDto>>> list(
+      @RequestParam Long tenantId, Pageable pageable) {
+    Page<GameTemplateDto> templates = templateService.listTemplates(tenantId, pageable);
     return ResponseEntity.ok(ApiResponse.success(templates));
   }
 }

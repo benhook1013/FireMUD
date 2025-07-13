@@ -19,4 +19,6 @@ public class GenerationRule {
 
   @Column(length = 255)
   private String value;
+
+  @Version private int version;
 }

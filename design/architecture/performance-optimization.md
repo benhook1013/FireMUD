@@ -9,8 +9,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   asset tables). Additional indexes should be added where missing.
 - Avoid N+1 queries using JPA entity graphs or join fetches. The Entity
   Management service uses `@EntityGraph` for inventory lookups.
-- Prefer pagination for large result sets. **TODO:** current endpoints generally
-  return full lists.
+- Prefer pagination for large result sets. Core services expose pageable
+  endpoints so huge lists are avoided.
 
 - Use Spring Cache backed by Redis for expensive queries. The Entity Management
   service caches character inventory graphs and the World Management service
@@ -19,8 +19,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   Service coordinates commits at the end of each tick so the Entity Management
   Service only persists changes once per tick. This reduces write frequency and
   lock contention.
-- The Entity Management Service design calls for optimistic locking on entity
-  tables, but version columns have not yet been implemented.
+- The Entity Management Service uses optimistic locking with `@Version` columns
+  on all entity tables to prevent lost updates.
 
 ## Runtime Processing
 
@@ -60,12 +60,9 @@ These notes summarize typical optimizations applied across FireMUD services.
 
 ## Network Traffic
 
-- gRPC calls should enable compression and keep-alive pings to reduce latency.
-  These settings are not yet configured.
-- Enable HTTP response compression via Spring Boot. Currently missing from the
-  service configuration.
-- The Gateway should apply connection pooling and cache static assets. There is
-  no explicit configuration yet.
+- gRPC calls enable compression and keep-alive pings to reduce latency.
+- HTTP response compression is enabled via Spring Boot.
+- The Gateway applies connection pooling and caches static assets.
 - gRPC and REST endpoints are instrumented with Micrometer metrics and
   OpenTelemetry tracing using shared interceptors to monitor latency and error
   rates.

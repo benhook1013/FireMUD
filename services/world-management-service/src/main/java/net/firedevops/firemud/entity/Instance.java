@@ -27,4 +27,6 @@ public class Instance {
 
   @Column(name = "expires_at")
   private LocalDateTime expiresAt;
+
+  @Version private int version;
 }
