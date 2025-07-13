@@ -198,7 +198,6 @@ services:
       - .env
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
-      - redis-data:/data
       - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
     ports:
       - "6379:6379"
@@ -210,4 +209,3 @@ services:
 
 volumes:
   postgres-data:
-  redis-data:

@@ -11,7 +11,8 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **24 hours** of 15‑minute snapshots
   - **3 weekly** snapshots
   - **3 monthly** snapshots
-- Example Velero schedules are provided in `k8s/velero/schedule.yaml`.
+- Velero backup schedules are installed automatically by the
+  production Terraform modules using `k8s/velero/schedule.yaml`.
 - If the database service fails completely:
   1. Restore the latest snapshot.
   2. Restart services to resume operation.
