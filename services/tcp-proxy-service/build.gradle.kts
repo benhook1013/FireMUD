@@ -23,9 +23,9 @@ dependencies {
     implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
     implementation("io.micrometer:micrometer-core:1.15.1")
     implementation("io.micrometer:micrometer-registry-prometheus:1.15.1")
-    implementation("io.opentelemetry:opentelemetry-api:1.38.0")
-    implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
-    implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
+    implementation("io.opentelemetry:opentelemetry-api:1.52.0")
+    implementation("io.opentelemetry:opentelemetry-sdk:1.52.0")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.52.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.7")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
 }
