@@ -1,6 +1,6 @@
 # 🔄 FireMUD User Journeys
 
-This guide summarizes typical workflows for creators and players. Each numbered step links to the microservice or design document that manages that portion of the flow. Use it alongside the [Architecture Overview](./README.md), the [System Architecture Overview](./system-architecture-overview.md) and the [System Context Diagram](./system-context-diagram.md) to understand how users traverse the platform. For a breakdown of every service see the [Microservices Overview](./microservices/README.md) and the [Service Responsibility Matrix](./service-responsibility-matrix.md). Detailed tooling instructions live in the [Game Creator Guide](../user-guides/game-creator-guide.md).
+This guide summarizes typical workflows for creators and players. Each numbered step links to the microservice or design document that manages that portion of the flow. Use it alongside the [Architecture Overview](./README.md), the [System Architecture Overview](./system-architecture-overview.md), the [System Architecture Diagram](./system-architecture-diagram.md), and the [System Context Diagram](./system-context-diagram.md) to understand how users traverse the platform. For a breakdown of every service see the [Microservices Overview](./microservices/README.md) and the [Service Responsibility Matrix](./service-responsibility-matrix.md). Detailed tooling instructions live in the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ## 🎯 Goals
 
@@ -164,6 +164,8 @@ Logs, metrics, and traces flow into **Elasticsearch**, **Prometheus**, and **Jae
 For usage examples see the
 [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 The service also exposes moderation tools such as bans and runtime feature toggles.
+Administrators review logs and configure these options through the
+[Admin UI](./microservices/logging-admin-service/admin-ui.md).
 Policies are summarized in
 [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
 and complex workflows are coordinated using the
