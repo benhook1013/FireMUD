@@ -27,10 +27,11 @@ This document defines the backup schedule and disaster recovery procedures for F
 ## ☁️ Kubernetes Production
 
 - **Velero** backs up StatefulSets, PersistentVolumeClaims, ConfigMaps, and Secrets.
-- Restoration process:
-  1. Use Velero to rehydrate the PostgreSQL volume from the latest snapshot.
-  2. Restore other resources (StatefulSets, ConfigMaps, Secrets).
-  3. Restart the affected pods; Redis starts empty and fills itself from PostgreSQL.
+  - Restoration process:
+    1. Use Velero to rehydrate the PostgreSQL volume from the latest snapshot.
+    2. Restore other resources (StatefulSets, ConfigMaps, Secrets).
+    3. Restart the affected pods; Redis starts empty and fills itself from PostgreSQL.
+    4. Operators can run `dev-tools/restore-cluster.sh <backup-name>` to automate these steps in production.
 
 ## 🐳 Local Development
 

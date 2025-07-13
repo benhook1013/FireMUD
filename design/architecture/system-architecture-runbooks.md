@@ -33,13 +33,15 @@ For local development, use `./gradlew devUp` to start Docker Compose.
 ## 🔄 Recovery
 
 1. **Database Failure**
-   - Restore the latest PostgreSQL snapshot using Velero:
+   - Run `dev-tools/restore-cluster.sh <backup-name>` to restore from the latest Velero snapshot and restart services.
+   - Alternatively, restore manually:
 
      ```bash
      velero restore create --from-backup firemud-postgres-latest
+     kubectl rollout restart deployment -n firemud
+     kubectl rollout restart statefulset -n firemud
      ```
 
-   - Restart dependent services with `kubectl rollout restart`.
    - For local development, run `dev-tools/restore-db.sh <backup-file>` and then
      restart containers with `docker compose restart`.
    - Scheduled backups are created automatically by the Terraform modules using
