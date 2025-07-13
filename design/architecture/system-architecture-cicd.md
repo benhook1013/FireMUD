@@ -14,8 +14,9 @@ This document describes the basic continuous integration and deployment strategy
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
 - **Publish documentation** to GitHub Pages after successful builds.
 - **Create release PRs automatically** using the `release-please` workflow.
+- **Generate database ERD diagrams** as build artifacts after each run.
 
-The CI job first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by the Gradle `check` task, which compiles and tests all modules while running Spotless, Checkstyle, and SpotBugs. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
+The CI job first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by the Gradle `check` task, which compiles and tests all modules while running Spotless, Checkstyle, and SpotBugs. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. After the scan, the job executes `dev-tools/generate-erd.sh` to build ERD diagrams from the service migrations and uploads them as artifacts. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
 
 ---
 
@@ -24,11 +25,14 @@ The CI job first performs a **Buf breaking change check** to ensure protobuf API
 Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch. A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
 
 ```yaml
-name: CI
+name: CI — Build and Security
 on:
   push:
     branches: [ main ]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 3am UTC
 
 defaults:
   run:
@@ -51,7 +55,7 @@ jobs:
         run: ./gradlew check
 ```
 
-The example above checks out the repository, sets up Java 21, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel.
+The example above checks out the repository, sets up Java 21, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel. The workflow also executes nightly at **3 AM UTC** via the `schedule` trigger so dependencies are scanned regularly.
 
 Other workflows support additional automation:
 
