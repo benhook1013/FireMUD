@@ -92,6 +92,18 @@ so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be pres
 but are ignored.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+Additional variables control the proxy runtime behaviour:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
+| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws` |
+| `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
+| `TCP_PROXY_TLS_CERT` | Path to the TLS certificate | *(empty)* |
+| `TCP_PROXY_TLS_KEY` | Path to the TLS private key | *(empty)* |
+| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent connections per client IP | `5` |
+| `TCP_PROXY_MAX_MSGS_PER_SEC` | Allowed messages per second per client | `5` |
+
 ## Metrics & Tracing
 
 Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The

@@ -104,6 +104,14 @@ It depends on the [PostgreSQL credentials](../../infrastructure/environment-and-
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+Additional variables configure world data caching and sharding:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `WORLD_LOCAL_SHARD_ID` | Numeric identifier for this shard instance | `0` |
+| `WORLD_ROOM_CACHE_TTL_SECONDS` | Seconds to retain room data in the cache | `60` |
+| `WORLD_INSTANCE_EXPIRATION_HOURS` | Hours before a transient instance expires | `24` |
+
 ## Proto Files
 
 The gRPC contract for world operations is located in
