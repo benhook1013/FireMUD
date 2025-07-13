@@ -31,14 +31,7 @@ class GameInstanceServiceImplTest {
     meterRegistry = new SimpleMeterRegistry();
     service =
         new GameInstanceServiceImpl(
-            repository,
-            mapper,
-            stateService,
-            null,
-            null,
-            null,
-            null,
-            meterRegistry);
+            repository, mapper, stateService, null, null, null, null, meterRegistry);
   }
 
   @Test
