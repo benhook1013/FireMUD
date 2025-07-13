@@ -80,5 +80,6 @@ Install Velero with these values after the MinIO bucket has been created:
 
 ```bash
 helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts
-helm install velero vmware-tanzu/velero -n velero --create-namespace -f values-minio.yaml
+helm install velero vmware-tanzu/velero \
+  -n velero --create-namespace -f values-minio.yaml
 ```
