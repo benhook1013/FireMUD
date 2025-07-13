@@ -75,12 +75,16 @@ provisioned by **cert-manager** and mounted from Kubernetes Secrets.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Filesystem path to the certificate chain for this service | `classpath:certs/client.crt` |
-| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the certificate chain | `classpath:certs/client.key` |
-| `FIREMUD_GRPC_CA_CERT_PATH` | Filesystem path to the CA bundle used to verify peer services | `classpath:certs/ca.crt` |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Filesystem path to the certificate chain for this service | `certs/client.crt` |
+| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the certificate chain | `certs/client.key` |
+| `FIREMUD_GRPC_CA_CERT_PATH` | Filesystem path to the CA bundle used to verify peer services | `certs/ca.crt` |
 
 During local development these values are generated automatically, so the
 variables may be omitted.
+
+> **Note**: Certificate files should be loaded from the filesystem rather than
+> packaged inside the application. Avoid `classpath:` URIs so that TLS materials
+> can be mounted securely via volumes or Secrets.
 
 ### Authentication
 

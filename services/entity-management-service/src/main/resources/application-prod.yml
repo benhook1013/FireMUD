@@ -31,13 +31,13 @@ grpc:
     compression: gzip
     security:
       enabled: true
-      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
-      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
-      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
+      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
+      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
       clientAuth: REQUIRE
 
 firemud:
   grpc:
-    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
-    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
-    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
