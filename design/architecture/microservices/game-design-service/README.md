@@ -103,6 +103,7 @@ Additional variables specific to this service:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
+| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | *(none)* | This service relies only on the shared configuration variables. | *(none)* |
 
 ## Proto Files

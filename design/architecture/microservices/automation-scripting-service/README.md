@@ -127,6 +127,7 @@ Additional variables tune the scripting engine:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
+| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` |
 | `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` |
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |

@@ -115,6 +115,7 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
+| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE` | `host:port` of the Logging Admin service | `logging-admin-service:6565` |
 | `FIREMUD_VOICE_TOKEN_EXPIRATION_MS` | Expiration of voice chat tokens | `300000` |
 
