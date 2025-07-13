@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Restore a FireMUD Kubernetes cluster from a Velero backup and restart services.
+#
+# This helper is intended for production emergencies. It automates the
+# Velero restore workflow so operators can quickly rehydrate volumes,
+# restore resources, and restart pods with a single command.
 set -euo pipefail
 
 BACKUP_NAME=${1:?"Usage: restore-cluster.sh <backup-name>"}
