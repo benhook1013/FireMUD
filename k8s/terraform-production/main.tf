@@ -51,3 +51,13 @@ resource "helm_release" "velero" {
     value = var.velero_bucket
   }
 }
+
+locals {
+  velero_schedule_docs = split("\n---\n", file("${path.module}/../velero/schedule.yaml"))
+}
+
+resource "kubernetes_manifest" "velero_schedule" {
+  for_each  = { for idx, doc in local.velero_schedule_docs : idx => yamldecode(doc) }
+  manifest  = each.value
+  depends_on = [helm_release.velero]
+}
