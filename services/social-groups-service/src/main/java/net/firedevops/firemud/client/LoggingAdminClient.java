@@ -8,6 +8,7 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
@@ -68,12 +69,17 @@ public class LoggingAdminClient implements AutoCloseable {
                 new java.io.File(tlsProps.getPrivateKey()))
             .build();
     ManagedChannel newChannel =
-        NettyChannelBuilder.forAddress(host, port).sslContext(sslContext).build();
+        NettyChannelBuilder.forAddress(host, port)
+            .sslContext(sslContext)
+            .keepAliveTime(30, TimeUnit.SECONDS)
+            .keepAliveTimeout(5, TimeUnit.SECONDS)
+            .keepAliveWithoutCalls(true)
+            .build();
     if (channel != null) {
       channel.shutdown();
     }
     channel = newChannel;
-    stub = ReportServiceGrpc.newBlockingStub(channel);
+    stub = ReportServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
   /**
