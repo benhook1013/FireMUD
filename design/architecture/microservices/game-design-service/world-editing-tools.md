@@ -17,7 +17,7 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 3. Revisions are grouped into a **version** and published via the saga workflow described in [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 4. Downstream services load the data strictly by `version_id` so the design database is never queried at runtime.
 
-## Related Design
+## 📚 Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [System Architecture – Transactions](../system-architecture-transactions.md)

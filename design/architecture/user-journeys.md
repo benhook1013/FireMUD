@@ -70,6 +70,11 @@ Creators refine the world and its inhabitants using several services:
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
+- **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
+- **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
+- **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
+- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing.
+- **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
 
 ```plaintext
 Game Design ↔ World Management ↔ Entity Management
@@ -353,6 +358,12 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Frontend Architecture](./system-architecture-frontend.md)
 - [Game Creator Guide](../user-guides/game-creator-guide.md)
 - [Game Customization Options](./game-customization-options.md)
+- [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md)
+- [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md)
+- [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md)
+- [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md)
+- [Version Control](./microservices/game-design-service/version-control.md)
+- [Game Templates](./microservices/game-design-service/game-templates.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
 - [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
 - [Infrastructure Overview](./infrastructure/README.md)
