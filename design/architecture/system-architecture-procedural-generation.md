@@ -16,3 +16,8 @@ This document describes the basic approach for procedurally generating simple du
 - Designed for extensibility so terrain features can be added later.
 
 The generator is intentionally lightweight to keep early worlds simple while providing a template for future expansion.
+
+## 📚 Related Documentation
+
+- [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
+- [World Management Service](./microservices/world-management-service/README.md)
