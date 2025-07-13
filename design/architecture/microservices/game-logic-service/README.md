@@ -94,6 +94,12 @@ It requires the [PostgreSQL credentials](../../infrastructure/environment-and-se
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+Additional variables specific to this service:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| *(none)* | This service relies only on the shared configuration variables. | *(none)* |
+
 ## Proto Files
 
 gRPC service definitions can be found in
