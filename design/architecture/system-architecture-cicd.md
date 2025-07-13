@@ -153,4 +153,4 @@ These can be added as separate workflows or additional jobs in the main pipeline
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Testing Strategy](./system-architecture-testing.md)
-- [User Journeys – Testing & Continuous Delivery](./user-journeys.md#16-testing--continuous-delivery)
+- [User Journeys – Testing & Continuous Delivery](./user-journeys.md#17-testing--continuous-delivery)
