@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 
@@ -77,6 +78,7 @@ public class TickServiceImpl implements TickService {
   }
 
   @Override
+  @Async("tickExecutor")
   public void processTick(Long sessionId) {
     long start = System.nanoTime();
     String lockKey = lockKey(sessionId);
