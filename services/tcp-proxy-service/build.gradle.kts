@@ -26,7 +26,7 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-api:1.52.0")
     implementation("io.opentelemetry:opentelemetry-sdk:1.52.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.52.0")
-    testImplementation("org.testcontainers:junit-jupiter:1.19.7")
+    testImplementation("org.testcontainers:junit-jupiter:1.21.3")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
 }
 
