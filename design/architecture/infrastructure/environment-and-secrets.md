@@ -17,8 +17,7 @@ This document explains how configuration values and sensitive secrets are suppli
 - Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
 - Secrets are provisioned by **cert-manager** and rotated automatically. The
-  sample `firemud-secret` manifest in `k8s/base/` contains placeholder values
-  only for local demos; production deployments must supply real credentials.
+  sample `firemud-secret` Secret is defined in `k8s/base/firemud-db-env.yaml` and contains placeholder values only for local demos; production deployments must supply real credentials.
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
   stage.
@@ -132,6 +131,10 @@ Service design documents reference this table for the OpenTelemetry endpoint con
 Service-specific settings such as SMTP credentials for the Account Service or
 `GAME_TICK_DURATION_MS` for the Game Session Service are documented in each
 service's design file. This document covers only shared configuration keys.
+
+Operational scripts like `dev-tools/restore-cluster.sh` use an optional
+`FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults
+to `firemud` when unset.
 
 ## 📚 Related Documentation
 
