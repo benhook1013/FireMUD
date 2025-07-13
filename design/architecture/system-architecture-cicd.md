@@ -99,9 +99,7 @@ Images are tagged with the commit SHA and pushed to **GitHub Container Registry 
 
 ### Base Docker Image
 
-All service containers extend a common `firemud-base` image built from
-`docker/base.Dockerfile`. The `buildBaseImage` Gradle task builds and pushes
-this image so microservices share the same runtime configuration.
+The firemud-base image provides a consistent OS and JVM setup across all service containers. It is built using the buildBaseImage Gradle task and reused by all microservice Dockerfiles.
 
 ---
 
