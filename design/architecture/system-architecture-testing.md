@@ -6,12 +6,12 @@ FireMUD employs a layered testing approach to keep services reliable while avoid
 
 ## 📝 Testing Scope
 
-Each microservice has its own unit and integration tests. Cross‑service scenarios are also covered in a dedicated suite. Load tests run independently using Gatling.
+Each microservice has its own unit and integration tests. Cross‑service scenarios are also covered in a dedicated suite. Load tests run independently using Gatling in a separate `load-testing` module.
 
 - **Unit tests** live under each service in `src/test/java/unit/`.
 - **Integration tests** for that service live in `src/test/java/integration/` and may start Redis, Postgres, or other dependencies on demand.
 - **Cross-service integration tests** exercise workflows that span multiple services. They are triggered via separate Gradle tasks and can orchestrate several services with Docker or Testcontainers.
-- **Load tests** reside in `src/gatling` and simulate real usage patterns. These tests are run manually when preparing a major release.
+- **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. These tests are run manually when preparing a major release.
 
 Test data seeding strategies are still under discussion. For now, tests set up their own minimal fixtures programmatically.
 

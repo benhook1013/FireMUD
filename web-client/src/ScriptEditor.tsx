@@ -37,7 +37,12 @@ export default function ScriptEditor() {
         minRows={4}
         fullWidth
       />
-      <Button variant="contained" sx={{ mt: 1 }} onClick={handleTest} disabled={isLoading}>
+      <Button
+        variant="contained"
+        sx={{ mt: 1 }}
+        onClick={handleTest}
+        disabled={isLoading}
+      >
         {isLoading ? 'Running...' : 'Test Run'}
       </Button>
     </Box>
