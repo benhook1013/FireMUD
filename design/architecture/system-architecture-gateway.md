@@ -10,7 +10,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
-- May validate JWTs for admin APIs (see [Authentication & Authorization](../system-architecture-authentication.md)). Gameplay login is processed by the **Game Session Service**; see [Authentication & Authorization](../system-architecture-authentication.md#-login-and-session-flow) for the detailed flow.
+- For admin APIs the Gateway forwards JWTs to backend services without validating them. Gameplay login is processed by the **Game Session Service**; see [Authentication & Authorization](../system-architecture-authentication.md#-login-and-session-flow) for the detailed flow.
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
@@ -68,8 +68,7 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 Spring Cloud Gateway provides centralized management of client traffic, offering:
 
-- Optional JWT validation for admin or REST endpoints (gameplay clients do not
-  provide JWTs)
+- JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices

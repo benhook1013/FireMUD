@@ -44,7 +44,7 @@ This enables:
 
 ## 🧾 JWT Format and Role Claims
 
-Internal JWTs are issued by the Account Service and used for backend gRPC authorization. Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs for optional validation at the Spring Cloud Gateway.
+Internal JWTs are issued by the Account Service and used for backend gRPC authorization. Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are validated by the Logging & Admin Service or other admin consumers. The Gateway and Game Session Service simply forward tokens without validation.
 
 ### 🧠 Claims
 

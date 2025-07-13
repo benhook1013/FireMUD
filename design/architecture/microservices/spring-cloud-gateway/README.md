@@ -46,13 +46,13 @@ environments work out of the box.
 ### Filter Chain
 
 - Authentication, rate limiting, and logging filters run before routing.
-- `JwtAuthFilter` validates admin JWTs using `JwtUtil` from the common library.
+- `JwtAuthFilter` passes any provided JWT to backend admin services; validation occurs in those services.
 - WebSocket upgrades are handled with heartbeat and idle timeout logic.
 
 ### Key Routes
 
 - `/api/session/**` → Game Session Service (WebSocket and REST endpoints).
-- `/api/admin/**` → Logging & Admin Service with JWT authentication.
+- `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
 
 ## Dependencies
