@@ -100,6 +100,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test
 - **Load Testing**: Gatling
+- **Accessibility Audit**: axe-core CLI (requires Google Chrome)
 
 ### Design Goals
 
