@@ -39,10 +39,17 @@ This document defines the backup schedule and disaster recovery procedures for F
           region: minio
           s3Url: http://minio.minio.svc.cluster.local:9000
           insecureSkipTLSVerify: true
-    credentials:
-      useSecret: true
-      existingSecret: velero-minio-creds
-    ```
+      credentials:
+        useSecret: true
+        existingSecret: velero-minio-creds
+      ```
+
+      Create the `firemud-backups` bucket in MinIO prior to installing Velero. Example using the MinIO client:
+
+      ```bash
+      mc alias set local http://minio.minio.svc.cluster.local:9000 myaccesskey mysecretkey
+      mc mb local/firemud-backups
+      ```
 
   - If the database service fails completely:
   1. Restore the latest snapshot.
