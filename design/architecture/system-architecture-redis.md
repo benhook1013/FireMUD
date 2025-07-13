@@ -165,7 +165,7 @@ FireMUD actively monitors Redis performance and tick health:
 Redis stores transient gameplay session state for each connected player, including:
 
 - Socket binding metadata
-- Active `playerId` and `worldId` context
+- Active `playerId` and `tenantId` context
 - Tick region participation and queued commands
 - Timer and cooldown data
 - Conflict and retry metadata

@@ -104,7 +104,7 @@ If roles change during an active session (e.g., a player is promoted to admin):
 The Game Session Service is responsible for:
 
 - Authenticating sockets and binding identity context
-- Managing Redis session state (e.g. `playerId`, `worldId`, tick region)
+- Managing Redis session state (e.g. `playerId`, `tenantId`, tick region)
 - Managing JWTs for backend interactions
 
 > 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.

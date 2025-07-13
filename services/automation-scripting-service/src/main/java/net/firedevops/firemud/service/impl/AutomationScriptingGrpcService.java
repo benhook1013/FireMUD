@@ -106,7 +106,7 @@ public class AutomationScriptingGrpcService
       NotifyScriptVersionUpdateRequest request,
       StreamObserver<NotifyScriptVersionUpdateResponse> responseObserver) {
     scriptVersionService.notifyUpdate(
-        request.getGameId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
+        request.getTenantId(), request.getScriptPatchVersion(), request.getAffectedScriptsList());
     NotifyScriptVersionUpdateResponse resp =
         NotifyScriptVersionUpdateResponse.newBuilder().setSuccess(true).build();
     responseObserver.onNext(resp);

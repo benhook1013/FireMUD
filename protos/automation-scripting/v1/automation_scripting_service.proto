@@ -82,7 +82,7 @@ message GetScriptStatusResponse {
 }
 
 message NotifyScriptVersionUpdateRequest {
-  int64 game_id = 1;
+  int64 tenant_id = 1;
   string script_patch_version = 2;
   repeated string affected_scripts = 3;
 }
