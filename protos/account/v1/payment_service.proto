@@ -10,6 +10,7 @@ option java_multiple_files = true;
 service PaymentService {
   rpc CreatePaymentIntent(CreatePaymentIntentRequest) returns (CreatePaymentIntentResponse);
   rpc CreateSubscription(CreateSubscriptionRequest) returns (CreateSubscriptionResponse);
+  rpc CreateDonation(CreateDonationRequest) returns (CreateDonationResponse);
   rpc RefundPayment(RefundPaymentRequest) returns (RefundPaymentResponse);
 }
 
@@ -34,6 +35,18 @@ message CreateSubscriptionRequest {
 message CreateSubscriptionResponse {
   string subscription_id = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message CreateDonationRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  int64 amount_cents = 3;
+}
+
+message CreateDonationResponse {
+  string intent_id = 1;
+  string client_secret = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 message RefundPaymentRequest {

@@ -30,6 +30,9 @@ public class PaymentTransaction {
   @Column(name = "provider_id", length = 50)
   private String providerId;
 
+  @Column(nullable = false)
+  private boolean donation;
+
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
 }

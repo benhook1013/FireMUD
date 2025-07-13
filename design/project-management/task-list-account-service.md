@@ -19,7 +19,7 @@
   - [x] Add asynchronous NotificationService components with gRPC endpoints
 - [ ] **Develop Monetization & Payment Module**
   - [x] Integrate Stripe or similar for in-game purchases
-  - [ ] Support subscriptions, one-time purchases, and donations
+  - [x] Support subscriptions, one-time purchases, and donations
   - [x] Enforce platform fee on transactions
   - [ ] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows

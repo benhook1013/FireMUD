@@ -57,6 +57,7 @@ class PaymentServiceImplTest {
     verify(txRepo).save(captor.capture());
     assertEquals(2L, captor.getValue().getTenantId());
     assertEquals(25L, captor.getValue().getPlatformFeeCents());
+    assertFalse(dto.donation());
   }
 
   @Test
@@ -82,5 +83,30 @@ class PaymentServiceImplTest {
     verify(stripeClient).createRefund("pi_123");
     verify(txRepo).save(tx);
     assertEquals("refunded", tx.getStatus());
+  }
+
+  @Test
+  void createDonationSetsFlag() throws Exception {
+    Account account = new Account();
+    account.setId(1L);
+    account.setTenantId(2L);
+    when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
+    when(txRepo.save(any()))
+        .thenAnswer(
+            invocation -> {
+              PaymentTransaction tx = invocation.getArgument(0);
+              tx.setId(11L);
+              return tx;
+            });
+    when(stripeClient.calculatePlatformFee(100L)).thenReturn(5L);
+    when(stripeClient.createPaymentIntent(100L, "usd"))
+        .thenReturn(new StripeClient.IntentResult("pi2", "donate", "pending"));
+
+    PaymentIntentDto dto = service.createDonation(2L, 1L, 100L);
+
+    assertTrue(dto.donation());
+    ArgumentCaptor<PaymentTransaction> captor = ArgumentCaptor.forClass(PaymentTransaction.class);
+    verify(txRepo).save(captor.capture());
+    assertTrue(captor.getValue().isDonation());
   }
 }
