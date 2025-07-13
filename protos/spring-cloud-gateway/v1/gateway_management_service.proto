@@ -11,13 +11,13 @@ option java_multiple_files = true;
 service GatewayManagementService {
   rpc Ping(PingRequest) returns (PingResponse);
   // Adds or updates a custom route for the gateway.
-  rpc UpsertRoute(RouteDefinition) returns (RouteResponse);
+  rpc UpsertRoute(UpsertRouteRequest) returns (UpsertRouteResponse);
   // Removes a route by ID.
-  rpc RemoveRoute(RouteRequest) returns (RouteResponse);
+  rpc RemoveRoute(RemoveRouteRequest) returns (RemoveRouteResponse);
 }
 
 // Route configuration details for dynamic updates.
-message RouteDefinition {
+message UpsertRouteRequest {
   string route_id = 1; // Unique identifier for the route
   string uri = 2;      // Target service URI
   repeated string predicates = 3; // Spring Cloud Gateway predicates
@@ -25,12 +25,17 @@ message RouteDefinition {
 }
 
 // Request to operate on a specific route.
-message RouteRequest {
+message RemoveRouteRequest {
   string route_id = 1; // Identifier of the route to remove
 }
 
 // Standard response wrapper.
-message RouteResponse {
+message UpsertRouteResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RemoveRouteResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }

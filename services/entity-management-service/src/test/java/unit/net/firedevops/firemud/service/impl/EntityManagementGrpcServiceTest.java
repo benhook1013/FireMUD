@@ -137,16 +137,16 @@ class EntityManagementGrpcServiceTest {
         new EntityManagementGrpcService(
             pingService, characterService, inventoryService, meterRegistry);
 
-    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersResponse> ref =
-        new AtomicReference<>();
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
+        ref = new AtomicReference<>();
     service.listCharactersByAccount(
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersRequest.newBuilder()
+        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
             .setAccountId("bad")
             .build(),
         new StreamObserver<>() {
           @Override
           public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersResponse value) {
+              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
             ref.set(value);
           }
 
@@ -178,13 +178,13 @@ class EntityManagementGrpcServiceTest {
 
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.listCharactersByAccount(
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersRequest.newBuilder()
+        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
             .setAccountId("1")
             .build(),
         new StreamObserver<>() {
           @Override
           public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersResponse value) {}
+              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {}
 
           @Override
           public void onError(Throwable t) {
