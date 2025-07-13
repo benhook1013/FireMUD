@@ -23,4 +23,6 @@ public class Room {
 
   @Column(length = 255)
   private String description;
+
+  @Version private int version;
 }

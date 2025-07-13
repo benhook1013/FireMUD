@@ -20,4 +20,6 @@ public class Zone {
 
   @Column(nullable = false, length = 100)
   private String name;
+
+  @Version private int version;
 }

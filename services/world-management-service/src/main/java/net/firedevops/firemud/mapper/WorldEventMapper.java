@@ -11,5 +11,6 @@ public interface WorldEventMapper {
   WorldEventDto toDto(WorldEvent entity);
 
   @Mapping(target = "region.id", source = "regionId")
+  @Mapping(target = "version", ignore = true)
   WorldEvent toEntity(WorldEventDto dto);
 }

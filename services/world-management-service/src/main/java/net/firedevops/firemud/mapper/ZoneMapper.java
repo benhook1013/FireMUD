@@ -11,5 +11,6 @@ public interface ZoneMapper {
   ZoneDto toDto(Zone entity);
 
   @Mapping(target = "region.id", source = "regionId")
+  @Mapping(target = "version", ignore = true)
   Zone toEntity(ZoneDto dto);
 }

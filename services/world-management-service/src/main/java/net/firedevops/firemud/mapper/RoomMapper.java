@@ -10,5 +10,6 @@ public interface RoomMapper {
   RoomDto toDto(Room entity);
 
   @org.mapstruct.Mapping(target = "region.id", source = "regionId")
+  @org.mapstruct.Mapping(target = "version", ignore = true)
   Room toEntity(RoomDto dto);
 }

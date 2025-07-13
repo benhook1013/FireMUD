@@ -26,4 +26,6 @@ public class Region {
 
   @Column(length = 50)
   private String weather;
+
+  @Version private int version;
 }

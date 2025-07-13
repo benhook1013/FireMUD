@@ -1,0 +1,20 @@
+ALTER TABLE region ADD COLUMN version INT NOT NULL DEFAULT 0;
+ALTER TABLE zone ADD COLUMN version INT NOT NULL DEFAULT 0;
+ALTER TABLE room ADD COLUMN version INT NOT NULL DEFAULT 0;
+ALTER TABLE room_exit ADD COLUMN version INT NOT NULL DEFAULT 0;
+ALTER TABLE generation_rule ADD COLUMN version INT NOT NULL DEFAULT 0;
+ALTER TABLE world_event ADD COLUMN version INT NOT NULL DEFAULT 0;
+ALTER TABLE instance ADD COLUMN version INT NOT NULL DEFAULT 0;
+
+CREATE INDEX idx_region_tenant_id ON region(tenant_id);
+CREATE INDEX idx_zone_tenant_id ON zone(tenant_id);
+CREATE INDEX idx_room_tenant_id ON room(tenant_id);
+CREATE INDEX idx_instance_tenant_id ON instance(tenant_id);
+CREATE INDEX idx_world_event_tenant_id ON world_event(tenant_id);
+CREATE INDEX idx_generation_rule_tenant_id ON generation_rule(tenant_id);
+CREATE INDEX idx_room_exit_tenant_id ON room_exit(tenant_id);
+CREATE INDEX idx_zone_region_id ON zone(region_id);
+CREATE INDEX idx_room_zone_id ON room(zone_id);
+CREATE INDEX idx_world_event_region_id ON world_event(region_id);
+CREATE INDEX idx_room_exit_from_room_id ON room_exit(from_room_id);
+CREATE INDEX idx_room_exit_to_room_id ON room_exit(to_room_id);

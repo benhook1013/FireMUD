@@ -24,4 +24,6 @@ public class RoomExit {
 
   @Column(nullable = false)
   private int cost = 1;
+
+  @Version private int version;
 }
