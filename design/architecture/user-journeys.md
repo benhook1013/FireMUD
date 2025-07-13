@@ -36,6 +36,7 @@ For step-by-step tooling instructions see the [Game Creator Guide](../user-guide
 - [19. Deployment & Environment Configuration](#19-deployment--environment-configuration)
 - [20. Observability & Debugging](#20-observability--debugging)
 - [21. Extensibility & External Tools](#21-extensibility--external-tools)
+- [22. Bug Reporting & Feature Requests](#22-bug-reporting--feature-requests)
 
 ---
 
@@ -345,6 +346,24 @@ Creators extend gameplay using external editors and runtime plugins:
 
 ```plaintext
 Editor/Tool → TCP Proxy Service → Game Design Service → Automation & Scripting Service
+```
+
+---
+
+## 22. Bug Reporting & Feature Requests
+
+Players and creators can file issues or request new features through the
+project management workflow:
+
+1. **Create a GitHub Issue** – Use the repository issue tracker so tasks have a
+   clear owner. Larger efforts are organized in the
+   [Development To-Do List](../project-management/task-list.md).
+2. **Review the Backlog** – Outstanding bugs and enhancements are summarized in
+   the [Backlog](../project-management/backlog.md). Items are prioritized during
+   planning cycles.
+
+```plaintext
+User → GitHub Issue → Maintainers
 ```
 
 ---
