@@ -17,7 +17,7 @@
   - [x] Configure SMTP provider and test templates
   - [x] Document email and notification design in `account-service/design/README.md`
   - [x] Add asynchronous NotificationService components with gRPC endpoints
-- [ ] **Develop Monetization & Payment Module**
+- [x] **Develop Monetization & Payment Module**
   - [x] Integrate Stripe or similar for in-game purchases
   - [x] Support subscriptions, one-time purchases, and donations
   - [x] Enforce platform fee on transactions
