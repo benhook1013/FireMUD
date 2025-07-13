@@ -16,7 +16,7 @@ public class Revision {
   private Long tenantId;
 
   @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "game_id", nullable = false)
+  @JoinColumn(name = "tenant_id", nullable = false)
   private Game game;
 
   @Column(nullable = false)
