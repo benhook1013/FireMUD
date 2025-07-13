@@ -1,10 +1,11 @@
 package net.firedevops.firemud.service;
 
-import java.util.List;
 import net.firedevops.firemud.dto.GameTemplateDto;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 public interface GameTemplateService {
   GameTemplateDto createTemplate(GameTemplateDto dto);
 
-  List<GameTemplateDto> listTemplates(Long tenantId);
+  Page<GameTemplateDto> listTemplates(Long tenantId, Pageable pageable);
 }

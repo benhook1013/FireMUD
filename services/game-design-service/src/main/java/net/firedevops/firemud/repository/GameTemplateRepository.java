@@ -1,8 +1,12 @@
 package net.firedevops.firemud.repository;
 
 import net.firedevops.firemud.entity.GameTemplate;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface GameTemplateRepository extends JpaRepository<GameTemplate, Long> {}
+public interface GameTemplateRepository extends JpaRepository<GameTemplate, Long> {
+  Page<GameTemplate> findByTenantId(Long tenantId, Pageable pageable);
+}

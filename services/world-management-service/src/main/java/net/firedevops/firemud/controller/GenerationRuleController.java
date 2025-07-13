@@ -1,10 +1,11 @@
 package net.firedevops.firemud.controller;
 
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.GenerationRuleDto;
 import net.firedevops.firemud.service.GenerationRuleService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,8 +27,9 @@ public class GenerationRuleController {
   }
 
   @GetMapping
-  public ResponseEntity<ApiResponse<List<GenerationRuleDto>>> list(@RequestParam Long tenantId) {
-    List<GenerationRuleDto> list = generationRuleService.listRules(tenantId);
+  public ResponseEntity<ApiResponse<Page<GenerationRuleDto>>> list(
+      @RequestParam Long tenantId, Pageable pageable) {
+    Page<GenerationRuleDto> list = generationRuleService.listRules(tenantId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
 }

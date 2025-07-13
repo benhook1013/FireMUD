@@ -1,10 +1,11 @@
 package net.firedevops.firemud.service;
 
-import java.util.List;
 import net.firedevops.firemud.dto.GenerationRuleDto;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 public interface GenerationRuleService {
   GenerationRuleDto saveRule(GenerationRuleDto dto);
 
-  List<GenerationRuleDto> listRules(Long tenantId);
+  Page<GenerationRuleDto> listRules(Long tenantId, Pageable pageable);
 }
