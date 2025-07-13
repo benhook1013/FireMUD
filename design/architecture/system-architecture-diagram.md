@@ -33,6 +33,7 @@ flowchart TD
     subgraph Observability
         FluentBit[Fluent Bit]
         Prom[Prometheus]
+        Alertmgr[Alertmanager]
         OTel[OTel Collector]
         Kibana[Kibana]
         Grafana[Grafana]
@@ -54,10 +55,33 @@ flowchart TD
     Session -- gRPC --> Logging
 
     InternalServices --> Datastores
-    InternalServices --> Observability
+    InternalServices -- logs --> FluentBit
+    InternalServices -- metrics --> Prom
+    InternalServices -- traces --> OTel
+    FluentBit --> ES
+    Prom --> Alertmgr
+    Prom --> Grafana
+    OTel --> Jaeger
+    ES --> Kibana
 ```
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, and send structured logs to Elasticsearch.
+
+## 🧩 Core Services Shown
+
+The diagram covers every microservice currently in the repository:
+
+- **TCP Proxy Service** – Bridges Telnet clients into the WebSocket-based backend.
+- **Spring Cloud Gateway** – Routes HTTP and WebSocket traffic to internal services.
+- **Game Session Service** – Orchestrates sessions, ticks, and runtime configuration.
+- **Account Service** – Handles accounts, authentication, and subscriptions.
+- **World Management Service** – Stores rooms, regions, and world maps.
+- **Entity Management Service** – Manages players, NPCs, items, and inventory data.
+- **Game Logic Service** – Resolves commands and core gameplay mechanics.
+- **Game Design Service** – Provides authoring tools for game data and feature flags.
+- **Automation & Scripting Service** – Executes AI behaviors and custom scripts.
+- **Social & Groups Service** – Manages chat, guilds, and social networking.
+- **Logging & Admin Service** – Centralizes logging, metrics, and admin tools.
 
 ## 📚 Related Documentation
 

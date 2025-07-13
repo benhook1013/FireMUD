@@ -92,6 +92,7 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
     2. Restore other resources (StatefulSets, ConfigMaps, Secrets).
     3. Restart the affected pods; Redis starts empty and fills itself from PostgreSQL.
     4. Operators can run `dev-tools/restore-cluster.sh <backup-name>` to automate these steps in production.
+       Set `FIREMUD_K8S_NAMESPACE` if restoring to a different namespace.
 
 ## 🐳 Local Development
 
@@ -106,7 +107,8 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 - The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs
   `dev-tools/verify-backups.sh` daily to ensure recent snapshots are present in
-  the object store.
+  the object store. This CronJob is installed automatically by the production
+  Terraform modules.
 - Operators should periodically test recovery by restoring a snapshot into a
   throwaway namespace with `dev-tools/restore-cluster.sh <backup-name>` and
   verifying services start successfully.

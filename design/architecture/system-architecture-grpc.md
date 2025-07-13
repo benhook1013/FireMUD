@@ -65,7 +65,7 @@ Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `
 - Use the `reserved` keyword to block deprecated field numbers or names.
 - Avoid changing the type of an existing field.
 
-## ⚠️ Error Handling (Optional)
+## ⚠️ Error Handling
 
 - Map application-level failures to appropriate gRPC status codes (`INVALID_ARGUMENT`, `NOT_FOUND`, etc.).
 - Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
