@@ -90,3 +90,8 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
+
+## 📚 Related Documentation
+
+- [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
+- [Transaction Strategies](./system-architecture-transactions.md)

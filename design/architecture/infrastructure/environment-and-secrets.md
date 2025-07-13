@@ -121,7 +121,7 @@ Service-specific settings such as SMTP credentials for the Account Service or
 `GAME_TICK_DURATION_MS` for the Game Session Service are documented in each
 service's design file. This document covers only shared configuration keys.
 
-## 📚 Related Docs
+## 📚 Related Documentation
 
 - [Deployment Environments](./deployment-environments.md)
 - [System Architecture: Security](../system-architecture-security.md)

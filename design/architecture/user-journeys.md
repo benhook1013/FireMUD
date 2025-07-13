@@ -290,6 +290,19 @@ Service Logs → Elasticsearch → Kibana / Jaeger
 
 ---
 
+## 21. Extensibility & External Tools
+
+Creators extend gameplay using external editors and runtime plugins:
+
+1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so tools can create rooms, items, and NPCs programmatically. See [MCP Support](./system-architecture-mcp-support.md).
+2. **Modding Framework** – Plugins packaged through the [Game Design Service](./microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) executes them in a sandbox.
+
+```plaintext
+Editor/Tool → TCP Proxy Service → Game Design Service → Automation & Scripting Service
+```
+
+---
+
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
 
 ## 📚 Related Documentation
@@ -318,6 +331,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [MCP Support](./system-architecture-mcp-support.md)
+- [Modding Framework](./microservices/game-design-service/modding-framework.md)
 - [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
 - [Tracing](./system-architecture-tracing.md)
 - [Operational Runbooks](./system-architecture-runbooks.md)

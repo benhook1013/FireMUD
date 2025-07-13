@@ -196,7 +196,7 @@ Redis in FireMUD is:
 
 ---
 
-📚 **Related Documentation**
+## 📚 Related Documentation
 
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [System Architecture Overview](./system-architecture-overview.md)

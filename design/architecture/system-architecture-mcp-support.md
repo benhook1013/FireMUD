@@ -20,3 +20,9 @@ The TCP Proxy Service will negotiate MCP with connecting clients. When enabled, 
 4. A confirmation package containing the new room ID is returned.
 
 Future enhancements will include bulk import and transaction support for batch creation.
+
+## 📚 Related Documentation
+
+- [Game Design Service](./microservices/game-design-service/README.md)
+- [TCP Proxy Service](./microservices/tcp-proxy-service/README.md)
+- [Modding Framework](./microservices/game-design-service/modding-framework.md)

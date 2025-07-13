@@ -36,3 +36,8 @@
                 |  Elasticsearch (logs)                       |
                 +----------------------------------------------+
 ```
+
+## 📚 Related Documentation
+
+- [System Architecture Diagram](./system-architecture-diagram.md)
+- [Gateway Architecture](./system-architecture-gateway.md)
