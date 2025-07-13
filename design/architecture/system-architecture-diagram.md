@@ -65,7 +65,11 @@ flowchart TD
     ES --> Kibana
 ```
 
+Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
+
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, and send structured logs to Elasticsearch.
+
+All datastores are shared across games, but each table includes a `tenantId` column and Redis keys use a matching prefix. This isolates data per game while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 
 ## 🧩 Core Services Shown
 
@@ -90,3 +94,4 @@ The diagram covers every microservice currently in the repository:
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
 - [Logging & Monitoring](./system-architecture-logging-monitoring.md)
+- [Multi-Tenancy](./system-architecture-multi-tenancy.md)
