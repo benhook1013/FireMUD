@@ -82,8 +82,8 @@ Access to services is governed by roles from the JWT:
 
 All meta services use a shared `AuthTokenInterceptor` that extracts claims from
 the `Authorization` header and stores them in a thread-local `SessionContext`.
-Service methods read roles from this context, often via the `@RequireAdminRole`
-annotation. Gameplay services never read or propagate these claims.
+Service methods read roles from this context via the `@RequireAdminRole`
+annotation (or similar). Gameplay services never read or propagate these claims.
 
 ---
 
