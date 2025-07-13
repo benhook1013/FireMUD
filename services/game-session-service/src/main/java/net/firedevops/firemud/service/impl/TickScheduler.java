@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entity.GameInstance;
@@ -16,6 +17,7 @@ public class TickScheduler {
   private final TickService tickService;
 
   @Scheduled(fixedDelayString = "${game.tick-duration-ms:1000}")
+  @Timed(value = "game_session.tick_scheduler")
   public void runTicks() {
     List<GameInstance> running = repository.findByStatus("RUNNING");
     for (GameInstance instance : running) {
