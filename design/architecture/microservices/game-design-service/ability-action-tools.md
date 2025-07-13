@@ -16,7 +16,7 @@ Game creators can build complex combat systems without modifying the core engine
 2. Designers can group related abilities into categories for organization.
 3. When a version is published, abilities are copied to the Game Logic Service using the `version_id`.
 
-## Related Design
+## 📚 Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [World Editing & Customization Tools](world-editing-tools.md)

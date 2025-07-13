@@ -30,7 +30,7 @@ curl -X POST http://localhost:8080/templates \
 The service validates the payload and stores it in the `game_templates` table.
 Templates can then be listed per `tenantId` to help bootstrap new games.
 
-## Related Design
+## 📚 Related Documentation
 
 - [Game Design Service Architecture](../../../design/architecture/microservices/game-design-service/README.md)
 - [Multi-Tenancy](../../../design/architecture/system-architecture-multi-tenancy.md)

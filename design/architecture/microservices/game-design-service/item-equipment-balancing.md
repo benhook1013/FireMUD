@@ -14,7 +14,7 @@ Game balance relies heavily on item statistics and equipment progression. This d
 2. Balancing views aggregate stats and show graphs for cost vs. power.
 3. Finalized changes are published as part of a game version and copied to the Entity Management Service.
 
-## Related Design
+## 📚 Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
