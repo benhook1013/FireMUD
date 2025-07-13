@@ -48,7 +48,16 @@ This document defines the backup schedule and disaster recovery procedures for F
 
       ```bash
       mc alias set local http://minio.minio.svc.cluster.local:9000 myaccesskey mysecretkey
+
       mc mb local/firemud-backups
+      ```
+
+      Then install Velero using the local values file:
+
+      ```bash
+      helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts
+      helm install velero vmware-tanzu/velero \
+        -n velero --create-namespace -f k8s/velero/values-minio.yaml
       ```
 
   - If the database service fails completely:
