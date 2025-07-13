@@ -27,21 +27,24 @@ frontend/
 
 ## ⚛️ State Management
 
-Application state is handled by **Redux Toolkit** with slices per feature. Slices contain reducers, actions, and async thunks for API calls. This keeps business logic out of components and promotes predictable state updates.
+Application state is handled by **Redux Toolkit**, with **RTK Query** used for data fetching and mutations. RTK Query auto-generates hooks for API access and manages caching, invalidation, and loading/error states declaratively.
 
 - The global store is created in `src/store.ts` and provided via `<Provider>`.
 - Components dispatch actions and select state using hooks (`useAppDispatch`, `useAppSelector`).
-- Thunks interact with backend services through the API layer.
+- RTK Query hooks expose typed endpoints that components call directly.
 
 ## 🔗 API Usage Patterns
 
-All HTTP requests are made through a centralized wrapper built on **Axios**:
+All API communication is handled by **RTK Query** services defined in `src/api/`. These services generate typed React hooks (for example, `useLoginMutation` and `useFetchCharacterQuery`) that components call directly.
 
-- `src/api/client.ts` configures the base URL and interceptors for authentication tokens and error handling.
-- Feature slices call typed API helpers in `src/api/` (e.g., `loginUser`, `fetchCharacter`).
-- Responses are converted into domain-specific models before updating state.
+RTK Query automatically handles:
 
-WebSocket interactions for real-time gameplay are handled by a single service in `src/websocket.ts` that manages connection lifecycle and message routing to Redux actions.
+- Data caching and revalidation
+- Request deduplication
+- Error and loading state tracking
+- Background polling and refetching
+
+WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. RTK Query hooks can be invalidated or updated in response to WebSocket messages for live state updates.
 
 ## 🛠️ Build Tooling
 
@@ -52,6 +55,8 @@ The frontend uses **Vite** for fast development and production builds:
 - `npm run test` runs unit tests with Jest and React Testing Library.
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
+
+RTK Query works out of the box with Redux Toolkit and TypeScript. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing.
 
 ## 🎨 Game-Specific Customization (Planned)
 
