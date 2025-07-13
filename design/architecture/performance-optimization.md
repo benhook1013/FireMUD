@@ -51,6 +51,12 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Redis runs with **AOF persistence** and synchronous replication via `WAIT`
   so tick state can be recovered quickly after failover. The Game Session
   Service automatically replays staged commands on restart.
+- Each tick enforces a **soft execution budget** (~100ms). Slow actions are
+  deferred to follow-up ticks so long-running commands never block the game
+  loop. Conflict metadata collected during retries highlights hotspots for
+  operators.
+- The TCP Proxy Service limits connections per IP and throttles messages per
+  client to shield the gateway from abuse.
 
 ## Network Traffic
 
@@ -65,6 +71,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   rates.
 - Spring Cloud Gateway applies Redis-backed request rate limiting to protect
   services from sudden spikes.
+- Gateway connection metrics (`gateway.connections.total` and
+  `gateway.connections.active`) help operators track usage and capacity.
 - Redis caches common lookups to reduce database load. The World Management
   service stores hot rooms with configurable TTL and hit/miss metrics
   (`room_cache_hits_total`, `room_cache_misses_total`). The Social Groups service
