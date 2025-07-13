@@ -26,4 +26,6 @@ public class Npc {
 
   @Column(name = "last_defeated_at")
   private Instant lastDefeatedAt;
+
+  @Version private int version;
 }

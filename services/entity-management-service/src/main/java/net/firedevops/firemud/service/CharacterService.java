@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service;
 
-import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import net.firedevops.firemud.dto.CharacterDto;
 
 public interface CharacterService {
@@ -16,5 +17,5 @@ public interface CharacterService {
   boolean updateEntity(Long characterId);
 
   /** Lists all characters for the given account across all tenants. */
-  List<CharacterDto> listForAccount(Long accountId);
+  Page<CharacterDto> listForAccount(Long accountId, Pageable pageable);
 }

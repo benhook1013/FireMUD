@@ -3,6 +3,7 @@ package net.firedevops.firemud.service.impl;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.data.domain.Pageable;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.v1.Character;
@@ -73,7 +74,7 @@ public class EntityManagementGrpcService
     try {
       long accountId = Long.parseLong(request.getAccountId());
       var characters =
-          characterService.listForAccount(accountId).stream()
+          characterService.listForAccount(accountId, Pageable.unpaged()).stream()
               .map(this::toProto)
               .collect(Collectors.toList());
       ListCharactersByAccountResponse response =
@@ -154,7 +155,8 @@ public class EntityManagementGrpcService
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     try {
       long characterId = Long.parseLong(request.getEntityId());
-      var entries = inventoryService.listInventory(characterId);
+      var entries =
+          inventoryService.listInventory(characterId, Pageable.unpaged()).getContent();
       var itemIds = entries.stream().map(e -> String.valueOf(e.itemId())).toList();
       QueryInventoryResponse response =
           QueryInventoryResponse.newBuilder().addAllItemIds(itemIds).build();

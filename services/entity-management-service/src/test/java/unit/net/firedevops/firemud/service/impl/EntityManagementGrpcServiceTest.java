@@ -11,6 +11,7 @@ import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.service.CharacterService;
 import net.firedevops.firemud.service.InventoryService;
 import net.firedevops.firemud.service.PingService;
+import org.springframework.data.domain.Pageable;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -165,7 +166,8 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
-    Mockito.when(characterService.listForAccount(1L)).thenThrow(new RuntimeException("boom"));
+    Mockito.when(characterService.listForAccount(1L, Pageable.unpaged()))
+        .thenThrow(new RuntimeException("boom"));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =

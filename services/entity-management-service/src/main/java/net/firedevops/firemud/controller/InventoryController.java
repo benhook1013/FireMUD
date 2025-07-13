@@ -1,12 +1,13 @@
 package net.firedevops.firemud.controller;
 
 import jakarta.validation.Valid;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AddInventoryItemRequest;
 import net.firedevops.firemud.dto.InventoryEntryDto;
 import net.firedevops.firemud.service.InventoryService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,8 +19,9 @@ public class InventoryController {
   private final InventoryService inventoryService;
 
   @GetMapping
-  public ResponseEntity<ApiResponse<List<InventoryEntryDto>>> list(@PathVariable Long characterId) {
-    List<InventoryEntryDto> list = inventoryService.listInventory(characterId);
+  public ResponseEntity<ApiResponse<Page<InventoryEntryDto>>> list(
+      @PathVariable Long characterId, Pageable pageable) {
+    Page<InventoryEntryDto> list = inventoryService.listInventory(characterId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
 
