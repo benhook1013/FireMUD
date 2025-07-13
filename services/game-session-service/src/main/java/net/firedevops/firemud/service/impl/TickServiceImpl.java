@@ -30,9 +30,13 @@ public class TickServiceImpl implements TickService {
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
 
+  @Value("${game.tick-budget-ms:100}")
+  private long tickBudgetMs;
+
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
   private Counter lockContentionCounter;
+  private Counter budgetExceededCounter;
   private Timer tickTimer;
   private Timer luaTimer;
   private java.util.concurrent.atomic.AtomicInteger retryQueueDepth =
@@ -46,6 +50,7 @@ public class TickServiceImpl implements TickService {
     this.enqueueCounter = meterRegistry.counter("game_session_commands_enqueued_total");
     this.redisErrorCounter = meterRegistry.counter("game_session_redis_errors_total");
     this.lockContentionCounter = meterRegistry.counter("game_session_lock_contention_total");
+    this.budgetExceededCounter = meterRegistry.counter("game_session_tick_budget_exceeded_total");
     this.tickTimer = meterRegistry.timer("game_session_tick_duration_ms");
     this.luaTimer = meterRegistry.timer("game_session_lua_latency_ms");
     Gauge.builder(
@@ -73,6 +78,7 @@ public class TickServiceImpl implements TickService {
 
   @Override
   public void processTick(Long sessionId) {
+    long start = System.nanoTime();
     String lockKey = lockKey(sessionId);
     Boolean acquired =
         redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
@@ -109,6 +115,11 @@ public class TickServiceImpl implements TickService {
               redisTemplate.execute(
                   rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId))));
     } finally {
+      long elapsed = (System.nanoTime() - start) / 1_000_000;
+      if (elapsed > tickBudgetMs) {
+        budgetExceededCounter.increment();
+        logger.debug("Tick budget exceeded: {} ms", elapsed);
+      }
       redisTemplate.delete(lockKey);
     }
   }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +40,7 @@ public class WorldManagementGrpcService
   }
 
   @Override
+  @Timed(value = "worldGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     try {
       String msg = pingService.ping();
@@ -57,6 +59,7 @@ public class WorldManagementGrpcService
   }
 
   @Override
+  @Timed(value = "worldGrpc.getRoom")
   public void getRoom(GetRoomRequest request, StreamObserver<GetRoomResponse> responseObserver) {
     try {
       Long roomId = Long.valueOf(request.getRoomId());
@@ -87,6 +90,7 @@ public class WorldManagementGrpcService
   }
 
   @Override
+  @Timed(value = "worldGrpc.updateState")
   public void updateWorldState(
       UpdateWorldStateRequest request, StreamObserver<UpdateWorldStateResponse> responseObserver) {
     try {

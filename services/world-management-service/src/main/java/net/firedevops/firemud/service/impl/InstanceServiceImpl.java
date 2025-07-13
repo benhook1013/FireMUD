@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.InstanceDto;
@@ -29,6 +30,7 @@ public class InstanceServiceImpl implements InstanceService {
   }
 
   @Override
+  @Timed(value = "instance.create")
   public InstanceDto createInstance(InstanceDto request) {
     Instance entity = instanceMapper.toEntity(request);
     if (entity.getCreatedAt() == null) {
@@ -43,6 +45,7 @@ public class InstanceServiceImpl implements InstanceService {
 
   @Override
   @Scheduled(cron = "0 0 * * * *")
+  @Timed(value = "instance.cleanup")
   public void cleanupExpiredInstances() {
     LocalDateTime now = LocalDateTime.now();
     instanceRepository.findByExpiresAtBefore(now).forEach(instanceRepository::delete);

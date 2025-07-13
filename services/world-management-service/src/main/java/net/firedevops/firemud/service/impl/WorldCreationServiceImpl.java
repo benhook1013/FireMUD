@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
@@ -48,6 +49,7 @@ public class WorldCreationServiceImpl implements WorldCreationService {
 
   @Override
   @Transactional
+  @Timed(value = "world.create")
   public void createWorld(Long tenantId, Long versionId) throws SagaException {
     ensureMetrics();
     logger.info("Creating world for tenant {} from version {}", tenantId, versionId);

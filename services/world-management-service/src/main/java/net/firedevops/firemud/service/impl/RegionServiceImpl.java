@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.RegionDto;
@@ -16,12 +17,14 @@ public class RegionServiceImpl implements RegionService {
   private final RegionMapper regionMapper;
 
   @Override
+  @Timed(value = "region.list")
   public List<RegionDto> listRegions(Long tenantId) {
     return regionRepository.findByTenantId(tenantId).stream().map(regionMapper::toDto).toList();
   }
 
   @Override
   @Transactional
+  @Timed(value = "region.move")
   public RegionDto moveRegion(Long tenantId, Long regionId, Integer shardId) {
     var region =
         regionRepository
