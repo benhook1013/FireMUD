@@ -96,6 +96,18 @@ Then execute:
 npm run accessibility
 ```
 
+### OpenAPI Spec Linting
+
+OpenAPI descriptions for each service live under
+`services/**/src/main/resources/openapi.yaml`. Lint these files with
+
+```bash
+npm run openapi:lint
+```
+
+Run this command from the project root after installing dependencies with
+`npm ci`.
+
 ## Lombok and MapStruct
 
 The microservices use **Lombok** to cut down on boilerplate and **MapStruct** for DTO mapping. Each service's `build.gradle.kts` already declares these dependencies:
