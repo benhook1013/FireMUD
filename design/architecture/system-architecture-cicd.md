@@ -11,8 +11,11 @@ This document describes the basic continuous integration and deployment strategy
 - **Deploy to Kubernetes manually** using the manifests in [`k8s/`](../../k8s/), with automation planned for the future.
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
+- **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
+- **Publish documentation** to GitHub Pages after successful builds.
+- **Create release PRs automatically** using the `release-please` workflow.
 
-The main workflow runs formatting and lint checks followed by the Gradle `check` task, which compiles and tests all modules while running Spotless, Checkstyle, and SpotBugs. It then generates JaCoCo coverage reports and performs a Trivy security scan. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
+The CI job first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by the Gradle `check` task, which compiles and tests all modules while running Spotless, Checkstyle, and SpotBugs. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
 
 ---
 
@@ -49,6 +52,13 @@ jobs:
 ```
 
 The example above checks out the repository, sets up Java 21, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel.
+
+Other workflows support additional automation:
+
+- `docs.yml` publishes the contents of the `design/` folder to GitHub Pages.
+- `codeql.yml` performs static code analysis on each pull request and push to `main`.
+- `license-scan.yml` checks open source dependencies for license compliance.
+- `release-please.yml` creates release pull requests from the `develop` branch.
 
 ---
 
@@ -148,8 +158,9 @@ Docker Compose has default environment variables available.
 ## ➕ Optional Add-Ons
 
 - **Nightly builds or scheduled jobs** for integration testing.
-- **Security scanning** using tools like Trivy. A scheduled workflow runs
-  weekly to scan dependencies and container images for vulnerabilities.
+- **Security scanning** using tools like Trivy. The `weekly-security-scan.yml`
+  workflow runs on a schedule to scan dependencies and container images for
+  vulnerabilities.
 - **Notifications** via email when workflows fail.
 
 These can be added as separate workflows or additional jobs in the main pipeline.
