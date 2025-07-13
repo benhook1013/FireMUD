@@ -30,6 +30,7 @@ frontend/
 Application state is handled by **Redux Toolkit**, with **RTK Query** used for data fetching and mutations. RTK Query auto-generates hooks for API access and manages caching, invalidation, and loading/error states declaratively.
 
 - The global store is created in `src/store.ts` and provided via `<Provider>`.
+- `setupListeners(store.dispatch)` enables automatic refetching on focus and reconnects.
 - Components dispatch actions and select state using hooks (`useAppDispatch`, `useAppSelector`).
 - RTK Query hooks expose typed endpoints that components call directly.
 
