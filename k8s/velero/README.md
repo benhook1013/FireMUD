@@ -24,9 +24,9 @@ configuration:
 
 For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
 
-To automatically verify that backups continue to run, apply the optional
-`verify-backups-cronjob.yaml` which executes a daily check using the included
-script:
+The repository includes a `verify-backups-cronjob.yaml` manifest that runs
+`dev-tools/verify-backups.sh` daily. Production Terraform modules deploy this
+CronJob automatically, but you can apply it manually in other environments:
 
 ```bash
 kubectl apply -f verify-backups-cronjob.yaml -n velero
