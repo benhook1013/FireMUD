@@ -56,6 +56,18 @@ This document defines the backup schedule and disaster recovery procedures for F
 - Redis is **not restored** from backup during a cold start; it is repopulated from PostgreSQL after recovery.
   In development a `redis-data` volume can persist the AOF between container restarts. Restore an AOF file with `dev-tools/restore-redis-aof.sh`.
 
+### Redis AOF Reset on Deployment
+
+FireMUD wipes Redis state on every deployment. Redis is treated as a transient coordination layer and must always start fresh to ensure consistency with authoritative PostgreSQL data.
+
+During each Helm install or upgrade, a Kubernetes Job automatically deletes the Redis Append‑Only File (AOF) before the application starts:
+
+- AOF wipe is triggered via a Helm hook
+- Ensures no stale gameplay state or tick locks remain
+- Does not affect Redis crash recovery during runtime
+
+Because Redis is not a source of truth, this strategy guarantees a clean, deterministic runtime state on every deployment.
+
 ## ☁️ Kubernetes Production
 
 - **Velero** backs up StatefulSets, PersistentVolumeClaims, ConfigMaps, and Secrets.
