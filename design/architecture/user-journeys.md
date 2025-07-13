@@ -42,6 +42,7 @@ For step-by-step tooling instructions see the [Game Creator Guide](../user-guide
 ## 1. Sign Up
 
 Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and login flows are outlined in [Authentication & Authorization](./system-architecture-authentication.md).
+Admins and moderators can enable **two-factor authentication** (TOTP) as described in the [Security Architecture](./system-architecture-security.md).
 
 ```plaintext
 Player → Account Service
@@ -215,6 +216,7 @@ through the [Account Service](./microservices/account-service/README.md),
 which issues password reset emails and temporary login tokens. Suspicious
 attempts are logged by the
 [Logging & Admin Service](./microservices/logging-admin-service/README.md).
+If two-factor authentication was enabled, the service validates the TOTP code before issuing a new password.
 
 ```plaintext
 Player → Account Service → Logging & Admin Service (audit)
@@ -292,7 +294,8 @@ Player → Account Service → Logging & Admin Service (audit)
 FireMUD can be deployed locally using **Docker Compose** or to production via **Kubernetes**:
 
 1. **Local Development** – Run `./gradlew devUp` to start all services with Docker Compose. Configuration values are loaded from an `.env` file. See [Deployment Environments](./infrastructure/deployment-environments.md).
-2. **Production** – Kubernetes manifests load configuration through `ConfigMap` and `Secret` objects. Refer to [Environment & Secrets Management](./infrastructure/environment-and-secrets.md) for details. The cluster layout is described in the [Infrastructure Overview](./infrastructure/README.md).
+2. **Production** – Kubernetes manifests load configuration through `ConfigMap` and `Secret` objects. Refer to [Environment & Secrets Management](./infrastructure/environment-and-secrets.md) for details.
+3. **Infrastructure Overview** – Shared networking and deployment patterns are summarized in [Infrastructure Overview](./infrastructure/README.md).
 
 ```plaintext
 Developer → Docker Compose / Kubernetes → Running Services
