@@ -163,6 +163,10 @@ Logs, metrics, and traces flow into **Elasticsearch**, **Prometheus**, and **Jae
 For usage examples see the
 [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 The service also exposes moderation tools such as bans and runtime feature toggles.
+Policies are summarized in
+[Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
+and complex workflows are coordinated using the
+[Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md).
 
 ---
 
@@ -176,10 +180,10 @@ The service also exposes moderation tools such as bans and runtime feature toggl
 5. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
+6. **Apply Database Migrations** – Schema changes run automatically via Flyway when each service restarts. See [Database Migrations](./system-architecture-database-migrations.md).
+7. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
 
-6. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
-
-7. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+8. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
