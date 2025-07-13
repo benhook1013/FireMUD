@@ -18,6 +18,9 @@ kubectl apply -f base/world-management-service.yaml
 kubectl apply -f base/spring-cloud-gateway.yaml
 ```
 
+The file `base/firemud-db-env.yaml` defines the shared `firemud-config`
+`ConfigMap` and `firemud-secret` `Secret` used by these deployments.
+
 After the services are running, apply the default network policies found in
 `network-policies/` to restrict traffic to internal pods only:
 
