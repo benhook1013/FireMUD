@@ -120,6 +120,20 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("STOPPED");
     GameInstance saved = repository.save(instance);
     sessionStateService.deleteState(instance.getTenantId(), instance.getId());
+
+    if (gameLogicClient != null && sagaRunner != null) {
+      var saga =
+          new SagaBuilder("stopSession")
+              .step("notifyGameLogic", () -> gameLogicClient.ping())
+              .build();
+      try {
+        sagaRunner.run(saga);
+      } catch (SagaException e) {
+        logger.error("Saga failed during session stop", e);
+        throw new IllegalStateException("Failed to stop session", e);
+      }
+    }
+
     return mapper.toDto(saved);
   }
 
