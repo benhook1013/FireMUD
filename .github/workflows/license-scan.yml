@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Run ORT License Scan
+        id: ort
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
           fail-on: policy-violation
@@ -37,12 +38,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ort-result-${{ github.sha }}
-          path: |
-            ort-results/*
+          path: ${{ steps.ort.outputs.results-path }}
       - name: Summarize ORT report
         if: github.event_name == 'pull_request'
         run: |
-          SUMMARY_FILE=$(ls ort-results/scan-summary-*.md 2>/dev/null | head -n 1)
+          SUMMARY_FILE=$(ls "${{ steps.ort.outputs.results-path }}/scan-summary-*.md" 2>/dev/null | head -n 1)
           if [ -f "$SUMMARY_FILE" ]; then
             echo "### 📜 License Scan Summary" >> $GITHUB_STEP_SUMMARY
             cat "$SUMMARY_FILE" >> $GITHUB_STEP_SUMMARY
