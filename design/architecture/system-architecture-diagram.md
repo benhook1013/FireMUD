@@ -33,6 +33,7 @@ flowchart TD
     subgraph Observability
         FluentBit[Fluent Bit]
         Prom[Prometheus]
+        Alertmgr[Alertmanager]
         OTel[OTel Collector]
         Kibana[Kibana]
         Grafana[Grafana]
@@ -55,6 +56,11 @@ flowchart TD
 
     InternalServices --> Datastores
     InternalServices --> Observability
+    FluentBit --> ES
+    Prom --> Alertmgr
+    Prom --> Grafana
+    OTel --> Jaeger
+    ES --> Kibana
 ```
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, and send structured logs to Elasticsearch.
