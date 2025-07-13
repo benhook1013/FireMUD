@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.dto.AddGuildMemberRequest;
@@ -16,11 +17,15 @@ import org.mockito.Mockito;
 
 class GuildServiceImplTest {
   private GuildMemberRepository repository;
+  private net.firedevops.firemud.client.LoggingAdminClient loggingAdminClient;
+  private net.firedevops.firemud.common.saga.SagaRunner sagaRunner;
   private GuildServiceImpl service;
 
   @BeforeEach
   void setUp() {
     repository = Mockito.mock(GuildMemberRepository.class);
+    loggingAdminClient = Mockito.mock(net.firedevops.firemud.client.LoggingAdminClient.class);
+    sagaRunner = Mockito.mock(net.firedevops.firemud.common.saga.SagaRunner.class);
     service =
         new GuildServiceImpl(
             null,
@@ -31,12 +36,12 @@ class GuildServiceImplTest {
             null,
             repository,
             Mappers.getMapper(GuildMemberMapper.class),
-            null,
-            null);
+            loggingAdminClient,
+            sagaRunner);
   }
 
   @Test
-  void addMemberReturnsDto() {
+  void addMemberReturnsDto() throws Exception {
     AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 2L, 3L, "member");
     GuildMember saved = new GuildMember();
     saved.setId(1L);
@@ -45,6 +50,17 @@ class GuildServiceImplTest {
     saved.setAccountId(3L);
     saved.setRole("member");
     when(repository.save(any(GuildMember.class))).thenReturn(saved);
+    doAnswer(
+            inv -> {
+              try {
+                ((net.firedevops.firemud.common.saga.Saga) inv.getArgument(0)).run();
+              } catch (net.firedevops.firemud.common.saga.SagaException e) {
+                throw new RuntimeException(e);
+              }
+              return null;
+            })
+        .when(sagaRunner)
+        .run(any());
 
     GuildMemberDto dto = service.addMember(request);
     assertEquals(3L, dto.accountId());

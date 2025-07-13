@@ -69,6 +69,33 @@ To manually fix correctable issues, run:
 
 Linting rules are defined in `.markdownlint-cli2.jsonc` at the project root. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
 
+### Frontend Lint & Accessibility
+
+The React client in `web-client` provides npm scripts for linting, formatting,
+and running an accessibility audit. After installing dependencies with
+`npm ci`, you can run these checks:
+
+```bash
+cd web-client
+npm run lint
+npm run format -- -c
+```
+
+The accessibility audit relies on the axe-core CLI and requires Google Chrome
+to be installed. On Debian-based systems you can install it with:
+
+```bash
+sudo apt install -y wget
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y ./google-chrome-stable_current_amd64.deb
+```
+
+Then execute:
+
+```bash
+npm run accessibility
+```
+
 ## Lombok and MapStruct
 
 The microservices use **Lombok** to cut down on boilerplate and **MapStruct** for DTO mapping. Each service's `build.gradle.kts` already declares these dependencies:

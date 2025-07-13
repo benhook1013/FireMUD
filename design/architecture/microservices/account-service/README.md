@@ -106,6 +106,18 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 variables.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+Additional variables configure outbound email delivery:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SMTP_HOST` | SMTP server hostname | `localhost` |
+| `SMTP_PORT` | SMTP server port | `1025` |
+| `SMTP_USERNAME` | Username for SMTP auth | *(empty)* |
+| `SMTP_PASSWORD` | Password for SMTP auth | *(empty)* |
+| `SMTP_FROM` | From address for transactional emails | `no-reply@firemud.local` |
+| `FIREMUD_MAIL_VERIFICATION_URL` | Public URL for email verification links | `http://localhost:8080/auth/verify-email?token=%s` |
+| `FIREMUD_MAIL_RESET_URL` | Public URL for password reset links | `http://localhost:8080/reset-password?token=%s` |
+
 ## Proto Files
 
 The gRPC schemas for this service live in

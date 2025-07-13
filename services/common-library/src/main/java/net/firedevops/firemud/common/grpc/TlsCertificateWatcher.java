@@ -36,6 +36,9 @@ public class TlsCertificateWatcher implements AutoCloseable {
     this.watchService = FileSystems.getDefault().newWatchService();
     for (Path file : this.files) {
       Path dir = file.getParent();
+      if (dir == null) {
+        throw new IOException("File path has no parent: " + file);
+      }
       WatchKey key =
           dir.register(
               watchService,
