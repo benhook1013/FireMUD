@@ -1,6 +1,6 @@
 # Account Service Task List
 
-- [ ] **Develop Account Service**
+- [x] **Develop Account Service**
   - [x] Implement user registration and authentication (OAuth2, JWT)
   - [x] Implement session management and persistent logins
   - [x] Implement role-based access control (RBAC) for admins, moderators, and players
@@ -11,7 +11,7 @@
   - [x] Use saga orchestrator for account creation workflow
   - [x] Implement self-service account recovery
   - [x] Add optional 2FA for admin and moderator roles
-- [ ] **Develop Email & Notification System**
+- [x] **Develop Email & Notification System**
   - [x] Implement email verification & password resets
   - [x] Implement in-game notification system for events & messages
   - [x] Configure SMTP provider and test templates
@@ -21,7 +21,7 @@
   - [x] Integrate Stripe or similar for in-game purchases
   - [x] Support subscriptions, one-time purchases, and donations
   - [x] Enforce platform fee on transactions
-  - [ ] Implement refund & chargeback handling
+  - [x] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [x] Create `payment_transaction` and `subscription` entities in the Account Service
   - [x] Add gRPC methods in `AccountService` for payments
