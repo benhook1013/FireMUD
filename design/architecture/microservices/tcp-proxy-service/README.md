@@ -105,7 +105,7 @@ Additional variables control the proxy runtime behaviour:
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent connections per client IP | `5` |
 | `TCP_PROXY_MAX_MSGS_PER_SEC` | Allowed messages per second per client | `5` |
 
-## Metrics & Tracing
+### Metrics & Tracing
 
 Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The
 service exports OpenTelemetry spans to the collector defined by the
