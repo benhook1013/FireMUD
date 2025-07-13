@@ -33,6 +33,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
 
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
+  private Counter lockContentionCounter;
   private Timer tickTimer;
   private Timer luaTimer;
   private java.util.concurrent.atomic.AtomicInteger retryQueueDepth =
@@ -45,6 +46,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   void init() {
     enqueueCounter = meterRegistry.counter("automation_tick_events_enqueued_total");
     redisErrorCounter = meterRegistry.counter("automation_tick_redis_errors_total");
+    lockContentionCounter = meterRegistry.counter("automation_tick_lock_contention_total");
     tickTimer = meterRegistry.timer("automation_tick_duration_ms");
     luaTimer = meterRegistry.timer("automation_lua_latency_ms");
     Gauge.builder(
@@ -80,6 +82,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
     Boolean acquired =
         redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
     if (Boolean.FALSE.equals(acquired)) {
+      lockContentionCounter.increment();
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }

@@ -12,6 +12,7 @@ import net.firedevops.firemud.service.FeatureFlagService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import io.micrometer.core.annotation.Timed;
 
 @Service
 @RequiredArgsConstructor
@@ -22,6 +23,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
   private final FeatureFlagMapper mapper;
 
   @Override
+  @Timed(value = "gamesession.feature.toggle")
   @Transactional
   public FeatureFlagDto toggleFlag(ToggleFeatureFlagRequest request) {
     logger.info("Toggling feature flag {} for tenant {}", request.name(), request.tenantId());

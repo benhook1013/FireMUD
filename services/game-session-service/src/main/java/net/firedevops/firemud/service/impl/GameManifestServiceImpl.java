@@ -9,6 +9,7 @@ import net.firedevops.firemud.service.GameManifestService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import io.micrometer.core.annotation.Timed;
 
 @Service
 public class GameManifestServiceImpl implements GameManifestService {
@@ -22,6 +23,7 @@ public class GameManifestServiceImpl implements GameManifestService {
   }
 
   @Override
+  @Timed(value = "gamesession.manifest.create")
   @Transactional
   public GameManifestDto createManifest(GameManifestDto dto) {
     logger.info("Creating game manifest for version {}", dto.versionId());

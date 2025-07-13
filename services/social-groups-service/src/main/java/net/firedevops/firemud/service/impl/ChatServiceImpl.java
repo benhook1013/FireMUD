@@ -20,6 +20,7 @@ import org.slf4j.Logger;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import io.micrometer.core.annotation.Timed;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +45,7 @@ public class ChatServiceImpl implements ChatService {
   }
 
   @Override
+  @Timed(value = "chat.send")
   @Transactional
   public ChatMessageDto sendMessage(SendMessageRequestDto request) {
     logger.info("Chat message from {}", request.senderAccountId());
@@ -95,6 +97,7 @@ public class ChatServiceImpl implements ChatService {
   }
 
   @Override
+  @Timed(value = "chat.tells")
   public java.util.List<String> getRecentTells(Long tenantId, Long accountId) {
     String key = String.format("tell:%d:%d", tenantId, accountId);
     try {
