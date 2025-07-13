@@ -4,3 +4,8 @@ account-service:
 game-session-service:
   image:
     tag: latest
+redis:
+  # Helm release name for the Redis chart
+  releaseName: redis
+  # Optional override of the PersistentVolumeClaim used for the AOF file
+  aofPvc: ""

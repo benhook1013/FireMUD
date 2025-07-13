@@ -29,3 +29,8 @@ To deploy all services at once you can use the umbrella chart:
 helm install firemud ./firemud \
   -f values-local.yaml
 ```
+
+The umbrella chart includes a Helm hook job that wipes the Redis Append-Only File on each deployment.
+Set `redis.releaseName` in your values file to match the Redis Helm release name
+(for example `firemud-redis` in production) so the hook can mount the correct
+PersistentVolumeClaim.
