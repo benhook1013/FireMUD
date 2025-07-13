@@ -87,7 +87,6 @@ Important variables include:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `SERVER_PORT` | HTTP port exposed by the service | `8080` |
 
 ## Proto Files
