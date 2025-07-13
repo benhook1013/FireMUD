@@ -1,42 +1,20 @@
 # 📈 FireMUD System Architecture: Diagram
 
-```plaintext
-     +------------+      TCP (Telnet)         +-------------------+
-     | MUD Client | <-----------------------> | TCP Proxy Service |
-     +------------+                           +---------+---------+
-                                                        |
-                                                        | WebSocket (wss)
-                                                        |
-                                                        v
-     +------------+      WebSocket/HTTP     +----------------------+
-     | Web Client | <----------------------> | Spring Cloud Gateway |
-     +------------+                          +----------+-----------+
-                                                        |
-                                                        | WebSocket (wss)
-                                                        |
-                                                        v
-                                         +----------------------------+
-                                         | Game Session Service       |
-                                         +--------------+-------------+
-                                                        |
-            +--------------------------+----------------+---------------+----------------------------+
-            |                          |                |               |                            |
-            v                          v                |               v                            v
-  +-------------------+      +-------------------+      |      +-------------------+      +--------------------+
-  | Account Service   |      | World Management  |      |      | Entity Management |      | Game Logic Service |
-  | (Auth)            |      | (Maps/Rooms)      |      |      | (Players, NPCs,   |      | (Rules, Commands)  |
-  |                   |      |                   |      |      | Items)            |      |                    |
-  +-------------------+      +-------------------+      |      +-------------------+      +--------------------+
-                                                        |                                               
-            +--------------------------+----------------+---------------+----------------------------+
-            |                          |                                |                            |
-            v                          v                                v                            v           
-  +-------------------+        +-------------------+           +-------------------+      +--------------------+
-  | Game Design       |        | Automation &      |           | Social & Groups   |      | Logging & Admin    |
-  | Service           |        | Scripting Service |           | Service           |      | Service            |
-  | (Templates,       |        |                   |           |                   |      |                    |
-  | Backups)          |        +-------------------+           +-------------------+      +--------------------+
-  +-------------------+ 
+```mermaid
+flowchart TD
+    MUD[MUD Client] -- TCP --> TCPProxy[TCP Proxy Service]
+    Web[Web Client] -- wss/HTTP --> Gateway[Spring Cloud Gateway]
+    TCPProxy -- wss --> Gateway
+    Gateway -- wss --> Session[Game Session Service]
+
+    Session --> Account[Account Service]
+    Session --> World[World Management Service]
+    Session --> Entity[Entity Management Service]
+    Session --> Logic[Game Logic Service]
+    Session --> Design[Game Design Service]
+    Session --> Script[Automation & Scripting Service]
+    Session --> Social[Social & Groups Service]
+    Session --> Logging[Logging & Admin Service]
 ```
 
 ## 📚 Related Documentation
