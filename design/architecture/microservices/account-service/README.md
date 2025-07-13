@@ -120,8 +120,8 @@ The gRPC schemas for this service live in
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [User Journeys – Sign Up](../user-journeys.md#1-sign-up)
-- [User Journeys](../user-journeys.md#10-purchases-and-subscriptions) – payment and subscription workflow.
-- [User Journeys – Account Data Export & Deletion](../user-journeys.md#17-account-data-export--deletion)
+- [User Journeys](../user-journeys.md#11-purchases-and-subscriptions) – payment and subscription workflow.
+- [User Journeys – Account Data Export & Deletion](../user-journeys.md#18-account-data-export--deletion)
 - [Redis Architecture](../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
