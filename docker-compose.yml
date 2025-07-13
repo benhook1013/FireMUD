@@ -199,6 +199,7 @@ services:
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
       - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis-data:/data
     ports:
       - "6379:6379"
     healthcheck:
@@ -209,3 +210,4 @@ services:
 
 volumes:
   postgres-data:
+  redis-data:

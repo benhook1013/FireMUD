@@ -11,3 +11,14 @@ kubectl apply -f schedule.yaml -n velero
 ```
 
 Ensure Velero is installed and configured with access to your object storage bucket prior to applying the schedule.
+
+Example `values.yaml` snippet when using AWS S3:
+
+```yaml
+configuration:
+  provider: aws
+  backupStorageLocation:
+    bucket: firemud-backups
+```
+
+For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
