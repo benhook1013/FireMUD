@@ -22,7 +22,7 @@
   - [x] Support subscriptions, one-time purchases, and donations
   - [x] Enforce platform fee on transactions
   - [x] Implement refund & chargeback handling
-  - [ ] Use saga orchestrator for cross-service purchase workflows
+  - [x] Use saga orchestrator for cross-service purchase workflows
   - [x] Create `payment_transaction` and `subscription` entities in the Account Service
   - [x] Add gRPC methods in `AccountService` for payments
   - [x] Define proto contracts for payment and subscription flows in the account proto namespace
