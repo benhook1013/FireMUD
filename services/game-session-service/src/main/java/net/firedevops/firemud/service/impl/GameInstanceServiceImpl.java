@@ -18,6 +18,7 @@ import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import io.micrometer.core.annotation.Timed;
 
 /** Default implementation of {@link GameInstanceService}. */
 @Service
@@ -69,6 +70,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   @Override
+  @Timed(value = "gamesession.start")
   @Transactional
   public GameInstanceDto startSession(StartSessionRequest request) {
     logger.info(
@@ -126,6 +128,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   @Override
+  @Timed(value = "gamesession.stop")
   @Transactional
   public GameInstanceDto stopSession(long sessionId) {
     GameInstance instance =
@@ -158,6 +161,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   @Override
+  @Timed(value = "gamesession.restart")
   @Transactional
   public GameInstanceDto restartSession(long sessionId) {
     GameInstance instance =

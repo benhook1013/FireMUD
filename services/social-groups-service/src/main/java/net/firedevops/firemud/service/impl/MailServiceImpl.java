@@ -12,6 +12,7 @@ import net.firedevops.firemud.service.MailService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import io.micrometer.core.annotation.Timed;
 
 @Service
 @RequiredArgsConstructor
@@ -22,6 +23,7 @@ public class MailServiceImpl implements MailService {
   private final MailMessageMapper mapper;
 
   @Override
+  @Timed(value = "mail.send")
   @Transactional
   public MailMessageDto sendMail(SendMailRequest request) {
     logger.info("Mail from {} to {}", request.senderAccountId(), request.recipientAccountId());

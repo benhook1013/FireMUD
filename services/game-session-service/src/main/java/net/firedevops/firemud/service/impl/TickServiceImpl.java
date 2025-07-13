@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.annotation.Timed;
 import java.time.Duration;
 import java.util.List;
 import javax.annotation.PostConstruct;
@@ -71,6 +72,7 @@ public class TickServiceImpl implements TickService {
   }
 
   @Override
+  @Timed(value = "gamesession.command.enqueue")
   public void enqueueCommand(Long sessionId, String command) {
     redisTemplate.opsForList().rightPush(queueKey(sessionId), command);
     enqueueCounter.increment();
@@ -78,6 +80,7 @@ public class TickServiceImpl implements TickService {
   }
 
   @Override
+  @Timed(value = "gamesession.tick.process")
   @Async("tickExecutor")
   public void processTick(Long sessionId) {
     long start = System.nanoTime();
@@ -127,6 +130,7 @@ public class TickServiceImpl implements TickService {
   }
 
   @Override
+  @Timed(value = "gamesession.state.query")
   public String queryState(Long sessionId) {
     Object state = redisTemplate.opsForValue().get(stateKey(sessionId));
     return state != null ? state.toString() : "{}";

@@ -7,6 +7,7 @@ import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import io.micrometer.core.annotation.Timed;
 
 /** Default Redis-backed implementation of {@link SessionStateService}. */
 @Service
@@ -17,6 +18,7 @@ public class SessionStateServiceImpl implements SessionStateService {
   private final RedisTemplate<String, Object> redisTemplate;
 
   @Override
+  @Timed(value = "gamesession.state.save")
   public void saveState(GameInstanceDto dto) {
     String key = key(dto.tenantId(), dto.id());
     redisTemplate.opsForValue().set(key, dto);
@@ -24,6 +26,7 @@ public class SessionStateServiceImpl implements SessionStateService {
   }
 
   @Override
+  @Timed(value = "gamesession.state.delete")
   public void deleteState(Long tenantId, Long sessionId) {
     String key = key(tenantId, sessionId);
     redisTemplate.delete(key);

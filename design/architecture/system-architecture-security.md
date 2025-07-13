@@ -18,7 +18,7 @@ seamlessly with cert-manager for automatic rotation.
 ### Key and Certificate Rotation
 
 - cert-manager issues both JWT signing keys and mTLS certificates, backed by an internal CA.
-- All services poll their mounted secrets for updates and support **hot reload** of keys and certificates.
+- All services poll their mounted secrets for updates and support **hot reload** of keys and certificates. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH` so that rotation occurs without restarts.
 - During rotation, services cache both current and previous credentials to allow for **seamless transition**.
 - JWKS is updated automatically to reflect the current public keyset.
 

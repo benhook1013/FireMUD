@@ -55,7 +55,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Events are forwarded to the Account Service for enforcement and stored for
   compliance purposes.
 
-### REST & gRPC APIs
+### REST & gRPC Endpoints
 
 #### REST
 
@@ -114,15 +114,6 @@ Additional variables specific to this service:
 | -------- | ------- | ------- |
 | *(none)* | This service relies only on the shared configuration variables. | *(none)* |
 
-## Saga Dashboard
-
-The service exposes `/sagas` and `/sagas/{id}/steps` endpoints for operators to inspect
-long-running workflows coordinated via the shared Saga library. The dashboard reads from
-the `saga_instance` and `saga_step` tables and publishes a `sagas.active` Prometheus gauge.
-
-See [Transaction Strategies](../system-architecture-transactions.md) for an overview of
-Saga usage across FireMUD.
-
 ## Proto Files
 
 API schemas are kept in
@@ -147,6 +138,17 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
+## Additional Details
+
+### Saga Dashboard
+
+The service exposes `/sagas` and `/sagas/{id}/steps` endpoints for operators to inspect
+long-running workflows coordinated via the shared Saga library. The dashboard reads from
+the `saga_instance` and `saga_step` tables and publishes a `sagas.active` Prometheus gauge.
+
+See [Transaction Strategies](../system-architecture-transactions.md) for an overview of
+Saga usage across FireMUD.
 
 ## Future Enhancements
 
