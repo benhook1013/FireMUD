@@ -9,7 +9,7 @@
   - [x] Implement player data export & deletion (GDPR compliance)
   - [x] Expose JWKS endpoint for token verification
   - [x] Use saga orchestrator for account creation workflow
-  - [ ] Implement self-service account recovery
+  - [x] Implement self-service account recovery
   - [x] Add optional 2FA for admin and moderator roles
 - [ ] **Develop Email & Notification System**
   - [x] Implement email verification & password resets
@@ -20,7 +20,7 @@
 - [ ] **Develop Monetization & Payment Module**
   - [x] Integrate Stripe or similar for in-game purchases
   - [ ] Support subscriptions, one-time purchases, and donations
-  - [ ] Enforce platform fee on transactions
+  - [x] Enforce platform fee on transactions
   - [ ] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [x] Create `payment_transaction` and `subscription` entities in the Account Service

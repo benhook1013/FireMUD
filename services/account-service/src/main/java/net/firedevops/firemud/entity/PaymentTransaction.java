@@ -18,6 +18,9 @@ public class PaymentTransaction {
   @Column(name = "amount_cents", nullable = false)
   private Long amountCents;
 
+  @Column(name = "platform_fee_cents", nullable = false)
+  private Long platformFeeCents;
+
   @Column(nullable = false, length = 10)
   private String currency;
 

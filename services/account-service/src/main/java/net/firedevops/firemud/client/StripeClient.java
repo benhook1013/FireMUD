@@ -20,7 +20,7 @@ public class StripeClient {
   public IntentResult createPaymentIntent(long amountCents, String currency)
       throws StripeException {
     Stripe.apiKey = apiKey;
-    long fee = Math.round(amountCents * platformFeePercent / 100.0);
+    long fee = calculatePlatformFee(amountCents);
     PaymentIntentCreateParams params =
         PaymentIntentCreateParams.builder()
             .setAmount(amountCents)
@@ -33,6 +33,10 @@ public class StripeClient {
             .build();
     com.stripe.model.PaymentIntent intent = com.stripe.model.PaymentIntent.create(params);
     return new IntentResult(intent.getId(), intent.getClientSecret(), intent.getStatus());
+  }
+
+  public long calculatePlatformFee(long amountCents) {
+    return Math.round(amountCents * platformFeePercent / 100.0);
   }
 
   public void createRefund(String paymentIntentId) throws StripeException {
