@@ -32,6 +32,7 @@ public class TickServiceImpl implements TickService {
 
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
+  private Counter lockContentionCounter;
   private Timer tickTimer;
   private Timer luaTimer;
   private java.util.concurrent.atomic.AtomicInteger retryQueueDepth =
@@ -44,6 +45,7 @@ public class TickServiceImpl implements TickService {
   void init() {
     this.enqueueCounter = meterRegistry.counter("game_session_commands_enqueued_total");
     this.redisErrorCounter = meterRegistry.counter("game_session_redis_errors_total");
+    this.lockContentionCounter = meterRegistry.counter("game_session_lock_contention_total");
     this.tickTimer = meterRegistry.timer("game_session_tick_duration_ms");
     this.luaTimer = meterRegistry.timer("game_session_lua_latency_ms");
     Gauge.builder(
@@ -75,6 +77,7 @@ public class TickServiceImpl implements TickService {
     Boolean acquired =
         redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
     if (Boolean.FALSE.equals(acquired)) {
+      lockContentionCounter.increment();
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }

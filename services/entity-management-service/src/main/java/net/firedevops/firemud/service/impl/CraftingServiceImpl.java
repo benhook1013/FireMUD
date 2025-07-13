@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.CraftingRecipeDto;
 import net.firedevops.firemud.entity.CraftingRecipe;
@@ -17,6 +18,7 @@ public class CraftingServiceImpl implements CraftingService {
 
   @Override
   @Transactional
+  @Timed(value = "crafting.createRecipe")
   public CraftingRecipeDto createRecipe(CraftingRecipeDto dto) {
     CraftingRecipe entity = mapper.toEntity(dto);
     entity = repository.save(entity);
@@ -25,6 +27,7 @@ public class CraftingServiceImpl implements CraftingService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "crafting.getRecipe")
   public CraftingRecipeDto getRecipe(Long id) {
     CraftingRecipe entity = repository.findWithIngredientsById(id);
     return mapper.toDto(entity);

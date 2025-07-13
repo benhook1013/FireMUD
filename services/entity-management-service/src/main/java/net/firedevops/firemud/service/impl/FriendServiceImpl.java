@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.CharacterFriendDto;
@@ -24,12 +25,14 @@ public class FriendServiceImpl implements FriendService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "friend.list")
   public Page<CharacterFriendDto> listFriends(Long characterId, Pageable pageable) {
     return repository.findByIdCharacterId(characterId, pageable).map(mapper::toDto);
   }
 
   @Override
   @Transactional
+  @Timed(value = "friend.add")
   public CharacterFriendDto addFriend(Long characterId, Long friendId) {
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
@@ -51,6 +54,7 @@ public class FriendServiceImpl implements FriendService {
 
   @Override
   @Transactional
+  @Timed(value = "friend.remove")
   public void removeFriend(Long characterId, Long friendId) {
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);

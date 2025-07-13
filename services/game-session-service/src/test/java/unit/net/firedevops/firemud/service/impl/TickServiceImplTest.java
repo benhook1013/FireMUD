@@ -47,4 +47,14 @@ class TickServiceImplTest {
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), any(List.class));
   }
+
+  @Test
+  void lockContentionIncrementsMetric() {
+    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(false);
+
+    service.processTick(2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
+  }
 }

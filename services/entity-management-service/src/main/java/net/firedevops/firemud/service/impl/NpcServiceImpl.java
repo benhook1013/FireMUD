@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entity.Npc;
@@ -16,6 +17,7 @@ public class NpcServiceImpl implements NpcService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "npc.shouldRespawn")
   public boolean shouldRespawn(Long npcId) {
     Npc npc = npcRepository.findById(npcId).orElseThrow();
     if (npc.getLastDefeatedAt() == null) {
