@@ -83,6 +83,20 @@ The diagram covers every microservice currently in the repository:
 - **Social & Groups Service** – Manages chat, guilds, and social networking.
 - **Logging & Admin Service** – Centralizes logging, metrics, and admin tools.
 
+## 🔍 Observability Components
+
+The diagram also illustrates the monitoring stack shared by every service:
+
+- **Fluent Bit** – Collects structured logs from each container.
+- **Elasticsearch** – Stores logs for search and troubleshooting.
+- **Prometheus** – Scrapes metrics and forwards alerts to **Alertmanager**.
+- **Grafana** – Visualizes dashboards based on Prometheus data.
+- **OpenTelemetry Collector** – Aggregates distributed traces.
+- **Jaeger** – Provides a UI for end‑to‑end trace analysis.
+- **Kibana** – Queries and visualizes Elasticsearch logs.
+
+See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for deployment details.
+
 ## 📚 Related Documentation
 
 - [System Context Diagram](./system-context-diagram.md)
