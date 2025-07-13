@@ -44,6 +44,29 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
 
+  private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys) {
+    int attempts = 0;
+    while (true) {
+      try {
+        return redisTemplate.execute(script, keys);
+      } catch (Exception ex) {
+        attempts++;
+        redisErrorCounter.increment();
+        if (attempts >= 3) {
+          logger.error("Redis script execution failed after {} attempts", attempts, ex);
+          throw ex;
+        }
+        logger.debug("Redis script execution failed, retrying attempt {}", attempts, ex);
+        try {
+          Thread.sleep(50L * attempts);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw new RuntimeException("Retry interrupted", ie);
+        }
+      }
+    }
+  }
+
   @PostConstruct
   void init() {
     enqueueCounter = meterRegistry.counter("automation_tick_events_enqueued_total");
@@ -112,7 +135,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
             () ->
                 luaTimer.record(
                     () ->
-                        redisTemplate.execute(
+                        executeScriptWithRetry(
                             commitScript, List.of(pendingKey(tenantId, scriptId)))));
         awaitReplication();
       }
@@ -120,22 +143,21 @@ public class ScriptTickServiceImpl implements ScriptTickService {
           () ->
               luaTimer.record(
                   () ->
-                      redisTemplate.execute(
+                      executeScriptWithRetry(
                           stageScript,
                           List.of(queueKey(tenantId, scriptId), pendingKey(tenantId, scriptId)))));
       tickTimer.record(
           () ->
               luaTimer.record(
                   () ->
-                      redisTemplate.execute(
+                      executeScriptWithRetry(
                           commitScript, List.of(pendingKey(tenantId, scriptId)))));
       awaitReplication();
     } catch (Exception ex) {
-      redisErrorCounter.increment();
       logger.error("Script tick failed, rolling back", ex);
       luaTimer.record(
           () ->
-              redisTemplate.execute(
+              executeScriptWithRetry(
                   rollbackScript,
                   List.of(pendingKey(tenantId, scriptId), queueKey(tenantId, scriptId))));
       awaitReplication();
