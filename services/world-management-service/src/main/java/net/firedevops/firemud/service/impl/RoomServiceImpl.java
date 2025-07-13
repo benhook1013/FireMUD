@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
@@ -40,6 +41,7 @@ public class RoomServiceImpl implements RoomService {
   }
 
   @Override
+  @Timed(value = "room.get")
   public RoomDto getRoom(Long tenantId, Long roomId) {
     String key = cacheKey(tenantId, roomId);
     Object cached = redisTemplate.opsForValue().get(key);

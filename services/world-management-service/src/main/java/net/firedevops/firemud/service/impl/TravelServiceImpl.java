@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entity.RoomExit;
@@ -13,6 +14,7 @@ public class TravelServiceImpl implements TravelService {
   private final RoomExitRepository exitRepository;
 
   @Override
+  @Timed(value = "travel.findPath")
   public List<Long> findPath(Long tenantId, Long startRoomId, Long targetRoomId) {
     if (startRoomId.equals(targetRoomId)) {
       return List.of(startRoomId);

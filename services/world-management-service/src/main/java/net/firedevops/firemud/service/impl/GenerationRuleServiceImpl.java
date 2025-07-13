@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.GenerationRuleDto;
 import net.firedevops.firemud.entity.GenerationRule;
@@ -19,6 +20,7 @@ public class GenerationRuleServiceImpl implements GenerationRuleService {
 
   @Override
   @Transactional
+  @Timed(value = "generationRule.save")
   public GenerationRuleDto saveRule(GenerationRuleDto dto) {
     GenerationRule entity = mapper.toEntity(dto);
     entity = repository.save(entity);
@@ -27,6 +29,7 @@ public class GenerationRuleServiceImpl implements GenerationRuleService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "generationRule.list")
   public Page<GenerationRuleDto> listRules(Long tenantId, Pageable pageable) {
     return repository.findByTenantId(tenantId, pageable).map(mapper::toDto);
   }

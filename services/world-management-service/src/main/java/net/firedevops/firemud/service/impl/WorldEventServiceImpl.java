@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
@@ -37,6 +38,7 @@ public class WorldEventServiceImpl implements WorldEventService {
   }
 
   @Override
+  @Timed(value = "worldEvent.schedule")
   public WorldEventDto scheduleEvent(WorldEventDto dto) {
     WorldEvent entity = mapper.toEntity(dto);
     if (entity.getExecuteAt() == null) {
@@ -49,6 +51,7 @@ public class WorldEventServiceImpl implements WorldEventService {
   @Override
   @Scheduled(fixedDelayString = "${world.event.check-delay-ms:60000}")
   @Transactional
+  @Timed(value = "worldEvent.processDue")
   public void processDueEvents() {
     LocalDateTime now = LocalDateTime.now();
     List<WorldEvent> events =
