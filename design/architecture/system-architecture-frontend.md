@@ -9,7 +9,7 @@ This document describes the structure and tooling for FireMUD's browser-based us
 FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling:
 
 ```text
-frontend/
+web-client/
   src/
     features/
       account/
