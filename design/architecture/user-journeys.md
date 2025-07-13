@@ -72,6 +72,7 @@ Creators refine the world and its inhabitants using several services:
 - **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
 - **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
 - **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing.
+- **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
 - **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
 
 ```plaintext
@@ -320,8 +321,8 @@ observability stack:
 1. **Log Aggregation** – Fluent Bit forwards service logs to **Elasticsearch**,
    which are explored via **Kibana**. See
    [Logging & Monitoring](./system-architecture-logging-monitoring.md).
-2. **Metrics & Dashboards** – **Prometheus** scrapes metrics and **Grafana**
-   visualizes dashboards such as the
+2. **Metrics & Alerts** – **Prometheus** scrapes metrics, sends alerts through
+   **Alertmanager**, and **Grafana** visualizes dashboards such as the
    [Service Overview](../observability/grafana/service-overview.json).
 3. **Tracing** – Distributed traces are sent to **Jaeger** via the OpenTelemetry
    Collector as described in [Tracing](./system-architecture-tracing.md).
@@ -413,6 +414,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Tick System](./system-architecture-ticks.md)
 - [Tracing](./system-architecture-tracing.md)
 - [Transaction Strategies](./system-architecture-transactions.md)
+- [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)
 - [Version Control](./microservices/game-design-service/version-control.md)
 - [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md)
 - [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md)
