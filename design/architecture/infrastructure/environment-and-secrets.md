@@ -113,11 +113,13 @@ FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE=logging-admin-service:6565
 
 ### Observability
 
-All services export OpenTelemetry spans. The collector endpoint can be overridden with:
+All services export OpenTelemetry spans. The collector endpoint can be
+overridden with the `OTEL_ENDPOINT` environment variable (mapped to the
+Spring property `otel.endpoint`):
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `otel.endpoint` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
+| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 
 ### Additional Notes
 

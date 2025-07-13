@@ -108,7 +108,8 @@ Additional variables control the proxy runtime behaviour:
 
 Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The
 service exports OpenTelemetry spans to the collector defined by the
-`otel.endpoint` property so traces appear in Jaeger.
+`OTEL_ENDPOINT` environment variable (Spring property `otel.endpoint`) so
+traces appear in Jaeger.
 
 ## Proto Files
 
