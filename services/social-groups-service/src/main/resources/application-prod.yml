@@ -15,10 +15,6 @@ management:
       probes:
         enabled: true
 
-loggingAdmin:
-  host: ${FIREMUD_LOGGINGADMIN_HOST:logging-admin-service}
-  port: ${FIREMUD_LOGGINGADMIN_PORT:6565}
-
 firemud:
   services:
     logging-admin-service: ${FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE}
