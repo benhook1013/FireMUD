@@ -52,15 +52,15 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 |---------------|-------------------------------------------------------------------------|
 | `accountId`   | Identity of the authenticated account                                   |
 | `globalRoles` | Cross-game privileges (e.g., `platformAdmin`, `moderator`)              |
-| `scopedRoles` | Map of `gameId` → roles (e.g., `"game-abc": ["admin", "designer"]`)     |
+| `scopedRoles` | Map of `tenantId` (game ID) → roles (e.g., `"tenant-abc": ["admin", "designer"]`)     |
 
 ### 🧾 Example JWT Payload
 
 - `accountId`: `"user-123"`
 - `globalRoles`: `["moderator"]`
 - `scopedRoles`:
-  - `"game-abc"` → `["admin", "designer"]`
-  - `"game-def"` → `["moderator"]`
+  - `"tenant-abc"` → `["admin", "designer"]`
+  - `"tenant-def"` → `["moderator"]`
 
 > Tokens are short-lived and internal only. Gameplay context (e.g., `playerId`, `worldId`) is stored in Redis and sent via command envelopes.
 
