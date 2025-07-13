@@ -44,6 +44,7 @@ class PaymentServiceImplTest {
               tx.setId(10L);
               return tx;
             });
+    when(stripeClient.calculatePlatformFee(500L)).thenReturn(25L);
     when(stripeClient.createPaymentIntent(500L, "usd"))
         .thenReturn(new StripeClient.IntentResult("pi", "secret", "pending"));
 
@@ -51,9 +52,11 @@ class PaymentServiceImplTest {
 
     assertEquals(10L, dto.id());
     assertEquals("secret", dto.clientSecret());
+    assertEquals(25L, dto.platformFeeCents());
     ArgumentCaptor<PaymentTransaction> captor = ArgumentCaptor.forClass(PaymentTransaction.class);
     verify(txRepo).save(captor.capture());
     assertEquals(2L, captor.getValue().getTenantId());
+    assertEquals(25L, captor.getValue().getPlatformFeeCents());
   }
 
   @Test

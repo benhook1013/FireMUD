@@ -47,6 +47,7 @@ public class PaymentServiceImpl implements PaymentService {
             .findById(accountId)
             .filter(a -> a.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    long platformFee = stripeClient.calculatePlatformFee(amountCents);
     StripeClient.IntentResult intent;
     try {
       intent = stripeClient.createPaymentIntent(amountCents, "usd");
@@ -58,6 +59,7 @@ public class PaymentServiceImpl implements PaymentService {
     tx.setAccount(account);
     tx.setAmountCents(amountCents);
     tx.setCurrency("USD");
+    tx.setPlatformFeeCents(platformFee);
     tx.setProviderId(intent.id());
     tx.setStatus(intent.status());
     tx.setTenantId(tenantId);
@@ -67,6 +69,7 @@ public class PaymentServiceImpl implements PaymentService {
         tenantId,
         accountId,
         tx.getAmountCents(),
+        tx.getPlatformFeeCents(),
         tx.getCurrency(),
         intent.clientSecret());
   }

@@ -5,5 +5,6 @@ public record PaymentIntentDto(
     Long tenantId,
     Long accountId,
     Long amountCents,
+    Long platformFeeCents,
     String currency,
     String clientSecret) {}
