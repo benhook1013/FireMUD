@@ -2,7 +2,7 @@
 
 This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP) to enable richer tooling for AI-assisted game creation.
 
-## Goals
+## 🎯 Goals
 
 - Allow editors and automated tools to communicate with the server using structured MCP messages.
 - Enable scripted workflows where the AI can create rooms, items, and NPCs via standardized commands.
@@ -26,3 +26,4 @@ Future enhancements will include bulk import and transaction support for batch c
 - [Game Design Service](./microservices/game-design-service/README.md)
 - [TCP Proxy Service](./microservices/tcp-proxy-service/README.md)
 - [Modding Framework](./microservices/game-design-service/modding-framework.md)
+- [User Journeys – Extensibility & External Tools](./user-journeys.md#21-extensibility--external-tools)

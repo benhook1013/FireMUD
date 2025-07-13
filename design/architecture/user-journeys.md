@@ -1,9 +1,9 @@
 # 🔄 FireMUD User Journeys
 
-This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
-It complements the [System Architecture Overview](./system-architecture-overview.md) and [System Context Diagram](./system-context-diagram.md) to show how users traverse the overall platform.
+This guide summarizes typical workflows for creators and players. Each numbered step links to the microservice or design document that manages that portion of the flow.
+Use it alongside the [System Architecture Overview](./system-architecture-overview.md) and [System Context Diagram](./system-context-diagram.md) to understand how users traverse the platform.
 For a breakdown of every service see the [Microservices Overview](./microservices/README.md) and the [Service Responsibility Matrix](./service-responsibility-matrix.md).
-For step-by-step tooling instructions see the [Game Creator Guide](../user-guides/game-creator-guide.md).
+Detailed tooling instructions live in the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ## 🎯 Goals
 

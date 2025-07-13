@@ -2,7 +2,7 @@
 
 This document sketches the planned modding system that allows administrators to extend a published game without republishing a full version.
 
-## Goals
+## 🎯 Goals
 
 - Enable runtime loading of approved plugins written in the same scripting DSL used for automation.
 - Provide a secure sandbox so plugins cannot access unauthorized data or system resources.
@@ -19,3 +19,4 @@ This document sketches the planned modding system that allows administrators to 
 
 - [Automation & Scripting Service](../automation-scripting-service/README.md)
 - [Game Design Service Architecture](README.md)
+- [User Journeys – Extensibility & External Tools](../user-journeys.md#21-extensibility--external-tools)
