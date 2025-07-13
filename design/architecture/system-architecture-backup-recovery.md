@@ -14,13 +14,15 @@ This document defines the backup schedule and disaster recovery procedures for F
 - Velero backup schedules are installed automatically by the
   production Terraform modules using `k8s/velero/schedule.yaml`.
   Operators must configure Velero with access to an object storage bucket
-    (AWS S3, GCS, or MinIO). Example `values.yaml` snippet:
+    (AWS S3, GCS, or MinIO). Copy `k8s/velero/values.example.yaml` to `values.yaml`
+    and adjust the provider and bucket. Example `values.yaml` snippet:
 
     ```yaml
     configuration:
       provider: aws
       backupStorageLocation:
         bucket: firemud-backups
+        prefix: postgres
       ```
 
     For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml`
@@ -69,6 +71,17 @@ This document defines the backup schedule and disaster recovery procedures for F
 - Create ad hoc snapshots with `dev-tools/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
 - Redis starts empty and repopulates when services access the database.
+
+---
+
+## ✅ Backup Verification & Restoration Testing
+
+- The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs
+  `dev-tools/verify-backups.sh` daily to ensure recent snapshots are present in
+  the object store.
+- Operators should periodically test recovery by restoring a snapshot into a
+  throwaway namespace with `dev-tools/restore-cluster.sh <backup-name>` and
+  verifying services start successfully.
 
 ---
 

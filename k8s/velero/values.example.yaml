@@ -1,0 +1,7 @@
+# Example Velero Helm values for FireMUD
+# Customize the provider and bucket name for your environment.
+configuration:
+  provider: aws
+  backupStorageLocation:
+    bucket: firemud-backups
+    prefix: postgres

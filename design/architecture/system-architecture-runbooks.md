@@ -46,6 +46,7 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      restart containers with `docker compose restart`.
    - Scheduled backups are created automatically by the Terraform modules using
      `k8s/velero/schedule.yaml`.
+   - Apply `k8s/velero/verify-backups-cronjob.yaml` to run daily checks that backups exist.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
 3. **Full Cluster Restore**
