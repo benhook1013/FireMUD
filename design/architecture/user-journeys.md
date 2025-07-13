@@ -90,6 +90,8 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 - Trigger world events in response to player actions.
 - See [Scripting & Automation Framework](./system-architecture-scripting.md) for
   details on the component-based DSL and sandboxing model.
+- [Modding Framework](./microservices/game-design-service/modding-framework.md)
+  enables runtime plugins using the same scripting sandbox.
 
 ---
 
