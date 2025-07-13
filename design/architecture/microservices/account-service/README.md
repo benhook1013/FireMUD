@@ -71,7 +71,7 @@ resolved during authentication.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
 
-### REST Endpoints
+### REST APIs
 
 | Method | Path       | Description               |
 | ------ | ---------- | ------------------------- |
