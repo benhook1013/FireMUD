@@ -1,9 +1,15 @@
 package net.firedevops.firemud.config;
 
+import jakarta.annotation.PreDestroy;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtSecretWatcher;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.ReloadableJwtUtil;
 import org.slf4j.Logger;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -15,13 +21,14 @@ import org.springframework.core.env.Environment;
 public class AuthConfig {
   private static final Logger logger = LoggingUtil.getLogger(AuthConfig.class);
   private final Environment environment;
+  private JwtSecretWatcher watcher;
 
   public AuthConfig(Environment environment) {
     this.environment = environment;
   }
 
   @Bean
-  public JwtUtil jwtUtil(AuthProperties props) {
+  public JwtUtil jwtUtil(AuthProperties props) throws IOException {
     String secret = props.getJwtSecret();
     if (secret == null || secret.isBlank()) {
       boolean dev = Arrays.asList(environment.getActiveProfiles()).contains("dev");
@@ -35,6 +42,29 @@ public class AuthConfig {
         throw new IllegalStateException("firemud.auth.jwt-secret must be set");
       }
     }
-    return new JwtUtil(secret, props.getJwtExpirationMs());
+    ReloadableJwtUtil util = new ReloadableJwtUtil(secret, props.getJwtExpirationMs());
+    String path = props.getJwtSecretPath();
+    if (path != null && !path.isBlank()) {
+      Path p = Path.of(path);
+      Runnable reload =
+          () -> {
+            try {
+              String newSecret = Files.readString(p).trim();
+              util.updateSecret(newSecret);
+            } catch (IOException e) {
+              logger.error("Failed to reload JWT secret", e);
+            }
+          };
+      reload.run();
+      watcher = JwtSecretWatcher.createAndStart(p, reload);
+    }
+    return util;
+  }
+
+  @PreDestroy
+  public void close() throws Exception {
+    if (watcher != null) {
+      watcher.close();
+    }
   }
 }

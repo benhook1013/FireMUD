@@ -122,6 +122,7 @@ firemud:
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
   auth:
+    jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
 
 server:

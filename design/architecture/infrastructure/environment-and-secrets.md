@@ -94,6 +94,7 @@ environment variables while development instances generate random secrets.
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Server-side session TTL in milliseconds | `3600000` |
 
