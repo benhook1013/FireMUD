@@ -272,6 +272,7 @@ Before launch or after major updates, creators invite testers to staged environm
 
 1. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
 2. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md).
+3. **Database Migrations** – Schemas are migrated with Flyway on startup; see [Database Migrations](./system-architecture-database-migrations.md).
 
 ```plaintext
 GitHub → CI Workflow → Container Registry → Kubernetes
@@ -348,6 +349,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 
 ## 📚 Related Documentation
 
+- [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md)
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
 - [Authentication & Authorization](./system-architecture-authentication.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
@@ -358,15 +360,10 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Frontend Architecture](./system-architecture-frontend.md)
 - [Game Creator Guide](../user-guides/game-creator-guide.md)
 - [Game Customization Options](./game-customization-options.md)
-- [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md)
-- [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md)
-- [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md)
-- [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md)
-- [Version Control](./microservices/game-design-service/version-control.md)
 - [Game Templates](./microservices/game-design-service/game-templates.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
-- [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
 - [Infrastructure Overview](./infrastructure/README.md)
+- [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md)
 - [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
 - [MCP Support](./system-architecture-mcp-support.md)
 - [Microservices Overview](./microservices/README.md)
@@ -391,4 +388,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Tick System](./system-architecture-ticks.md)
 - [Tracing](./system-architecture-tracing.md)
 - [Transaction Strategies](./system-architecture-transactions.md)
-- [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)
+- [Version Control](./microservices/game-design-service/version-control.md)
+- [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md)
+- [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md)
+- [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
