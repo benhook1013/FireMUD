@@ -36,7 +36,7 @@ class PurchaseWorkflowServiceImplTest {
   @Test
   void processPurchaseRunsSaga() throws Exception {
     when(paymentService.createPaymentIntent(1L, 2L, 100L))
-        .thenReturn(new PaymentIntentDto(5L, 1L, 2L, 100L, 5L, "USD", "secret", false));
+        .thenReturn(new PaymentIntentDto(5L, 1L, 2L, 100L, 5L, 95L, "USD", "secret", false));
 
     PurchaseRequest req = new PurchaseRequest(1L, 2L, 100L);
     PaymentIntentDto dto = service.processPurchase(req);

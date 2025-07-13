@@ -21,7 +21,7 @@ class PaymentGrpcServiceTest {
   void createPaymentIntentReturnsResponse() {
     PaymentService paymentService = Mockito.mock(PaymentService.class);
     Mockito.when(paymentService.createPaymentIntent(1L, 2L, 500L))
-        .thenReturn(new PaymentIntentDto(10L, 1L, 2L, 500L, 25L, "USD", "secret", false));
+        .thenReturn(new PaymentIntentDto(10L, 1L, 2L, 500L, 25L, 475L, "USD", "secret", false));
     PaymentGrpcService service = new PaymentGrpcService(paymentService);
 
     AtomicReference<CreatePaymentIntentResponse> ref = new AtomicReference<>();
@@ -83,7 +83,7 @@ class PaymentGrpcServiceTest {
   void createDonationReturnsResponse() {
     PaymentService paymentService = Mockito.mock(PaymentService.class);
     Mockito.when(paymentService.createDonation(1L, 2L, 100L))
-        .thenReturn(new PaymentIntentDto(11L, 1L, 2L, 100L, 5L, "USD", "donate", true));
+        .thenReturn(new PaymentIntentDto(11L, 1L, 2L, 100L, 5L, 95L, "USD", "donate", true));
     PaymentGrpcService service = new PaymentGrpcService(paymentService);
 
     AtomicReference<CreateDonationResponse> ref = new AtomicReference<>();

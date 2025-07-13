@@ -57,6 +57,7 @@ class PaymentServiceImplTest {
     verify(txRepo).save(captor.capture());
     assertEquals(2L, captor.getValue().getTenantId());
     assertEquals(25L, captor.getValue().getPlatformFeeCents());
+    assertEquals(475L, captor.getValue().getCreatorShareCents());
     assertFalse(dto.donation());
   }
 
@@ -108,5 +109,6 @@ class PaymentServiceImplTest {
     ArgumentCaptor<PaymentTransaction> captor = ArgumentCaptor.forClass(PaymentTransaction.class);
     verify(txRepo).save(captor.capture());
     assertTrue(captor.getValue().isDonation());
+    assertEquals(95L, captor.getValue().getCreatorShareCents());
   }
 }

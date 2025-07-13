@@ -6,6 +6,7 @@ public record PaymentIntentDto(
     Long accountId,
     Long amountCents,
     Long platformFeeCents,
+    Long creatorShareCents,
     String currency,
     String clientSecret,
     boolean donation) {}
