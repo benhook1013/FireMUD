@@ -24,18 +24,18 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
   private final Map<Long, Map<String, String>> registry = new ConcurrentHashMap<>();
 
   @Override
-  public void notifyUpdate(Long gameId, String scriptPatchVersion, List<String> affectedScripts) {
+  public void notifyUpdate(Long tenantId, String scriptPatchVersion, List<String> affectedScripts) {
     logger.info(
-        "Applying script patch {} for game {} affecting {} scripts",
+        "Applying script patch {} for tenant {} affecting {} scripts",
         scriptPatchVersion,
-        gameId,
+        tenantId,
         affectedScripts.size());
     if (affectedScripts.isEmpty()) {
       logger.info("No scripts provided for patch {}", scriptPatchVersion);
       return;
     }
-    List<ScriptDefinition> defs = repository.findByTenantIdAndNameIn(gameId, affectedScripts);
-    Map<String, String> map = registry.computeIfAbsent(gameId, id -> new ConcurrentHashMap<>());
+    List<ScriptDefinition> defs = repository.findByTenantIdAndNameIn(tenantId, affectedScripts);
+    Map<String, String> map = registry.computeIfAbsent(tenantId, id -> new ConcurrentHashMap<>());
     for (ScriptDefinition def : defs) {
       map.put(def.getName(), def.getDefinition());
     }

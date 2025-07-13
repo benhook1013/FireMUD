@@ -4,5 +4,5 @@ import java.util.List;
 
 /** Handles live script patch updates. */
 public interface ScriptVersionService {
-  void notifyUpdate(Long gameId, String scriptPatchVersion, List<String> affectedScripts);
+  void notifyUpdate(Long tenantId, String scriptPatchVersion, List<String> affectedScripts);
 }

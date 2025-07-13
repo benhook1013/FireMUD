@@ -31,13 +31,13 @@ public final class SessionContext {
     return data == null ? List.of() : data.globalRoles;
   }
 
-  /** Returns the scoped roles for the provided gameId or an empty list. */
-  public static List<String> getScopedRoles(String gameId) {
+  /** Returns the scoped roles for the provided tenantId or an empty list. */
+  public static List<String> getScopedRoles(String tenantId) {
     ClaimsData data = HOLDER.get();
     if (data == null || data.scopedRoles == null) {
       return List.of();
     }
-    return data.scopedRoles.getOrDefault(gameId, Collections.emptyList());
+    return data.scopedRoles.getOrDefault(tenantId, Collections.emptyList());
   }
 
   private record ClaimsData(
