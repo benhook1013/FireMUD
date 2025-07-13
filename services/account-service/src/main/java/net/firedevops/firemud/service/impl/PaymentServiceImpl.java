@@ -47,6 +47,7 @@ public class PaymentServiceImpl implements PaymentService {
             .findById(accountId)
             .filter(a -> a.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    long platformFee = stripeClient.calculatePlatformFee(amountCents);
     StripeClient.IntentResult intent;
     try {
       intent = stripeClient.createPaymentIntent(amountCents, "usd");
@@ -58,8 +59,10 @@ public class PaymentServiceImpl implements PaymentService {
     tx.setAccount(account);
     tx.setAmountCents(amountCents);
     tx.setCurrency("USD");
+    tx.setPlatformFeeCents(platformFee);
     tx.setProviderId(intent.id());
     tx.setStatus(intent.status());
+    tx.setDonation(false);
     tx.setTenantId(tenantId);
     tx = paymentTransactionRepository.save(tx);
     return new PaymentIntentDto(
@@ -67,8 +70,49 @@ public class PaymentServiceImpl implements PaymentService {
         tenantId,
         accountId,
         tx.getAmountCents(),
+        tx.getPlatformFeeCents(),
         tx.getCurrency(),
-        intent.clientSecret());
+        intent.clientSecret(),
+        false);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "payment.create_donation")
+  public PaymentIntentDto createDonation(Long tenantId, Long accountId, Long amountCents) {
+    logger.info("Create donation {} cents for account {}", amountCents, accountId);
+    Account account =
+        accountRepository
+            .findById(accountId)
+            .filter(a -> a.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    long platformFee = stripeClient.calculatePlatformFee(amountCents);
+    StripeClient.IntentResult intent;
+    try {
+      intent = stripeClient.createPaymentIntent(amountCents, "usd");
+    } catch (com.stripe.exception.StripeException e) {
+      throw new IllegalStateException("Stripe error", e);
+    }
+
+    PaymentTransaction tx = new PaymentTransaction();
+    tx.setAccount(account);
+    tx.setAmountCents(amountCents);
+    tx.setCurrency("USD");
+    tx.setPlatformFeeCents(platformFee);
+    tx.setProviderId(intent.id());
+    tx.setStatus(intent.status());
+    tx.setDonation(true);
+    tx.setTenantId(tenantId);
+    tx = paymentTransactionRepository.save(tx);
+    return new PaymentIntentDto(
+        tx.getId(),
+        tenantId,
+        accountId,
+        tx.getAmountCents(),
+        tx.getPlatformFeeCents(),
+        tx.getCurrency(),
+        intent.clientSecret(),
+        true);
   }
 
   @Override

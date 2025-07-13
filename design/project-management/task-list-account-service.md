@@ -1,7 +1,7 @@
 # Account Service Task List
 
-- [ ] **Develop Account Service**
-  - [ ] Implement user registration and authentication (OAuth2, JWT)
+- [x] **Develop Account Service**
+  - [x] Implement user registration and authentication (OAuth2, JWT)
   - [x] Implement session management and persistent logins
   - [x] Implement role-based access control (RBAC) for admins, moderators, and players
   - [x] Enable external account linking (Google, Discord, Steam)
@@ -9,19 +9,19 @@
   - [x] Implement player data export & deletion (GDPR compliance)
   - [x] Expose JWKS endpoint for token verification
   - [x] Use saga orchestrator for account creation workflow
-  - [ ] Implement self-service account recovery
+  - [x] Implement self-service account recovery
   - [x] Add optional 2FA for admin and moderator roles
-- [ ] **Develop Email & Notification System**
+- [x] **Develop Email & Notification System**
   - [x] Implement email verification & password resets
-  - [ ] Implement in-game notification system for events & messages
+  - [x] Implement in-game notification system for events & messages
   - [x] Configure SMTP provider and test templates
   - [x] Document email and notification design in `account-service/design/README.md`
   - [x] Add asynchronous NotificationService components with gRPC endpoints
 - [ ] **Develop Monetization & Payment Module**
-  - [ ] Integrate Stripe or similar for in-game purchases
-  - [ ] Support subscriptions, one-time purchases, and donations
-  - [ ] Enforce platform fee on transactions
-  - [ ] Implement refund & chargeback handling
+  - [x] Integrate Stripe or similar for in-game purchases
+  - [x] Support subscriptions, one-time purchases, and donations
+  - [x] Enforce platform fee on transactions
+  - [x] Implement refund & chargeback handling
   - [ ] Use saga orchestrator for cross-service purchase workflows
   - [x] Create `payment_transaction` and `subscription` entities in the Account Service
   - [x] Add gRPC methods in `AccountService` for payments
@@ -121,7 +121,7 @@ participate in CI.
 - [x] Validate contracts with smoke tests (gRPC and REST)
 - [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
-- [ ] *(When workflows span services)* add cross-service integration tests
+- [x] *(When workflows span services)* add cross-service integration tests
 
 ---
 

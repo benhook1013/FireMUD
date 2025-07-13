@@ -15,7 +15,7 @@ This document sketches the planned modding system that allows administrators to 
 3. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service.
 4. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior.
 
-## Related Design
+## 📚 Related Documentation
 
 - [Automation & Scripting Service](../automation-scripting-service/README.md)
 - [Game Design Service Architecture](README.md)

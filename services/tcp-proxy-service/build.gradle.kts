@@ -4,7 +4,7 @@ import com.github.spotbugs.snom.SpotBugsTask
 plugins {
     // Apply the Spring Boot plugin so `bootBuildImage` is available for Docker builds
     id("org.springframework.boot") version "3.5.3"
-    id("org.flywaydb.flyway") version "11.10.1"
+    id("org.flywaydb.flyway") version "11.10.2"
     id("com.google.protobuf")
 }
 
@@ -13,21 +13,21 @@ dependencies {
     annotationProcessor("org.projectlombok:lombok:1.18.38")
     annotationProcessor("org.projectlombok:lombok-mapstruct-binding:0.2.0")
     compileOnly("org.projectlombok:lombok:1.18.38")
-    implementation("org.flywaydb:flyway-core:11.10.1")
+    implementation("org.flywaydb:flyway-core:11.10.2")
     implementation("org.mapstruct:mapstruct:1.6.3")
     implementation("org.springframework.boot:spring-boot-starter:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
-    implementation("io.netty:netty-all:4.1.108.Final")
+    implementation("io.netty:netty-all:4.2.2.Final")
     implementation("org.springframework.boot:spring-boot-starter-websocket:3.5.3")
     implementation(project(":common-library"))
     implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
     implementation("io.micrometer:micrometer-core:1.15.1")
     implementation("io.micrometer:micrometer-registry-prometheus:1.15.1")
-    implementation("io.opentelemetry:opentelemetry-api:1.38.0")
-    implementation("io.opentelemetry:opentelemetry-sdk:1.38.0")
-    implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.38.0")
+    implementation("io.opentelemetry:opentelemetry-api:1.52.0")
+    implementation("io.opentelemetry:opentelemetry-sdk:1.52.0")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.52.0")
     testImplementation("org.testcontainers:junit-jupiter:1.19.7")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
 }
 
 protobuf {

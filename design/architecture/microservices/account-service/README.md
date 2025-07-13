@@ -106,6 +106,18 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 variables.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+Additional variables configure outbound email delivery:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SMTP_HOST` | SMTP server hostname | `localhost` |
+| `SMTP_PORT` | SMTP server port | `1025` |
+| `SMTP_USERNAME` | Username for SMTP auth | *(empty)* |
+| `SMTP_PASSWORD` | Password for SMTP auth | *(empty)* |
+| `SMTP_FROM` | From address for transactional emails | `no-reply@firemud.local` |
+| `FIREMUD_MAIL_VERIFICATION_URL` | Public URL for email verification links | `http://localhost:8080/auth/verify-email?token=%s` |
+| `FIREMUD_MAIL_RESET_URL` | Public URL for password reset links | `http://localhost:8080/reset-password?token=%s` |
+
 ## Proto Files
 
 The gRPC schemas for this service live in
@@ -120,8 +132,8 @@ The gRPC schemas for this service live in
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 - [User Journeys – Sign Up](../user-journeys.md#1-sign-up)
-- [User Journeys](../user-journeys.md#10-purchases-and-subscriptions) – payment and subscription workflow.
-- [User Journeys – Account Data Export & Deletion](../user-journeys.md#17-account-data-export--deletion)
+- [User Journeys](../user-journeys.md#11-purchases-and-subscriptions) – payment and subscription workflow.
+- [User Journeys – Account Data Export & Deletion](../user-journeys.md#18-account-data-export--deletion)
 - [Redis Architecture](../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
@@ -139,6 +151,7 @@ The gRPC schemas for this service live in
 ### Monetization Design
 
 The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../design/project-management/core-requirements.md#2.8-moderation-administration--monetization). Planned entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../protos/account/v1/payment_service.proto).
+Donations are stored as one-time `payment_transaction` records with the `donation` flag set to `true`. A dedicated `CreateDonation` gRPC method issues a Stripe payment intent for these cases. Refunds call Stripe's API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows.
 
 ### Email & Notification Design
 
@@ -246,6 +259,18 @@ details on the saga pattern.
 ### Metrics & Tracing
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods expose `account.*`, `payment.*`, `notification.*`, and `session.*` timers via `@Timed` annotations. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger. No additional configuration is required when running via `./gradlew bootRun` as the default properties target `http://otel-collector:4317`.
+
+### Cross-Service Integration Test
+
+An integration test under `src/test/java/crossservice` starts this service alongside
+the Logging & Admin Service using **Testcontainers**. Execute it once dependent
+images are available:
+
+```bash
+./gradlew :account-service:test --tests "*CrossServiceIntegrationTest"
+```
+
+See [System Architecture Testing](../system-architecture-testing.md) for more details.
 
 ## Future Enhancements
 

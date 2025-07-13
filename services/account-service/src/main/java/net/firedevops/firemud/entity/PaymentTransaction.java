@@ -18,6 +18,9 @@ public class PaymentTransaction {
   @Column(name = "amount_cents", nullable = false)
   private Long amountCents;
 
+  @Column(name = "platform_fee_cents", nullable = false)
+  private Long platformFeeCents;
+
   @Column(nullable = false, length = 10)
   private String currency;
 
@@ -26,6 +29,9 @@ public class PaymentTransaction {
 
   @Column(name = "provider_id", length = 50)
   private String providerId;
+
+  @Column(nullable = false)
+  private boolean donation;
 
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;

@@ -4,12 +4,17 @@ import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.DeleteAccountRequest;
 import net.firedevops.firemud.account.v1.DeleteAccountResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.config.GrpcClientProperties;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +25,7 @@ public class AccountClient implements AutoCloseable {
   private final GrpcClientProperties tlsProps;
   private ManagedChannel channel;
   private AccountServiceGrpc.AccountServiceBlockingStub stub;
+  private TlsCertificateWatcher watcher;
 
   public AccountClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
     this.endpoints = endpoints;
@@ -27,7 +33,27 @@ public class AccountClient implements AutoCloseable {
   }
 
   @PostConstruct
-  void init() throws SSLException {
+  void init() throws SSLException, IOException {
+    reloadChannel();
+    watcher =
+        new TlsCertificateWatcher(
+            List.of(
+                Path.of(tlsProps.getCertChain()),
+                Path.of(tlsProps.getPrivateKey()),
+                Path.of(tlsProps.getCaCert())),
+            this::safeReload);
+  }
+
+  private synchronized void safeReload() {
+    try {
+      reloadChannel();
+    } catch (SSLException e) {
+      net.firedevops.firemud.common.LoggingUtil.getLogger(AccountClient.class)
+          .error("Failed to reload gRPC channel", e);
+    }
+  }
+
+  private void reloadChannel() throws SSLException {
     String target = endpoints.getAccountService();
     if (target == null || target.isEmpty()) {
       target = "account-service:6565";
@@ -40,7 +66,12 @@ public class AccountClient implements AutoCloseable {
             .trustManager(new File(tlsProps.getCaCert()))
             .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
             .build();
-    channel = NettyChannelBuilder.forAddress(host, port).sslContext(sslContext).build();
+    ManagedChannel newChannel =
+        NettyChannelBuilder.forAddress(host, port).sslContext(sslContext).build();
+    if (channel != null) {
+      channel.shutdown();
+    }
+    channel = newChannel;
     stub = AccountServiceGrpc.newBlockingStub(channel);
   }
 
@@ -54,8 +85,12 @@ public class AccountClient implements AutoCloseable {
     return stub.deleteAccount(request);
   }
 
+  @PreDestroy
   @Override
-  public void close() {
+  public void close() throws IOException {
+    if (watcher != null) {
+      watcher.close();
+    }
     if (channel != null) {
       channel.shutdown();
     }

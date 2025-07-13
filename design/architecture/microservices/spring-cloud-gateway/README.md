@@ -104,7 +104,7 @@ adding or removing routes at runtime.
 - [Security Architecture](../system-architecture-security.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#6-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../user-journeys.md#7-player-login-and-gameplay)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)
 - [Testing Strategy](../system-architecture-testing.md)

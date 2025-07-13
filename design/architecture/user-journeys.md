@@ -2,6 +2,7 @@
 
 This document outlines common flows for creators and players when interacting with the platform. Each step references the microservice responsible for that portion of the journey.
 It complements the [System Architecture Overview](./system-architecture-overview.md) and [System Context Diagram](./system-context-diagram.md) to show how users traverse the overall platform.
+For a breakdown of every service see the [Microservices Overview](./microservices/README.md).
 For step-by-step tooling instructions see the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 ## 🎯 Goals
@@ -12,9 +13,36 @@ For step-by-step tooling instructions see the [Game Creator Guide](../user-guide
 
 ---
 
+## 📑 Quick Reference
+
+- [1. Sign Up](#1-sign-up)
+- [2. Game Creation](#2-game-creation)
+- [3. World and Entity Design](#3-world-and-entity-design)
+- [4. Add Automation & Scripting](#4-add-automation--scripting)
+- [5. Publish and Start a Game Instance](#5-publish-and-start-a-game-instance)
+- [6. Character Creation & Selection](#6-character-creation--selection)
+- [7. Player Login and Gameplay](#7-player-login-and-gameplay)
+- [8. Social Interaction](#8-social-interaction)
+- [9. Monitoring and Moderation](#9-monitoring-and-moderation)
+- [10. Patch and Update a Live Game](#10-patch-and-update-a-live-game)
+- [11. Purchases and Subscriptions](#11-purchases-and-subscriptions)
+- [12. Password Resets & Account Recovery](#12-password-resets--account-recovery)
+- [13. Switch Games or Manage Multiple Games](#13-switch-games-or-manage-multiple-games)
+- [14. Operational Recovery](#14-operational-recovery)
+- [15. Branding and Customization](#15-branding-and-customization)
+- [16. Playtesting & Analytics](#16-playtesting--analytics)
+- [17. Testing & Continuous Delivery](#17-testing--continuous-delivery)
+- [18. Account Data Export & Deletion](#18-account-data-export--deletion)
+- [19. Deployment & Environment Configuration](#19-deployment--environment-configuration)
+- [20. Observability & Debugging](#20-observability--debugging)
+- [21. Extensibility & External Tools](#21-extensibility--external-tools)
+
+---
+
 ## 1. Sign Up
 
 Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and login flows are outlined in [Authentication & Authorization](./system-architecture-authentication.md).
+Admins and moderators can enable **two-factor authentication** (TOTP) as described in the [Security Architecture](./system-architecture-security.md).
 
 ```plaintext
 Player → Account Service
@@ -73,7 +101,21 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 ---
 
-## 6. Player Login and Gameplay
+## 6. Character Creation & Selection
+
+Players create or select a character before entering the world:
+
+1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account.
+2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md).
+3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service.
+
+```plaintext
+Account Service → Game Design Service → Entity Management Service
+```
+
+---
+
+## 7. Player Login and Gameplay
 
 Players connect through the networking layer:
 
@@ -82,6 +124,7 @@ Players connect through the networking layer:
 3. **Authentication** – Login credentials are validated by the [Game Session Service](./microservices/game-session-service/README.md).
    See [Authentication & Authorization](./system-architecture-authentication.md)
    for supported `LOGIN` commands and token handling.
+4. **Frontend** – The React client connects through the Gateway using the same WebSocket flow. Component structure and state management are detailed in the [Frontend Architecture](./system-architecture-frontend.md).
 
 ```plaintext
 Client → Proxy/Gateway → Game Session Service → Game Logic Service / Entity & World services
@@ -91,7 +134,7 @@ The [Game Session Service](./microservices/game-session-service/README.md) handl
 
 ---
 
-## 7. Social Interaction
+## 8. Social Interaction
 
 During gameplay, players form groups and communicate via the
 [Social & Groups Service](./microservices/social-groups-service/README.md):
@@ -105,7 +148,7 @@ During gameplay, players form groups and communicate via the
 
 ---
 
-## 8. Monitoring and Moderation
+## 9. Monitoring and Moderation
 
 Operators monitor the game and enforce rules using the
 [Logging & Admin Service](./microservices/logging-admin-service/README.md).
@@ -118,19 +161,20 @@ The service also exposes moderation tools such as bans and runtime feature toggl
 
 ---
 
-## 9. Patch and Update a Live Game
+## 10. Patch and Update a Live Game
 
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
-3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
+3. **Deploy Through CI/CD** – Updated images are pushed via the automated [CI/CD Pipeline](./system-architecture-cicd.md).
+4. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
    `scriptPatchVersion` like `v42-script.3` linked to the current version.
-4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
+5. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
 
-5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
+6. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
 
-6. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+7. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
@@ -148,9 +192,11 @@ Game Design Service (publish) → Game Session Service (restart)
   reason: "Live AI bug fix during event"
 ```
 
+Hotfixes follow the steps in the [Hotfix Procedure](./system-architecture-runbooks.md#-hotfix-procedure) to ensure minimal downtime.
+
 ---
 
-## 10. Purchases and Subscriptions
+## 11. Purchases and Subscriptions
 
 1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles purchases and subscription renewals via Stripe.
 2. **Audit and Compliance** – Transactions are logged through the
@@ -163,13 +209,14 @@ Player → Account Service → Logging & Admin Service
 
 ---
 
-## 11. Password Resets & Account Recovery
+## 12. Password Resets & Account Recovery
 
 Players occasionally lose access to their accounts. Recovery is performed
 through the [Account Service](./microservices/account-service/README.md),
 which issues password reset emails and temporary login tokens. Suspicious
 attempts are logged by the
 [Logging & Admin Service](./microservices/logging-admin-service/README.md).
+If two-factor authentication was enabled, the service validates the TOTP code before issuing a new password.
 
 ```plaintext
 Player → Account Service → Logging & Admin Service (audit)
@@ -177,7 +224,7 @@ Player → Account Service → Logging & Admin Service (audit)
 
 ---
 
-## 12. Switch Games or Manage Multiple Games
+## 13. Switch Games or Manage Multiple Games
 
 Players can participate in multiple games using the same platform account. The
 [Multi-Tenancy](./system-architecture-multi-tenancy.md) model stores character
@@ -191,7 +238,7 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ---
 
-## 13. Operational Recovery
+## 14. Operational Recovery
 
 When issues occur, operators follow the
 [Operational Runbooks](./system-architecture-runbooks.md) to restore services.
@@ -204,19 +251,19 @@ Admin → Runbooks → Kubernetes / Docker → Services Restored
 
 ---
 
-## 14. Branding and Customization
+## 15. Branding and Customization
 
 Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. The web client loads tenant-specific assets as described in [Frontend Architecture](./system-architecture-frontend.md). See [Game Customization Options](./game-customization-options.md) for details.
 
 ---
 
-## 15. Playtesting & Analytics
+## 16. Playtesting & Analytics
 
 Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 
 ---
 
-## 16. Testing & Continuous Delivery
+## 17. Testing & Continuous Delivery
 
 1. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
 2. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md).
@@ -227,7 +274,7 @@ GitHub → CI Workflow → Container Registry → Kubernetes
 
 ---
 
-## 17. Account Data Export & Deletion
+## 18. Account Data Export & Deletion
 
 Players may request a full data export or permanently delete an account through
 the [Account Service](./microservices/account-service/README.md). Exported data
@@ -242,15 +289,52 @@ Player → Account Service → Logging & Admin Service (audit)
 
 ---
 
-## 18. Deployment & Environment Configuration
+## 19. Deployment & Environment Configuration
 
 FireMUD can be deployed locally using **Docker Compose** or to production via **Kubernetes**:
 
 1. **Local Development** – Run `./gradlew devUp` to start all services with Docker Compose. Configuration values are loaded from an `.env` file. See [Deployment Environments](./infrastructure/deployment-environments.md).
 2. **Production** – Kubernetes manifests load configuration through `ConfigMap` and `Secret` objects. Refer to [Environment & Secrets Management](./infrastructure/environment-and-secrets.md) for details.
+3. **Infrastructure Overview** – Shared networking and deployment patterns are summarized in [Infrastructure Overview](./infrastructure/README.md).
 
 ```plaintext
 Developer → Docker Compose / Kubernetes → Running Services
+```
+
+---
+
+## 20. Observability & Debugging
+
+Operators troubleshoot issues and tune performance using the centralized
+[Logging & Admin Service](./microservices/logging-admin-service/README.md) and
+observability stack:
+
+1. **Log Aggregation** – Fluent Bit forwards service logs to **Elasticsearch**,
+   which are explored via **Kibana**. See
+   [Logging & Monitoring](./system-architecture-logging-monitoring.md).
+2. **Metrics & Dashboards** – **Prometheus** scrapes metrics and **Grafana**
+   visualizes dashboards such as the
+   [Service Overview](../observability/grafana/service-overview.json).
+3. **Tracing** – Distributed traces are sent to **Jaeger** via the OpenTelemetry
+   Collector as described in [Tracing](./system-architecture-tracing.md).
+
+```plaintext
+Service Logs → Elasticsearch → Kibana / Jaeger
+```
+
+Common troubleshooting steps are documented in the [Operational Runbooks](./system-architecture-runbooks.md).
+
+---
+
+## 21. Extensibility & External Tools
+
+Creators extend gameplay using external editors and runtime plugins:
+
+1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so tools can create rooms, items, and NPCs programmatically. See [MCP Support](./system-architecture-mcp-support.md).
+2. **Modding Framework** – Plugins packaged through the [Game Design Service](./microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) executes them in a sandbox.
+
+```plaintext
+Editor/Tool → TCP Proxy Service → Game Design Service → Automation & Scripting Service
 ```
 
 ---
@@ -259,35 +343,41 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 
 ## 📚 Related Documentation
 
-- [System Architecture Overview](./system-architecture-overview.md)
-- [System Architecture Diagram](./system-architecture-diagram.md)
-- [System Context Diagram](./system-context-diagram.md)
-- [Service Responsibility Matrix](./service-responsibility-matrix.md)
-- [Microservices Overview](./microservices/README.md)
-- [Game Creator Guide](../user-guides/game-creator-guide.md)
-- [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md)
-- [Game Customization Options](./game-customization-options.md)
-- [Frontend Architecture](./system-architecture-frontend.md)
-- [Repository Structure](./repository-structure.md)
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
-- [Performance Optimization Guidelines](./performance-optimization.md)
-- [CI/CD Pipeline](./system-architecture-cicd.md)
-- [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)
-- [Transaction Strategies](./system-architecture-transactions.md)
-- [Testing Strategy](./system-architecture-testing.md)
-- [Procedural Generation](./system-architecture-procedural-generation.md)
-- [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
-- [Shared Libraries Overview](./system-architecture-shared-libraries.md)
-- [Database Migrations](./system-architecture-database-migrations.md)
-- [Multi-Tenancy](./system-architecture-multi-tenancy.md)
-- [Reconnection Strategy](./system-architecture-reconnection.md)
-- [Protocol Bridging](./system-architecture-protocol-bridging.md)
-- [MCP Support](./system-architecture-mcp-support.md)
-- [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
-- [Tracing](./system-architecture-tracing.md)
-- [Operational Runbooks](./system-architecture-runbooks.md)
+- [Authentication & Authorization](./system-architecture-authentication.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
-- [Gateway Architecture](./system-architecture-gateway.md)
-- [Security Architecture](./system-architecture-security.md)
+- [CI/CD Pipeline](./system-architecture-cicd.md)
+- [Database Migrations](./system-architecture-database-migrations.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Environment & Secrets Management](./infrastructure/environment-and-secrets.md)
+- [Frontend Architecture](./system-architecture-frontend.md)
+- [Game Creator Guide](../user-guides/game-creator-guide.md)
+- [Game Customization Options](./game-customization-options.md)
+- [Gateway Architecture](./system-architecture-gateway.md)
+- [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
+- [Infrastructure Overview](./infrastructure/README.md)
+- [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
+- [MCP Support](./system-architecture-mcp-support.md)
+- [Microservices Overview](./microservices/README.md)
+- [Modding Framework](./microservices/game-design-service/modding-framework.md)
+- [Multi-Tenancy](./system-architecture-multi-tenancy.md)
+- [Operational Runbooks](./system-architecture-runbooks.md)
+- [Performance Optimization Guidelines](./performance-optimization.md)
+- [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md)
+- [Procedural Generation](./system-architecture-procedural-generation.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Repository Structure](./repository-structure.md)
+- [Scripting & Automation Framework](./system-architecture-scripting.md)
+- [Security Architecture](./system-architecture-security.md)
+- [Service Responsibility Matrix](./service-responsibility-matrix.md)
+- [Shared Libraries Overview](./system-architecture-shared-libraries.md)
+- [System Architecture Diagram](./system-architecture-diagram.md)
+- [System Architecture Overview](./system-architecture-overview.md)
+- [System Context Diagram](./system-context-diagram.md)
+- [Testing Strategy](./system-architecture-testing.md)
+- [Tick System](./system-architecture-ticks.md)
+- [Tracing](./system-architecture-tracing.md)
+- [Transaction Strategies](./system-architecture-transactions.md)
+- [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)

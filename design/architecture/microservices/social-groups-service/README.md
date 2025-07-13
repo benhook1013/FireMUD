@@ -113,6 +113,12 @@ It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-s
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `FIREMUD_LOGGINGADMIN_HOST` | Hostname for the Logging Admin service | `logging-admin-service` |
+| `FIREMUD_LOGGINGADMIN_PORT` | gRPC port for the Logging Admin service | `6565` |
+| `FIREMUD_VOICE_TOKEN_EXPIRATION_MS` | Expiration of voice chat tokens | `300000` |
+
 Chat history cache behaviour can be tuned with the following variables:
 
 | Variable | Default | Description |
@@ -140,7 +146,7 @@ files change.
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Social Interaction](../user-journeys.md#7-social-interaction)
+- [User Journeys – Social Interaction](../user-journeys.md#8-social-interaction)
 - [Redis Architecture](../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
 - [Shared Libraries Overview](../system-architecture-shared-libraries.md)

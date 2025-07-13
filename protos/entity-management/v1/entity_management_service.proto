@@ -12,7 +12,7 @@ service EntityManagementService {
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
   rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
-  rpc ListCharactersByAccount(ListCharactersRequest) returns (ListCharactersResponse);
+  rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
 }
 
 message CreateCharacterRequest {
@@ -44,7 +44,7 @@ message QueryInventoryResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
-message ListCharactersRequest {
+message ListCharactersByAccountRequest {
   string account_id = 1;
 }
 
@@ -63,7 +63,7 @@ message Character {
   int32 mana = 12;
 }
 
-message ListCharactersResponse {
+message ListCharactersByAccountResponse {
   repeated Character characters = 1;
   shared.v1.ErrorDetail error = 2;
 }

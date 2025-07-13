@@ -4,9 +4,10 @@ import io.grpc.stub.StreamObserver;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
 import net.firedevops.firemud.gateway.v1.PingRequest;
 import net.firedevops.firemud.gateway.v1.PingResponse;
-import net.firedevops.firemud.gateway.v1.RouteDefinition;
-import net.firedevops.firemud.gateway.v1.RouteRequest;
-import net.firedevops.firemud.gateway.v1.RouteResponse;
+import net.firedevops.firemud.gateway.v1.RemoveRouteRequest;
+import net.firedevops.firemud.gateway.v1.RemoveRouteResponse;
+import net.firedevops.firemud.gateway.v1.UpsertRouteRequest;
+import net.firedevops.firemud.gateway.v1.UpsertRouteResponse;
 import net.firedevops.firemud.service.GatewayRoute;
 import net.firedevops.firemud.service.GatewayRouteService;
 import org.lognet.springboot.grpc.GRpcService;
@@ -29,7 +30,8 @@ public class GatewayManagementGrpcService
   }
 
   @Override
-  public void upsertRoute(RouteDefinition request, StreamObserver<RouteResponse> responseObserver) {
+  public void upsertRoute(
+      UpsertRouteRequest request, StreamObserver<UpsertRouteResponse> responseObserver) {
     if (request.getRouteId().isBlank() || request.getUri().isBlank()) {
       responseObserver.onError(
           io.grpc.Status.INVALID_ARGUMENT
@@ -44,21 +46,22 @@ public class GatewayManagementGrpcService
             request.getPredicatesList(),
             request.getFiltersList());
     routeService.upsert(route);
-    RouteResponse response = RouteResponse.newBuilder().setSuccess(true).build();
+    UpsertRouteResponse response = UpsertRouteResponse.newBuilder().setSuccess(true).build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
 
   @Override
-  public void removeRoute(RouteRequest request, StreamObserver<RouteResponse> responseObserver) {
+  public void removeRoute(
+      RemoveRouteRequest request, StreamObserver<RemoveRouteResponse> responseObserver) {
     boolean removed = routeService.remove(request.getRouteId());
     if (removed) {
-      RouteResponse response = RouteResponse.newBuilder().setSuccess(true).build();
+      RemoveRouteResponse response = RemoveRouteResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } else {
-      RouteResponse response =
-          RouteResponse.newBuilder()
+      RemoveRouteResponse response =
+          RemoveRouteResponse.newBuilder()
               .setSuccess(false)
               .setError(
                   net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()

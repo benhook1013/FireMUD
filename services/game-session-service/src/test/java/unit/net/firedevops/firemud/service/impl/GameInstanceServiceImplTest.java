@@ -30,7 +30,15 @@ class GameInstanceServiceImplTest {
     stateService = mock(SessionStateService.class);
     meterRegistry = new SimpleMeterRegistry();
     service =
-        new GameInstanceServiceImpl(repository, mapper, stateService, null, null, meterRegistry);
+        new GameInstanceServiceImpl(
+            repository,
+            mapper,
+            stateService,
+            null,
+            null,
+            null,
+            null,
+            meterRegistry);
   }
 
   @Test

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.account.v1.CreateDonationRequest;
+import net.firedevops.firemud.account.v1.CreateDonationResponse;
 import net.firedevops.firemud.account.v1.CreatePaymentIntentRequest;
 import net.firedevops.firemud.account.v1.CreatePaymentIntentResponse;
 import net.firedevops.firemud.account.v1.CreateSubscriptionRequest;
@@ -19,7 +21,7 @@ class PaymentGrpcServiceTest {
   void createPaymentIntentReturnsResponse() {
     PaymentService paymentService = Mockito.mock(PaymentService.class);
     Mockito.when(paymentService.createPaymentIntent(1L, 2L, 500L))
-        .thenReturn(new PaymentIntentDto(10L, 1L, 2L, 500L, "USD", "secret"));
+        .thenReturn(new PaymentIntentDto(10L, 1L, 2L, 500L, 25L, "USD", "secret", false));
     PaymentGrpcService service = new PaymentGrpcService(paymentService);
 
     AtomicReference<CreatePaymentIntentResponse> ref = new AtomicReference<>();
@@ -75,5 +77,36 @@ class PaymentGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void createDonationReturnsResponse() {
+    PaymentService paymentService = Mockito.mock(PaymentService.class);
+    Mockito.when(paymentService.createDonation(1L, 2L, 100L))
+        .thenReturn(new PaymentIntentDto(11L, 1L, 2L, 100L, 5L, "USD", "donate", true));
+    PaymentGrpcService service = new PaymentGrpcService(paymentService);
+
+    AtomicReference<CreateDonationResponse> ref = new AtomicReference<>();
+    service.createDonation(
+        CreateDonationRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setAmountCents(100)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateDonationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("11", ref.get().getIntentId());
+    assertEquals("donate", ref.get().getClientSecret());
   }
 }

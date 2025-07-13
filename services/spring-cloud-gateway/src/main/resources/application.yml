@@ -10,8 +10,18 @@ spring:
 grpc:
   server:
     port: 6565
+    security:
+      enabled: true
+      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
+      clientAuth: REQUIRE
 
 firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
     jwt-expiration-ms: 3600000
 
@@ -43,8 +53,23 @@ spring:
           args:
             redis-rate-limiter.replenishRate: 20
             redis-rate-limiter.burstCapacity: 40
+        - name: Retry
+          args:
+            retries: 3
+            statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
+            series: SERVER_ERROR
+            methods: GET,POST
+            backoff:
+              firstBackoff: 50ms
+              maxBackoff: 500ms
+              factor: 2
+              basedOnPreviousValue: false
 
 firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
     jwt-secret: changeit-changeit-changeit-changeit
 
@@ -66,7 +91,22 @@ spring:
           args:
             redis-rate-limiter.replenishRate: 20
             redis-rate-limiter.burstCapacity: 40
+        - name: Retry
+          args:
+            retries: 3
+            statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
+            series: SERVER_ERROR
+            methods: GET,POST
+            backoff:
+              firstBackoff: 50ms
+              maxBackoff: 500ms
+              factor: 2
+              basedOnPreviousValue: false
 firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
   auth:
     jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
 

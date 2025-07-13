@@ -115,7 +115,7 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [User Journeys – Game Creation](../user-journeys.md#2-game-creation)
 - [User Journeys – World and Entity Design](../user-journeys.md#3-world-and-entity-design)
 - [User Journeys – Publish and Start a Game Instance](../user-journeys.md#5-publish-and-start-a-game-instance)
-- [User Journeys – Patch and Update a Live Game](../user-journeys.md#9-patch-and-update-a-live-game)
+- [User Journeys – Patch and Update a Live Game](../user-journeys.md#10-patch-and-update-a-live-game)
 - [Asset Storage Setup](asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
 - [Ability & Action Design Tools](ability-action-tools.md)

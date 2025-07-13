@@ -21,3 +21,19 @@ server:
     enabled: true
     mime-types: application/json,application/xml,text/html,text/xml,text/plain
     min-response-size: 1024
+
+grpc:
+  server:
+    port: 6565
+    security:
+      enabled: true
+      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}
+      clientAuth: REQUIRE
+
+firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/client.crt}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/client.key}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/ca.crt}

@@ -215,7 +215,7 @@ This supports **idempotent, replayable** ticks — without risk of duplicate eff
 
 ---
 
-📚 **Related Documentation**
+## 📚 Related Documentation
 
 - [Redis Architecture](./system-architecture-redis.md)
 - [Transaction Strategies](./system-architecture-transactions.md)
