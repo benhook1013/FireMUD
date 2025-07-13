@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.FeatureFlagDto;
@@ -26,6 +27,7 @@ public class FeatureFlagServiceImpl implements FeatureFlagService {
 
   @Override
   @Transactional
+  @Timed(value = "loggingadmin.feature.toggle")
   public FeatureFlagDto toggleFlag(ToggleFeatureFlagRequest request) {
     logger.info("Toggling feature flag {} for tenant {}", request.name(), request.tenantId());
     Optional<FeatureFlag> existing =
