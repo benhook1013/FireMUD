@@ -41,7 +41,7 @@ class RevisionServiceImplTest {
     saved.setGame(game);
     when(revisionRepository.save(any(Revision.class))).thenReturn(saved);
 
-    RevisionDto dto = new RevisionDto(null, null, 1L, 3L, "{}", null);
+    RevisionDto dto = new RevisionDto(null, 1L, 3L, "{}", null);
     RevisionDto result = service.saveRevision(dto);
 
     assertEquals(10L, result.id());

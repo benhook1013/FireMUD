@@ -25,10 +25,10 @@ public class RevisionServiceImpl implements RevisionService {
   @Override
   @Transactional
   public RevisionDto saveRevision(RevisionDto dto) {
-    logger.info("Saving revision for game {}", dto.gameId());
+    logger.info("Saving revision for tenant {}", dto.tenantId());
     Game game =
         gameRepository
-            .findById(dto.gameId())
+            .findById(dto.tenantId())
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
     Revision entity = revisionMapper.toEntity(dto);
     entity.setGame(game);
