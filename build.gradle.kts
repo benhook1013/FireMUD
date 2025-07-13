@@ -17,7 +17,7 @@ plugins {
     id("com.google.protobuf") version "0.9.5" apply false
     id("com.diffplug.spotless") version "7.0.4"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.2.1"
+    id("com.github.spotbugs") version "6.2.2"
     jacoco
 }
 
