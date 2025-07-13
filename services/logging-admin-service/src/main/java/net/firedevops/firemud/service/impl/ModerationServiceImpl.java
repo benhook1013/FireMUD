@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import net.firedevops.firemud.client.AccountClient;
 import net.firedevops.firemud.client.GameSessionClient;
@@ -42,6 +43,7 @@ public class ModerationServiceImpl implements ModerationService {
 
   @Override
   @Transactional
+  @Timed(value = "moderation.applyAction")
   public ModerationActionDto applyAction(ApplyModerationActionRequest request) {
     logger.info(
         "Applying moderation action {} to account {}", request.action(), request.accountId());

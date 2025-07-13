@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.advanced;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.model.AggressionState;
 import net.firedevops.firemud.service.NpcAggressionService;
@@ -12,6 +13,7 @@ public class NpcMoraleServiceImpl implements NpcMoraleService {
   private final NpcAggressionService aggressionService;
 
   @Override
+  @Timed(value = "npc.morale.evaluate")
   public AggressionState evaluateState(int healthPercent, int moralePercent, int reputation) {
     if (healthPercent <= 10 || moralePercent <= 10 || reputation <= -50) {
       return AggressionState.SURRENDERED;
@@ -23,6 +25,7 @@ public class NpcMoraleServiceImpl implements NpcMoraleService {
   }
 
   @Override
+  @Timed(value = "npc.morale.update")
   public void updateState(
       Long tenantId, Long npcId, int healthPercent, int moralePercent, int reputation) {
     AggressionState state = evaluateState(healthPercent, moralePercent, reputation);

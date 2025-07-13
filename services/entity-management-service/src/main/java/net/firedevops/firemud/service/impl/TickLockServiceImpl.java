@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
@@ -28,6 +29,7 @@ public class TickLockServiceImpl implements TickLockService {
   }
 
   @Override
+  @Timed(value = "tick.lock.acquire")
   public boolean acquireLock(Long tenantId, Long entityId) {
     String key = lockKey(tenantId, entityId);
     Boolean result =
@@ -40,6 +42,7 @@ public class TickLockServiceImpl implements TickLockService {
   }
 
   @Override
+  @Timed(value = "tick.lock.release")
   public void releaseLock(Long tenantId, Long entityId) {
     redisTemplate.delete(lockKey(tenantId, entityId));
   }

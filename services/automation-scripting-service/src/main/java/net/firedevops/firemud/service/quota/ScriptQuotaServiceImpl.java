@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.quota;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
@@ -32,6 +33,7 @@ public class ScriptQuotaServiceImpl implements ScriptQuotaService {
   }
 
   @Override
+  @Timed(value = "script.quota.tryAcquire")
   public boolean tryAcquire(Long tenantId, Long scriptId) {
     String key = quotaKey(tenantId, scriptId);
     Long count = redisTemplate.opsForValue().increment(key);

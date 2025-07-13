@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
@@ -20,7 +21,6 @@ import org.slf4j.Logger;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import io.micrometer.core.annotation.Timed;
 
 @Service
 @RequiredArgsConstructor

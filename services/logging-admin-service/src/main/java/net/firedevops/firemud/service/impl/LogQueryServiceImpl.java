@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.QueryLogsRequest;
@@ -22,6 +23,7 @@ public class LogQueryServiceImpl implements LogQueryService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "logging.queryLogs")
   public List<String> queryLogs(QueryLogsRequest request) {
     logger.info("Querying logs for tenant {}", request.tenantId());
     List<LogEvent> events =

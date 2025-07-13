@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.CreateReportRequest;
@@ -26,6 +27,7 @@ public class ReportServiceImpl implements ReportService {
 
   @Override
   @Transactional
+  @Timed(value = "report.create")
   public ReportDto createReport(CreateReportRequest request) {
     logger.info("Creating player report by {}", request.reporterAccountId());
     PlayerReport entity = new PlayerReport();

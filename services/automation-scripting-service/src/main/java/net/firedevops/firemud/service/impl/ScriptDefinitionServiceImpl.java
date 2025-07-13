@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -21,6 +22,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
 
   @Override
   @Transactional
+  @Timed(value = "script.update")
   public ScriptDefinitionDto updateScript(ScriptDefinitionDto dto) throws SagaException {
     ScriptDefinition entity = mapper.toEntity(dto);
     var saga =

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.client.LoggingAdminClient;
@@ -51,6 +52,7 @@ public class GuildServiceImpl implements GuildService {
 
   @Override
   @Transactional
+  @Timed(value = "guild.create")
   public GuildDto createGuild(CreateGuildRequest request) {
     logger.info("Creating guild {}", request.name());
     Guild guild = new Guild();
@@ -85,6 +87,7 @@ public class GuildServiceImpl implements GuildService {
 
   @Override
   @Transactional
+  @Timed(value = "guild.addStorageItem")
   public GuildStorageItemDto addStorageItem(AddGuildStorageItemRequest request) {
     logger.info("Adding item {} to guild {}", request.itemName(), request.guildId());
     GuildStorageItem item = new GuildStorageItem();
@@ -97,6 +100,7 @@ public class GuildServiceImpl implements GuildService {
 
   @Override
   @Transactional
+  @Timed(value = "guild.createAlliance")
   public GuildAllianceDto createAlliance(CreateAllianceRequest request) {
     logger.info("Creating alliance {} -> {}", request.guildId(), request.allyGuildId());
     GuildAlliance alliance = new GuildAlliance();
@@ -109,6 +113,7 @@ public class GuildServiceImpl implements GuildService {
 
   @Override
   @Transactional
+  @Timed(value = "guild.addMember")
   public GuildMemberDto addMember(AddGuildMemberRequest request) {
     logger.info("Adding member {} to guild {}", request.accountId(), request.guildId());
     GuildMember member = new GuildMember();
@@ -146,6 +151,7 @@ public class GuildServiceImpl implements GuildService {
 
   @Override
   @Transactional
+  @Timed(value = "guild.updateMemberRole")
   public GuildMemberDto updateMemberRole(UpdateGuildMemberRoleRequest request) {
     logger.info(
         "Updating member {} in guild {} to role {}",
@@ -194,6 +200,7 @@ public class GuildServiceImpl implements GuildService {
 
   @Override
   @Transactional
+  @Timed(value = "guild.removeMember")
   public void removeMember(long tenantId, long guildId, long accountId) {
     logger.info("Removing member {} from guild {}", accountId, guildId);
     GuildMember member =

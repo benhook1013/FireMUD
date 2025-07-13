@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.RevisionDto;
@@ -24,6 +25,7 @@ public class RevisionServiceImpl implements RevisionService {
 
   @Override
   @Transactional
+  @Timed(value = "gamedesign.revision.save")
   public RevisionDto saveRevision(RevisionDto dto) {
     logger.info("Saving revision for tenant {}", dto.tenantId());
     Game game =

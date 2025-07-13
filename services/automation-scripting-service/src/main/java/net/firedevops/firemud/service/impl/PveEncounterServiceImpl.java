@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Random;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,7 @@ public class PveEncounterServiceImpl implements PveEncounterService {
       List.of("goblin raiders", "loose rocks", "toxic fumes");
 
   @Override
+  @Timed(value = "pve.generateEvent")
   public PveEvent generateEvent(String region, long seed) {
     Random rnd = new Random(seed);
     List<String> pool;
