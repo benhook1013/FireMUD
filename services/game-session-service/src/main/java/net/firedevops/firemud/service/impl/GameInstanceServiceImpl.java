@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.client.EntityManagementClient;
 import net.firedevops.firemud.client.GameLogicClient;
@@ -18,7 +19,6 @@ import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import io.micrometer.core.annotation.Timed;
 
 /** Default implementation of {@link GameInstanceService}. */
 @Service

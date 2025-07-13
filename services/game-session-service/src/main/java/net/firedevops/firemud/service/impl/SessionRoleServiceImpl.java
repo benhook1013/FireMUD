@@ -1,10 +1,10 @@
 package net.firedevops.firemud.service.impl;
 
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.service.SessionRoleService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
-import io.micrometer.core.annotation.Timed;
 
 @Service
 public class SessionRoleServiceImpl implements SessionRoleService {
