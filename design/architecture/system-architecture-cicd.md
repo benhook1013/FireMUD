@@ -16,7 +16,7 @@ This document describes the basic continuous integration and deployment strategy
 - **Create release PRs automatically** using the `release-please` workflow.
 - **Generate database ERD diagrams** as build artifacts after each run.
 
-The CI job first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by a matrix of Gradle `check` tasks—one per microservice—which compile and test each module while running Spotless, Checkstyle, and SpotBugs. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. After the scan, the job executes `dev-tools/generate-erd.sh` to build ERD diagrams from the service migrations and uploads them as artifacts. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
+The CI job first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by a matrix of Gradle `check` tasks—one per microservice—which compile and test each module while running Spotless, Checkstyle, and SpotBugs. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. Node 20 is also configured so the pipeline can lint OpenAPI definitions, run the React client’s linters, and execute an accessibility audit using headless Chrome. After the scan, the job executes `dev-tools/generate-erd.sh` to build ERD diagrams from the service migrations and uploads them as artifacts. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
 
 ---
 
