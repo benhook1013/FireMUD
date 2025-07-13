@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
@@ -32,6 +33,9 @@ public class TickServiceImpl implements TickService {
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
   private Timer tickTimer;
+  private Timer luaTimer;
+  private java.util.concurrent.atomic.AtomicInteger retryQueueDepth =
+      new java.util.concurrent.atomic.AtomicInteger();
   private RedisScript<Long> stageScript;
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
@@ -41,6 +45,12 @@ public class TickServiceImpl implements TickService {
     this.enqueueCounter = meterRegistry.counter("game_session_commands_enqueued_total");
     this.redisErrorCounter = meterRegistry.counter("game_session_redis_errors_total");
     this.tickTimer = meterRegistry.timer("game_session_tick_duration_ms");
+    this.luaTimer = meterRegistry.timer("game_session_lua_latency_ms");
+    Gauge.builder(
+            "game_session_retry_queue_depth",
+            retryQueueDepth,
+            java.util.concurrent.atomic.AtomicInteger::get)
+        .register(meterRegistry);
     ResourceScriptSource commitSrc =
         new ResourceScriptSource(new ClassPathResource("redis/tick_commit.lua"));
     ResourceScriptSource stageSrc =
@@ -70,19 +80,31 @@ public class TickServiceImpl implements TickService {
     }
     try {
       Long pending = redisTemplate.opsForList().size(pendingKey(sessionId));
+      retryQueueDepth.set(pending != null ? pending.intValue() : 0);
       if (pending != null && pending > 0) {
         logger.info("Replaying {} pending commands for {}", pending, sessionId);
-        tickTimer.record(() -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId))));
+        tickTimer.record(
+            () ->
+                luaTimer.record(
+                    () -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId)))));
       }
       tickTimer.record(
           () ->
-              redisTemplate.execute(
-                  stageScript, List.of(queueKey(sessionId), pendingKey(sessionId))));
-      tickTimer.record(() -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId))));
+              luaTimer.record(
+                  () ->
+                      redisTemplate.execute(
+                          stageScript, List.of(queueKey(sessionId), pendingKey(sessionId)))));
+      tickTimer.record(
+          () ->
+              luaTimer.record(
+                  () -> redisTemplate.execute(commitScript, List.of(pendingKey(sessionId)))));
     } catch (Exception ex) {
       redisErrorCounter.increment();
       logger.error("Tick processing failed, rolling back", ex);
-      redisTemplate.execute(rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId)));
+      luaTimer.record(
+          () ->
+              redisTemplate.execute(
+                  rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId))));
     } finally {
       redisTemplate.delete(lockKey);
     }

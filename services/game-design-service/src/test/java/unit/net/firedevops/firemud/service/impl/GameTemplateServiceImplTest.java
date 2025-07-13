@@ -9,7 +9,6 @@ import net.firedevops.firemud.entity.GameTemplate;
 import net.firedevops.firemud.mapper.GameTemplateMapper;
 import net.firedevops.firemud.repository.GameTemplateRepository;
 import org.junit.jupiter.api.Test;
-import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -19,7 +18,7 @@ class GameTemplateServiceImplTest {
   @Test
   void listTemplatesReturnsPage() {
     GameTemplateRepository repo = Mockito.mock(GameTemplateRepository.class);
-    GameTemplateMapper mapper = Mappers.getMapper(GameTemplateMapper.class);
+    GameTemplateMapper mapper = Mockito.mock(GameTemplateMapper.class);
     GameTemplateServiceImpl service = new GameTemplateServiceImpl(repo, mapper);
 
     GameTemplate template = new GameTemplate();
