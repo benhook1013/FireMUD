@@ -3,7 +3,6 @@ package net.firedevops.firemud.service.impl;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
-import org.springframework.data.domain.Pageable;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.v1.Character;
@@ -23,6 +22,7 @@ import net.firedevops.firemud.service.InventoryService;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.data.domain.Pageable;
 
 /** Simple gRPC service exposing the Ping RPC. */
 @GRpcService
@@ -155,8 +155,7 @@ public class EntityManagementGrpcService
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     try {
       long characterId = Long.parseLong(request.getEntityId());
-      var entries =
-          inventoryService.listInventory(characterId, Pageable.unpaged()).getContent();
+      var entries = inventoryService.listInventory(characterId, Pageable.unpaged()).getContent();
       var itemIds = entries.stream().map(e -> String.valueOf(e.itemId())).toList();
       QueryInventoryResponse response =
           QueryInventoryResponse.newBuilder().addAllItemIds(itemIds).build();
