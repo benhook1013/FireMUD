@@ -61,3 +61,13 @@ resource "kubernetes_manifest" "velero_schedule" {
   manifest  = each.value
   depends_on = [helm_release.velero]
 }
+
+locals {
+  velero_verify_docs = split("\n---\n", file("${path.module}/../velero/verify-backups-cronjob.yaml"))
+}
+
+resource "kubernetes_manifest" "velero_verify" {
+  for_each  = { for idx, doc in local.velero_verify_docs : idx => yamldecode(doc) }
+  manifest  = each.value
+  depends_on = [helm_release.velero]
+}

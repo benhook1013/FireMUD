@@ -34,6 +34,7 @@ For local development, use `./gradlew devUp` to start Docker Compose.
 
 1. **Database Failure**
    - Run `dev-tools/restore-cluster.sh <backup-name>` to restore from the latest Velero snapshot and restart services.
+     Set `FIREMUD_K8S_NAMESPACE` to restore into a custom namespace.
    - Alternatively, restore manually:
 
      ```bash
@@ -46,7 +47,7 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      restart containers with `docker compose restart`.
    - Scheduled backups are created automatically by the Terraform modules using
      `k8s/velero/schedule.yaml`.
-   - Apply `k8s/velero/verify-backups-cronjob.yaml` to run daily checks that backups exist.
+   - Daily backup checks are handled by the `verify-backups` CronJob deployed by Terraform.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
 3. **Full Cluster Restore**
