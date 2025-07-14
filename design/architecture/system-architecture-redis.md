@@ -89,7 +89,6 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 - Timer lifecycle management
 - Session rebinding and deduplication (`session:*` keys)
 - Retry queue updates
-- AI/scripted action injection
 
 All Lua scripts are:
 
