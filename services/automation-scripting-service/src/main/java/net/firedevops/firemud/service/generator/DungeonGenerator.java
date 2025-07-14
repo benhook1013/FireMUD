@@ -25,10 +25,30 @@ public class DungeonGenerator implements Generator {
       return new GenerationResult(result, null);
     }
     // first room has no connection
-    result.add(new GeneratedRoom(1, 0));
+    result.add(
+        new GeneratedRoom(
+            1,
+            0,
+            0,
+            0,
+            java.util.Map.of(),
+            java.util.List.of("start"),
+            "cave",
+            0,
+            null));
     for (int i = 2; i <= rooms; i++) {
-      long connectTo = result.get(rnd.nextInt(result.size())).id();
-      result.add(new GeneratedRoom(i, connectTo));
+      long connectTo = result.get(rnd.nextInt(result.size())).roomId();
+      result.add(
+          new GeneratedRoom(
+              i,
+              connectTo,
+              i - 1,
+              0,
+              java.util.Map.of(),
+              java.util.List.of(),
+              "cave",
+              0,
+              null));
     }
     return new GenerationResult(result, null);
   }

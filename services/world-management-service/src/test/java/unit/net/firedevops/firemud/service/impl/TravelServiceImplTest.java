@@ -24,10 +24,15 @@ class TravelServiceImplTest {
   void findsSimplePath() {
     Room r1 = new Room();
     r1.setId(1L);
+    net.firedevops.firemud.entity.Region region = new net.firedevops.firemud.entity.Region();
+    region.setSpacingMultiplier(1.0);
+    r1.setRegion(region);
     Room r2 = new Room();
     r2.setId(2L);
+    r2.setRegion(r1.getRegion());
     Room r3 = new Room();
     r3.setId(3L);
+    r3.setRegion(r1.getRegion());
     RoomExit e1 = new RoomExit();
     e1.setFromRoom(r1);
     e1.setToRoom(r2);

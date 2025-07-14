@@ -82,6 +82,10 @@ public class WorldCreationServiceImpl implements WorldCreationService {
     // Newly created worlds start on the local shard. Admin tooling can
     // redistribute regions later for scaling.
     region.setShardId(worldProperties.getLocalShardId());
+    region.setGenerationSeed(System.currentTimeMillis());
+    region.setGeneratorType("SimpleDungeonGenerator");
+    region.setGeneratorParams("{}");
+    region.setSpacingMultiplier(1.0);
     region.setName("Starter Region");
     regionRepository.save(region);
   }

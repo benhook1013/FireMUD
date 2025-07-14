@@ -11,4 +11,5 @@ public record RegionDto(
     Integer shardId,
     Long generationSeed,
     String generatorType,
-    String generatorParams) {}
+    String generatorParams,
+    Double spacingMultiplier) {}
