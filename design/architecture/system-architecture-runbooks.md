@@ -56,6 +56,10 @@ For local development, use `./gradlew devUp` to start Docker Compose.
    - A manual workflow `manual-backup-restore.yml` can verify backups and
      perform an optional restore test in a temporary namespace. Trigger it
      from the GitHub Actions UI when needed.
+   - **Maintain dump volume**: the `firemud-pg-dump` CronJob rotates files automatically,
+     but long-lived persistent volumes can still fill up. Periodically check
+     the `firemud-pg-dumps` PVC and prune old `*.sql.gz` files or run
+     `dev-tools/pg-dump-rotate.sh` manually to enforce retention.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
 3. **Full Cluster Restore**

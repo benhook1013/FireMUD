@@ -2,6 +2,7 @@
 # Customize the provider and bucket name for your environment.
 configuration:
   provider: aws
+  defaultVolumesToFsBackup: false
   backupStorageLocation:
     bucket: firemud-backups
     prefix: postgres

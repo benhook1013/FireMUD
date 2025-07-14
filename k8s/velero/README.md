@@ -10,13 +10,14 @@ Apply the manifests with:
 kubectl apply -f schedule.yaml -n velero
 ```
 
-Ensure Velero is installed and configured with access to your object storage bucket prior to applying the schedule. A starter [values.example.yaml](./values.example.yaml) file is included. Copy it to `values.yaml` and edit the provider and bucket for your environment.
+Ensure Velero is installed and configured with access to your object storage bucket prior to applying the schedule. A starter [values.example.yaml](./values.example.yaml) file is included. Copy it to `values.yaml` and edit the provider and bucket for your environment. Keep `defaultVolumesToFsBackup: false` so PVCs are not backed up.
 
 Example `values.yaml` snippet when using AWS S3:
 
 ```yaml
 configuration:
   provider: aws
+  defaultVolumesToFsBackup: false
   backupStorageLocation:
     bucket: firemud-backups
     prefix: postgres

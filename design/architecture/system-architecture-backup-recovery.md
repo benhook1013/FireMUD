@@ -25,6 +25,8 @@ This document defines the backup schedule and disaster recovery procedures for F
       backupStorageLocation:
         bucket: firemud-backups
       ```
+    Always leave `defaultVolumesToFsBackup` set to `false` so Velero backs up
+    only Kubernetes manifests and not persistent volume contents.
 
     For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml`
     manifest and configure Velero with a local backup location:
@@ -47,7 +49,8 @@ This document defines the backup schedule and disaster recovery procedures for F
       ```
 
       Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the
-      `firemud-backups` bucket, and install Velero automatically.
+      `firemud-backups` bucket, and install Velero automatically. Keep
+      `defaultVolumesToFsBackup` disabled to avoid saving PVC data.
 
   - If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
