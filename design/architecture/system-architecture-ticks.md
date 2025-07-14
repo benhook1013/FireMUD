@@ -80,6 +80,16 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 - **Configurable pacing** per region (tick rate or delay)
 - **Elastic execution** across worker instances
 
+> 🔄 **Cross-region actions are split into sequential ticks.** The first tick
+> exits the source region and clears state from its shard. A follow-up tick
+> enters the destination region and applies state on that shard. The Game
+> Session Service ensures these ticks do not overlap or hold locks across
+> shards.
+
+> 🌀 **Global effects are dispatched by fan-out.** The Game Session Service
+> injects commands into each affected region's shard and triggers a tick there,
+> ensuring the event is applied even if that region was idle.
+
 > 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
 
 ---
