@@ -59,6 +59,9 @@ random when the Game Session Service requests a PvE interaction.
 - `automation_queue` keys in Redis buffer triggered events until a script runs.
 - `automation_queue_enqueued_total` and `automation_queue_drained_total` metrics
   track Redis queue activity.
+- The staging Lua script processes only a limited number of events each tick
+  (controlled by `AUTOMATION_TICK_MAX_EVENTS`) to keep automation work
+  predictable.
 - Player reputation data is stored in the Social & Groups Service; see its
   [data model](../social-groups-service/README.md#data-model) for the
   `faction` and `faction_standing` tables.
@@ -131,6 +134,7 @@ Additional variables tune the scripting engine:
 | `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` |
 | `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` |
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
+| `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` |
 
 ## Proto Files
 

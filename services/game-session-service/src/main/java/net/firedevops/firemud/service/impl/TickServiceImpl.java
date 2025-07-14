@@ -36,6 +36,9 @@ public class TickServiceImpl implements TickService {
   @Value("${game.tick-budget-ms:100}")
   private long tickBudgetMs;
 
+  @Value("${game.tick-max-commands:50}")
+  private int tickMaxCommands;
+
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
   private Counter lockContentionCounter;
@@ -48,11 +51,11 @@ public class TickServiceImpl implements TickService {
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
 
-  private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys) {
+  private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
     while (true) {
       try {
-        return redisTemplate.execute(script, keys);
+        return redisTemplate.execute(script, keys, args);
       } catch (Exception ex) {
         attempts++;
         redisErrorCounter.increment();
@@ -145,7 +148,9 @@ public class TickServiceImpl implements TickService {
               luaTimer.record(
                   () ->
                       executeScriptWithRetry(
-                          stageScript, List.of(queueKey(sessionId), pendingKey(sessionId)))));
+                          stageScript,
+                          List.of(queueKey(sessionId), pendingKey(sessionId)),
+                          tickMaxCommands)));
       tickTimer.record(
           () ->
               luaTimer.record(

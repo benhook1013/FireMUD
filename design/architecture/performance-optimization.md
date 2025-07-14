@@ -54,6 +54,9 @@ These notes summarize typical optimizations applied across FireMUD services.
   deferred to follow-up ticks so long-running commands never block the game
   loop. Conflict metadata collected during retries highlights hotspots for
   operators.
+- Lua staging scripts move only a limited number of commands or events per tick
+  (configurable via `game.tick-max-commands` and `automation.tick-max-events`).
+  This prevents runaway loops and keeps work evenly distributed across ticks.
 - The TCP Proxy Service limits connections per IP and throttles messages per
   client to shield the gateway from abuse.
 

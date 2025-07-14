@@ -63,6 +63,8 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - Each session advances in fixed-length ticks controlled by a Redis-based timer.
 - Commands are collected during a tick and executed in deterministic order.
+- The staging Lua script only moves a limited number of commands each tick
+  (`GAME_TICK_MAX_COMMANDS`) so one player cannot starve others.
 - After execution, results are persisted and broadcast to connected clients.
 
 ### gRPC APIs
@@ -101,6 +103,8 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `GAME_TICK_DURATION_MS` | Length of a single game tick in milliseconds | `1000` |
+| `GAME_TICK_BUDGET_MS` | Soft execution budget for a tick in milliseconds | `100` |
+| `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (host:port) for the Game Logic Service | *(none)* |
 
 ## Proto Files

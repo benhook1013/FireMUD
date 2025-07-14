@@ -33,6 +33,9 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   @Value("${automation.tick-duration-ms:1000}")
   private long tickDurationMs;
 
+  @Value("${automation.tick-max-events:50}")
+  private int tickMaxEvents;
+
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
   private Counter lockContentionCounter;
@@ -44,11 +47,11 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
 
-  private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys) {
+  private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
     while (true) {
       try {
-        return redisTemplate.execute(script, keys);
+        return redisTemplate.execute(script, keys, args);
       } catch (Exception ex) {
         attempts++;
         redisErrorCounter.increment();
@@ -145,7 +148,8 @@ public class ScriptTickServiceImpl implements ScriptTickService {
                   () ->
                       executeScriptWithRetry(
                           stageScript,
-                          List.of(queueKey(tenantId, scriptId), pendingKey(tenantId, scriptId)))));
+                          List.of(queueKey(tenantId, scriptId), pendingKey(tenantId, scriptId)),
+                          tickMaxEvents)));
       tickTimer.record(
           () ->
               luaTimer.record(
