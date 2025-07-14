@@ -16,7 +16,6 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - Gameplay session state and real-time coordination data
   _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
 - Retry metadata and inter-tick conflict tracking
-- AI/scripted action injection
 
 All **canonical game data** — accounts, entities, items, rooms — resides in **PostgreSQL**, owned by domain-specific services.
 
