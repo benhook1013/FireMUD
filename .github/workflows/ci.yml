@@ -52,13 +52,12 @@ jobs:
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v3
-      - name: Install hadolint
-        run: |
-          wget -O hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
-          chmod +x hadolint
-          sudo mv hadolint /usr/local/bin/
-      - name: Lint Dockerfiles
-        run: hadolint -c .hadolint.yaml docker/base.Dockerfile services/*/Dockerfile
+
+      - name: 🐳 Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          recursive: true
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
