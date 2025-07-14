@@ -31,3 +31,8 @@ repos:
         entry: bash -c 'cd web-client && npm run lint && npm run format:fix'
         language: system
         pass_filenames: false
+      - id: link-check
+        name: Link Check
+        entry: ./dev-tools/link-check.sh
+        language: script
+        pass_filenames: false
