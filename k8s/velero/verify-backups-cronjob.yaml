@@ -51,3 +51,19 @@ data:
     
     echo "Found $BACKUP_COUNT Velero backups in $NAMESPACE"
 
+    if [ -n "${PG_DUMP_BUCKET:-}" ]; then
+      command -v aws >/dev/null 2>&1 || {
+        echo "aws CLI not found" >&2
+        exit 1
+      }
+      KEY=$(aws s3api list-objects-v2 --bucket "$PG_DUMP_BUCKET" \
+            --prefix "daily/" \
+            --endpoint-url "${PG_DUMP_ENDPOINT:-}" \
+            --query 'sort_by(Contents,&LastModified)[-1].Key' --output text 2>/dev/null || echo None)
+      if [ "$KEY" = "None" ]; then
+        echo "No pg_dump files found in bucket $PG_DUMP_BUCKET" >&2
+        exit 1
+      fi
+      echo "Latest pg_dump: $KEY"
+    fi
+
