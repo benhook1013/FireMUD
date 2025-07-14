@@ -4,8 +4,35 @@ account-service:
 game-session-service:
   image:
     tag: latest
+automation-scripting-service:
+  image:
+    tag: latest
+entity-management-service:
+  image:
+    tag: latest
+game-design-service:
+  image:
+    tag: latest
+game-logic-service:
+  image:
+    tag: latest
+logging-admin-service:
+  image:
+    tag: latest
+social-groups-service:
+  image:
+    tag: latest
+spring-cloud-gateway:
+  image:
+    tag: latest
+tcp-proxy-service:
+  image:
+    tag: latest
+world-management-service:
+  image:
+    tag: latest
+=======
 redis:
-  # Helm release name for the Redis chart
   releaseName: redis
   # Optional override of the PersistentVolumeClaim used for the AOF file
   aofPvc: ""

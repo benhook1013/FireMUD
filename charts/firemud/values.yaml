@@ -1,0 +1,50 @@
+accountService:
+  image:
+    repository: ghcr.io/example/account-service
+    tag: latest
+gameSessionService:
+  image:
+    repository: ghcr.io/example/game-session-service
+    tag: latest
+automationScriptingService:
+  image:
+    repository: ghcr.io/example/automation-scripting-service
+    tag: latest
+entityManagementService:
+  image:
+    repository: ghcr.io/example/entity-management-service
+    tag: latest
+gameDesignService:
+  image:
+    repository: ghcr.io/example/game-design-service
+    tag: latest
+gameLogicService:
+  image:
+    repository: ghcr.io/example/game-logic-service
+    tag: latest
+loggingAdminService:
+  image:
+    repository: ghcr.io/example/logging-admin-service
+    tag: latest
+socialGroupsService:
+  image:
+    repository: ghcr.io/example/social-groups-service
+    tag: latest
+springCloudGateway:
+  image:
+    repository: ghcr.io/example/spring-cloud-gateway
+    tag: latest
+tcpProxyService:
+  image:
+    repository: ghcr.io/example/tcp-proxy-service
+    tag: latest
+worldManagementService:
+  image:
+    repository: ghcr.io/example/world-management-service
+    tag: latest
+redis:
+  persistence:
+    size: 8Gi
+postgresql:
+  persistence:
+    size: 10Gi
