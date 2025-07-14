@@ -80,6 +80,8 @@ All internal communication from the **Game Session Service** to downstream micro
 
 All datastores are shared across games, but each table includes a `tenantId` column and Redis keys use a matching prefix. This isolates data per game while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 
+All services run as Docker containers inside a shared Kubernetes cluster. They reuse a [common shared library](./system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and metrics helpers. See [Deployment Environments](./infrastructure/deployment-environments.md) for how the cluster is configured.
+
 ## 🧩 Core Services Shown
 
 The diagram covers every microservice currently in the repository:
@@ -116,6 +118,9 @@ See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for depl
 - [Microservices Overview](./microservices/README.md)
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
+- [Infrastructure Overview](./infrastructure/README.md)
+- [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 - [Multi-Tenancy](./system-architecture-multi-tenancy.md)
 - [Frontend Architecture](./system-architecture-frontend.md)
+- [Shared Libraries Overview](./system-architecture-shared-libraries.md)
