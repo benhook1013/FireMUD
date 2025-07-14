@@ -27,5 +27,17 @@ public class Region {
   @Column(length = 50)
   private String weather;
 
+  /** Seed used for procedural generation of this region. */
+  @Column(name = "generation_seed", nullable = false)
+  private Long generationSeed = 0L;
+
+  /** Generator type used to create this region. */
+  @Column(name = "generator_type", length = 50)
+  private String generatorType;
+
+  /** Raw generator parameters serialized as JSON. */
+  @Column(name = "generator_params")
+  private String generatorParams;
+
   @Version private int version;
 }

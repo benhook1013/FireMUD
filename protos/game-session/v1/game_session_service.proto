@@ -49,6 +49,7 @@ message RestartSessionResponse {
 message EnqueueCommandRequest {
   string session_id = 1;
   string command = 2;
+  bool requires_solo_tick = 3;
 }
 
 message EnqueueCommandResponse {

@@ -36,6 +36,9 @@ public class TickServiceImpl implements TickService {
   @Value("${game.tick-budget-ms:100}")
   private long tickBudgetMs;
 
+  @Value("${game.solo-tick-budget-ms:500}")
+  private long soloTickBudgetMs;
+
   @Value("${game.tick-max-commands:50}")
   private int tickMaxCommands;
 
@@ -113,8 +116,9 @@ public class TickServiceImpl implements TickService {
 
   @Override
   @Timed(value = "gamesession.command.enqueue")
-  public void enqueueCommand(Long sessionId, String command) {
-    redisTemplate.opsForList().rightPush(queueKey(sessionId), command);
+  public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
+    String value = (requiresSoloTick ? "S|" : "N|") + command;
+    redisTemplate.opsForList().rightPush(queueKey(sessionId), value);
     enqueueCounter.increment();
     logger.debug("Queued command for {}", sessionId);
   }
@@ -132,6 +136,8 @@ public class TickServiceImpl implements TickService {
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }
+    String head = null;
+    boolean solo = false;
     try {
       Long pending = redisTemplate.opsForList().size(pendingKey(sessionId));
       retryQueueDepth.set(pending != null ? pending.intValue() : 0);
@@ -143,14 +149,16 @@ public class TickServiceImpl implements TickService {
                     () -> executeScriptWithRetry(commitScript, List.of(pendingKey(sessionId)))));
         awaitReplication();
       }
+      Object headObj = redisTemplate.opsForList().index(queueKey(sessionId), 0);
+      head = headObj != null ? headObj.toString() : null;
+      solo = head != null && head.startsWith("S|");
+      int max = solo ? 1 : tickMaxCommands;
       tickTimer.record(
           () ->
               luaTimer.record(
                   () ->
                       executeScriptWithRetry(
-                          stageScript,
-                          List.of(queueKey(sessionId), pendingKey(sessionId)),
-                          tickMaxCommands)));
+                          stageScript, List.of(queueKey(sessionId), pendingKey(sessionId)), max)));
       tickTimer.record(
           () ->
               luaTimer.record(
@@ -165,7 +173,8 @@ public class TickServiceImpl implements TickService {
       awaitReplication();
     } finally {
       long elapsed = (System.nanoTime() - start) / 1_000_000;
-      if (elapsed > tickBudgetMs) {
+      long budget = solo ? soloTickBudgetMs : tickBudgetMs;
+      if (elapsed > budget) {
         budgetExceededCounter.increment();
         logger.debug("Tick budget exceeded: {} ms", elapsed);
       }

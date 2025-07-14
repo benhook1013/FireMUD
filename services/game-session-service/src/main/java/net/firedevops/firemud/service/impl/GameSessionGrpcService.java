@@ -135,7 +135,10 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
     try {
-      tickService.enqueueCommand(Long.valueOf(request.getSessionId()), request.getCommand());
+      tickService.enqueueCommand(
+          Long.valueOf(request.getSessionId()),
+          request.getCommand(),
+          request.getRequiresSoloTick());
       EnqueueCommandResponse response =
           EnqueueCommandResponse.newBuilder().setAccepted(true).build();
       responseObserver.onNext(response);
