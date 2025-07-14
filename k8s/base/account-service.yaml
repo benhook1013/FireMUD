@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: account-service
-          image: account-service:latest
+          image: ghcr.io/firemud/account-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE

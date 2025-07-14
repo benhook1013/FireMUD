@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: automation-scripting-service
-          image: automation-scripting-service:latest
+          image: ghcr.io/firemud/automation-scripting-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE

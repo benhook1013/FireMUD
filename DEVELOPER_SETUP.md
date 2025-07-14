@@ -238,11 +238,10 @@ on `localhost:6379`. Typical key patterns are `session:*`, `tick:*`, and
 
 ## Configuration Files
 
-Environment‑specific settings live in Spring Boot profile files contained within each service's `src/main/resources` directory.
+Environment‑specific settings live in each service's `src/main/resources` directory.
 
-- `application.yml` – base configuration with `dev` and `prod` profiles.
-- `application-dev.yml` – legacy name; now included as a profile section in `application.yml`.
-- `application-prod.yml` – legacy name; also included as a profile section.
+- `application.yml` – base configuration containing both `dev` and `prod` profile sections.
+- `SPRING_PROFILES_ACTIVE` – environment variable used to select the active profile at runtime.
 
 More details on deployment environments and gateway routing can be found in the following design documents:
 

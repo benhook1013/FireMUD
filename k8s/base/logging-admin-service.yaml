@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: logging-admin-service
-          image: logging-admin-service:latest
+          image: ghcr.io/firemud/logging-admin-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE
