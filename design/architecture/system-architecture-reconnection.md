@@ -14,7 +14,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.**
-Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remains connected.
+Game Session Service restarts are **transparent** if the client remains connected. TCP Proxy restarts drop Telnet clients. Spring Cloud Gateway restarts disconnect Web clients, but Telnet clients proxied through the Gateway remain connected.
 
 ---
 
@@ -32,7 +32,7 @@ Infra restarts (Proxy, Gateway, Session) are **transparent** if the client remai
 - Automatically re-establishes backend connections if restarted
 - Holds no gameplay, auth, or session state
 
-> Proxy and Gateway restarts do not interrupt gameplay as long as the client’s physical connection is maintained.
+> TCP Proxy restarts drop Telnet connections. Spring Cloud Gateway restarts disconnect Web clients only; Telnet clients proxied through the Gateway remain connected.
 
 ### Game Session Service
 
@@ -72,12 +72,14 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 | Event                                           | Result                                         |
 |------------------------------------------------|------------------------------------------------|
 | Client disconnect (TCP/WebSocket)              | Requires new `LOGIN`; may resume via Redis     |
-| Proxy/Gateway/Game Session Service restart             | Transparent — if client remains connected      |
+| TCP Proxy Service restart                              | Telnet clients disconnected; new `LOGIN` required       |
+| Spring Cloud Gateway restart                           | Web clients disconnected; Telnet clients stay connected |
+| Game Session Service restart                          | Transparent if client remains connected         |
 | Manual re-`LOGIN` from same character          | Treated as reconnect; resumes if Redis intact  |
 | Redis session expired/missing                  | Treated as fresh login; gameplay starts anew   |
 | New client logs in as same character           | Old session terminated; new one resumes control |
 
-> 🔑 Only **client disconnection** requires `LOGIN`. Backend service restarts are invisible unless the physical connection is lost.
+> 🔑 Only **client disconnection** requires `LOGIN`. Game Session Service restarts are invisible if the socket stays open. TCP Proxy restarts drop Telnet clients, while Gateway restarts disconnect Web clients; Telnet clients proxied through the Gateway remain connected.
 
 ---
 
