@@ -97,8 +97,11 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
   the object store. This CronJob is installed automatically by the production
   Terraform modules.
 - Operators should periodically test recovery by restoring a snapshot into a
-  throwaway namespace with `dev-tools/restore-cluster.sh <backup-name>` and
-  verifying services start successfully.
+  throwaway namespace with `dev-tools/restore-cluster.sh <backup-name>
+  <namespace>` (or by setting `FIREMUD_K8S_NAMESPACE`) and verifying
+  services start successfully. A manual workflow
+  `.github/workflows/manual-backup-restore.yml` can run these checks on
+  demand from the GitHub Actions UI.
 
 ---
 
