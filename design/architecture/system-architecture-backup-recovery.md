@@ -11,7 +11,10 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **24 hours** of 15‑minute dumps
   - **3 weekly** dumps
   - **3 monthly** dumps
-- The CronJob writes to a persistent volume claim `firemud-pg-dumps` or uploads to MinIO if configured.
+- The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
+  a script (`pg-dump.sh`) that enforces the retention policy. When the
+  environment variable `PG_DUMP_BUCKET` is set, the script also uploads each
+  dump to the specified S3/MinIO bucket.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example snippet:
 
