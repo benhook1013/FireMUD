@@ -15,8 +15,8 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: firemud-secret
-stringData:
-  FIREMUD_POSTGRES_USER: firemud
-  FIREMUD_POSTGRES_PASSWORD: firemud
-  FIREMUD_AUTH_JWT_SECRET: changeit-changeit-changeit-changeit
+data:
+  FIREMUD_POSTGRES_USER: ZmlyZW11ZA==
+  FIREMUD_POSTGRES_PASSWORD: ZmlyZW11ZA==
+  FIREMUD_AUTH_JWT_SECRET: Y2hhbmdlaXQtY2hhbmdlaXQtY2hhbmdlaXQtY2hhbmdlaXQ=
 

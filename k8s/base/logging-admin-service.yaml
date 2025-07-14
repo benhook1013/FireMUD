@@ -16,7 +16,7 @@ spec:
       containers:
         - name: logging-admin-service
           image: ghcr.io/firemud/logging-admin-service:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
@@ -49,6 +49,7 @@ spec:
               memory: "512Mi"
           ports:
             - containerPort: 8080
+            - containerPort: 6565
           readinessProbe:
             httpGet:
               path: /actuator/health
@@ -63,7 +64,7 @@ spec:
             periodSeconds: 20
         - name: fluent-bit
           image: fluent/fluent-bit:2.2.2
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
           volumeMounts:
             - name: varlog
@@ -97,5 +98,8 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+      protocol: TCP
+    - port: 6565
+      targetPort: 6565
       protocol: TCP
   type: ClusterIP

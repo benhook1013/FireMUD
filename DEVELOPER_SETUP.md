@@ -223,6 +223,11 @@ require it. Open Kreya, choose **Open Project** and select the project file to
 invoke gRPC methods. When proto definitions change, update the project by
 pointing Kreya to the modified `.proto` files.
 
+Smoke test scripts also target `localhost:6565`. Docker Compose does not
+publish this port to the host, so run them inside the Compose network with
+`docker compose exec <service> ./smoke-test.sh` or set `GRPC_ADDR` to the
+service hostname (e.g., `account-service:6565`).
+
 ### Redis Debugging
 
 Use the Redis CLI (`redis-cli -h localhost -p 6379`) to inspect transient game state. Useful commands include:
