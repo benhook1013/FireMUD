@@ -34,7 +34,7 @@ Once your environment is running you can create a feature branch and submit a PR
 ## Pre-commit Hooks
 
 The repository includes a `.pre-commit-config.yaml` that runs Spotless,
-markdownlint, Checkstyle, and SpotBugs. Install the pre-commit tool and set up the hooks
+markdownlint, Checkstyle, SpotBugs, and ShellCheck. Install the pre-commit tool and set up the hooks
 with:
 
 ```bash
@@ -42,7 +42,7 @@ pip install pre-commit
 pre-commit install
 ```
 
-Hooks automatically format code, lint Markdown, and run static analysis before each commit.
+Hooks automatically format code, lint Markdown, run ShellCheck on our `dev-tools` scripts, and perform other static analysis before each commit.
 
 ## Testing Requirements
 

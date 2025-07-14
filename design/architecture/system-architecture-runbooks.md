@@ -57,9 +57,11 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      perform an optional restore test in a temporary namespace. Trigger it
      from the GitHub Actions UI when needed.
    - **Maintain dump volume**: the `firemud-pg-dump` CronJob rotates files automatically,
-     but long-lived persistent volumes can still fill up. Periodically check
-     the `firemud-pg-dumps` PVC and prune old `*.sql.gz` files or run
-     `dev-tools/pg-dump-rotate.sh` manually to enforce retention.
+    but long-lived persistent volumes can still fill up. The Docker Compose
+    stack includes a `pg-dump-cron` service that runs the same rotation script
+    every 15 minutes. Periodically check the `firemud-pg-dumps` PVC and prune
+    old `*.sql.gz` files or run `dev-tools/pg-dump-rotate.sh` manually if
+    additional cleanup is required.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
 3. **Full Cluster Restore**
