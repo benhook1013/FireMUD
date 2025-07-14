@@ -4,7 +4,7 @@
 flowchart TD
     subgraph Clients
         MUD[MUD Client]
-        Web[Web Client (React UI)]
+        Web[Web Client]
     end
 
     subgraph DMZ
