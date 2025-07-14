@@ -27,6 +27,7 @@ server:
     min-response-size: 1024
 
 grpc:
+  shutdownGrace: 30
   server:
     port: 6565
     enableKeepAlive: true
