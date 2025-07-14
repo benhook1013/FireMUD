@@ -48,10 +48,10 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      restart containers with `docker compose restart`.
    - Scheduled backups are created automatically by the Terraform modules using
      `k8s/velero/schedule.yaml`.
-    - Daily backup checks are handled by the `verify-backups` CronJob deployed by Terraform.
-    - A manual workflow `manual-backup-restore.yml` can verify backups and
-      perform an optional restore test in a temporary namespace. Trigger it
-      from the GitHub Actions UI when needed.
+   - Daily backup checks are handled by the `verify-backups` CronJob deployed by Terraform.
+   - A manual workflow `manual-backup-restore.yml` can verify backups and
+     perform an optional restore test in a temporary namespace. Trigger it
+     from the GitHub Actions UI when needed.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
 3. **Full Cluster Restore**
