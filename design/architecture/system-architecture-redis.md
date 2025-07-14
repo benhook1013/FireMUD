@@ -108,20 +108,22 @@ All Lua scripts are:
 
 ### 🔀 Shard Locality and Cross-Region Behavior
 
-Redis **does not support cross-shard transactions**. All tick-related commands
-and Lua scripts are confined to **one shard**. When an action spans regions
-(for example a player moving between rooms on different shards) the Game Session
-Service decomposes the transition into **two sequential ticks**:
+Redis **does not support cross-shard operations**. All tick locks, Lua scripts,
+and queued commands execute on a **single shard** aligned to the tick region.
+When an action crosses regional boundaries (for example a player moving between
+rooms on different shards) the Game Session Service decomposes the transition
+into **two sequential ticks**:
 
-1. **Tick&nbsp;A** on *Shard&nbsp;X* performs exit logic and clears local state.
-2. **Tick&nbsp;B** on *Shard&nbsp;Y* applies entry logic and rebinds the
-   session in the new region.
+1. **Tick&nbsp;A** *(Shard&nbsp;X)* — executes exit logic and clears local
+   state.
+2. **Tick&nbsp;B** *(Shard&nbsp;Y)* — performs entry logic and rebinds the
+   player's session in the new region.
 
-No lock or Lua script ever spans shards. The Game Session Service coordinates
-these ticks so they never overlap, ensuring atomicity and deterministic replay
-without distributed transactions. See
+No lock, Lua script, or tick context may span shards. The Game Session Service
+guarantees these ticks execute sequentially without overlap so no effect runs
+simultaneously across shard boundaries. See
 [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
-for how commands targeting another region are routed and resolved.
+for how follow-up commands are routed.
 
 ### 🌀 Global Effects and Region-Wide Coordination
 
@@ -137,6 +139,10 @@ This ensures every shard processes the global event even if it would not tick
 naturally. The approach preserves shard-local atomicity and deterministic
 recovery without cross-shard locks or speculative polling. It also avoids
 scheduling global keys that might wake otherwise idle regions.
+
+Regions still run a lightweight background tick (for example every second) so
+queued timers, cooldowns, or delayed events progress even when no players are
+present.
 
 ---
 

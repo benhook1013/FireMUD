@@ -216,17 +216,31 @@ Some commands originate in one region but affect targets in another — for
 example, remote attacks, cross-world spells, or administrative inventory moves.
 The process is **asynchronous and multi-phased**:
 
-1. The origin region validates the command and enqueues it in the target
-   region's shard.
-2. The target region executes the command during its next tick (applying damage
-   or item changes locally).
-3. A result message is routed back to the origin region or directly to the
-   player's session via Redis queue or in-band message.
+1. A tick-local command executes in the **origin region**.
+2. A follow-up action — including the `sourceEntityId` — is enqueued in the
+   **target region's** command queue (often under a `remote:{entityId}` key).
+3. The target region processes the action during its next tick and determines
+   the outcome locally.
+4. The Game Session Service routes the result back to the origin region or
+   directly to the player's active session.
 
-Players see immediate feedback such as "Casting Fireball..." and later receive
-"🔥 Hit for 12 damage!" once the remote tick completes. No region waits
-synchronously for another shard, preserving responsiveness and full replay
-safety.
+Players experience a smooth flow:
+
+```
+🕒 You cast Fireball...
+🔥 Your Fireball hits Player B for 12 damage!
+```
+
+No region waits synchronously for another shard, preserving responsiveness and
+deterministic replay.
+
+### ⛓️ Tick Chaining and Reentrant Effect Control
+
+Each action carries a `tickChainDepth`. When follow-up effects (stuns,
+explosions, scripted traps) spawn additional actions, the depth is incremented.
+If `MAX_TICK_CHAIN_DEPTH` (default **8**) is exceeded, the new action is
+aborted and a warning is logged. Prior steps remain committed, and the player
+may be notified that the chain was halted.
 
 ---
 
