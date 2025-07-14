@@ -58,6 +58,12 @@ flowchart TD
     InternalServices -- logs --> FluentBit
     InternalServices -- metrics --> Prom
     InternalServices -- traces --> OTel
+    TCPProxy -- logs --> FluentBit
+    TCPProxy -- metrics --> Prom
+    TCPProxy -- traces --> OTel
+    Gateway -- logs --> FluentBit
+    Gateway -- metrics --> Prom
+    Gateway -- traces --> OTel
     FluentBit --> ES
     Prom --> Alertmgr
     Prom --> Grafana
