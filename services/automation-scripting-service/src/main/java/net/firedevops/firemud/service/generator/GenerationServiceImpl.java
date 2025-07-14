@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.generator;
 
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -16,6 +17,7 @@ public class GenerationServiceImpl implements GenerationService {
   private final List<GenerationHook> hooks;
 
   @Override
+  @Timed(value = "generation.generate")
   public GenerationResult generate(String generatorName, GenerationParams params) {
     Generator generator = registry.get(generatorName);
     if (generator == null) {
