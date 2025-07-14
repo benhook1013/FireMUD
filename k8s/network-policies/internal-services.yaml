@@ -12,6 +12,16 @@ spec:
           - tcp-proxy-service
   policyTypes:
     - Ingress
+    - Egress
   ingress:
     - from:
         - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080

@@ -24,8 +24,10 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 > Services communicate with each other over **gRPC**.
 > See [System Architecture Overview](../system-architecture-overview.md) and [Authentication & Authorization](../system-architecture-authentication.md#-login-and-session-flow) for the complete login and gRPC flow.
 
-- Static URIs in `application-dev.yml` (for Docker Compose)
-- Kubernetes DNS-based service names in `application-prod.yml` (for production)
+- Static URIs configured in the `dev` profile within `application.yml`
+  (used by Docker Compose)
+- Kubernetes DNS-based service names configured in the `prod` profile of
+  `application.yml` (used in production)
 
 ---
 
@@ -91,7 +93,8 @@ This approach minimizes latency and matches the protocol table in the
 | Dev         | `http://service:8080`     | Docker Compose DNS          |
 | Prod        | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
-Spring profiles (`application-dev.yml`, `application-prod.yml`) are used to configure routing targets based on environment.
+Spring profiles defined in `application.yml` and selected via
+`SPRING_PROFILES_ACTIVE` configure routing targets based on environment.
 
 ---
 

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: spring-cloud-gateway
-          image: spring-cloud-gateway:latest
+          image: ghcr.io/firemud/spring-cloud-gateway:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE

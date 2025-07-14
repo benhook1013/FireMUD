@@ -129,10 +129,11 @@ Deployment health checks (readiness and liveness probes) for these layers are
 described in detail in
 [Deployment Environments](./infrastructure/deployment-environments.md).
 
-Environment-specific routing is configured through Spring profiles
-(`application-dev.yml`, `application-prod.yml`). See
+Environment-specific routing is configured via Spring profiles defined in
+`application.yml` and selected by the `SPRING_PROFILES_ACTIVE` environment
+variable. See
 [Deployment Environments](./infrastructure/deployment-environments.md#🔁-spring-profile-configuration)
-for how these profiles differ in Docker Compose versus Kubernetes.
+for how the `dev` and `prod` profiles differ between Docker Compose and Kubernetes.
 
 ---
 

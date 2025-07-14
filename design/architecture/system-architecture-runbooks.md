@@ -52,8 +52,7 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      restart containers with `docker compose restart`.
    - Scheduled backups are created automatically by the Terraform modules using
      `k8s/velero/schedule.yaml`.
-   - Daily backup checks are handled by the `verify-backups` CronJob deployed by
-     Terraform.
+   - Daily backup checks are handled by the `verify-backups` CronJob deployed by Terraform.
    - A manual workflow `manual-backup-restore.yml` can verify backups and
      perform an optional restore test in a temporary namespace. Trigger it
      from the GitHub Actions UI when needed.

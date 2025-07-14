@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: game-design-service
-          image: game-design-service:latest
+          image: ghcr.io/firemud/game-design-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE

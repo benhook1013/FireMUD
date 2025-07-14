@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: tcp-proxy-service
-          image: tcp-proxy-service:latest
+          image: ghcr.io/firemud/tcp-proxy-service:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             runAsNonRoot: true

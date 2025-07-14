@@ -13,7 +13,8 @@ FireMUD uses Docker Compose for local development and testing:
 - All services, including the gateway, are built locally via `Dockerfile`s.
 - Docker Compose orchestrates container startup, but not readiness.
 - Service discovery is handled by Docker's internal DNS (e.g., `game-session-service:8080`).
-- Route URIs in Spring Cloud Gateway use static hostnames defined in `application-dev.yml`.
+- Route URIs in Spring Cloud Gateway use static hostnames defined in the `dev`
+  profile of `application.yml`.
 - Connection settings for PostgreSQL and Redis are loaded from a `.env` file.
   A sample `.env.sample` is provided with default credentials.
 
@@ -42,7 +43,8 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 
 - Services are deployed as Pods and exposed via Kubernetes Services.
 - DNS-based discovery is built into Kubernetes (e.g., `game-session-service.default.svc.cluster.local`).
-- Route URIs in Spring Cloud Gateway use service names configured in `application-prod.yml`.
+- Route URIs in Spring Cloud Gateway use service names configured in the `prod`
+  profile of `application.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Spring Cloud Gateway.
 - The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly.
 - The external load balancer exposes only the Gateway and TCP Proxy Service, forming a DMZ that shields internal services.
@@ -97,14 +99,15 @@ See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for det
 
 ## 🔁 Spring Profile Configuration
 
-Spring Boot services use environment-specific profiles:
+Spring Boot services define `dev` and `prod` profiles inside `application.yml`.
+Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable.
 
-- `application-dev.yml`:
+- **dev** profile:
   - Used with Docker Compose
   - Static URI-based routing
   - Dev-mode databases or in-memory stores
 
-- `application-prod.yml`:
+- **prod** profile:
   - Used in Kubernetes
   - DNS-based routing to Kubernetes Services
   - Integration with persistent infrastructure such as the PostgreSQL cluster

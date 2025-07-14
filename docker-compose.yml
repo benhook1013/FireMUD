@@ -19,11 +19,19 @@ x-service-healthcheck: &service-health
 x-service-volumes: &service-vols
   - ./dev-tools/certs:/app/certs:ro
 
+x-service-resources: &service-resources
+  deploy:
+    resources:
+      limits:
+        cpus: "0.5"
+        memory: 512M
+
 services:
   account-service:
     build: ./services/account-service
     ports:
       - "8081:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -40,6 +48,7 @@ services:
     build: ./services/spring-cloud-gateway
     ports:
       - "8080:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -56,6 +65,7 @@ services:
     build: ./services/automation-scripting-service
     ports:
       - "8082:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -72,6 +82,7 @@ services:
     build: ./services/entity-management-service
     ports:
       - "8083:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -88,6 +99,7 @@ services:
     build: ./services/game-design-service
     ports:
       - "8084:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -104,6 +116,7 @@ services:
     build: ./services/game-logic-service
     ports:
       - "8085:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -120,6 +133,7 @@ services:
     build: ./services/game-session-service
     ports:
       - "8086:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -136,6 +150,7 @@ services:
     build: ./services/logging-admin-service
     ports:
       - "8087:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -152,6 +167,7 @@ services:
     build: ./services/social-groups-service
     ports:
       - "8088:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -168,6 +184,7 @@ services:
     build: ./services/tcp-proxy-service
     ports:
       - "2323:2323"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:
@@ -184,6 +201,7 @@ services:
     build: ./services/world-management-service
     ports:
       - "8089:8080"
+    <<: *service-resources
     environment:
       <<: *service-env
     env_file:

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: world-management-service
-          image: world-management-service:latest
+          image: ghcr.io/firemud/world-management-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE

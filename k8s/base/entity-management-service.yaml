@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: entity-management-service
-          image: entity-management-service:latest
+          image: ghcr.io/firemud/entity-management-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE
