@@ -14,10 +14,12 @@ web-client/
     features/
       account/
         AccountPage.tsx
-        accountSlice.ts
+        accountSlice.ts  # local UI state
+        accountApi.ts    # RTK Query endpoints
       gameplay/
         GameplayPage.tsx
         gameplaySlice.ts
+        gameplayApi.ts
       ...
 ```
 
