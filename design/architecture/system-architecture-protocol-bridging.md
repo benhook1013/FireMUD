@@ -40,6 +40,9 @@ Despite their differences, both protocols are normalized into the same internal 
 - Handled by a dedicated **TCP Proxy Service**.
 - The service:
   - Accepts and parses Telnet line-based input.
+  - Sanitizes incoming data and allows only a safe subset of
+    **Telnet protocol commands** as outlined in
+    [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
   - Normalizes the connection.
   - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
   - Proxies I/O between the TCP client and Spring Cloud Gateway.
