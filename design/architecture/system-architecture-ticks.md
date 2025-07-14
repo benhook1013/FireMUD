@@ -87,14 +87,12 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 > Service ensures these ticks execute safely without overlap. See
 > [Shard Locality and Cross-Region Behavior](./system-architecture-redis.md#🔀-shard-locality-and-cross-region-behavior)
 > for a full description of this pattern.
-
 > 🌀 **Global effects are dispatched by fan-out.** Tick regions remain idle
 > unless explicitly triggered, so the Game Session Service injects commands into
 > each affected shard and forces a tick there. This guarantees the event is
 > applied even if a region would not tick on its own. See
 > [Global Effects and Region-Wide Coordination](./system-architecture-redis.md#🌀-global-effects-and-region-wide-coordination)
 > for details on the underlying Redis pattern.
-
 > 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
 
 ---
