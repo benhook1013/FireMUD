@@ -1,0 +1,11 @@
+# Configuration for lychee link checker
+# Skip private and localhost links
+exclude_all_private = true
+# Accept 200 OK and 403 Forbidden as valid
+accept = ["200", "403"]
+
+exclude = [
+  "^http://service",
+  "^http://otel-collector",
+  "^http://example.com"
+]

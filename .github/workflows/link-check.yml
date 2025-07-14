@@ -1,0 +1,19 @@
+name: Link Checker
+
+on:
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '.lychee.toml'
+  workflow_dispatch:
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Check Links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config .lychee.toml --no-progress '**/*.md'
+          fail: true
