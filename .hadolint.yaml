@@ -1,0 +1,2 @@
+ignored:
+  - DL3007 # using latest tag for base image intentionally
