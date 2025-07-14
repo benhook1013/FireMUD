@@ -31,6 +31,11 @@ repos:
         entry: bash -c 'cd web-client && npm run lint && npm run format:fix'
         language: system
         pass_filenames: false
+      - id: link-check
+        name: Link Check
+        entry: ./dev-tools/link-check.sh
+        language: script
+        pass_filenames: false
       - id: shellcheck
         name: ShellCheck
         entry: bash -c 'find dev-tools -name "*.sh" -print0 | xargs -0 shellcheck'
