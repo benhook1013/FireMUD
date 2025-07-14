@@ -6,5 +6,6 @@ public enum ActionType {
   ATTACK,
   INTERACT,
   EMOTE,
+  PROCEDURAL,
   UNKNOWN
 }

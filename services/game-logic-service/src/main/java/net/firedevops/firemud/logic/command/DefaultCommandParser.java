@@ -22,6 +22,8 @@ public class DefaultCommandParser implements CommandParser {
     actionMap.put("emote", ActionType.EMOTE);
     // interact alias
     actionMap.put("use", ActionType.INTERACT);
+    // procedural generation
+    actionMap.put("generate-dungeon", ActionType.PROCEDURAL);
   }
 
   @Override
@@ -37,6 +39,7 @@ public class DefaultCommandParser implements CommandParser {
     if (action == ActionType.MOVE && target.isEmpty()) {
       target = verb;
     }
-    return new Command(action, target, input);
+    boolean solo = action == ActionType.PROCEDURAL;
+    return new Command(action, target, input, solo);
   }
 }
