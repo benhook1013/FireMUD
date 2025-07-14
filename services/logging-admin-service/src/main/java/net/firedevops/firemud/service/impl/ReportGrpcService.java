@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.dto.ReportDto;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
@@ -28,6 +29,7 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
   }
 
   @Override
+  @Timed(value = "loggingadminGrpc.createReport")
   public void createReport(
       CreateReportRequest request, StreamObserver<CreateReportResponse> responseObserver) {
     try {

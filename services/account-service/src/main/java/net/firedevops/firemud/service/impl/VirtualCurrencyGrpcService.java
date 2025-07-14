@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.account.v1.AddCurrencyRequest;
 import net.firedevops.firemud.account.v1.AddCurrencyResponse;
 import net.firedevops.firemud.account.v1.GetCurrencyBalanceRequest;
@@ -21,6 +22,7 @@ public class VirtualCurrencyGrpcService
   }
 
   @Override
+  @Timed(value = "currencyGrpc.getBalance")
   public void getBalance(
       GetCurrencyBalanceRequest request,
       StreamObserver<GetCurrencyBalanceResponse> responseObserver) {
@@ -36,6 +38,7 @@ public class VirtualCurrencyGrpcService
   }
 
   @Override
+  @Timed(value = "currencyGrpc.addCurrency")
   public void addCurrency(
       AddCurrencyRequest request, StreamObserver<AddCurrencyResponse> responseObserver) {
     try {
@@ -63,6 +66,7 @@ public class VirtualCurrencyGrpcService
   }
 
   @Override
+  @Timed(value = "currencyGrpc.spendCurrency")
   public void spendCurrency(
       SpendCurrencyRequest request, StreamObserver<SpendCurrencyResponse> responseObserver) {
     try {

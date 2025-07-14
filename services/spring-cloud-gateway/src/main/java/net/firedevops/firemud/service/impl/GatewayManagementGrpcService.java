@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
 import net.firedevops.firemud.gateway.v1.PingRequest;
 import net.firedevops.firemud.gateway.v1.PingResponse;
@@ -23,6 +24,7 @@ public class GatewayManagementGrpcService
   }
 
   @Override
+  @Timed(value = "gatewayGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     PingResponse response = PingResponse.newBuilder().setMessage("pong").build();
     responseObserver.onNext(response);
@@ -30,6 +32,7 @@ public class GatewayManagementGrpcService
   }
 
   @Override
+  @Timed(value = "gatewayGrpc.upsertRoute")
   public void upsertRoute(
       UpsertRouteRequest request, StreamObserver<UpsertRouteResponse> responseObserver) {
     if (request.getRouteId().isBlank() || request.getUri().isBlank()) {
@@ -52,6 +55,7 @@ public class GatewayManagementGrpcService
   }
 
   @Override
+  @Timed(value = "gatewayGrpc.removeRoute")
   public void removeRoute(
       RemoveRouteRequest request, StreamObserver<RemoveRouteResponse> responseObserver) {
     boolean removed = routeService.remove(request.getRouteId());

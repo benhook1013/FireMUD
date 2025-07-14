@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetScriptStatusResponse;
@@ -35,6 +36,7 @@ public class AutomationScriptingGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     try {
       String msg = pingService.ping();
@@ -59,6 +61,7 @@ public class AutomationScriptingGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.updateScript")
   public void updateScript(
       UpdateScriptRequest request, StreamObserver<UpdateScriptResponse> responseObserver) {
     try {
@@ -92,6 +95,7 @@ public class AutomationScriptingGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.getScriptStatus")
   public void getScriptStatus(
       GetScriptStatusRequest request, StreamObserver<GetScriptStatusResponse> responseObserver) {
     // Placeholder implementation; scripts execute asynchronously
@@ -102,6 +106,7 @@ public class AutomationScriptingGrpcService
   }
 
   @Override
+  @Timed(value = "automationGrpc.notifyScriptVersionUpdate")
   public void notifyScriptVersionUpdate(
       NotifyScriptVersionUpdateRequest request,
       StreamObserver<NotifyScriptVersionUpdateResponse> responseObserver) {
