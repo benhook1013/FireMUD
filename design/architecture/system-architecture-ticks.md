@@ -80,15 +80,20 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 - **Configurable pacing** per region (tick rate or delay)
 - **Elastic execution** across worker instances
 
-> 🔄 **Cross-region actions are split into sequential ticks.** The first tick
-> exits the source region and clears state from its shard. A follow-up tick
-> enters the destination region and applies state on that shard. The Game
-> Session Service ensures these ticks do not overlap or hold locks across
-> shards.
+> 🔄 **Cross-region actions are split into sequential ticks.**
+> **Tick&nbsp;A** (on the source shard) performs exit logic and clears local
+> state. **Tick&nbsp;B** (on the destination shard) applies entry logic and
+> rebinds the session. No lock or Lua script spans shards, and the Game Session
+> Service ensures these ticks execute safely without overlap. See
+> [Shard Locality and Cross-Region Behavior](./system-architecture-redis.md#🔀-shard-locality-and-cross-region-behavior)
+> for a full description of this pattern.
 
-> 🌀 **Global effects are dispatched by fan-out.** The Game Session Service
-> injects commands into each affected region's shard and triggers a tick there,
-> ensuring the event is applied even if that region was idle.
+> 🌀 **Global effects are dispatched by fan-out.** Tick regions remain idle
+> unless explicitly triggered, so the Game Session Service injects commands into
+> each affected shard and forces a tick there. This guarantees the event is
+> applied even if a region would not tick on its own. See
+> [Global Effects and Region-Wide Coordination](./system-architecture-redis.md#🌀-global-effects-and-region-wide-coordination)
+> for details on the underlying Redis pattern.
 
 > 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
 
@@ -202,6 +207,26 @@ Recovery is coordinated by Game Session Service and backed by:
 - `WAIT 1 100` for durable replication
 
 This supports **idempotent, replayable** ticks — without risk of duplicate effects or inconsistent state.
+
+---
+
+## 📡 Cross-Region Command Execution and Result Relay
+
+Some commands originate in one region but affect targets in another — for
+example, remote attacks, cross-world spells, or administrative inventory moves.
+The process is **asynchronous and multi-phased**:
+
+1. The origin region validates the command and enqueues it in the target
+   region's shard.
+2. The target region executes the command during its next tick (applying damage
+   or item changes locally).
+3. A result message is routed back to the origin region or directly to the
+   player's session via Redis queue or in-band message.
+
+Players see immediate feedback such as "Casting Fireball..." and later receive
+"🔥 Hit for 12 damage!" once the remote tick completes. No region waits
+synchronously for another shard, preserving responsiveness and full replay
+safety.
 
 ---
 
