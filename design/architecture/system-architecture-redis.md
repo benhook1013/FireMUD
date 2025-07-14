@@ -106,6 +106,37 @@ All Lua scripts are:
 3. On successful commit the lock is released and staged data is flushed.
 4. If the lock expires, the next tick replays `tick:pending:{tenantId}:{regionId}` and attempts the workflow again.
 
+### 🔀 Shard Locality and Cross-Region Behavior
+
+Redis **does not support cross-shard transactions**. Tick operations are bound
+to the shard that hosts their region. When an action spans regions — for
+example a player moving between rooms — the Game Session Service decomposes the
+transition into **separate ticks**:
+
+1. The first tick exits the source region, clearing locks and staged state on
+   *Shard&nbsp;A*.
+2. A follow-up tick enters the destination region on *Shard&nbsp;B* and applies
+   the new state.
+
+These ticks never overlap or hold locks across shards. Lua scripts execute on a
+single shard at a time, guaranteeing atomicity and replay safety without any
+distributed coordination.
+
+### 🌀 Global Effects and Region-Wide Coordination
+
+Some gameplay events span **multiple tick regions** — for example, a server-wide
+freeze, global weather change, or round reset. FireMUD avoids relying on idle
+regions to poll for these changes. Instead, the **Game Session Service**
+identifies all affected regions and **fan-outs tick tasks**:
+
+1. Commands are injected into each region’s shard-local keyspace.
+2. A tick is triggered in that region to apply the effect atomically.
+
+This ensures every shard processes the global event even if it would not tick
+naturally. The approach preserves shard-local atomicity and deterministic
+recovery without cross-shard locks or speculative polling. It also avoids
+scheduling global keys that might wake otherwise idle regions.
+
 ---
 
 ## ⏱️ Tick Integration (Resilience, Locking, Staging)
