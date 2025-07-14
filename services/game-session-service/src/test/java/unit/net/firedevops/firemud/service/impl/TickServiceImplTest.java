@@ -57,4 +57,18 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
   }
+
+  @Test
+  void slowTickIncrementsBudgetMetric() {
+    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
+    when(redisTemplate.execute(any(RedisScript.class), any(List.class))).thenReturn(1L);
+    when(listOps.size(any())).thenReturn(0L);
+
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickBudgetMs", 0L);
+
+    service.processTick(2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0, meterRegistry.get("game_session_tick_budget_exceeded_total").counter().count(), 0.001);
+  }
 }
