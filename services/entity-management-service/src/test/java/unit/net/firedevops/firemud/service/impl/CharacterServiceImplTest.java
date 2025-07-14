@@ -5,10 +5,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entity.Character;
 import net.firedevops.firemud.mapper.CharacterMapper;
 import net.firedevops.firemud.repository.CharacterRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
@@ -19,7 +21,10 @@ class CharacterServiceImplTest {
   void gainExperienceLevelsUp() {
     CharacterRepository repo = Mockito.mock(CharacterRepository.class);
     CharacterMapper mapper = Mappers.getMapper(CharacterMapper.class);
-    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper);
+    var cacheManager = new ConcurrentMapCacheManager("characterGraph");
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
+    service.initMetrics();
 
     Character character = new Character();
     character.setId(1L);
@@ -47,7 +52,10 @@ class CharacterServiceImplTest {
   void getWithInventoryReturnsDto() {
     CharacterRepository repo = Mockito.mock(CharacterRepository.class);
     CharacterMapper mapper = Mappers.getMapper(CharacterMapper.class);
-    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper);
+    var cacheManager = new ConcurrentMapCacheManager("characterGraph");
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
+    service.initMetrics();
 
     Character character = new Character();
     character.setId(1L);

@@ -1,13 +1,17 @@
 package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.CharacterDto;
 import net.firedevops.firemud.entity.Character;
 import net.firedevops.firemud.mapper.CharacterMapper;
 import net.firedevops.firemud.repository.CharacterRepository;
 import net.firedevops.firemud.service.CharacterService;
-import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -19,8 +23,19 @@ public class CharacterServiceImpl implements CharacterService {
 
   private final CharacterRepository characterRepository;
   private final CharacterMapper characterMapper;
+  private final CacheManager cacheManager;
+  private final MeterRegistry meterRegistry;
+
+  private Counter cacheHitCounter;
+  private Counter cacheMissCounter;
 
   private static final int EXP_PER_LEVEL = 1000;
+
+  @PostConstruct
+  void initMetrics() {
+    cacheHitCounter = meterRegistry.counter("character_cache_hits_total");
+    cacheMissCounter = meterRegistry.counter("character_cache_misses_total");
+  }
 
   @Override
   @Transactional
@@ -34,11 +49,24 @@ public class CharacterServiceImpl implements CharacterService {
 
   @Override
   @Transactional(readOnly = true)
-  @Cacheable(value = "characterGraph", key = "#characterId")
   @Timed(value = "character.get")
   public CharacterDto getWithInventory(Long characterId) {
-    Character character = characterRepository.findWithInventoryById(characterId).orElseThrow();
-    return characterMapper.toDto(character);
+    Cache cache = cacheManager.getCache("characterGraph");
+    if (cache != null) {
+      CharacterDto cached = cache.get(characterId, CharacterDto.class);
+      if (cached != null) {
+        cacheHitCounter.increment();
+        return cached;
+      }
+    }
+    cacheMissCounter.increment();
+    Character character =
+        characterRepository.findWithInventoryById(characterId).orElseThrow();
+    CharacterDto dto = characterMapper.toDto(character);
+    if (cache != null) {
+      cache.put(characterId, dto);
+    }
+    return dto;
   }
 
   @Override
