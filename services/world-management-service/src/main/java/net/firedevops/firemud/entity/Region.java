@@ -39,5 +39,9 @@ public class Region {
   @Column(name = "generator_params")
   private String generatorParams;
 
+  /** Multiplier applied to travel cost in sparse areas. */
+  @Column(name = "spacing_multiplier", nullable = false)
+  private Double spacingMultiplier = 1.0;
+
   @Version private int version;
 }

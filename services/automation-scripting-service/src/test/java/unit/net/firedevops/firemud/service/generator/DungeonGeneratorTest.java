@@ -16,6 +16,7 @@ class DungeonGeneratorTest {
     List<GeneratedRoom> rooms = result.rooms();
     assertEquals(5, rooms.size());
     assertFalse(rooms.stream().skip(1).anyMatch(r -> r.connectedTo() == 0));
+    assertEquals(0, rooms.get(0).x());
   }
 
   @Test

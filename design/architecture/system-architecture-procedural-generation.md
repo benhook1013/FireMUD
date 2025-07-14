@@ -79,6 +79,7 @@ All generators emit a normalized structure:
 | `biome`       | Biome or terrain type (if applicable)              |
 | `elevation`   | Numeric terrain height (used for visuals or logic) |
 | `regionId`    | Optional grouping for partitioned maps             |
+| `spacingMultiplier` | Adjusts travel cost when rooms are sparsely placed |
 
 In **full-grid mode**, every terrain tile becomes a room.
 In **sparse mode**, only selected POIs and waypoints are emitted.
