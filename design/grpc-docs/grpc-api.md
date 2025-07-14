@@ -523,6 +523,7 @@
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 | command | [string](#string) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
 
 <a name="game_session-v1-EnqueueCommandResponse"></a>
 

@@ -8,4 +8,7 @@ public record RegionDto(
     @NotNull Long tenantId,
     @NotNull @Size(max = 100) String name,
     String weather,
-    Integer shardId) {}
+    Integer shardId,
+    Long generationSeed,
+    String generatorType,
+    String generatorParams) {}

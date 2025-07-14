@@ -12,12 +12,17 @@ public class DungeonGenerator implements Generator {
 
   @Override
   public GenerationResult generate(GenerationParams params) {
+    List<String> errors = validateParams(params);
+    if (!errors.isEmpty()) {
+      return new GenerationResult(
+          List.of(), new GenerationErrorDetail("VALIDATION_FAILED", String.join(";", errors)));
+    }
     Random rnd = new SecureRandom();
     rnd.setSeed(params.seed());
     int rooms = params.rooms();
     List<GeneratedRoom> result = new ArrayList<>();
     if (rooms <= 0) {
-      return new GenerationResult(result);
+      return new GenerationResult(result, null);
     }
     // first room has no connection
     result.add(new GeneratedRoom(1, 0));
@@ -25,7 +30,7 @@ public class DungeonGenerator implements Generator {
       long connectTo = result.get(rnd.nextInt(result.size())).id();
       result.add(new GeneratedRoom(i, connectTo));
     }
-    return new GenerationResult(result);
+    return new GenerationResult(result, null);
   }
 
   @Override

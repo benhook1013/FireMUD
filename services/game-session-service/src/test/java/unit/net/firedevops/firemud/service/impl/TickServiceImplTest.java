@@ -35,7 +35,7 @@ class TickServiceImplTest {
 
   @Test
   void enqueueCommandPushesToQueue() {
-    service.enqueueCommand(2L, "look");
+    service.enqueueCommand(2L, "look", false);
     verify(listOps).rightPush(any(String.class), any());
   }
 
