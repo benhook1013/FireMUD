@@ -65,6 +65,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Commands are collected during a tick and executed in deterministic order.
 - The staging Lua script only moves a limited number of commands each tick
   (`GAME_TICK_MAX_COMMANDS`) so one player cannot starve others.
+- Commands with `requiresSoloTick: true` are dequeued into an isolated tick so expensive operations like runtime procedural generation do not share time with normal actions.
 - After execution, results are persisted and broadcast to connected clients.
 
 ### gRPC APIs

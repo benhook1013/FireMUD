@@ -208,6 +208,7 @@ exported via the standard `sagas.active` gauge.
 - Web UI for creating and testing scripts (initial version implemented).
 - Additional AI modules for advanced behaviors.
 - Procedural world generation hooks working in tandem with the World Management Service. The initial implementation uses a lightweight dungeon generator described in [System Architecture: Procedural Generation](../system-architecture-procedural-generation.md).
+- Post-generation population scripts spawn NPCs and loot based on room tags, biome, and depth. Generators register via the `Generator` interface so designers can plug in custom logic or DSL-defined generators.
 - NPC fleeing and surrender logic.
 - NPC formations and squad AI for coordinated encounters. Implemented via
   `NpcFormationService`.

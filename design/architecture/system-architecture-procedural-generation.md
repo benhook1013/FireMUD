@@ -80,8 +80,22 @@ All generators emit a normalized structure:
 | `elevation`   | Numeric terrain height (used for visuals or logic) |
 | `regionId`    | Optional grouping for partitioned maps             |
 
-In **full-grid mode**, every terrain tile becomes a room.  
+In **full-grid mode**, every terrain tile becomes a room.
 In **sparse mode**, only selected POIs and waypoints are emitted.
+
+---
+
+## 🛠️ Integration Guidelines
+
+The following rules align generators with the core runtime and tooling:
+
+1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended 500&nbsp;ms budget.
+2. **Seed Metadata** – All requests specify a seed and the Automation & Scripting Service stores `seed`, `generatorType`, and raw params in the region metadata table for later inspection.
+3. **Sparse Traversal Rules** – Sparse rooms exist on the map. A `worldSpacingMultiplier` influences movement cost and travel time between them.
+4. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone.
+5. **Validation and Errors** – Generators validate parameters (biome compatibility, room counts, connectivity). Failures return `GenerationErrorDetail` objects and are logged for observability.
+6. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
+7. **Pluggable Interface** – Generators implement the `Generator` interface and are registered via the Automation & Scripting Service for future scripted or DSL-based generators.
 
 ---
 

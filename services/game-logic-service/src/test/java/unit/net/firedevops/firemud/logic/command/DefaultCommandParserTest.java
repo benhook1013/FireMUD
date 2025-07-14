@@ -25,4 +25,11 @@ class DefaultCommandParserTest {
     Command cmd = parser.parse("   ");
     assertEquals(ActionType.UNKNOWN, cmd.actionType());
   }
+
+  @Test
+  void marksProceduralCommandsForSoloTick() {
+    Command cmd = parser.parse("generate-dungeon 5");
+    assertEquals(ActionType.PROCEDURAL, cmd.actionType());
+    assertEquals(true, cmd.requiresSoloTick());
+  }
 }
