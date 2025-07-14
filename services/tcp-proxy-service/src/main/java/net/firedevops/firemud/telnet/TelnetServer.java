@@ -1,6 +1,9 @@
 package net.firedevops.firemud.telnet;
 
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -33,6 +36,10 @@ public class TelnetServer {
   private final int maxConnectionsPerIp;
   private final int maxMessagesPerSecond;
 
+  private final java.util.concurrent.atomic.AtomicInteger activeConnections =
+      new java.util.concurrent.atomic.AtomicInteger();
+  private final Counter connectionCounter;
+
   private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
   private final EventLoopGroup workerGroup = new NioEventLoopGroup();
   private Channel serverChannel;
@@ -47,7 +54,8 @@ public class TelnetServer {
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       @Value("${TCP_PROXY_MAX_CONNECTIONS_PER_IP:5}") int maxConnectionsPerIp,
-      @Value("${TCP_PROXY_MAX_MSGS_PER_SEC:5}") int maxMessagesPerSec)
+      @Value("${TCP_PROXY_MAX_MSGS_PER_SEC:5}") int maxMessagesPerSec,
+      MeterRegistry meterRegistry)
       throws SSLException {
     this.port = port;
     this.gatewayWsUrl = gatewayWsUrl;
@@ -57,6 +65,12 @@ public class TelnetServer {
     this.maxConnectionsPerIp = maxConnectionsPerIp;
     this.maxMessagesPerSecond = maxMessagesPerSec;
     this.connectionThrottler = new ConnectionThrottler(maxConnectionsPerIp);
+    this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
+    Gauge.builder(
+            "tcpproxy.connections.active",
+            activeConnections,
+            java.util.concurrent.atomic.AtomicInteger::get)
+        .register(meterRegistry);
     if (tlsEnabled) {
       sslContext = SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
     }
@@ -83,7 +97,11 @@ public class TelnetServer {
                     .addLast(new StringDecoder())
                     .addLast(
                         new TelnetServerHandler(
-                            gatewayWsUrl, connectionThrottler, maxMessagesPerSecond));
+                            gatewayWsUrl,
+                            connectionThrottler,
+                            maxMessagesPerSecond,
+                            activeConnections,
+                            connectionCounter));
               }
             });
     serverChannel = b.bind(port).sync().channel();
@@ -110,5 +128,15 @@ public class TelnetServer {
   /** Expose the configured port for testing purposes. */
   public int getPort() {
     return port;
+  }
+
+  /** Current active connection count for metrics testing. */
+  int getActiveConnectionCount() {
+    return activeConnections.get();
+  }
+
+  /** Total connection count for metrics testing. */
+  double getTotalConnections() {
+    return connectionCounter.count();
   }
 }
