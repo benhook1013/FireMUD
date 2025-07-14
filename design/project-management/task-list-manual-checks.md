@@ -10,6 +10,8 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `Docker` and `Docker Compose`
   - [ ] `buf` for proto linting
   - [ ] `pre-commit` Python package
+  - [ ] `hadolint` for Dockerfile linting
+  - [ ] `shellcheck` for shell script validation
 - [ ] Set up git hooks
   - [ ] `pip install pre-commit`
   - [ ] `pre-commit install`
@@ -29,6 +31,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `npm run lint`
 - [ ] `npm run format -- -c`
 - [ ] `npm run openapi:lint`
+- [ ] `npm run accessibility` (requires Google Chrome)
 
 ## 📜 Protobuf & Documentation Scripts
 
@@ -36,6 +39,8 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `./dev-tools/generate-grpc-docs.sh` to update gRPC docs
 - [ ] `./dev-tools/generate-erd.sh` to produce ERD diagrams
 - [ ] `./dev-tools/link-check.sh` to validate links in docs
+- [ ] `hadolint` on all Dockerfiles
+- [ ] `shellcheck` on scripts under `dev-tools/`
 
 ## 📂 Database & Backup Utilities
 
@@ -61,3 +66,13 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `./dev-tools/seed-automation-scripting-data.sh` to add scripting examples
 - [ ] Import `dev-tools/insomnia/firemud-insomnia.json` in Insomnia for REST API calls
 - [ ] Open `dev-tools/kreya/.kreya-project.yaml` in Kreya for gRPC testing
+
+## 🔥 Service Smoke Tests
+
+- [ ] Run `services/account-service/smoke-test.sh`
+- [ ] Run `services/automation-scripting-service/smoke-test.sh`
+- [ ] Run `services/game-design-service/smoke-test.sh`
+- [ ] Run `services/game-logic-service/smoke-test.sh`
+- [ ] Run `services/social-groups-service/smoke-test.sh`
+- [ ] Run `services/tcp-proxy-service/smoke-test.sh`
+- [ ] Run `services/world-management-service/smoke-test.sh`
