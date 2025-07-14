@@ -16,7 +16,7 @@ spec:
       containers:
         - name: game-logic-service
           image: ghcr.io/firemud/game-logic-service:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
@@ -49,6 +49,7 @@ spec:
               memory: "512Mi"
           ports:
             - containerPort: 8080
+            - containerPort: 6565
           readinessProbe:
             httpGet:
               path: /actuator/health
@@ -76,5 +77,8 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+      protocol: TCP
+    - port: 6565
+      targetPort: 6565
       protocol: TCP
   type: ClusterIP

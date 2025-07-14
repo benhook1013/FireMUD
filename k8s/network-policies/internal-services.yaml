@@ -19,9 +19,13 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+        - protocol: TCP
+          port: 6565
   egress:
     - to:
         - podSelector: {}
       ports:
         - protocol: TCP
           port: 8080
+        - protocol: TCP
+          port: 6565
