@@ -3,15 +3,15 @@ package net.firedevops.firemud.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
-import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import net.firedevops.firemud.entity.Character;
 import net.firedevops.firemud.mapper.CharacterMapper;
 import net.firedevops.firemud.repository.CharacterRepository;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
@@ -22,7 +22,8 @@ class CharacterServiceImplListTest {
     CharacterMapper mapper = Mappers.getMapper(CharacterMapper.class);
     var cacheManager = new ConcurrentMapCacheManager("characterGraph");
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
+    CharacterServiceImpl service =
+        new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
     service.initMetrics();
 
     Character c = new Character();

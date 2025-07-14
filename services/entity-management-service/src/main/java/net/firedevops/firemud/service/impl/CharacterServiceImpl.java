@@ -60,8 +60,7 @@ public class CharacterServiceImpl implements CharacterService {
       }
     }
     cacheMissCounter.increment();
-    Character character =
-        characterRepository.findWithInventoryById(characterId).orElseThrow();
+    Character character = characterRepository.findWithInventoryById(characterId).orElseThrow();
     CharacterDto dto = characterMapper.toDto(character);
     if (cache != null) {
       cache.put(characterId, dto);
