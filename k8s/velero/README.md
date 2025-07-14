@@ -30,7 +30,7 @@ The repository includes a `verify-backups-cronjob.yaml` manifest that runs
 CronJob automatically, but you can apply it manually in other environments:
 
 ```bash
-kubectl apply -f verify-backups-cronjob.yaml -n velero
+kubectl apply -f verify-backups-cronjob.yaml -n firemud
 ```
 
 ## Local Backup with MinIO
