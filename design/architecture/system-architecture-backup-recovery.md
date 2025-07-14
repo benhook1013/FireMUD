@@ -89,6 +89,9 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 ## 🐳 Local Development
 
 - Backups are restored using `dev-tools/restore-db.sh` with a snapshot file.
+- `dev-tools/restore-latest-db.sh` can fetch the newest dump from the object
+  store and restore it automatically when `PG_DUMP_BUCKET` and
+  `PG_DUMP_ENDPOINT` are configured.
 - Create ad hoc snapshots with `dev-tools/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
 - Redis starts empty and repopulates when services access the database.
@@ -99,8 +102,9 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 - The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs
   `dev-tools/verify-backups.sh` daily to ensure recent snapshots are present in
-  the object store. This CronJob is installed automatically by the production
-  Terraform modules.
+  the object store. The script now also verifies that the latest PostgreSQL dump
+  exists in `PG_DUMP_BUCKET`, failing the job if no dumps are found. This
+  CronJob is installed automatically by the production Terraform modules.
 - Operators should periodically test recovery by restoring a snapshot into a
   throwaway namespace with `dev-tools/restore-cluster.sh <backup-name>
   <namespace>` (or by setting `FIREMUD_K8S_NAMESPACE`) and verifying

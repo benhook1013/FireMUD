@@ -52,11 +52,21 @@ if [ -n "$BUCKET" ]; then
   if [ -n "$ENDPOINT" ]; then
     AWS_ARGS="--endpoint-url $ENDPOINT"
   fi
-  aws s3 cp "$DUMP" "s3://$BUCKET/daily/" $AWS_ARGS
+  echo "Uploading $DUMP to s3://$BUCKET"
+  if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" $AWS_ARGS; then
+    echo "Failed to upload daily dump" >&2
+    exit 1
+  fi
   if [ "$DOW" = "7" ]; then
-    aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" $AWS_ARGS
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" $AWS_ARGS; then
+      echo "Failed to upload weekly dump" >&2
+      exit 1
+    fi
   fi
   if [ "$DOM" = "01" ]; then
-    aws s3 cp "$DUMP" "s3://$BUCKET/monthly/" $AWS_ARGS
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/monthly/" $AWS_ARGS; then
+      echo "Failed to upload monthly dump" >&2
+      exit 1
+    fi
   fi
 fi
