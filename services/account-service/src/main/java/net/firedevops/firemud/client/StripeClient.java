@@ -13,13 +13,14 @@ public class StripeClient {
   public StripeClient(String apiKey, double platformFeePercent) {
     this.apiKey = apiKey;
     this.platformFeePercent = platformFeePercent;
+    // Set once during construction to avoid repeated writes to static field
+    Stripe.apiKey = apiKey;
   }
 
   public record IntentResult(String id, String clientSecret, String status) {}
 
   public IntentResult createPaymentIntent(long amountCents, String currency)
       throws StripeException {
-    Stripe.apiKey = apiKey;
     long fee = calculatePlatformFee(amountCents);
     PaymentIntentCreateParams params =
         PaymentIntentCreateParams.builder()
@@ -40,7 +41,6 @@ public class StripeClient {
   }
 
   public void createRefund(String paymentIntentId) throws StripeException {
-    Stripe.apiKey = apiKey;
     RefundCreateParams params =
         RefundCreateParams.builder().setPaymentIntent(paymentIntentId).build();
     com.stripe.model.Refund.create(params);

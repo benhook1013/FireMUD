@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: game-logic-service
-          image: game-logic-service:latest
+          image: ghcr.io/firemud/game-logic-service:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE

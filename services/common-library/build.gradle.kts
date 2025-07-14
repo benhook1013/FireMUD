@@ -23,6 +23,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-web:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-aop:3.5.3")
+    compileOnly("io.github.lognet:grpc-spring-boot-starter:5.2.0")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
 

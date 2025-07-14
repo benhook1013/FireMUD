@@ -174,7 +174,11 @@ Use `dev-tools/backup-db.sh` to create a snapshot and
 
 ### Automatic Kubernetes Backups
 
-Production clusters run a `firemud-pg-dump` CronJob that writes compressed dumps to a `firemud-pg-dumps` volume (or MinIO bucket). Retrieve a dump with `kubectl cp` and restore it with `psql` as shown in the runbooks. Velero schedules back up only Kubernetes manifests.
+Production clusters run a `firemud-pg-dump` CronJob that writes compressed dumps
+to a `firemud-pg-dumps` volume. A helper script rotates these files and can
+upload them to an object bucket when `PG_DUMP_BUCKET` is configured. Retrieve a
+dump with `kubectl cp` or `aws s3 cp` and restore it with `psql` as shown in the
+runbooks. Velero schedules back up only Kubernetes manifests.
 
 ### Optional Redis Persistence
 
@@ -238,11 +242,10 @@ on `localhost:6379`. Typical key patterns are `session:*`, `tick:*`, and
 
 ## Configuration Files
 
-Environment‑specific settings live in Spring Boot profile files contained within each service's `src/main/resources` directory.
+Environment‑specific settings live in each service's `src/main/resources` directory.
 
-- `application.yml` – base configuration with `dev` and `prod` profiles.
-- `application-dev.yml` – legacy name; now included as a profile section in `application.yml`.
-- `application-prod.yml` – legacy name; also included as a profile section.
+- `application.yml` – base configuration containing both `dev` and `prod` profile sections.
+- `SPRING_PROFILES_ACTIVE` – environment variable used to select the active profile at runtime.
 
 More details on deployment environments and gateway routing can be found in the following design documents:
 

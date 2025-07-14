@@ -1,4 +1,4 @@
-package net.firedevops.firemud.config;
+package net.firedevops.firemud.common.grpc;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -8,11 +8,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 
+/**
+ * Reloads TLS certificates for the gRPC server when the underlying files change. The service runner
+ * is stopped and restarted gracefully so active calls finish before shutdown.
+ */
 @Component
 public class GrpcServerTlsReloader {
   private static final Logger logger = LoggingUtil.getLogger(GrpcServerTlsReloader.class);
@@ -41,7 +44,9 @@ public class GrpcServerTlsReloader {
   private synchronized void reload() {
     try {
       logger.info("TLS certificates changed; restarting gRPC server");
+      logger.info("Stopping gRPC server to reload TLS certificates");
       serverRunner.stop();
+      logger.info("gRPC server stopped; restarting");
       serverRunner.start();
     } catch (Exception e) {
       logger.error("Failed to restart gRPC server", e);
