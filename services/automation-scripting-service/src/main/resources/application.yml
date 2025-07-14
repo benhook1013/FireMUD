@@ -20,6 +20,9 @@ script:
   quota:
     limit: 50
     windowSeconds: 60
+automation:
+  tick-duration-ms: 1000
+  tick-max-events: 50
 
 server:
   compression:

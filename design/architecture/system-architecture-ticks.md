@@ -131,6 +131,10 @@ Each tick enforces a **soft execution budget** (e.g., 100ms):
 - **Oldest actions win** in conflict scenarios
 - Newer submissions are backlogged until resolved
 - Conflict metadata enables **hotspot detection** and livelock prevention
+- Lua staging scripts limit how many commands or events move from queue to
+  pending lists per tick. The defaults (`game.tick-max-commands` and
+  `automation.tick-max-events`) spread heavy workloads across ticks so one
+  player or script cannot monopolize the loop.
 
 ---
 

@@ -1,7 +1,8 @@
 local queue = KEYS[1]
 local pending = KEYS[2]
+local max = tonumber(ARGV[1])
 local moved = 0
-while true do
+while moved < max do
   local cmd = redis.call('LPOP', queue)
   if not cmd then
     break
