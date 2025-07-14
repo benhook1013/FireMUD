@@ -1,0 +1,15 @@
+CREATE INDEX idx_accounts_tenant_id ON accounts(tenant_id);
+CREATE INDEX idx_profiles_account_id ON profiles(account_id);
+CREATE INDEX idx_profiles_tenant_id ON profiles(tenant_id);
+CREATE INDEX idx_payment_tx_account_id ON payment_transaction(account_id);
+CREATE INDEX idx_payment_tx_tenant_id ON payment_transaction(tenant_id);
+CREATE INDEX idx_subscription_account_id ON subscription(account_id);
+CREATE INDEX idx_subscription_tenant_id ON subscription(tenant_id);
+CREATE INDEX idx_external_account_tenant_id ON external_account(tenant_id);
+CREATE INDEX idx_external_account_account_id ON external_account(account_id);
+CREATE INDEX idx_password_reset_account_id ON password_reset_token(account_id);
+CREATE INDEX idx_password_reset_tenant_id ON password_reset_token(tenant_id);
+CREATE INDEX idx_email_verification_account_id ON email_verification_token(account_id);
+CREATE INDEX idx_email_verification_tenant_id ON email_verification_token(tenant_id);
+CREATE INDEX idx_currency_balance_account_id ON currency_balance(account_id);
+CREATE INDEX idx_currency_balance_tenant_id ON currency_balance(tenant_id);

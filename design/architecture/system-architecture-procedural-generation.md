@@ -60,9 +60,7 @@ Generates biome-aware terrain maps with elevation, water features, forest densit
 | **Forest/Cave Generation** | Place dense blobs of trees or underground | Cellular automata                          |
 | **Feature Placement**    | Place towns, dungeons, landmarks            | `Poisson Disk Sampling`, seeded rules      |
 | **Connectivity Graph**   | Generate roads, rivers, and path exits      | A*, flow maps, elevation-aware routing     |
-| **Room Graph Export**    | Convert terrain grid into room data         | Either:
-  - Sparse: POIs and path nodes only  
-  - Full: 1:1 room per map cell              |
+| **Room Graph Export**    | Convert terrain grid into room data         | Either sparse (POIs and path nodes only) or full (1:1 room per map cell) |
 
 > 🔧 The room generation mode (sparse vs full) is selectable per generation request, depending on the game’s desired level of detail and exploration density.
 
