@@ -45,9 +45,26 @@ jobs:
       - name: ⚙️ Generate Protobufs
         run: buf generate
 
+  shellcheck:
+    name: ShellCheck
+    needs: buf-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v3
+
+      - name: 📦 Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: 🐚 Run ShellCheck
+        run: |
+          echo "::group::ShellCheck"
+          find dev-tools -name '*.sh' -print0 | xargs -0 shellcheck
+          echo "::endgroup::"
+
   build-and-test:
     name: Build and Test (${{ matrix.service }})
-    needs: buf-check
+    needs: [buf-check, shellcheck]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
