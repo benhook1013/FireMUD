@@ -4,7 +4,7 @@
 flowchart TD
     subgraph Clients
         MUD[MUD Client]
-        Web[Web Client]
+        Web[Web Client (React UI)]
     end
 
     subgraph DMZ
@@ -63,7 +63,10 @@ flowchart TD
     Prom --> Grafana
     OTel --> Jaeger
     ES --> Kibana
+
 ```
+
+The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md).
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
 
@@ -75,17 +78,17 @@ All datastores are shared across games, but each table includes a `tenantId` col
 
 The diagram covers every microservice currently in the repository:
 
-- **TCP Proxy Service** – Bridges Telnet clients into the WebSocket-based backend.
-- **Spring Cloud Gateway** – Routes HTTP and WebSocket traffic to internal services.
-- **Game Session Service** – Orchestrates sessions, ticks, and runtime configuration.
-- **Account Service** – Handles accounts, authentication, and subscriptions.
-- **World Management Service** – Stores rooms, regions, and world maps.
-- **Entity Management Service** – Manages players, NPCs, items, and inventory data.
-- **Game Logic Service** – Resolves commands and core gameplay mechanics.
-- **Game Design Service** – Provides authoring tools for game data and feature flags.
-- **Automation & Scripting Service** – Executes AI behaviors and custom scripts.
-- **Social & Groups Service** – Manages chat, guilds, and social networking.
-- **Logging & Admin Service** – Centralizes logging, metrics, and admin tools.
+- **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** – Bridges Telnet clients into the WebSocket-based backend.
+- **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** – Routes HTTP and WebSocket traffic to internal services.
+- **[Game Session Service](./microservices/game-session-service/README.md)** – Orchestrates sessions, ticks, and runtime configuration.
+- **[Account Service](./microservices/account-service/README.md)** – Handles accounts, authentication, and subscriptions.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps.
+- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages players, NPCs, items, and inventory data.
+- **[Game Logic Service](./microservices/game-logic-service/README.md)** – Resolves commands and core gameplay mechanics.
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags.
+- **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** – Executes AI behaviors and custom scripts.
+- **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
+- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools.
 
 ## 🔍 Observability Components
 
@@ -109,3 +112,4 @@ See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for depl
 - [Gateway Architecture](./system-architecture-gateway.md)
 - [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 - [Multi-Tenancy](./system-architecture-multi-tenancy.md)
+- [Frontend Architecture](./system-architecture-frontend.md)
