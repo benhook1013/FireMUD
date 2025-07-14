@@ -71,8 +71,8 @@ Redis keys follow strict naming conventions to ensure:
 |-------------------------------|------------------------------------------|
 | `tick:lock:{tenantId}:{entityId}` | Lock for entity during tick execution    |
 | `tick:pending:{tenantId}:{regionId}` | Staged results for a tick region         |
-| `room:{roomId}:occupants`     | Room occupancy snapshot                  |
-| `retry:{regionId}`            | Retry queue for failed actions           |
+| `room:{tenantId}:{roomId}:occupants`     | Room occupancy snapshot                  |
+| `retry:{tenantId}:{regionId}`            | Retry queue for failed actions           |
 | `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
 
 > 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)
