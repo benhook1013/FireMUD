@@ -18,4 +18,8 @@ public class Faction {
   private String name;
 
   private String description;
+
+  @Version
+  @Column(name = "row_version")
+  private int version;
 }

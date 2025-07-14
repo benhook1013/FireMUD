@@ -24,4 +24,8 @@ public class NpcFormation {
   @Enumerated(EnumType.STRING)
   @Column(name = "formation_type", nullable = false)
   private FormationType formationType;
+
+  @Version
+  @Column(name = "row_version")
+  private int version;
 }

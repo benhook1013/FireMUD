@@ -17,4 +17,8 @@ public class NpcFormationMember {
 
   @Column(name = "npc_id", nullable = false)
   private Long npcId;
+
+  @Version
+  @Column(name = "row_version")
+  private int version;
 }

@@ -22,4 +22,8 @@ public class NpcMemory {
 
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
+
+  @Version
+  @Column(name = "row_version")
+  private int version;
 }
