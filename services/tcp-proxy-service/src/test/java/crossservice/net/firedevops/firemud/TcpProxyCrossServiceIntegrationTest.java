@@ -12,6 +12,9 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -29,6 +32,8 @@ import org.testcontainers.utility.DockerImageName;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class,
     properties = {"TCP_PROXY_PORT=2323"})
+@EnableAutoConfiguration(
+    exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
   static GenericContainer<?> gateway =
