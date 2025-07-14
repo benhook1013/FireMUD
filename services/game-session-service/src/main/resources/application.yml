@@ -22,6 +22,8 @@ game:
 firemud:
   services:
     game-logic-service: game-logic-service:6565
+  conflict:
+    ttlSeconds: 300
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

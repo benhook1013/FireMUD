@@ -10,6 +10,7 @@ import java.util.List;
 import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.service.tick.ScriptTickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +30,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final net.firedevops.firemud.service.quota.ScriptQuotaService quotaService;
+  private final ConflictTracker conflictTracker;
 
   @Value("${automation.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -126,6 +128,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
         redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
     if (Boolean.FALSE.equals(acquired)) {
       lockContentionCounter.increment();
+      conflictTracker.recordConflict("script:" + tenantId + ":" + scriptId);
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }
@@ -159,6 +162,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
       awaitReplication();
     } catch (Exception ex) {
       logger.error("Script tick failed, rolling back", ex);
+      conflictTracker.recordConflict("script:" + tenantId + ":" + scriptId);
       luaTimer.record(
           () ->
               executeScriptWithRetry(

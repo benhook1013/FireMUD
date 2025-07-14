@@ -19,6 +19,7 @@ class TickServiceImplTest {
   private org.springframework.data.redis.core.ListOperations<String, Object> listOps;
   private org.springframework.data.redis.core.ValueOperations<String, Object> valueOps;
   private SimpleMeterRegistry meterRegistry;
+  private net.firedevops.firemud.common.conflict.ConflictTracker conflictTracker;
   private TickService service;
 
   @BeforeEach
@@ -29,7 +30,8 @@ class TickServiceImplTest {
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     meterRegistry = new SimpleMeterRegistry();
-    service = new TickServiceImpl(redisTemplate, meterRegistry);
+    conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
+    service = new TickServiceImpl(redisTemplate, meterRegistry, conflictTracker);
     ((TickServiceImpl) service).init();
   }
 
@@ -56,6 +58,7 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
+    verify(conflictTracker).recordConflict("session:2");
   }
 
   @Test
