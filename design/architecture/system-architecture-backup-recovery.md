@@ -4,25 +4,23 @@ This document defines the backup schedule and disaster recovery procedures for F
 
 ---
 
-## 📦 PostgreSQL Snapshots
+## 📦 PostgreSQL Logical Backups
 
-- Snapshots are taken **every 15 minutes**.
+- A `firemud-pg-dump` CronJob runs **every 15 minutes** and stores compressed SQL dumps.
 - Retention policy:
-  - **24 hours** of 15‑minute snapshots
-  - **3 weekly** snapshots
-  - **3 monthly** snapshots
-- Velero backup schedules are installed automatically by the
-  production Terraform modules using `k8s/velero/schedule.yaml`.
-  Operators must configure Velero with access to an object storage bucket
-    (AWS S3, GCS, or MinIO). Copy `k8s/velero/values.example.yaml` to `values.yaml`
-    and adjust the provider and bucket. Example `values.yaml` snippet:
+  - **24 hours** of 15‑minute dumps
+  - **3 weekly** dumps
+  - **3 monthly** dumps
+- The CronJob writes to a persistent volume claim `firemud-pg-dumps` or uploads to MinIO if configured.
+- Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests.
+- Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example snippet:
 
     ```yaml
     configuration:
       provider: aws
+      defaultVolumesToFsBackup: false
       backupStorageLocation:
         bucket: firemud-backups
-        prefix: postgres
       ```
 
     For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml`
@@ -31,6 +29,7 @@ This document defines the backup schedule and disaster recovery procedures for F
     ```yaml
     configuration:
       provider: aws
+      defaultVolumesToFsBackup: false
       backupStorageLocation:
         name: local
         provider: aws
@@ -48,7 +47,7 @@ This document defines the backup schedule and disaster recovery procedures for F
       `firemud-backups` bucket, and install Velero automatically.
 
   - If the database service fails completely:
-  1. Restore the latest snapshot.
+  1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
   2. Restart services to resume operation.
   3. Redis repopulates transient state from PostgreSQL on access.
 
@@ -73,10 +72,10 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 ## ☁️ Kubernetes Production
 
-- **Velero** backs up StatefulSets, PersistentVolumeClaims, ConfigMaps, and Secrets.
+- **Velero** backs up Deployments, StatefulSets, ConfigMaps, and Secrets (but not volume snapshots).
   - Restoration process:
-    1. Use Velero to rehydrate the PostgreSQL volume from the latest snapshot.
-    2. Restore other resources (StatefulSets, ConfigMaps, Secrets).
+    1. Restore the latest `pg_dump` file onto the PostgreSQL volume.
+    2. Use Velero to restore Kubernetes manifests.
     3. Restart the affected pods; Redis starts empty and fills itself from PostgreSQL.
     4. Operators can run `dev-tools/restore-cluster.sh <backup-name>` to automate these steps in production.
        Set `FIREMUD_K8S_NAMESPACE` if restoring to a different namespace.
@@ -106,7 +105,7 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 | Environment      | Steps |
 |------------------|-------------------------------------------------------------|
-| **Kubernetes**   | Restore PostgreSQL via Velero → restore other resources → restart pods → allow Redis to repopulate |
+| **Kubernetes**   | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → allow Redis to repopulate |
 | **Docker Compose** | `dev-tools/restore-db.sh` snapshot → restart containers → Redis repopulates automatically |
 
 Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. Gameplay resumes after services restart and Redis repopulates from PostgreSQL.

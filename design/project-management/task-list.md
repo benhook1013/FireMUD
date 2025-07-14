@@ -297,8 +297,8 @@ The standard microservice checklist is now copied into each service task list.
   - [x] Implement horizontal scaling (Auto-scaling, Load Balancer)
   - [x] Optimize database queries & network traffic handling
   - [x] Define backup & disaster recovery strategy (see [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md))
-  - [x] Deploy **Velero** for scheduled Kubernetes and PostgreSQL backups
-  - [x] Configure production snapshots as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
+  - [x] Deploy **Velero** for scheduled Kubernetes manifest backups
+  - [x] Configure the `pg_dump` CronJob for PostgreSQL data as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
 
 ## 🛠️ Phase 4: Community & Funding
 

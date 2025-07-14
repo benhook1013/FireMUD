@@ -172,6 +172,10 @@ Use `dev-tools/backup-db.sh` to create a snapshot and
 ./dev-tools/restore-db.sh backups/<file>
 ```
 
+### Automatic Kubernetes Backups
+
+Production clusters run a `firemud-pg-dump` CronJob that writes compressed dumps to a `firemud-pg-dumps` volume (or MinIO bucket). Retrieve a dump with `kubectl cp` and restore it with `psql` as shown in the runbooks. Velero schedules back up only Kubernetes manifests.
+
 ### Optional Redis Persistence
 
 Redis normally starts empty between service restarts. If you want to keep the

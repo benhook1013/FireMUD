@@ -33,12 +33,13 @@ For local development, use `./gradlew devUp` to start Docker Compose.
 ## 🔄 Recovery
 
 1. **Database Failure**
-   - Run `dev-tools/restore-cluster.sh <backup-name>` to restore from the latest Velero snapshot and restart services.
+   - Run `dev-tools/restore-cluster.sh <backup-name>` to restore from the latest `pg_dump` and restart services.
      Set `FIREMUD_K8S_NAMESPACE` to restore into a custom namespace.
    - Alternatively, restore manually:
 
      ```bash
-     velero restore create --from-backup firemud-postgres-latest
+     kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
+     gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
      kubectl rollout restart deployment -n firemud
      kubectl rollout restart statefulset -n firemud
      ```
@@ -52,9 +53,9 @@ For local development, use `./gradlew devUp` to start Docker Compose.
    - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
 3. **Full Cluster Restore**
    - Recreate the cluster using Terraform modules in `k8s/terraform`.
-   - Run `velero restore` for persistent volumes.
+   - Run `velero restore` to recreate Kubernetes manifests.
 
-See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for snapshot schedules and retention policies.
+See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for backup schedules and retention policies.
 
 ## 🩹 Hotfix Procedure
 
