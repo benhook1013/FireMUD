@@ -23,6 +23,7 @@ script:
 automation:
   tick-duration-ms: 1000
   tick-max-events: 50
+  tick-budget-ms: 100
 
 server:
   compression:

@@ -71,4 +71,18 @@ class ScriptTickServiceImplTest {
 
     verify(conflictTracker).recordConflict("script:1:2");
   }
+
+  @Test
+  void slowTickIncrementsBudgetMetric() {
+    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
+    when(redisTemplate.execute(any(RedisScript.class), any(List.class))).thenReturn(1L);
+    when(listOps.size(any())).thenReturn(0L);
+
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickBudgetMs", 0L);
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0, meterRegistry.get("automation_tick_budget_exceeded_total").counter().count(), 0.001);
+  }
 }
