@@ -47,8 +47,16 @@ resource "helm_release" "velero" {
     value = var.velero_provider
   }
   set {
-    name  = "configuration.backupStorageLocation.name"
+    name  = "configuration.backupStorageLocation.bucket"
     value = var.velero_bucket
+  }
+  set {
+    name  = "configuration.backupStorageLocation.prefix"
+    value = var.velero_bucket_prefix
+  }
+  set {
+    name  = "credentials.existingSecret"
+    value = var.velero_credentials_secret
   }
 }
 

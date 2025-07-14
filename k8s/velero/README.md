@@ -69,17 +69,8 @@ aws_access_key_id=myaccesskey
 aws_secret_access_key=mysecretkey'
 ```
 
-Create the backup bucket using the MinIO client or web UI before installing Velero. Example with the `mc` CLI:
+Run the helper script to deploy MinIO, create the bucket, and install Velero:
 
 ```bash
-mc alias set local http://minio.minio.svc.cluster.local:9000 myaccesskey mysecretkey
-mc mb local/firemud-backups
-```
-
-Install Velero with these values after the MinIO bucket has been created:
-
-```bash
-helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts
-helm install velero vmware-tanzu/velero \
-  -n velero --create-namespace -f values-minio.yaml
+dev-tools/setup-local-backup.sh
 ```
