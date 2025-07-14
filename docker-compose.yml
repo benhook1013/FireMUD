@@ -20,11 +20,8 @@ x-service-volumes: &service-vols
   - ./dev-tools/certs:/app/certs:ro
 
 x-service-resources: &service-resources
-  deploy:
-    resources:
-      limits:
-        cpus: "0.5"
-        memory: 512M
+  cpus: "0.5"
+  mem_limit: 512m
 
 services:
   account-service:
@@ -255,6 +252,8 @@ services:
     build:
       context: .
       dockerfile: docker/pg-dump-cron.Dockerfile
+    cpus: "0.5"
+    mem_limit: 256m
     env_file:
       - .env
     environment:

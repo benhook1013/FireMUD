@@ -24,7 +24,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: pg-dump
-              image: postgres:15
+              image: postgres:16
               envFrom:
                 - configMapRef:
                     name: firemud-config

@@ -45,7 +45,7 @@ For workflows that span multiple services, such as account creation and world pr
 
 ```kotlin
 val network = Network.newNetwork()
-val postgres = PostgreSQLContainer<Nothing>("postgres:15").withNetwork(network)
+val postgres = PostgreSQLContainer<Nothing>("postgres:16").withNetwork(network)
 val accountService = GenericContainer("account-service:latest").withNetwork(network)
 ```
 
