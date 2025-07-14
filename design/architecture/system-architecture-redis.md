@@ -108,26 +108,27 @@ All Lua scripts are:
 
 ### 🔀 Shard Locality and Cross-Region Behavior
 
-Redis **does not support cross-shard transactions**. Tick operations are bound
-to the shard that hosts their region. When an action spans regions — for
-example a player moving between rooms — the Game Session Service decomposes the
-transition into **separate ticks**:
+Redis **does not support cross-shard transactions**. All tick-related commands
+and Lua scripts are confined to **one shard**. When an action spans regions
+(for example a player moving between rooms on different shards) the Game Session
+Service decomposes the transition into **two sequential ticks**:
 
-1. The first tick exits the source region, clearing locks and staged state on
-   *Shard&nbsp;A*.
-2. A follow-up tick enters the destination region on *Shard&nbsp;B* and applies
-   the new state.
+1. **Tick&nbsp;A** on *Shard&nbsp;X* performs exit logic and clears local state.
+2. **Tick&nbsp;B** on *Shard&nbsp;Y* applies entry logic and rebinds the
+   session in the new region.
 
-These ticks never overlap or hold locks across shards. Lua scripts execute on a
-single shard at a time, guaranteeing atomicity and replay safety without any
-distributed coordination.
+No lock or Lua script ever spans shards. The Game Session Service coordinates
+these ticks so they never overlap, ensuring atomicity and deterministic replay
+without distributed transactions. See
+[Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
+for how commands targeting another region are routed and resolved.
 
 ### 🌀 Global Effects and Region-Wide Coordination
 
-Some gameplay events span **multiple tick regions** — for example, a server-wide
-freeze, global weather change, or round reset. FireMUD avoids relying on idle
-regions to poll for these changes. Instead, the **Game Session Service**
-identifies all affected regions and **fan-outs tick tasks**:
+Tick regions **do not execute unless explicitly triggered**. Idle regions will
+never see scheduled global events on their own. To apply a world-wide effect —
+for example, a server-wide freeze or weather change — the **Game Session
+Service** identifies every active region and **fan-outs tick tasks**:
 
 1. Commands are injected into each region’s shard-local keyspace.
 2. A tick is triggered in that region to apply the effect atomically.
