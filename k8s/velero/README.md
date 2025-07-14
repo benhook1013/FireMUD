@@ -1,8 +1,8 @@
 # Velero Backups
 
-This directory contains Kubernetes manifests for installing Velero and scheduling PostgreSQL backups for the FireMUD cluster.
+This directory contains Kubernetes manifests for installing Velero and scheduling namespace backups for the FireMUD cluster. Velero now backs up **only Kubernetes manifests** (Deployments, Services, StatefulSets, Secrets, etc.). PostgreSQL data is backed up separately using a `pg_dump` CronJob.
 
-The `schedule.yaml` file defines three backup schedules matching the retention policy described in the architecture docs.
+The `schedule.yaml` file defines three backup schedules matching the retention policy described in the architecture docs. Each schedule sets `snapshotVolumes: false` to avoid PVC snapshots.
 
 Apply the manifests with:
 
@@ -47,6 +47,7 @@ Example `values-minio.yaml` config:
 ```yaml
 configuration:
   provider: aws
+  defaultVolumesToFsBackup: false
   backupStorageLocation:
     name: local
     provider: aws
@@ -74,3 +75,5 @@ Run the helper script to deploy MinIO, create the bucket, and install Velero:
 ```bash
 dev-tools/setup-local-backup.sh
 ```
+
+Velero backups exclude PostgreSQL and Redis data. PostgreSQL dumps are created by the `firemud-pg-dump` CronJob defined under `k8s/postgres/pg-dump-cronjob.yaml`. Redis is intentionally ephemeral and repopulates from the database on startup.

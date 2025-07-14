@@ -40,7 +40,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
 - **Certificate Management**: TLS and mTLS certificates issued by **cert-manager** and stored as Kubernetes Secrets
-- **Cluster Backups**: **Velero** snapshots StatefulSets and persistent volumes. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the snapshot schedule.
+- **Cluster Backups**: **Velero** backs up Kubernetes manifests only. PostgreSQL volumes are dumped via a CronJob. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the backup schedule.
 - **Payment Gateway**: Stripe (with custom subscription integration)
 
 ## Frontend

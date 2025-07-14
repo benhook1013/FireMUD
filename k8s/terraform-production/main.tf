@@ -79,3 +79,13 @@ resource "kubernetes_manifest" "velero_verify" {
   manifest  = each.value
   depends_on = [helm_release.velero]
 }
+
+locals {
+  pg_dump_docs = split("\n---\n", file("${path.module}/../postgres/pg-dump-cronjob.yaml"))
+}
+
+resource "kubernetes_manifest" "pg_dump" {
+  for_each  = { for idx, doc in local.pg_dump_docs : idx => yamldecode(doc) }
+  manifest  = each.value
+  depends_on = [helm_release.postgresql]
+}

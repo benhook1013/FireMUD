@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: firemud-pg-dumps
+  namespace: firemud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: firemud-pg-dump
+  namespace: firemud
+spec:
+  schedule: "*/15 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pg-dump
+              image: postgres:15
+              envFrom:
+                - configMapRef:
+                    name: firemud-config
+                - secretRef:
+                    name: firemud-secret
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  ts=$(date +%Y%m%d%H%M%S)
+                  pg_dump -h "$FIREMUD_POSTGRES_HOST" -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB" \
+                    | gzip > /backups/firemud_${ts}.sql.gz
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: firemud-pg-dumps
