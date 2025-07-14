@@ -95,7 +95,7 @@ The following rules align generators with the core runtime and tooling:
 4. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone.
 5. **Validation and Errors** – Generators validate parameters (biome compatibility, room counts, connectivity). Failures return `GenerationErrorDetail` objects and are logged for observability.
 6. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
-7. **Pluggable Interface** – Generators implement the `Generator` interface and are registered via the Automation & Scripting Service for future scripted or DSL-based generators.
+7. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service for future scripted or DSL-based generators.
 
 ---
 
