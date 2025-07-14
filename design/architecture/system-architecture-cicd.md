@@ -115,6 +115,31 @@ job runs `helm upgrade` against a local cluster using the charts in
 configured beforehand. When full automation is added, a workflow similar to the
 example below can be introduced.
 
+### Option 1: CI/CD Sets a Unique Tag Per Build
+
+Each build pushes images with a version tag and updates the chart values so
+Kubernetes pulls the exact image:
+
+```bash
+docker build -t my-app:1.2.3 .
+docker push my-registry/my-app:1.2.3
+```
+
+In your Helm values:
+
+```yaml
+image:
+  repository: my-registry/my-app
+  tag: "1.2.3"
+  pullPolicy: IfNotPresent
+```
+
+Deployment then uses `helm upgrade` with the updated values file:
+
+```bash
+helm upgrade --install my-app ./charts/my-app -f prod-values.yaml
+```
+
 ```yaml
 deploy:
   needs: docker-build
