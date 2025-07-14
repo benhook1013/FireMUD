@@ -35,12 +35,16 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   @Value("${automation.tick-duration-ms:1000}")
   private long tickDurationMs;
 
+  @Value("${automation.tick-budget-ms:100}")
+  private long tickBudgetMs;
+
   @Value("${automation.tick-max-events:50}")
   private int tickMaxEvents;
 
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
   private Counter lockContentionCounter;
+  private Counter budgetExceededCounter;
   private Timer tickTimer;
   private Timer luaTimer;
   private java.util.concurrent.atomic.AtomicInteger retryQueueDepth =
@@ -77,6 +81,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
     enqueueCounter = meterRegistry.counter("automation_tick_events_enqueued_total");
     redisErrorCounter = meterRegistry.counter("automation_tick_redis_errors_total");
     lockContentionCounter = meterRegistry.counter("automation_tick_lock_contention_total");
+    budgetExceededCounter = meterRegistry.counter("automation_tick_budget_exceeded_total");
     tickTimer = meterRegistry.timer("automation_tick_duration_ms");
     luaTimer = meterRegistry.timer("automation_lua_latency_ms");
     Gauge.builder(
@@ -123,6 +128,7 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   @Override
   @Timed(value = "automation.tick.process")
   public void processTick(Long tenantId, Long scriptId) {
+    long start = System.nanoTime();
     String lockKey = lockKey(tenantId, scriptId);
     Boolean acquired =
         redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
@@ -170,6 +176,11 @@ public class ScriptTickServiceImpl implements ScriptTickService {
                   List.of(pendingKey(tenantId, scriptId), queueKey(tenantId, scriptId))));
       awaitReplication();
     } finally {
+      long elapsed = (System.nanoTime() - start) / 1_000_000;
+      if (elapsed > tickBudgetMs) {
+        budgetExceededCounter.increment();
+        logger.debug("Tick budget exceeded: {} ms", elapsed);
+      }
       redisTemplate.delete(lockKey);
     }
   }
