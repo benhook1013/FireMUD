@@ -180,6 +180,14 @@ upload them to an object bucket when `PG_DUMP_BUCKET` is configured. Retrieve a
 dump with `kubectl cp` or `aws s3 cp` and restore it with `psql` as shown in the
 runbooks. Velero schedules back up only Kubernetes manifests.
 
+### Local Database Cron Backups
+
+The Docker Compose stack includes a `pg-dump-cron` service that runs
+`dev-tools/pg-dump-rotate.sh` every 15 minutes. Dumps are written to the
+`./backups` directory and follow the same daily/weekly/monthly rotation policy as
+production. Set `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` to automatically upload
+the files to your object store.
+
 ### Optional Redis Persistence
 
 Redis normally starts empty between service restarts. If you want to keep the
