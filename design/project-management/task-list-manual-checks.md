@@ -14,6 +14,7 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `pip install pre-commit`
   - [ ] `pre-commit install`
   - [ ] `pre-commit run --all-files`
+  - [ ] Copy `.env.sample` to `.env` and adjust values as needed
 
 ## ✅ Build & Test Commands
 
@@ -61,3 +62,19 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `./dev-tools/seed-automation-scripting-data.sh` to add scripting examples
 - [ ] Import `dev-tools/insomnia/firemud-insomnia.json` in Insomnia for REST API calls
 - [ ] Open `dev-tools/kreya/.kreya-project.yaml` in Kreya for gRPC testing
+
+## 🔒 Security & Scanning
+
+- [ ] `trivy fs --config .trivy.yaml .` to scan dependencies and Dockerfiles
+
+## ☸ Kubernetes & Helm
+
+- [ ] `helm lint k8s/helm/firemud` to validate charts
+- [ ] `helm upgrade --install firemud k8s/helm/firemud -f k8s/helm/values-dev.yaml`
+- [ ] `kubectl get pods -n firemud` to verify running services
+
+## 🌍 Terraform Modules
+
+- [ ] `terraform init` in `k8s/terraform-production`
+- [ ] `terraform plan` to preview infrastructure changes
+
