@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jre
+FROM ghcr.io/firedevops/firemud-base:latest
 WORKDIR /app
 COPY build/libs/*.jar app.jar
 COPY ../../dev-tools/wait-for-it.sh /usr/local/bin/wait-for-it.sh

@@ -1,6 +1,6 @@
 # 🚀 FireMUD System Architecture: CI/CD Pipeline
 
-This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and deployed automatically so that changes reach production reliably.
+This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, and containerized. Deployment to Kubernetes is triggered manually using a dedicated workflow until cloud hosting is available.
 
 ---
 
@@ -102,17 +102,18 @@ Images are tagged with the commit SHA and pushed to **GitHub Container Registry 
 
 ### Base Docker Image
 
-The firemud-base image provides a consistent OS and JVM setup across all service containers. It is built using the buildBaseImage Gradle task and reused by all microservice Dockerfiles.
+The firemud-base image provides a consistent OS and JVM setup across all service containers. It is built using the `buildBaseImage` Gradle task and referenced in each microservice Dockerfile as `ghcr.io/firedevops/firemud-base:latest`.
 
 ---
 
 ## 🚢 Deploying to Kubernetes
 
-At the moment FireMUD does not automatically deploy to Kubernetes. Operators
-apply the manifests in [`k8s/`](../../k8s/) or the provided Helm charts to roll
-out new versions. Cluster credentials and registry secrets are managed manually.
-When automated deployment is added, a workflow similar to the example below can
-be introduced.
+FireMUD does not yet deploy automatically to Kubernetes. Operators trigger the
+`manual-helm-deploy.yml` workflow when they want to roll out a new version. That
+job runs `helm upgrade` against a local cluster using the charts in
+[`k8s/helm`](../../k8s/helm). Cluster credentials and registry secrets must be
+configured beforehand. When full automation is added, a workflow similar to the
+example below can be introduced.
 
 ```yaml
 deploy:
