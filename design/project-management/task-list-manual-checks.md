@@ -43,6 +43,10 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `./dev-tools/restore-db.sh backups/<file>` to restore a backup
 - [ ] `./dev-tools/verify-backups.sh` to confirm scheduled dumps exist
 - [ ] Rotate local dumps with `./dev-tools/pg-dump-rotate.sh`
+- [ ] `./dev-tools/setup-local-backup.sh` to configure local backup tooling
+- [ ] `./dev-tools/restore-latest-db.sh` to restore the newest dump
+- [ ] `./dev-tools/restore-redis-aof.sh <file>` to restore Redis state
+- [ ] `./dev-tools/restore-cluster.sh <backup-name>` for full cluster recovery
 
 ## ⚙️ Miscellaneous Helpers
 
@@ -51,3 +55,9 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] Run cross-service tests via `./gradlew crossServiceTest` when needed
 - [ ] Execute load tests via `./gradlew :load-testing:gatlingRun`
 
+## 🌱 Data Seeding & API Clients
+
+- [ ] `./dev-tools/seed-test-data.sh` to populate sample game data
+- [ ] `./dev-tools/seed-automation-scripting-data.sh` to add scripting examples
+- [ ] Import `dev-tools/insomnia/firemud-insomnia.json` in Insomnia for REST API calls
+- [ ] Open `dev-tools/kreya/.kreya-project.yaml` in Kreya for gRPC testing
