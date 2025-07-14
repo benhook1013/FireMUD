@@ -16,6 +16,7 @@ spec:
       containers:
         - name: logging-admin-service
           image: logging-admin-service:latest
+          imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
@@ -34,13 +35,18 @@ spec:
             - name: grpc-tls
               mountPath: /tls
               readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
-            limits:
               cpu: "200m"
               memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -57,6 +63,7 @@ spec:
             periodSeconds: 20
         - name: fluent-bit
           image: fluent/fluent-bit:2.2.2
+          imagePullPolicy: IfNotPresent
           args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
           volumeMounts:
             - name: varlog
@@ -64,6 +71,11 @@ spec:
             - name: containers
               mountPath: /var/lib/docker/containers
               readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
       volumes:
         - name: grpc-tls
           secret:

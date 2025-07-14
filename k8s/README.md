@@ -57,6 +57,10 @@ and the Spring Cloud Gateway is published on port `80`.
 
 A sample Terraform module is available in [`terraform/`](./terraform) to spin up a local Kind cluster with a `firemud` namespace and admin RBAC. It can optionally install Redis via Helm.
 
+## Persistent Storage
+
+The production Terraform modules provision persistent volumes for PostgreSQL and Redis. Default sizes are defined in `terraform-production/postgres-values.yaml` and `terraform-production/redis-values.yaml` as **10Gi** and **8Gi** respectively. Update these values to match your capacity planning when deploying to a real cluster.
+
 ## Helm Charts
 
 The [`helm/`](./helm) folder contains example charts. Use `values-local.yaml` or `values-dev.yaml` to override connection details and feature flags when deploying locally:

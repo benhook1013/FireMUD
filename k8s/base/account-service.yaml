@@ -16,6 +16,7 @@ spec:
       containers:
         - name: account-service
           image: account-service:latest
+          imagePullPolicy: IfNotPresent
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
@@ -34,6 +35,11 @@ spec:
             - name: grpc-tls
               mountPath: /tls
               readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
           readinessProbe:
             httpGet:
               path: /actuator/health

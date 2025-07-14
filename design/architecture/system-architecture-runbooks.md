@@ -10,7 +10,7 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
 2. **Helm Charts** deploy each microservice. Install with:
 
    ```bash
-   helm install firemud ./k8s/charts/firemud -f k8s/charts/firemud/values-prod.yaml
+   helm install firemud ./k8s/helm/firemud -f k8s/helm/values-dev.yaml
    ```
 
 3. Verify pods are running with `kubectl get pods -n firemud`.
