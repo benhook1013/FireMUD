@@ -58,6 +58,10 @@ resource "helm_release" "velero" {
     name  = "credentials.existingSecret"
     value = var.velero_credentials_secret
   }
+  set {
+    name  = "configuration.defaultVolumesToFsBackup"
+    value = "false"
+  }
 }
 
 locals {

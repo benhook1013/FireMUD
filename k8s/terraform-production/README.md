@@ -22,6 +22,10 @@ The module exposes variables to configure Velero:
 - `velero_bucket_prefix` – Prefix inside the bucket for backups.
 - `velero_credentials_secret` – Name of the Kubernetes secret containing credentials.
 
+The module sets `configuration.defaultVolumesToFsBackup` to `false` to ensure Velero
+backs up only Kubernetes manifests. Do not change this unless you intend to back up
+PVC contents via filesystem snapshots.
+
 Create a `terraform.tfvars` file (or pass variables via the CLI) with values for
 these settings. An example `terraform.tfvars.example` is provided:
 
