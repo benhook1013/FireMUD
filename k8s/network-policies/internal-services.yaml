@@ -21,6 +21,10 @@ spec:
           port: 8080
         - protocol: TCP
           port: 6565
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
   egress:
     - to:
         - podSelector: {}
@@ -29,3 +33,7 @@ spec:
           port: 8080
         - protocol: TCP
           port: 6565
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379

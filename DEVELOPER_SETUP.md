@@ -128,6 +128,10 @@ Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so 
 
 The `docker-compose.yml` file orchestrates all services, including PostgreSQL and Redis, for local development. Launch the stack with:
 
+> **Note**: The `deploy.resources` block in the compose file only applies to
+> Docker Swarm. Docker Compose ignores these limits, so CPU and memory
+> restrictions are not enforced locally.
+
 ```bash
 ./gradlew devUp
 ```
