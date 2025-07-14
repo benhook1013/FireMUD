@@ -52,7 +52,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
 - Redis runs as a clustered StatefulSet with automatic failover. Details are in [Redis Architecture](../system-architecture-redis.md). Redis persistence uses **AOF**, as described there.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md).
-- Deployments are managed via Helm charts in the CI/CD pipeline. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
+- Deployments use Helm charts but are triggered manually. The `manual-helm-deploy.yml` GitHub workflow runs `helm upgrade` against a local cluster when invoked. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
 A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../k8s/helm) to deploy services locally.
 
