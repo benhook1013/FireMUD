@@ -4,9 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import net.firedevops.firemud.entity.Character;
 import net.firedevops.firemud.mapper.CharacterMapper;
 import net.firedevops.firemud.repository.CharacterRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
@@ -18,7 +20,10 @@ class CharacterServiceImplListTest {
   void listForAccountReturnsDtos() {
     CharacterRepository repo = Mockito.mock(CharacterRepository.class);
     CharacterMapper mapper = Mappers.getMapper(CharacterMapper.class);
-    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper);
+    var cacheManager = new ConcurrentMapCacheManager("characterGraph");
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    CharacterServiceImpl service = new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
+    service.initMetrics();
 
     Character c = new Character();
     c.setId(1L);
