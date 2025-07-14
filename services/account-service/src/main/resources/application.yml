@@ -11,6 +11,7 @@ spring:
     username: ''
     password: ''
 grpc:
+  shutdownGrace: 30
   server:
     port: 6565
     enableKeepAlive: true

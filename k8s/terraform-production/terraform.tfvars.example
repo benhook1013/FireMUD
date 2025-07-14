@@ -1,0 +1,9 @@
+# Example values for deploying FireMUD with Velero backups
+# Copy to terraform.tfvars and replace with your production settings
+
+kubeconfig               = "~/.kube/config"
+namespace                = "firemud"
+velero_provider          = "aws"
+velero_bucket            = "firemud-backups"
+velero_bucket_prefix     = "postgres"
+velero_credentials_secret = "velero-creds"

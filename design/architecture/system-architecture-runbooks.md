@@ -37,12 +37,16 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      Set `FIREMUD_K8S_NAMESPACE` to restore into a custom namespace.
    - Alternatively, restore manually:
 
-     ```bash
-     kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
-     gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
-     kubectl rollout restart deployment -n firemud
-     kubectl rollout restart statefulset -n firemud
-     ```
+   ```bash
+   kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
+   gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
+   kubectl rollout restart deployment -n firemud
+   kubectl rollout restart statefulset -n firemud
+   ```
+
+   - If dumps are stored in an object bucket set via `PG_DUMP_BUCKET`, download
+      the desired file with `aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz`
+      (add `--endpoint-url` for MinIO) before running the above restore steps.
 
    - For local development, run `dev-tools/restore-db.sh <backup-file>` and then
      restart containers with `docker compose restart`.

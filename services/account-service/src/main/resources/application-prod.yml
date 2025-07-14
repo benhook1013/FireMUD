@@ -10,6 +10,7 @@ spring:
     username: ${SMTP_USERNAME}
     password: ${SMTP_PASSWORD}
 grpc:
+  shutdownGrace: 30
   server:
     port: 6565
     enableKeepAlive: true
