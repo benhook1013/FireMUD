@@ -5,11 +5,11 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: game-session-service
+{{ include "firemud.labels" . | indent 6 }}
   template:
     metadata:
       labels:
-        app: game-session-service
+{{ include "firemud.labels" . | indent 8 }}
     spec:
       containers:
         - name: game-session-service
@@ -21,3 +21,5 @@ spec:
             - name: {{ $key }}
               value: "{{ $value }}"
             {{- end }}
+          resources:
+{{ include "firemud.resources" . | indent 12 }}

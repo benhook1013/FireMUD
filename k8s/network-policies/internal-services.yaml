@@ -21,8 +21,18 @@ spec:
           port: 8080
         - protocol: TCP
           port: 6565
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: firemud-postgresql
+      ports:
         - protocol: TCP
           port: 5432
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: firemud-redis
+      ports:
         - protocol: TCP
           port: 6379
   egress:
@@ -33,7 +43,17 @@ spec:
           port: 8080
         - protocol: TCP
           port: 6565
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: firemud-postgresql
+      ports:
         - protocol: TCP
           port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: firemud-redis
+      ports:
         - protocol: TCP
           port: 6379
