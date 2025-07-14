@@ -21,3 +21,18 @@ The module exposes variables to configure Velero:
 - `velero_bucket` – Backup bucket name.
 - `velero_bucket_prefix` – Prefix inside the bucket for backups.
 - `velero_credentials_secret` – Name of the Kubernetes secret containing credentials.
+
+Create a `terraform.tfvars` file (or pass variables via the CLI) with values for
+these settings. An example `terraform.tfvars.example` is provided:
+
+```tfvars
+kubeconfig               = "~/.kube/config"
+namespace                = "firemud"
+velero_provider          = "aws"
+velero_bucket            = "firemud-backups"
+velero_bucket_prefix     = "postgres"
+velero_credentials_secret = "velero-creds"
+```
+
+Replace the bucket name and credentials secret with your production object
+storage details to prevent failed backups.
