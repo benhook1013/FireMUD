@@ -70,7 +70,7 @@ spec:
             - name: varlog
               mountPath: /var/log
             - name: containers
-              mountPath: /var/log/containers
+              mountPath: /var/lib/docker/containers
               readOnly: true
           securityContext:
             runAsNonRoot: true
@@ -86,8 +86,7 @@ spec:
             path: /var/log
         - name: containers
           hostPath:
-            path: /var/log/containers
-            # Adjust to /var/lib/docker/containers when using Docker runtime
+            path: /var/lib/docker/containers
 ---
 apiVersion: v1
 kind: Service
