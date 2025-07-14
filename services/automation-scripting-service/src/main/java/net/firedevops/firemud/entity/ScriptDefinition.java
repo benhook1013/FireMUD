@@ -17,9 +17,13 @@ public class ScriptDefinition {
   @Column(nullable = false, length = 100)
   private String name;
 
-  @Column(nullable = false, length = 20)
-  private String version;
+  @Column(name = "version", nullable = false, length = 20)
+  private String scriptVersion;
 
   @Column(nullable = false, columnDefinition = "TEXT")
   private String definition;
+
+  @Version
+  @Column(name = "row_version")
+  private int rowVersion;
 }

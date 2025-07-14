@@ -23,4 +23,8 @@ public class FactionStanding {
 
   @Column(nullable = false)
   private int reputation = 0;
+
+  @Version
+  @Column(name = "row_version")
+  private int version;
 }
