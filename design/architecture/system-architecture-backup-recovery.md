@@ -44,12 +44,8 @@ This document defines the backup schedule and disaster recovery procedures for F
         existingSecret: velero-minio-creds
       ```
 
-      Create the `firemud-backups` bucket in MinIO prior to installing Velero. Example using the MinIO client:
-
-      ```bash
-      mc alias set local http://minio.minio.svc.cluster.local:9000 myaccesskey mysecretkey
-      mc mb local/firemud-backups
-      ```
+      Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the
+      `firemud-backups` bucket, and install Velero automatically.
 
   - If the database service fails completely:
   1. Restore the latest snapshot.

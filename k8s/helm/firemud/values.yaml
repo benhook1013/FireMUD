@@ -31,3 +31,8 @@ tcp-proxy-service:
 world-management-service:
   image:
     tag: latest
+=======
+redis:
+  releaseName: redis
+  # Optional override of the PersistentVolumeClaim used for the AOF file
+  aofPvc: ""

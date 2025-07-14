@@ -1,6 +1,6 @@
 # 📊 FireMUD Logging & Monitoring Overview
 
-This document consolidates the platform's observability architecture. It replaces duplicated descriptions found in other docs.
+This document consolidates the platform's observability architecture.
 
 ---
 
