@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
@@ -25,6 +26,7 @@ public class NpcFormationGrpcService
   }
 
   @Override
+  @Timed(value = "formationGrpc.createFormation")
   public void createFormation(
       CreateFormationRequest request, StreamObserver<CreateFormationResponse> responseObserver) {
     try {
@@ -56,6 +58,7 @@ public class NpcFormationGrpcService
   }
 
   @Override
+  @Timed(value = "formationGrpc.addFormationMember")
   public void addFormationMember(
       AddFormationMemberRequest request,
       StreamObserver<AddFormationMemberResponse> responseObserver) {
@@ -87,6 +90,7 @@ public class NpcFormationGrpcService
   }
 
   @Override
+  @Timed(value = "formationGrpc.listFormationMembers")
   public void listFormationMembers(
       ListFormationMembersRequest request,
       StreamObserver<ListFormationMembersResponse> responseObserver) {

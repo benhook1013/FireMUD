@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
@@ -24,6 +25,7 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
   }
 
   @Override
+  @Timed(value = "tcpproxyGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     String msg = pingService.ping();
     PingResponse response = PingResponse.newBuilder().setMessage(msg).build();
@@ -32,6 +34,7 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
   }
 
   @Override
+  @Timed(value = "tcpproxyGrpc.notifyDisconnect")
   public void notifyDisconnect(
       NotifyDisconnectRequest request, StreamObserver<NotifyDisconnectResponse> responseObserver) {
     logger.info(
@@ -42,6 +45,7 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
   }
 
   @Override
+  @Timed(value = "tcpproxyGrpc.pushBufferedInput")
   public void pushBufferedInput(
       PushBufferedInputRequest request,
       StreamObserver<PushBufferedInputResponse> responseObserver) {

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.AddFriendRequest;
 import net.firedevops.firemud.dto.CreateGuildRequest;
@@ -32,6 +33,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   private final MailService mailService;
 
   @Override
+  @Timed(value = "socialGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     String msg = pingService.ping();
     PingResponse response = PingResponse.newBuilder().setMessage(msg).build();
@@ -40,6 +42,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   }
 
   @Override
+  @Timed(value = "socialGrpc.sendMessage")
   public void sendMessage(
       net.firedevops.firemud.socialgroups.v1.SendMessageRequest request,
       StreamObserver<SendMessageResponse> responseObserver) {
@@ -74,6 +77,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   }
 
   @Override
+  @Timed(value = "socialGrpc.createGuild")
   public void createGuild(
       net.firedevops.firemud.socialgroups.v1.CreateGuildRequest request,
       StreamObserver<CreateGuildResponse> responseObserver) {
@@ -103,6 +107,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   }
 
   @Override
+  @Timed(value = "socialGrpc.addFriend")
   public void addFriend(
       net.firedevops.firemud.socialgroups.v1.AddFriendRequest request,
       StreamObserver<AddFriendResponse> responseObserver) {
@@ -132,6 +137,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   }
 
   @Override
+  @Timed(value = "socialGrpc.sendMail")
   public void sendMail(
       net.firedevops.firemud.socialgroups.v1.SendMailRequest request,
       StreamObserver<SendMailResponse> responseObserver) {

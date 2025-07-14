@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
@@ -53,6 +54,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     String msg = pingService.ping();
     PingResponse response = PingResponse.newBuilder().setMessage(msg).build();
@@ -61,6 +63,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.startSession")
   public void startSession(
       net.firedevops.firemud.gamesession.v1.StartSessionRequest request,
       StreamObserver<StartSessionResponse> responseObserver) {
@@ -87,6 +90,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.stopSession")
   public void stopSession(
       StopSessionRequest request, StreamObserver<StopSessionResponse> responseObserver) {
     try {
@@ -106,6 +110,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.restartSession")
   public void restartSession(
       RestartSessionRequest request, StreamObserver<RestartSessionResponse> responseObserver) {
     try {
@@ -126,6 +131,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.enqueueCommand")
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
     try {
@@ -146,6 +152,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.queryState")
   public void queryState(
       QueryStateRequest request, StreamObserver<QueryStateResponse> responseObserver) {
     try {
@@ -162,6 +169,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.toggleFeatureFlag")
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {

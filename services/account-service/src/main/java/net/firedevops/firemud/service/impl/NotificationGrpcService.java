@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.account.v1.NotificationServiceGrpc;
 import net.firedevops.firemud.account.v1.SendNotificationRequest;
 import net.firedevops.firemud.account.v1.SendNotificationResponse;
@@ -18,6 +19,7 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
 
   @Override
   @RequireAdminRole
+  @Timed(value = "notificationGrpc.sendNotification")
   public void sendNotification(
       SendNotificationRequest request, StreamObserver<SendNotificationResponse> responseObserver) {
     try {

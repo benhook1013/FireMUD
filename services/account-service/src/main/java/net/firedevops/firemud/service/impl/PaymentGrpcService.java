@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.account.v1.CreateDonationRequest;
 import net.firedevops.firemud.account.v1.CreateDonationResponse;
 import net.firedevops.firemud.account.v1.CreatePaymentIntentRequest;
@@ -24,6 +25,7 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   }
 
   @Override
+  @Timed(value = "paymentGrpc.createPaymentIntent")
   public void createPaymentIntent(
       CreatePaymentIntentRequest request,
       StreamObserver<CreatePaymentIntentResponse> responseObserver) {
@@ -55,6 +57,7 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   }
 
   @Override
+  @Timed(value = "paymentGrpc.createSubscription")
   public void createSubscription(
       CreateSubscriptionRequest request,
       StreamObserver<CreateSubscriptionResponse> responseObserver) {
@@ -83,6 +86,7 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   }
 
   @Override
+  @Timed(value = "paymentGrpc.createDonation")
   public void createDonation(
       CreateDonationRequest request, StreamObserver<CreateDonationResponse> responseObserver) {
     try {
@@ -113,6 +117,7 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   }
 
   @Override
+  @Timed(value = "paymentGrpc.refundPayment")
   public void refundPayment(
       RefundPaymentRequest request, StreamObserver<RefundPaymentResponse> responseObserver) {
     try {

@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.dto.CharacterDto;
@@ -50,6 +51,7 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     try {
       String msg = pingService.ping();
@@ -68,6 +70,7 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.listCharactersByAccount")
   public void listCharactersByAccount(
       ListCharactersByAccountRequest request,
       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
@@ -102,6 +105,7 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.createCharacter")
   public void createCharacter(
       CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
     try {
@@ -129,6 +133,7 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.updateEntity")
   public void updateEntity(
       UpdateEntityRequest request, StreamObserver<UpdateEntityResponse> responseObserver) {
     try {
@@ -151,6 +156,7 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.queryInventory")
   public void queryInventory(
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     try {

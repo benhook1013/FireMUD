@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.loggingadmin.v1.*;
@@ -36,6 +37,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   }
 
   @Override
+  @Timed(value = "loggingadminGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     try {
       PingResponse response = PingResponse.newBuilder().setMessage("pong").build();
@@ -48,6 +50,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   }
 
   @Override
+  @Timed(value = "loggingadminGrpc.toggleFeatureFlag")
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
@@ -74,6 +77,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   }
 
   @Override
+  @Timed(value = "loggingadminGrpc.queryLogs")
   public void queryLogs(
       QueryLogsRequest request, StreamObserver<QueryLogsResponse> responseObserver) {
     try {
@@ -98,6 +102,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   }
 
   @Override
+  @Timed(value = "loggingadminGrpc.applyModerationAction")
   public void applyModerationAction(
       ApplyModerationActionRequest request,
       StreamObserver<ApplyModerationActionResponse> responseObserver) {

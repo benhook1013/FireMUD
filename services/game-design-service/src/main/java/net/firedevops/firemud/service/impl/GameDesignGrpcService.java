@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.RevisionDto;
 import net.firedevops.firemud.dto.VersionDto;
@@ -29,6 +30,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final VersionService versionService;
 
   @Override
+  @Timed(value = "gamedesignGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     String msg = pingService.ping();
     responseObserver.onNext(PingResponse.newBuilder().setMessage(msg).build());
@@ -36,6 +38,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.saveRevision")
   public void saveRevision(
       SaveRevisionRequest request, StreamObserver<SaveRevisionResponse> responseObserver) {
     try {
@@ -55,6 +58,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.publishVersion")
   public void publishVersion(
       PublishVersionRequest request, StreamObserver<PublishVersionResponse> responseObserver) {
     try {
@@ -72,6 +76,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.publishScriptPatchVersion")
   public void publishScriptPatchVersion(
       PublishScriptPatchVersionRequest request,
       StreamObserver<PublishScriptPatchVersionResponse> responseObserver) {
@@ -95,6 +100,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   @Override
+  @Timed(value = "gamedesignGrpc.listVersions")
   public void listVersions(
       ListVersionsRequest request, StreamObserver<ListVersionsResponse> responseObserver) {
     try {

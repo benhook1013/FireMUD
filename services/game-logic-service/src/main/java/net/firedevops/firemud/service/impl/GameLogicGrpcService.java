@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
@@ -33,6 +34,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   }
 
   @Override
+  @Timed(value = "gamelogicGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     PingResponse response = PingResponse.newBuilder().setMessage(pingService.ping()).build();
     responseObserver.onNext(response);
@@ -40,6 +42,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   }
 
   @Override
+  @Timed(value = "gamelogicGrpc.executeCommand")
   public void executeCommand(
       ExecuteCommandRequest request, StreamObserver<ExecuteCommandResponse> responseObserver) {
     CommandResult result = commandService.handleCommand(request.getCommand());

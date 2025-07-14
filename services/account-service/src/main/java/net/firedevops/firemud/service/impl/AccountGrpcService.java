@@ -3,6 +3,7 @@ package net.firedevops.firemud.service.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -36,6 +37,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     String msg = pingService.ping();
     PingResponse response = PingResponse.newBuilder().setMessage(msg).build();
@@ -44,6 +46,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.createAccount")
   public void createAccount(
       CreateAccountRequest request, StreamObserver<CreateAccountResponse> responseObserver) {
     try {
@@ -72,6 +75,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.authenticate")
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
@@ -99,6 +103,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.getProfile")
   public void getProfile(
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
     try {
@@ -132,6 +137,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.updateProfile")
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
@@ -163,6 +169,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.exportAccount")
   public void exportAccount(
       ExportAccountRequest request, StreamObserver<ExportAccountResponse> responseObserver) {
     try {
@@ -195,6 +202,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
 
   @Override
   @RequireAdminRole
+  @Timed(value = "accountGrpc.deleteAccount")
   public void deleteAccount(
       DeleteAccountRequest request, StreamObserver<DeleteAccountResponse> responseObserver) {
     try {
@@ -219,6 +227,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.requestPasswordReset")
   public void requestPasswordReset(
       net.firedevops.firemud.account.v1.RequestPasswordResetRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.RequestPasswordResetResponse>
@@ -248,6 +257,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.completePasswordReset")
   public void completePasswordReset(
       net.firedevops.firemud.account.v1.CompletePasswordResetRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.CompletePasswordResetResponse>
@@ -278,6 +288,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.linkExternalAccount")
   public void linkExternalAccount(
       net.firedevops.firemud.account.v1.LinkExternalAccountRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse>
@@ -311,6 +322,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.requestEmailVerification")
   public void requestEmailVerification(
       net.firedevops.firemud.account.v1.RequestEmailVerificationRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse>
@@ -340,6 +352,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
+  @Timed(value = "accountGrpc.verifyEmail")
   public void verifyEmail(
       net.firedevops.firemud.account.v1.VerifyEmailRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse> responseObserver) {
