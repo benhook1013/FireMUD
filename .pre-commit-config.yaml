@@ -26,6 +26,11 @@ repos:
         entry: buf lint
         language: system
         pass_filenames: false
+      - id: hadolint
+        name: Dockerfile Lint
+        entry: hadolint -c .hadolint.yaml
+        language: system
+        files: (?i)^Dockerfile$|\.Dockerfile$
       - id: frontend-lint
         name: Frontend ESLint
         entry: bash -c 'cd web-client && npm run lint && npm run format:fix'
