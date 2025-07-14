@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.service.TickLockService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 public class TickLockServiceImpl implements TickLockService {
   private final StringRedisTemplate redisTemplate;
   private final MeterRegistry meterRegistry;
+  private final ConflictTracker conflictTracker;
 
   private Counter lockContentionCounter;
 
@@ -37,6 +39,7 @@ public class TickLockServiceImpl implements TickLockService {
     boolean acquired = Boolean.TRUE.equals(result);
     if (!acquired) {
       lockContentionCounter.increment();
+      conflictTracker.recordConflict("entity:" + tenantId + ":" + entityId);
     }
     return acquired;
   }

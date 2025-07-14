@@ -21,6 +21,7 @@ class ScriptTickServiceImplTest {
   private org.springframework.data.redis.core.ValueOperations<String, Object> valueOps;
   private SimpleMeterRegistry meterRegistry;
   private ScriptQuotaService quotaService;
+  private net.firedevops.firemud.common.conflict.ConflictTracker conflictTracker;
   private ScriptTickService service;
 
   @BeforeEach
@@ -33,7 +34,9 @@ class ScriptTickServiceImplTest {
     quotaService = mock(ScriptQuotaService.class);
     when(quotaService.tryAcquire(any(), any())).thenReturn(true);
     meterRegistry = new SimpleMeterRegistry();
-    service = new ScriptTickServiceImpl(redisTemplate, meterRegistry, quotaService);
+    conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
+    service =
+        new ScriptTickServiceImpl(redisTemplate, meterRegistry, quotaService, conflictTracker);
     ((ScriptTickServiceImpl) service).init();
   }
 
@@ -58,5 +61,14 @@ class ScriptTickServiceImplTest {
     ArgumentCaptor<RedisScript> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), any(List.class));
+  }
+
+  @Test
+  void lockContentionRecordsConflict() {
+    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(false);
+
+    service.processTick(1L, 2L);
+
+    verify(conflictTracker).recordConflict("script:1:2");
   }
 }

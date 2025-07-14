@@ -10,6 +10,7 @@ import java.util.List;
 import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.service.TickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +30,7 @@ public class TickServiceImpl implements TickService {
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
+  private final ConflictTracker conflictTracker;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -133,6 +135,7 @@ public class TickServiceImpl implements TickService {
         redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
     if (Boolean.FALSE.equals(acquired)) {
       lockContentionCounter.increment();
+      conflictTracker.recordConflict("session:" + sessionId);
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }
@@ -166,6 +169,7 @@ public class TickServiceImpl implements TickService {
       awaitReplication();
     } catch (Exception ex) {
       logger.error("Tick processing failed, rolling back", ex);
+      conflictTracker.recordConflict("session:" + sessionId);
       luaTimer.record(
           () ->
               executeScriptWithRetry(
