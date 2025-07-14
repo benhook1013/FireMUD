@@ -17,7 +17,16 @@ class TelnetServerTest {
 
   @Test
   void serverStartsAndStops() throws Exception {
-    server = new TelnetServer(0, "ws://localhost/ws", false, "", "", 5, 5);
+    server =
+        new TelnetServer(
+            0,
+            "ws://localhost/ws",
+            false,
+            "",
+            "",
+            5,
+            5,
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     server.start();
     server.stop();
     assertTrue(true); // no exception means success

@@ -24,15 +24,23 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final String gatewayWsUrl;
   private final ConnectionThrottler connectionThrottler;
   private final int maxMessagesPerSecond;
+  private final java.util.concurrent.atomic.AtomicInteger activeConnections;
+  private final io.micrometer.core.instrument.Counter connectionCounter;
   private WebSocket webSocket;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
   private final Deque<Long> messageTimes = new ArrayDeque<>();
 
   public TelnetServerHandler(
-      String gatewayWsUrl, ConnectionThrottler connectionThrottler, int maxMessagesPerSecond) {
+      String gatewayWsUrl,
+      ConnectionThrottler connectionThrottler,
+      int maxMessagesPerSecond,
+      java.util.concurrent.atomic.AtomicInteger activeConnections,
+      io.micrometer.core.instrument.Counter connectionCounter) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.connectionThrottler = connectionThrottler;
     this.maxMessagesPerSecond = maxMessagesPerSecond;
+    this.activeConnections = activeConnections;
+    this.connectionCounter = connectionCounter;
   }
 
   void setWebSocket(WebSocket webSocket) {
@@ -62,6 +70,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       ctx.close();
       return;
     }
+    connectionCounter.increment();
+    activeConnections.incrementAndGet();
     HttpClient client = HttpClient.newHttpClient();
     client
         .newWebSocketBuilder()
@@ -119,6 +129,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
     connectionThrottler.release(remote);
+    activeConnections.decrementAndGet();
     messageTimes.clear();
     buffer.clear();
   }
