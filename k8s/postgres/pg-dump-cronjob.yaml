@@ -60,6 +60,14 @@ data:
     ENDPOINT=${PG_DUMP_ENDPOINT:-}
     PREFIX=firemud
 
+    # Validate upload configuration
+    if [[ -n "$BUCKET" || -n "$ENDPOINT" ]]; then
+      if [[ -z "$BUCKET" || -z "$ENDPOINT" ]]; then
+        echo "Both PG_DUMP_BUCKET and PG_DUMP_ENDPOINT must be set to upload backups" >&2
+        exit 1
+      fi
+    fi
+
     mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly"
     TS=$(date +%Y%m%d%H%M%S)
     DUMP="$BACKUP_DIR/daily/${PREFIX}_${TS}.sql.gz"
