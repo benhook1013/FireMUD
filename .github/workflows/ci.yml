@@ -37,13 +37,13 @@ jobs:
         run: |
           git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
 
-  - name: ⚠️ Buf Breaking
-    if: github.event_name == 'pull_request'
-    run: |
-      buf breaking --against ".git#ref=${{ github.event.pull_request.base.sha }}"
+      - name: ⚠️ Buf Breaking
+        if: github.event_name == 'pull_request'
+        run: |
+          buf breaking --against ".git#ref=${{ github.event.pull_request.base.sha }}"
 
-  - name: ⚙️ Generate Protobufs
-    run: buf generate
+      - name: ⚙️ Generate Protobufs
+        run: buf generate
 
   docker-lint:
     name: Dockerfile Lint
