@@ -85,7 +85,7 @@ seamlessly with cert-manager for automatic rotation.
 
 - Admin functionality is **entirely controlled through JWT `roles`**, issued and managed by the **Account Service**.
 - There is **no special network-level access or infrastructure isolation** for admin features — this is an intentional design decision to rely solely on internal authentication and scoped authorization.
-- Future enhancements may include **2FA** support for admin roles via TOTP or hardware keys, but this is not currently required.
+- Admin and moderator accounts can enable **two-factor authentication** using TOTP codes. When enabled, login requests must supply an `otp` field to the Account Service.
 
 ---
 
@@ -103,7 +103,7 @@ seamlessly with cert-manager for automatic rotation.
 | Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
 | Admin Role Access         | JWT-only; no special network-level restrictions                          |
 | Zero Trust                | Not currently adopted; mTLS and JWTs provide strong internal identity    |
-| 2FA                       | Not implemented; optional future enhancement for elevated roles          |
+| 2FA                       | Available for admin and moderator accounts via TOTP codes               |
 
 ---
 
