@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.config;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.metrics.MicrometerCommandLatencyRecorder;
 import io.lettuce.core.metrics.MicrometerOptions;
 import io.lettuce.core.resource.ClientResources;
@@ -20,6 +21,9 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 @Configuration
 @EnableConfigurationProperties({PostgresProperties.class, RedisProperties.class})
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Properties are injected and not modified")
 public class DatabaseAutoConfiguration {
   private final PostgresProperties postgres;
   private final RedisProperties redis;

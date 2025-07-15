@@ -1,11 +1,15 @@
 package net.firedevops.firemud.common.grpc;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.*;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.util.Objects;
 
 /** Records gRPC call metrics using Micrometer. */
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "MeterRegistry is injected and safe to store")
 public class MetricsInterceptor implements ServerInterceptor {
   private final MeterRegistry registry;
 
