@@ -407,7 +407,7 @@
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
 
 <a name="gamedesign-v1-ListVersionsResponse"></a>
 
@@ -435,7 +435,7 @@
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
 | notes | [string](#string) |  |  |
 
 <a name="gamedesign-v1-PublishVersionResponse"></a>
@@ -444,7 +444,7 @@
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| version_id | [int64](#int64) |  |  |
+| version_id | [string](#string) |  |  |
 
 <a name="gamedesign-v1-SaveRevisionRequest"></a>
 
@@ -453,8 +453,8 @@
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | data | [string](#string) |  |  |
-| tenant_id | [int64](#int64) |  |  |
-| author_account_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
+| author_account_id | [string](#string) |  |  |
 
 <a name="gamedesign-v1-SaveRevisionResponse"></a>
 

@@ -20,7 +20,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         runtimeVersion:
           type: string
         ownerAccountId:
@@ -35,7 +35,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         runtimeVersion:
           type: string
         ownerAccountId:

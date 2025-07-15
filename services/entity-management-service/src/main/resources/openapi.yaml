@@ -31,7 +31,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         accountId:
           type: integer
         name:
@@ -65,7 +65,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         name:
           type: string
         resultItemId:
