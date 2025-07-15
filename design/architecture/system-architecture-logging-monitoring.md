@@ -30,9 +30,10 @@ This document consolidates the platform's observability architecture.
 - **OpenTelemetry** spans provide distributed tracing across ticks and requests.
   Traces are collected by an OpenTelemetry Collector and visualized with Jaeger.
   See [Tracing](./system-architecture-tracing.md) for deployment details.
-- Metrics are recorded with Micrometer and emitted through a shared
-  `MetricsInterceptor` so all gRPC endpoints expose consistent counters like
-  `grpc.server.requests` and `grpc.app_error`.
+  - Metrics are recorded with Micrometer. The shared `MetricsInterceptor`
+    tracks `grpc.server.requests` for each call. Services increment the
+    `grpc.app_error` counter in their `error()` helpers as described in the
+    [gRPC API Style guidelines](./system-architecture-grpc.md).
 - Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals
   are tuned per environment (typically 15s in development and 30s in production).
 - Distributed traces are exported via OTLP and correlated with logs using the same
