@@ -7,7 +7,7 @@ PORT="$2"
 shift 2
 TIMEOUT=${WAITFORIT_TIMEOUT:-30}
 
-for i in $(seq $TIMEOUT); do
+for i in $(seq "$TIMEOUT"); do
   if bash -c "</dev/tcp/$HOST/$PORT" >/dev/null 2>&1; then
     if [ "$#" -gt 0 ]; then
       exec "$@"

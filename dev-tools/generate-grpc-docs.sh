@@ -10,6 +10,6 @@ PROTO_FILES=$(find protos -name '*.proto' | sort)
 protoc -I protos \
   --doc_out="$OUT_DIR" \
   --doc_opt=markdown,grpc-api.md \
-  $PROTO_FILES
+  "$PROTO_FILES"
 
 echo "Generated gRPC docs in $OUT_DIR"
