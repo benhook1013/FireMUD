@@ -17,8 +17,7 @@ public class DungeonGenerator implements Generator {
       return new GenerationResult(
           List.of(), new GenerationErrorDetail("VALIDATION_FAILED", String.join(";", errors)));
     }
-    Random rnd = new SecureRandom();
-    rnd.setSeed(params.seed());
+    Random rnd = new Random(params.seed());
     int rooms = params.rooms();
     List<GeneratedRoom> result = new ArrayList<>();
     if (rooms <= 0) {
