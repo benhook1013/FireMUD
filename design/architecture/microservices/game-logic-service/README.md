@@ -48,8 +48,9 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Effect stacking and cooldown calculation.
 - Environmental effect resolution (weather, lighting) influencing gameplay.
 - Economy logic for trading, shops, and pricing adjustments.
-- Procedural generation commands such as `generate-dungeon`, which run in a
-  solo tick to avoid impacting other players.
+- Procedural generation commands such as generate-dungeon are executed in
+  solo ticks, coordinated by the Game Session Service and handled by the
+  Automation & Scripting Service to avoid impacting other players.
 
 ### Data Model
 
