@@ -32,8 +32,9 @@ These notes summarize typical optimizations applied across FireMUD services.
   actions are rolled back and retried automatically.
 - Tick regions execute independently so work can be parallelized across
   threads and servers for better scalability and fault isolation.
-- The Automation & Scripting Service batches NPC logic in tick cycles and
-  enforces per-script quotas via Redis to avoid runaway automation.
+- The Automation & Scripting Service evaluates scripts on its own schedule and
+  injects resulting commands into tick queues. Per-script quotas are enforced
+  via Redis before queuing to avoid runaway automation.
   Quota enforcement metrics (`script_quota_allowed_total`,
   `script_quota_denied_total`) and automation queue metrics
   (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide

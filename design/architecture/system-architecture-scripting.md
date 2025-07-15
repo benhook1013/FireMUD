@@ -25,9 +25,9 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 
 ## ⚙️ Integration with Game Logic & Tick System
 
-- During each tick, the Automation & Scripting Service evaluates scheduled scripts and queues resulting commands.
-- Commands are processed by the **Game Logic Service** in deterministic order, ensuring consistent outcomes.
-- Scripts can react to world events, NPC states, or timers provided by the tick system.
+- **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and injects the resulting commands into command queues.
+- These commands are processed during the **next tick cycle** by the Game Logic Service, preserving fairness, determinism, and replay safety.
+- Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
 
 ## 🔄 Deployment & Versioning
 
@@ -42,8 +42,10 @@ The Automation & Scripting Service now enforces several safeguards to prevent ru
 scripts and ensure fair resource usage:
 
 - `ScriptQuotaService` limits how often a script may execute within a configurable
-  window. When the quota is exceeded the event is ignored and metrics are emitted
+  window. **Quota checks happen before commands are enqueued**, so abusive scripts never reach
+  the tick queues. When the quota is exceeded the event is ignored and metrics are emitted
   for monitoring.
+- The tick system only processes these queued commands—it never runs script logic itself.
 - Metrics track script execution and help detect logic that attempts to monopolize
   CPU time or grief other players.
 - Administrators may disable or throttle problematic scripts via the Game Design
