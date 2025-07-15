@@ -71,6 +71,7 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Tracks in-progress, completed, and failed workflows
   - Supports retry, compensation, and alerting
   - Emits a `sagas.active` metric and logs a `correlationId` for each workflow
+  - Operators monitor progress in the Saga Dashboard provided by the Logging & Admin Service
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
@@ -113,7 +114,7 @@ Use Redis rollback + tick retries for fast, fair, and consistent gameplay handli
 
 ## 🔭 Future Enhancements
 
-- **Saga Dashboard** for operators to inspect saga states and failures
+- **Saga Dashboard** is already available in the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - **Timeout detection** and auto-recovery of stalled workflows
 - **Declarative flow definitions** via YAML or annotations
 - **Integration with logging/metrics** for saga observability
@@ -127,3 +128,4 @@ Use Redis rollback + tick retries for fast, fair, and consistent gameplay handli
 - [Redis Architecture](./system-architecture-redis.md)
 - [Game Session Service](./microservices/game-session-service/README.md)
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
+- [Shared Libraries Overview](./system-architecture-shared-libraries.md)
