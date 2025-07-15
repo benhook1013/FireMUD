@@ -92,6 +92,9 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 > applied even if a region would not tick on its own. See
 > [Global Effects and Region-Wide Coordination](./system-architecture-redis.md#🌀-global-effects-and-region-wide-coordination)
 > for details on the underlying Redis pattern.
+> 🔄 **Regions still execute a lightweight background tick** (for example every
+> second) so queued timers, cooldowns, and delayed events progress even when no
+> players are present.
 > 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
 ---
 
