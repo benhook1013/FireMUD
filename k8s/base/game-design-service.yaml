@@ -2,6 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: firemud
   name: game-design-service
 spec:
   replicas: 2
@@ -13,6 +14,7 @@ spec:
       labels:
         app: game-design-service
     spec:
+      serviceAccountName: firemud-app
       securityContext:
         fsGroup: 1000
       containers:
@@ -106,6 +108,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  namespace: firemud
   name: game-design-service
 spec:
   selector:

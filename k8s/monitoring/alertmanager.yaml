@@ -1,6 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: firemud
   name: alertmanager
 spec:
   replicas: 1
@@ -29,6 +30,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  namespace: firemud
   name: alertmanager
 spec:
   selector:
@@ -42,6 +44,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  namespace: firemud
   name: alertmanager-config
 data:
   alertmanager.yml: |

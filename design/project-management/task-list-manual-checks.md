@@ -47,6 +47,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] Build the base container image with `./gradlew buildBaseImage`
 - [ ] Start the local stack with `./gradlew devUp`
   - [ ] Verify services respond to `curl -fsSL http://localhost:8080/ping`
+  - [ ] Verify gRPC endpoints with `grpcurl -plaintext localhost:6565 list`
 - [ ] Stop services with `./gradlew devDown`
 
 ## 📦 Node & OpenAPI Tasks
@@ -86,6 +87,8 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `./dev-tools/restore-latest-db.sh` to restore the newest dump
 - [ ] `./dev-tools/restore-redis-aof.sh <file>` to restore Redis state
 - [ ] `./dev-tools/restore-cluster.sh <backup-name>` for full cluster recovery
+- [ ] Verify PostgreSQL access with `psql -h localhost -U firemud -d firemud -c '\dt'`
+- [ ] Verify Redis access with `redis-cli -h localhost -p 6379 ping`
 
 ## ⚙️ Miscellaneous Helpers
 

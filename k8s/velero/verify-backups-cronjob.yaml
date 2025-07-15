@@ -11,7 +11,7 @@ spec:
         spec:
           containers:
           - name: check
-            image: velero/velero:latest
+            image: velero/velero:v1.12.3
             command: ["/bin/sh", "-c", "/scripts/verify-backups.sh"]
             volumeMounts:
             - name: script

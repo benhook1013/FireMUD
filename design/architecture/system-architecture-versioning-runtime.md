@@ -35,7 +35,8 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 Script-only versions appear in version history and audit logs but do not trigger
 a data copy or world restart. Runtime services reload the affected scripts in
 memory and continue using the underlying `baseVersionId` for all other assets.
-When a patch is published the Game Design Service calls the `NotifyScriptVersionUpdate`
+When a patch is published the Game Design Service calls the
+[`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate)
 gRPC endpoint in the Automation & Scripting Service so modified scripts are
 reloaded in memory. The Game Session Service records the active
 `script_patch_version` with each running game instance for recovery.
@@ -46,13 +47,17 @@ Game versions contain **only** world data and scripts. Database schema changes
 remain the responsibility of each microservice and are applied via Flyway when a
 service container restarts during a platform deployment. Publishing a new design
 version therefore does not run Flyway migrations—it simply loads new data when a
-game instance starts or reloads scripts for patch versions.
+game instance starts or reloads scripts for patch versions. See
+[Database Migrations](./system-architecture-database-migrations.md) for the
+Flyway workflow.
 
 ## 🚀 Version Activation & Rollback
 
 The **Game Session Service** controls which published version is active for each live game instance. See the [User Journeys](./user-journeys.md#5-publish-and-start-a-game-instance) document for the high level flow.
 
 - When starting a game, it reads the desired `version_id` from a manifest or launch request and stores this value as `runtime_version` in the `game_instances` table.
+- The available versions a tenant can launch are listed in the `game_manifest`
+  table managed by the Game Session Service.
 - Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.
 - All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
 
@@ -89,3 +94,6 @@ For API versioning conventions see [gRPC Protocol Guidelines](./system-architect
 - [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [Transaction Strategies](./system-architecture-transactions.md)
 - [Testing Strategy](./system-architecture-testing.md)
+- [Database Migrations](./system-architecture-database-migrations.md)
+- [Game Customization Options](./game-customization-options.md)
+- [Game Session Service](./microservices/game-session-service/README.md)
