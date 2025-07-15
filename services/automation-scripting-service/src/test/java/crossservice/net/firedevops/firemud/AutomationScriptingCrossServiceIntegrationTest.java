@@ -33,8 +33,7 @@ class AutomationScriptingCrossServiceIntegrationTest {
 
   @Container
   static GenericContainer<?> gameSessionService =
-      new GenericContainer<>(
-              DockerImageName.parse("ghcr.io/firedevops/game-session-service:latest"))
+      new GenericContainer<>(DockerImageName.parse("ghcr.io/firemud/game-session-service:latest"))
           .withExposedPorts(8080);
 
   @LocalServerPort private int port;

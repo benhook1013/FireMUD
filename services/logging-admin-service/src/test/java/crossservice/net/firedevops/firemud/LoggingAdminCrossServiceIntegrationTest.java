@@ -34,7 +34,7 @@ class LoggingAdminCrossServiceIntegrationTest {
 
   @Container
   static GenericContainer<?> accountService =
-      new GenericContainer<>(DockerImageName.parse("ghcr.io/firedevops/account-service:latest"))
+      new GenericContainer<>(DockerImageName.parse("ghcr.io/firemud/account-service:latest"))
           .withExposedPorts(8080);
 
   @LocalServerPort private int port;
