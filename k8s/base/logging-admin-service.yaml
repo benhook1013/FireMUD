@@ -13,6 +13,8 @@ spec:
       labels:
         app: logging-admin-service
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: logging-admin-service
           image: ghcr.io/firemud/logging-admin-service:latest
@@ -39,6 +41,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
+            allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
           resources:
             requests:
@@ -76,6 +79,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
+            allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
       volumes:
         - name: grpc-tls

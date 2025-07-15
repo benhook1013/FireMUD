@@ -5,3 +5,15 @@ service:
   type: ClusterIP
   port: 8080
 extraEnv: {}
+serviceAccount:
+  create: true
+  name: ""
+readinessProbe:
+  path: /actuator/health
+  initialDelaySeconds: 5
+  periodSeconds: 10
+livenessProbe:
+  path: /actuator/health
+  initialDelaySeconds: 15
+  periodSeconds: 20
+affinity: {}

@@ -13,6 +13,8 @@ spec:
       labels:
         app: account-service
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: account-service
           image: ghcr.io/firemud/account-service:latest
@@ -39,6 +41,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
+            allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
           resources:
             requests:

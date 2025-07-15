@@ -11,3 +11,15 @@ limits:
   cpu: "400m"
   memory: "512Mi"
 {{- end -}}
+
+{{- define "firemud.fullname" -}}
+{{ printf "%s-%s" .Release.Name .Chart.Name }}
+{{- end -}}
+
+{{- define "firemud.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{ .Values.serviceAccount.name | default (include "firemud.fullname" .) }}
+{{- else }}
+{{ .Values.serviceAccount.name | default "default" }}
+{{- end }}
+{{- end -}}

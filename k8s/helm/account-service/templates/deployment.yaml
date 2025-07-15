@@ -11,6 +11,11 @@ spec:
       labels:
 {{ include "firemud.labels" . | indent 8 }}
     spec:
+      serviceAccountName: {{ include "firemud.serviceAccountName" . }}
+      {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+      {{- end }}
       containers:
         - name: account-service
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -21,5 +26,17 @@ spec:
             - name: {{ $key }}
               value: "{{ $value }}"
             {{- end }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.path }}
+              port: 8080
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
           resources:
 {{ include "firemud.resources" . | indent 12 }}
