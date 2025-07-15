@@ -59,6 +59,8 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 
 - Writes are **asynchronously replicated**
 - **AOF (Append-Only File)** enabled for durability and crash recovery
+- AOF files are wiped on each Helm upgrade to start with a clean state
+  (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment))
 - Critical Lua writes use `WAIT 1 100` for **replica acknowledgment**
 
 ---
@@ -80,7 +82,7 @@ Redis keys follow strict naming conventions to ensure:
 |-------------------------------|------------------------------------------|
 | `tick:lock:{tenantId}:{entityId}` | Lock for entity during tick execution    |
 | `tick:pending:{tenantId}:{regionId}` | Staged results for a tick region         |
-| `room:{tenantId}:{roomId}:occupants`     | Room occupancy snapshot                  |
+| `room:{tenantId}:{roomId}`               | Hot room cache as JSON (occupants and metadata)                  |
 | `retry:{tenantId}:{regionId}`            | Retry queue for failed actions           |
 | `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
 | `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
@@ -103,6 +105,8 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 - Retry queue updates
 
 All Lua scripts are:
+
+- Stored under `services/game-session-service/src/main/resources/redis/`
 
 - **Idempotent**
 - **Shard-local**
@@ -218,6 +222,9 @@ Redis stores transient gameplay session state for each connected player, includi
 - Tick region participation and queued commands
 - Timer and cooldown data
 - Conflict and retry metadata
+
+Session entries expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as
+configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
 This state is used by the **Game Session Service** to:
 
