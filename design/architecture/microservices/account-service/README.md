@@ -17,7 +17,8 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
 - Passwords are hashed with strong salts and stored only in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
-- Pending implementation: emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
+- Creation events are logged to the Logging & Admin Service via a saga step.
+- Ban and recovery events will be logged once those workflows are implemented.
 - Planned account-to-character relationships will allow players to own characters across multiple games.
 - All tables include a `tenantId` column so the same platform account can join
   multiple games without data leakage. Every query enforces this tenant filter as
@@ -42,13 +43,13 @@ Manages user accounts and authentication for the platform. It stores profile dat
 
 - Account registration and login.
 - Profile management and email notifications.
-- Profiles track optional game history. Achievement tracking is planned.
+- Profiles store a display name and bio. Tracking game history and achievements is planned.
 - Password reset and verification flows.
 - Subscription tracking. Ban management is planned.
 - External account linking (Google, Discord, Steam) allows unified logins.
 - Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
 - Planned: link accounts to player characters for ownership and permissions.
-- gRPC APIs for account creation, authentication, and profile queries.
+- gRPC APIs expose account management, external account linking, and payment operations.
 
 ### Data Model
 
@@ -70,6 +71,13 @@ resolved during authentication.
 - `Authenticate` – verifies credentials and issues a session token.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
+- `ExportAccount` – exports all account and profile data.
+- `DeleteAccount` – permanently removes an account.
+- `RequestPasswordReset` – initiate a password reset email.
+- `CompletePasswordReset` – update the password using a token.
+- `LinkExternalAccount` – attach a Google, Discord, or Steam ID.
+- `RequestEmailVerification` – send a verification email.
+- `VerifyEmail` – confirm an email verification token.
 - `CreatePaymentIntent` – initiate a Stripe payment.
 - `CreateSubscription` – start a recurring subscription.
 - `CreateDonation` – process a donation payment.
@@ -80,12 +88,22 @@ resolved during authentication.
 
 ### REST APIs
 
-| Method | Path       | Description               |
-| ------ | ---------- | ------------------------- |
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `GET`  | `/ping` | Simple health check |
+| `POST` | `/auth/login` | Authenticate and return JWT |
+| `POST` | `/auth/request-password-reset` | Request password reset |
+| `POST` | `/auth/complete-password-reset` | Complete password reset |
+| `POST` | `/auth/request-email-verification` | Send verification email |
+| `POST` | `/auth/verify-email` | Verify email token |
+| `POST` | `/auth/recover-username` | Send username reminder |
 | `POST` | `/accounts` | Create a new user account |
-| `GET`  | `/ping`    | Simple health check       |
+| `GET`  | `/accounts/{accountId}/export` | Export account data |
+| `DELETE` | `/accounts/{accountId}` | Delete an account |
+| `POST` | `/accounts/{accountId}/external` | Link external account |
 | `GET`  | `/profiles/{accountId}` | Retrieve profile information |
-| `PUT`  | `/profiles/{accountId}` | Update profile information   |
+| `PUT`  | `/profiles/{accountId}` | Update profile information |
+| `GET`  | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
 
 ## Dependencies
 
@@ -186,7 +204,7 @@ Authentication generates a JWT that is stored **server-side** in Redis for inter
 
 ### Two-Factor Authentication
 
-Admin and moderator accounts can enable a TOTP secret for additional protection. If a `two_factor_secret` is present on the account row, the `/auth/login` endpoint expects an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../../design/architecture/system-architecture-security.md).
+Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../../design/architecture/system-architecture-security.md).
 
 ### REST & gRPC Endpoints
 
@@ -246,6 +264,11 @@ Example login response:
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`account_service.proto`](../../../protos/account/v1/account_service.proto).
 - `CreateAccount(CreateAccountRequest) returns (CreateAccountResponse)` – registers a new user.
 - `SendNotification(SendNotificationRequest) returns (SendNotificationResponse)` – deliver account notifications asynchronously.
+- `ExportAccount(ExportAccountRequest) returns (ExportAccountResponse)` – export account data.
+- `DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse)` – permanently remove an account.
+- `RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse)` – send a reset token.
+- `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
+- `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
 - `RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse)` – send a verification email for the account.
 - `VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse)` – confirm the email token.
 - `CreatePaymentIntent(CreatePaymentIntentRequest) returns (CreatePaymentIntentResponse)` – initiate a payment.
