@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.conflict;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +11,9 @@ import org.springframework.stereotype.Component;
 /** Records conflict metadata in Redis for hotspot detection. */
 @Component
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are safe to store without defensive copies")
 public class RedisConflictTracker implements ConflictTracker {
   private final StringRedisTemplate redisTemplate;
   private final MeterRegistry meterRegistry;
