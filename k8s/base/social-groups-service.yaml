@@ -13,6 +13,8 @@ spec:
       labels:
         app: social-groups-service
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: social-groups-service
           image: ghcr.io/firemud/social-groups-service:latest
@@ -39,6 +41,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
+            allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
           resources:
             requests:

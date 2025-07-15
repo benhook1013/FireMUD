@@ -70,7 +70,8 @@ these variables.
 ### gRPC TLS Certificates
 
 Mutual TLS protects all gRPC calls between services. Certificates are normally
-provisioned by **cert-manager** and mounted from Kubernetes Secrets.
+provisioned by **cert-manager** and mounted from Kubernetes Secrets. A sample
+`Certificate` manifest is provided at `k8s/base/firemud-grpc-certificate.yaml`.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |

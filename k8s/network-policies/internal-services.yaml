@@ -21,6 +21,8 @@ spec:
           port: 8080
         - protocol: TCP
           port: 6565
+        - protocol: TCP
+          port: 4317
     - from:
         - podSelector:
             matchLabels:
@@ -43,6 +45,8 @@ spec:
           port: 8080
         - protocol: TCP
           port: 6565
+        - protocol: TCP
+          port: 4317
     - to:
         - podSelector:
             matchLabels:
