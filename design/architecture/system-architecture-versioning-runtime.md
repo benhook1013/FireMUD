@@ -35,6 +35,10 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 Script-only versions appear in version history and audit logs but do not trigger
 a data copy or world restart. Runtime services reload the affected scripts in
 memory and continue using the underlying `baseVersionId` for all other assets.
+When a patch is published the Game Design Service calls the `NotifyScriptVersionUpdate`
+gRPC endpoint in the Automation & Scripting Service so modified scripts are
+reloaded in memory. The Game Session Service records the active
+`script_patch_version` with each running game instance for recovery.
 
 ### Schema Migrations vs Design Data
 
@@ -59,6 +63,10 @@ Runtime feature flags allow limited behavior changes without publishing a new de
 - Designers create and maintain the set of flag definitions in the Game Design Service.
 - Administrators edit flag values through the [**Logging & Admin Service**](./microservices/logging-admin-service/README.md), which exposes management APIs and a web UI.
 - The Game Session Service loads these flags during initialization and may re-check them periodically or in response to admin updates.
+- The Logging & Admin Service persists flag changes in its own `feature_flag` table
+  for auditing and updates the Game Session Service via gRPC.
+- The Game Session Service stores active flag values in its `feature_flag` table so
+  sessions use consistent configuration even after reconnects.
 - Flags are separate from design-time configuration but still scoped by `version_id` to avoid mismatched behavior.
 - During each tick cycle the active flags are applied before executing game logic; see [Tick System](./system-architecture-ticks.md) for details.
 
