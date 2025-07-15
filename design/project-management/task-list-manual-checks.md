@@ -13,6 +13,9 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `pre-commit` Python package
 - [ ] `hadolint` for Dockerfile linting
 - [ ] `shellcheck` for shell script validation
+- [ ] `grpcurl` for gRPC testing
+- [ ] `velero` CLI for backup validation
+- [ ] `aws` CLI if uploading backups to object storage
 - [ ] Verify Gradle wrapper with `./gradlew --version`
 - [ ] Verify tool versions
   - [ ] `java --version`
@@ -22,6 +25,9 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `pre-commit --version`
   - [ ] `hadolint --version`
   - [ ] `shellcheck --version`
+  - [ ] `grpcurl --version`
+  - [ ] `velero version`
+  - [ ] `aws --version`
   - [ ] `helm version`
   - [ ] `kubectl version --client`
   - [ ] `terraform version`
