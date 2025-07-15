@@ -8,7 +8,6 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 
 - Accept Telnet connections and perform protocol negotiation
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames
-- Tag connections with tenant information for accurate routing *(planned)*
 - Provide graceful disconnect and reconnection handling
 
 ## Architecture / Design Notes
@@ -20,9 +19,6 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - Can optionally terminate Telnet-over-TLS. Forwarding to the gateway currently
   uses plain WebSocket connections; mutual TLS support is planned. See
   [Security Architecture](../system-architecture-security.md).
-- During the login handshake the proxy is intended to tag the connection with the selected
-  `tenantId` so the gateway can route commands to the proper game (not yet implemented). See
-  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
    **Telnet protocol commands** as described in the
