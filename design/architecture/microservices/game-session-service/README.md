@@ -33,9 +33,10 @@ Orchestrates live game sessions, including tick execution, player input validati
   [Transaction Strategies](../system-architecture-transactions.md).
 - Saga workflows use the shared `SagaBuilder` and emit metrics with correlation
   IDs via `SagaRunner`.
-- Monitors login attempts per IP and temporarily blacklists repeat offenders.
-  Global spikes introduce small delays and suspicious activity triggers
-  notification emails to the account holder. See
+- Intended to monitor login attempts per IP and temporarily blacklist repeat
+  offenders. **This functionality is not yet implemented.** Global spikes
+  introduce small delays and suspicious activity triggers notification emails to
+  the account holder. See
   [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Session objects are created as soon as a client connects. They remain unauthenticated until the Account Service verifies credentials and issues a token.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
@@ -109,6 +110,7 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 | -------- | ------- | ------- |
 | `GAME_TICK_DURATION_MS` | Length of a single game tick in milliseconds | `1000` |
 | `GAME_TICK_BUDGET_MS` | Soft execution budget for a tick in milliseconds | `100` |
+| `GAME_SOLO_TICK_BUDGET_MS` | Execution budget for isolated solo ticks | `500` |
 | `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (host:port) for the Game Logic Service | *(none)* |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
@@ -148,6 +150,10 @@ The service enforces multi-tenant isolation. All tables include a `tenant_id` co
 - `POST /sessions` – create a new game session from a published version.
 - `POST /sessions/{id}/stop` – stop a running session.
 - `POST /sessions/{id}/restart` – restart a stopped session.
+- `POST /sessions/{id}/refresh-roles` – refresh the player's roles for an active session.
+
+Use `/sessions/{id}/refresh-roles` after updating an account's privileges so the
+session reflects the latest role assignments.
 
 ```bash
 curl http://localhost:8080/ping
@@ -226,8 +232,8 @@ details.
 
 ## Future Enhancements
 
-- Cross-region sharding for massive worlds.
-- Built-in analytics for player behavior.
+- Cross-region sharding for massive worlds *(planned)*.
+- Built-in analytics for player behavior *(in progress)*.
 
 ### Cross-Region Sharding and Session Handoff
 
