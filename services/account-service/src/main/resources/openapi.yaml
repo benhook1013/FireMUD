@@ -20,7 +20,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         username:
           type: string
         email:
@@ -34,7 +34,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         username:
           type: string
         email:
@@ -45,7 +45,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         username:
           type: string
         password:
@@ -64,9 +64,9 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         accountId:
-          type: integer
+          type: string
         displayName:
           type: string
         bio:
@@ -75,9 +75,9 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         accountId:
-          type: integer
+          type: string
         displayName:
           type: string
         bio:
@@ -87,7 +87,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         email:
           type: string
       required: [tenantId, email]
@@ -95,7 +95,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         token:
           type: string
         newPassword:
@@ -105,7 +105,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         email:
           type: string
       required: [tenantId, email]
@@ -113,7 +113,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         provider:
           type: string
         externalId:
@@ -123,15 +123,15 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         accountId:
-          type: integer
+          type: string
       required: [tenantId, accountId]
     VerifyEmailRequest:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         token:
           type: string
       required: [tenantId, token]
@@ -281,7 +281,7 @@ paths:
           in: query
           required: true
           schema:
-            type: integer
+            type: string
       responses:
         '200':
           description: Exported data
@@ -296,7 +296,7 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
+            type: string
       requestBody:
         required: true
         content:
@@ -322,7 +322,7 @@ paths:
           in: query
           required: true
           schema:
-            type: integer
+            type: string
       responses:
         '200':
           description: Deletion success
@@ -342,7 +342,7 @@ paths:
           in: query
           required: true
           schema:
-            type: integer
+            type: string
       responses:
         '200':
           description: Profile data

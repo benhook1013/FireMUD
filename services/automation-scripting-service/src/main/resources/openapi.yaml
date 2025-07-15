@@ -26,7 +26,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         name:
           type: string
         leaderNpcId:

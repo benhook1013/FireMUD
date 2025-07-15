@@ -22,7 +22,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         name:
           type: string
         description:
@@ -39,7 +39,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         fileName:
           type: string
         contentType:
@@ -122,7 +122,7 @@ paths:
               type: object
               properties:
                 tenantId:
-                  type: integer
+                  type: string
                 file:
                   type: string
                   format: binary

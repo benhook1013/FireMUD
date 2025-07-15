@@ -20,7 +20,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         accountId:
           type: integer
         friendAccountId:
@@ -35,7 +35,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         accountId:
           type: integer
         friendAccountId:
@@ -49,7 +49,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         senderAccountId:
           type: integer
         recipientAccountId:
@@ -70,7 +70,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         senderAccountId:
           type: integer
         recipientAccountId:
@@ -89,7 +89,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         senderAccountId:
           type: integer
         type:
@@ -116,7 +116,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         senderAccountId:
           type: integer
         content:
@@ -136,7 +136,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         guildId:
           type: integer
         itemName:
@@ -153,7 +153,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         guildId:
           type: integer
         itemName:
@@ -164,7 +164,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         guildId:
           type: integer
         allyGuildId:
@@ -179,7 +179,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         guildId:
           type: integer
         allyGuildId:
@@ -191,7 +191,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         ownerAccountId:
           type: integer
         name:
@@ -206,7 +206,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         name:
           type: string
         ownerAccountId:
@@ -218,7 +218,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         accountId:
           type: integer
         channelId:
@@ -239,7 +239,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         guildId:
           type: integer
         accountId:
@@ -255,7 +255,7 @@ components:
       type: object
       properties:
         tenantId:
-          type: integer
+          type: string
         guildId:
           type: integer
         accountId:
@@ -273,7 +273,7 @@ components:
         id:
           type: integer
         tenantId:
-          type: integer
+          type: string
         guildId:
           type: integer
         accountId:
