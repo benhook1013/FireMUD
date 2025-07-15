@@ -44,12 +44,13 @@ Scripts may register handlers for a set of standard lifecycle events. The Automa
 - Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
 - Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
+- **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:lock:{tenantId}:{scriptId}` to ensure only one script tick runs at a time. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
 
 ## 🔄 Deployment & Versioning
 
 - Script definitions are stored in the **Game Design Service** and versioned alongside other game assets.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
-- Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly.
+- Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
 - The Game Session Service tracks the active script version for each running game and notifies the Automation & Scripting Service when a new version should be loaded.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
@@ -61,14 +62,28 @@ scripts and ensure fair resource usage:
 
 - `ScriptQuotaService` limits how often a script may execute within a configurable
   window. **Quota checks happen before commands are enqueued**, so abusive scripts never reach
-  the tick queues. When the quota is exceeded the event is ignored and metrics are emitted
-  for monitoring.
+  the tick queues. When the quota is exceeded the event is ignored and the
+  `script_quota_denied_total` metric is incremented. Successful executions are tracked via
+  `script_quota_allowed_total`.
 - The tick system only processes these queued commands—it never runs script logic itself.
 - Metrics track script execution and help detect logic that attempts to monopolize
   CPU time or grief other players.
 - Administrators may disable or throttle problematic scripts via the Game Design
   Service, which updates definitions and triggers hot reloads in the Automation &
   Scripting Service.
+
+### Environment Variables
+
+The scripting engine exposes several environment variables so operators can tune quotas and tick behavior:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `SCRIPT_QUOTA_LIMIT` | Events a script may process per window |
+| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds |
+| `AUTOMATION_TICK_DURATION_MS` | Duration of a script processing tick in milliseconds |
+| `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick |
+
+See the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#environment-variables) for default values and additional details.
 
 ---
 
