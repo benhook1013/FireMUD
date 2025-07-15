@@ -4,8 +4,12 @@ import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.RefundCreateParams;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** Simple wrapper around Stripe API calls. */
+@SuppressFBWarnings(
+    value = "ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD",
+    justification = "Stripe library requires global API key; set once in constructor")
 public class StripeClient {
   private final String apiKey;
   private final double platformFeePercent;

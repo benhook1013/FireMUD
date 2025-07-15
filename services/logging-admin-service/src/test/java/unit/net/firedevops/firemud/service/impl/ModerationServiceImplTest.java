@@ -38,7 +38,6 @@ class ModerationServiceImplTest {
   @Test
   void applyActionSavesEntity() throws Exception {
     ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, "ban", "test");
-    ModerationAction entity = new ModerationAction();
     ModerationAction saved = new ModerationAction();
     saved.setId(1L);
     saved.setCreatedAt(Instant.now());
