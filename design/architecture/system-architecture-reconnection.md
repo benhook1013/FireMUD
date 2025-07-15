@@ -52,6 +52,7 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 
 - TCP loss (Telnet clients)
 - WebSocket loss (Web clients)
+- If two-factor authentication is enabled, include the one-time `otp` value with the `LOGIN` command. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication).
 
 Redis-backed session state enables seamless resumption if valid, or fresh login if expired.
 Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
