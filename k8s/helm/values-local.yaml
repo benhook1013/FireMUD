@@ -1,6 +1,10 @@
 redis:
   host: redis
   port: 6379
+account-service:
+  replicaCount: 1
+game-session-service:
+  replicaCount: 1
 tickInterval: 100
 features:
   enableFoo: true

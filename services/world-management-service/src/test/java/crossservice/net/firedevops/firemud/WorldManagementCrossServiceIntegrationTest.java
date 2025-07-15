@@ -32,7 +32,7 @@ class WorldManagementCrossServiceIntegrationTest {
 
   @Container
   static GenericContainer<?> gameDesignService =
-      new GenericContainer<>(DockerImageName.parse("ghcr.io/firedevops/game-design-service:latest"))
+      new GenericContainer<>(DockerImageName.parse("ghcr.io/firemud/game-design-service:latest"))
           .withExposedPorts(8080);
 
   @LocalServerPort private int port;

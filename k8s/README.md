@@ -67,7 +67,7 @@ The production Terraform modules provision persistent volumes for PostgreSQL and
 
 ## Helm Charts
 
-The [`helm/`](./helm) folder contains example charts. Use `values-local.yaml` or `values-dev.yaml` to override connection details and feature flags when deploying locally:
+The [`helm/`](./helm) folder contains example charts. Use `values-local.yaml` or `values-dev.yaml` to override connection details and feature flags when deploying locally. `values-local.yaml` also reduces replica counts to 1 so a Kind or minikube cluster doesn't run out of resources:
 
 ```bash
 helm install game-session ./helm/game-session-service -f helm/values-local.yaml

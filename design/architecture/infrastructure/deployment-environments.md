@@ -26,6 +26,8 @@ FireMUD uses Docker Compose for local development and testing:
 - Docker Compose can monitor health using `healthcheck` blocks in `docker-compose.yml`.
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
   - Docker does **not** automatically restart unhealthy containers by default.
+    Even with `restart: unless-stopped` configured, containers remain
+    running in an `unhealthy` state until manually restarted.
   - Docker’s `depends_on` only controls startup order, not service readiness.
   - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
 

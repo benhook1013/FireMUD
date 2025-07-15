@@ -30,7 +30,7 @@ import org.testcontainers.utility.DockerImageName;
 class GameSessionCrossServiceIntegrationTest {
 
   private static GenericContainer<?> gameLogicService =
-      new GenericContainer<>(DockerImageName.parse("ghcr.io/firedevops/game-logic-service:latest"))
+      new GenericContainer<>(DockerImageName.parse("ghcr.io/firemud/game-logic-service:latest"))
           .withExposedPorts(8080);
 
   private static boolean containerStarted;
