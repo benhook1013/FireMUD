@@ -27,15 +27,15 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   centrally enforcing JWT-based roles and supporting secret rotation. See the
   [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
-- **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service.
+- **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
-- `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`.
+- `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`. It reads variables prefixed with `FIREMUD_SERVICES_` (see [Environment & Secrets](./infrastructure/environment-and-secrets.md#service-discovery)) to build endpoint URLs.
 - **Spring Boot Starter** – Provides `DatabaseAutoConfiguration` for
   PostgreSQL/Redis and `CommonAutoConfiguration` for shared service properties.
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service.
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. These watchers are activated by the environment variables described in [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication).
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
@@ -97,8 +97,7 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
-`SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding
- a `correlationId` to logs for easier troubleshooting.
+`SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active sagas so the Logging & Admin Service dashboard can display progress.
 
 ## 📚 Related Documentation
 
