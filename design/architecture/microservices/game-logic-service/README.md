@@ -35,6 +35,7 @@ Executes the core gameplay rules and command parsing. It processes player action
   Communications use mutual TLS certificates as outlined in the
   [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
 
 ## Key Features
 
@@ -103,11 +104,15 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
-Additional variables specific to this service:
+Additional variables referencing dependent services:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| *(none)* | This service relies only on the shared configuration variables. | *(none)* |
+| `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (host:port) for the Entity Management Service | *(none)* |
+| `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint for the World Management Service | *(none)* |
+| `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint for the Game Session Service | *(none)* |
+| `FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE` | gRPC endpoint for the Automation & Scripting Service | *(none)* |
+| `FIREMUD_SERVICES_SOCIAL_GROUPS_SERVICE` | gRPC endpoint for the Social & Groups Service | *(none)* |
 
 ## Proto Files
 
@@ -137,13 +142,23 @@ the generated code with `./gradlew generateProto` after making changes.
 
 #### REST
 
-- `GET /ping` – basic health check returning `"pong"`.
-- `POST /command` – submit a gameplay command body as plain text.
+- `GET /ping` – returns `ApiResponse` with the string `pong` in `data`.
+- `POST /command` – submit a gameplay command body as plain text and receive an `ApiResponse<String>` result.
 These are currently the only REST endpoints; gameplay commands are primarily
 processed through the gRPC interface.
 
 ```bash
 curl http://localhost:8080/ping
+```
+
+Expected response:
+
+```json
+{
+  "status": "SUCCESS",
+  "data": "pong",
+  "error": null
+}
 ```
 
 #### gRPC
@@ -163,10 +178,32 @@ Expected response:
 }
 ```
 
+Call `ExecuteCommand` with:
+
+```bash
+grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}' \
+  localhost:6565 game_logic.v1.GameLogicService/ExecuteCommand
+```
+
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
+
+### Local Development Notes
+
+The `smoke-test.sh` script under `services/game-logic-service` verifies both REST
+and gRPC endpoints.
+
+### Cross-Service Integration Test
+
+An integration test in `services/game-session-service/src/test/java/crossservice`
+starts this service alongside the Game Session Service using **Testcontainers**.
+Run it manually after building the Docker images:
+
+```bash
+./gradlew :game-session-service:test --tests "*CrossServiceIntegrationTest"
+```
 
 ## Future Enhancements
 
