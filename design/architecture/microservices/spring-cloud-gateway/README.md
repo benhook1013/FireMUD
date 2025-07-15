@@ -17,7 +17,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 - Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
 - Event-driven updates synchronize game state across connected players.
-- Includes a fallback mechanism so players with unstable connections can rejoin seamlessly.
+- Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md).
 - Gateway restarts are transparent thanks to the layered reconnection model
   outlined in [Reconnection Strategy](../system-architecture-reconnection.md).
 - Applies rate limiting and authentication filters for admin endpoints.
@@ -48,7 +48,7 @@ environments work out of the box.
 
 - Authentication, rate limiting, and logging filters run before routing.
 - `JwtAuthFilter` requires an `Authorization` header on admin routes and forwards the JWT unmodified. Validation occurs in the consuming service.
-- WebSocket upgrades are handled with heartbeat and idle timeout logic.
+- WebSocket upgrades are forwarded transparently using Spring Cloud Gateway's built-in support. The `ConnectionMetricsFilter` records active connections for observability.
 
 ### Key Routes
 
