@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.service.TickService;
+import net.firedevops.firemud.repository.GameInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -20,6 +21,7 @@ class TickServiceImplTest {
   private org.springframework.data.redis.core.ValueOperations<String, Object> valueOps;
   private SimpleMeterRegistry meterRegistry;
   private net.firedevops.firemud.common.conflict.ConflictTracker conflictTracker;
+  private net.firedevops.firemud.repository.GameInstanceRepository repository;
   private TickService service;
 
   @BeforeEach
@@ -31,7 +33,8 @@ class TickServiceImplTest {
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
-    service = new TickServiceImpl(redisTemplate, meterRegistry, conflictTracker);
+    repository = mock(net.firedevops.firemud.repository.GameInstanceRepository.class);
+    service = new TickServiceImpl(redisTemplate, meterRegistry, conflictTracker, repository);
     ((TickServiceImpl) service).init();
   }
 
@@ -74,4 +77,24 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_tick_budget_exceeded_total").counter().count(), 0.001);
   }
+
+  @Test
+  void retryQueueGaugeRecorded() {
+    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
+    when(listOps.size(any())).thenReturn(3L);
+    var instance = new net.firedevops.firemud.entity.GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(10L);
+    when(repository.findById(2L)).thenReturn(java.util.Optional.of(instance));
+    service.processTick(2L);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        3.0,
+        meterRegistry
+            .get("tick_retry_queue_depth")
+            .tags("tenantId", "10", "regionId", "2")
+            .gauge()
+            .value(),
+        0.001);
+  }
+
 }

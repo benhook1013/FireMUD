@@ -11,6 +11,7 @@ import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.TickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,6 +32,7 @@ public class TickServiceImpl implements TickService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final ConflictTracker conflictTracker;
+  private final GameInstanceRepository gameInstanceRepository;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -48,10 +50,10 @@ public class TickServiceImpl implements TickService {
   private Counter redisErrorCounter;
   private Counter lockContentionCounter;
   private Counter budgetExceededCounter;
+  private Counter requeuedActionCounter;
+  private Counter retryBackoffCounter;
   private Timer tickTimer;
   private Timer luaTimer;
-  private java.util.concurrent.atomic.AtomicInteger retryQueueDepth =
-      new java.util.concurrent.atomic.AtomicInteger();
   private RedisScript<Long> stageScript;
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
@@ -64,6 +66,7 @@ public class TickServiceImpl implements TickService {
       } catch (Exception ex) {
         attempts++;
         redisErrorCounter.increment();
+        retryBackoffCounter.increment();
         if (attempts >= 3) {
           logger.error("Redis script execution failed after {} attempts", attempts, ex);
           throw ex;
@@ -87,11 +90,9 @@ public class TickServiceImpl implements TickService {
     this.budgetExceededCounter = meterRegistry.counter("game_session_tick_budget_exceeded_total");
     this.tickTimer = meterRegistry.timer("game_session_tick_duration_ms");
     this.luaTimer = meterRegistry.timer("game_session_lua_latency_ms");
-    Gauge.builder(
-            "game_session_retry_queue_depth",
-            retryQueueDepth,
-            java.util.concurrent.atomic.AtomicInteger::get)
-        .register(meterRegistry);
+    this.requeuedActionCounter =
+        meterRegistry.counter("tick_requeued_action_total", "source", "player");
+    this.retryBackoffCounter = meterRegistry.counter("tick_retry_backoff_count_total");
     ResourceScriptSource commitSrc =
         new ResourceScriptSource(new ClassPathResource("redis/tick_commit.lua"));
     ResourceScriptSource stageSrc =
@@ -143,7 +144,15 @@ public class TickServiceImpl implements TickService {
     boolean solo = false;
     try {
       Long pending = redisTemplate.opsForList().size(pendingKey(sessionId));
-      retryQueueDepth.set(pending != null ? pending.intValue() : 0);
+      Long tenantId =
+          gameInstanceRepository.findById(sessionId).map(i -> i.getTenantId()).orElse(0L);
+      double depth = pending != null ? pending.doubleValue() : 0.0;
+      meterRegistry
+          .gauge(
+              "tick_retry_queue_depth",
+              io.micrometer.core.instrument.Tags.of(
+                  "tenantId", tenantId.toString(), "regionId", sessionId.toString()),
+              depth);
       if (pending != null && pending > 0) {
         logger.info("Replaying {} pending commands for {}", pending, sessionId);
         tickTimer.record(
@@ -174,6 +183,7 @@ public class TickServiceImpl implements TickService {
           () ->
               executeScriptWithRetry(
                   rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId))));
+      requeuedActionCounter.increment();
       awaitReplication();
     } finally {
       long elapsed = (System.nanoTime() - start) / 1_000_000;
