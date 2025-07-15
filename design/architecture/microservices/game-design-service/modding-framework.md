@@ -2,6 +2,8 @@
 
 This document sketches the planned modding system that allows administrators to extend a published game without republishing a full version.
 
+> **Status: In Progress** – The modding framework is still under active development and not yet available in production.
+
 ## 🎯 Goals
 
 - Enable runtime loading of approved plugins written in the same scripting DSL used for automation.

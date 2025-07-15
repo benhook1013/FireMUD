@@ -2,6 +2,8 @@
 
 This document outlines the planned editors for defining abilities, actions and combat mechanics.
 
+> **Status: In Progress** – These tooling features are not yet implemented.
+
 Game creators can build complex combat systems without modifying the core engine. All definitions are design-time data stored with a tenant so multiple games remain isolated.
 
 ## Capabilities

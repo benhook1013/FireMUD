@@ -4,6 +4,8 @@
 
 The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events, notifying other services over gRPC when the environment changes.
 
+> **Status: In Progress** – Planned features like pathfinding APIs and world snapshots are not yet implemented.
+
 ### Responsibilities
 
 - Persist region, zone, and room data with tenant isolation
