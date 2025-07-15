@@ -6,7 +6,7 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "versions")
+@Table(name = "version")
 public class Version {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
