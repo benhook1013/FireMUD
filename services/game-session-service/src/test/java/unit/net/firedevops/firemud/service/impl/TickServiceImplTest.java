@@ -8,7 +8,6 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.service.TickService;
-import net.firedevops.firemud.repository.GameInstanceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -96,5 +95,4 @@ class TickServiceImplTest {
             .value(),
         0.001);
   }
-
 }
