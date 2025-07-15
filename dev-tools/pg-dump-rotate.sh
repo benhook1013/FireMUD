@@ -28,7 +28,7 @@ pg_dump -h "$FIREMUD_POSTGRES_HOST" -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POS
 
 # keep last 96 daily dumps
 cd "$BACKUP_DIR/daily"
-ls -1t ${PREFIX}_*.sql.gz | tail -n +97 | xargs -r rm --
+find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +97 | cut -d' ' -f2- | xargs -r rm --
 
 DOW=$(date +%u) # 1-7 (Mon-Sun)
 DOM=$(date +%d)
@@ -37,14 +37,14 @@ if [ "$DOW" = "7" ]; then
   WEEKLY_DEST="$BACKUP_DIR/weekly/${PREFIX}_${TS}.sql.gz"
   cp "$DUMP" "$WEEKLY_DEST"
   cd "$BACKUP_DIR/weekly"
-  ls -1t ${PREFIX}_*.sql.gz | tail -n +4 | xargs -r rm --
+  find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm --
 fi
 
 if [ "$DOM" = "01" ]; then
   MONTHLY_DEST="$BACKUP_DIR/monthly/${PREFIX}_${TS}.sql.gz"
   cp "$DUMP" "$MONTHLY_DEST"
   cd "$BACKUP_DIR/monthly"
-  ls -1t ${PREFIX}_*.sql.gz | tail -n +4 | xargs -r rm --
+  find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm --
 fi
 
 if [ -n "$BUCKET" ]; then
