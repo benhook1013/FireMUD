@@ -222,7 +222,7 @@ The process is **asynchronous and multi-phased**:
 
 Players experience a smooth flow:
 
-```
+```text
 🕒 You cast Fireball...
 🔥 Your Fireball hits Player B for 12 damage!
 ```
