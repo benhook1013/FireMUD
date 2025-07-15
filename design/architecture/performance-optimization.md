@@ -40,6 +40,9 @@ These notes summarize typical optimizations applied across FireMUD services.
   visibility into heavy script load.
 - Redis exporters publish Lua latency, lock contention and retry queue depth
   metrics so operators can spot hotspots in Grafana dashboards.
+- The Game Session Service exposes `tick_retry_queue_depth`,
+  `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
+  per-region visibility into retries and backoff behavior.
 - Graceful degradation logic in the Game Session Service retries failed
   Redis operations so stalled ticks do not block gameplay.
 - The Game Session Service records `game_session_commands_enqueued_total` and
