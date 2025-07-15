@@ -135,6 +135,7 @@ Additional variables tune the scripting engine:
 | `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` |
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
 | `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` |
+| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` |
 
 ## Proto Files
 
