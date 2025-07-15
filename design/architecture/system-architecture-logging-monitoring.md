@@ -19,7 +19,7 @@ This document consolidates the platform's observability architecture.
   [Deployment Environments](./infrastructure/deployment-environments.md) settings.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and
   `FLUENT_ELASTICSEARCH_PORT` environment variables
-  ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).
+  ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
 - Operators search logs primarily through Kibana, but the Logging & Admin Service
   offers a focused UI for moderation and audit trails.
 
@@ -30,13 +30,17 @@ This document consolidates the platform's observability architecture.
 - **OpenTelemetry** spans provide distributed tracing across ticks and requests.
   Traces are collected by an OpenTelemetry Collector and visualized with Jaeger.
   See [Tracing](./system-architecture-tracing.md) for deployment details.
+- Sample Kubernetes manifests under [`k8s/monitoring`](../../k8s/monitoring) deploy the collector and Jaeger (`otel-collector.yaml`, `jaeger.yaml`).
 - Metrics are recorded with Micrometer and emitted through a shared
   `MetricsInterceptor` so all gRPC endpoints expose consistent counters like
   `grpc.server.requests` and `grpc.app_error`.
+- Business methods in services are annotated with `@Timed` to publish custom Prometheus timers.
 - Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals
   are tuned per environment (typically 15s in development and 30s in production).
+- Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment. A PostgreSQL exporter can also be added for database metrics.
 - Distributed traces are exported via OTLP and correlated with logs using the same
   `traceId` value.
+- Metrics use the same `traceId` label via the `MetricsInterceptor`, making it easy to correlate latency spikes with specific traces and log entries.
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT`
   environment variable ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).
 
