@@ -8,11 +8,10 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ### Responsibilities
 
-- Deliver real-time chat and presence notifications
+- Deliver real-time chat notifications
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
 - Feed chat logs to the Logging & Admin Service for moderation
-- Send out-of-game notifications and bulk emails on behalf of game creators
 
 ## Architecture / Design Notes
 
@@ -47,15 +46,12 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 ## Key Features
 
 - Global and guild chat rooms.
-- Private messaging and presence indicators.
+- Private messaging between players.
 - Asynchronous player-to-player mail.
 - Guild creation and membership management.
 - Shared guild storage and alliance system.
 - Friend lists scoped both to individual games and to overall accounts.
-- Cross-game presence lets players know when friends are online in any hosted
-  game.
 - In-game social chat plus account-to-account direct messaging.
-- Broadcast email capability for game creators to reach all active players.
 
 ### Data Model
 
@@ -82,13 +78,15 @@ Voice chat is an optional feature built on top of a lightweight WebRTC gateway.
 The gateway establishes peer-to-peer connections between players and relays
 media streams when direct communication is not possible. The Social & Groups
 Service issues temporary WebRTC tokens and records basic session metadata so the
-Logging & Admin Service can audit voice activity. Voice chat is disabled by
-default and can be enabled per tenant through configuration.
+Logging & Admin Service can audit voice activity. Tokens are issued only via the
+REST endpoint `/voice/token` (see `openapi.yaml` lines 499–520); there is no
+gRPC method for this feature. Voice chat is disabled by default and can be
+enabled per tenant through configuration.
 
 ### gRPC APIs
 
+- `Ping` – simple connectivity check.
 - `SendMessage` – publishes a chat message to an in-game channel or player.
-- `SendAccountMessage` – delivers a direct message between account holders.
 - `CreateGuild` – establishes a new guild with an owner account.
 - `AddFriend` – adds a friend relationship at the game or account level.
 - `SendMail` – stores asynchronous player mail for later retrieval.
@@ -195,7 +193,7 @@ Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are 
 
 ### Voice Chat
 
-The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. When enabled, the REST API issues short-lived WebRTC tokens and records connection events so moderation actions can be traced. This feature is disabled by default and is intended for games that wish to offer in-client voice without relying on external tools.
+The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. Tokens are issued only via the `/voice/token` REST endpoint (see `openapi.yaml` lines 499–520) and connection events are recorded so moderation actions can be traced. This feature is disabled by default and is intended for games that wish to offer in-client voice without relying on external tools.
 
 #### Example Request
 
@@ -225,3 +223,5 @@ guidance.
 
 - Rich moderation tools for chat including profanity filtering and moderator dashboards.
 - Optional voice chat integration via a WebRTC gateway.
+- Presence indicators and notifications when friends come online.
+- Broadcast and out-of-game email capabilities for game creators.
