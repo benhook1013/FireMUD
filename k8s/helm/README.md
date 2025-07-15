@@ -6,6 +6,8 @@ Charts are provided for the **Account Service** and **Game Session Service** as 
 The files `values-local.yaml` and `values-dev.yaml` demonstrate how runtime
 settings such as Redis connection info, tick interval, and feature flags can be
 overridden per environment.
+Replica counts and resource limits are also defined in the chart `values.yaml`
+so they can be tuned without modifying the templates.
 
 Install the example chart with:
 

@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   name: account-service
 spec:
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
 {{ include "firemud.labels" . | indent 6 }}

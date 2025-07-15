@@ -45,7 +45,13 @@ FIREMUD_POSTGRES_PASSWORD=firemud
 FIREMUD_REDIS_HOST=redis
 FIREMUD_REDIS_PORT=6379
 OTEL_ENDPOINT=http://otel-collector:4317
+FLUENT_ELASTICSEARCH_HOST=elasticsearch
+FLUENT_ELASTICSEARCH_PORT=9200
 ```
 
 Each deployment loads these variables using `envFrom`. Replace the sample
 credentials or mount your own Secrets for production environments.
+
+An example `HorizontalPodAutoscaler` manifest is provided in `hpa-example.yaml`.
+It is commented out by default and can be customized with CPU or other metrics
+when deploying to production clusters.

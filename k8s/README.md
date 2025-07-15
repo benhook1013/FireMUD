@@ -28,6 +28,7 @@ After the services are running, apply the default network policies found in
 kubectl apply -f network-policies/internal-services.yaml
 kubectl apply -f base/firemud-grpc-certificate.yaml
 ```
+
 The policy allows gRPC (8080, 6565) and OpenTelemetry traffic on port `4317` in
 addition to database access.
 

@@ -4,12 +4,16 @@ app: {{ .Chart.Name }}
 {{- end -}}
 
 {{- define "firemud.resources" -}}
+{{- if .Values.resources }}
+{{ toYaml .Values.resources }}
+{{- else }}
 requests:
   cpu: "200m"
   memory: "256Mi"
 limits:
   cpu: "400m"
   memory: "512Mi"
+{{- end }}
 {{- end -}}
 
 {{- define "firemud.fullname" -}}

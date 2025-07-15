@@ -69,6 +69,17 @@ spec:
           image: fluent/fluent-bit:2.2.2
           imagePullPolicy: Always
           args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+          env:
+            - name: FLUENT_ELASTICSEARCH_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FLUENT_ELASTICSEARCH_HOST
+            - name: FLUENT_ELASTICSEARCH_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FLUENT_ELASTICSEARCH_PORT
           volumeMounts:
             - name: varlog
               mountPath: /var/log
