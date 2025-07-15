@@ -67,9 +67,10 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
   
 - **State Management**:
-  - All saga state is persisted in a **dedicated `saga` schema** (e.g., `saga_instances`, `saga_steps`)
+  - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library
   - Tracks in-progress, completed, and failed workflows
   - Supports retry, compensation, and alerting
+  - Emits a `sagas.active` metric and logs a `correlationId` for each workflow
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
@@ -81,11 +82,13 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
 
 ```java
 sagaBuilder("accountCreation")
-.step("createAccount", accountClient::createAccount)
-.step("provisionCharacter", entityClient::createPlayer)
-.step("assignStartingRoom", worldClient::placeInWorld)
-.onFailure("provisionCharacter", accountClient::deleteAccount)
-.run();
+    .step(
+        "createAccount",
+        accountClient::createAccount,
+        accountClient::deleteAccount)
+    .step("provisionCharacter", entityClient::createPlayer)
+    .step("assignStartingRoom", worldClient::placeInWorld)
+    .run();
 ```
 
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
