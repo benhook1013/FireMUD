@@ -1,6 +1,7 @@
 apiVersion: v1
 kind: Secret
 metadata:
+  namespace: firemud
   name: firemud-grpc-tls
 data:
   client.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmV4YW1wbGUKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQ==
