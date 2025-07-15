@@ -30,6 +30,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Central log collection and search.
 - [Analytics dashboards](./analytics-dashboards.md) for operators.
 - Tools for banning or restricting accounts.
+- [Role-based admin UI](./admin-ui.md) for moderators.
 - [Admin operations saga](./admin-operations-saga.md) coordinates bans across services.
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
@@ -43,8 +44,9 @@ All admin APIs are secured via role-based access control integrated with the Acc
 ### Data Model
 
 - Log events are stored exclusively in Elasticsearch indexes for search.
-- `moderation_action` table records bans and warnings with timestamps.
-- `feature_flag` table mirrors active runtime settings for auditing.
+- `moderation_action` table records bans and warnings with timestamps and includes a `tenant_id` column.
+- `player_reports` table stores abuse and bug reports with a `tenant_id` column.
+- `feature_flag` table mirrors active runtime settings for auditing and stores the `tenant_id` of the owning game.
 
 ### Moderation Workflow
 
@@ -60,6 +62,10 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /reports` – submit an abuse or bug report.
 - `POST /feature-flags/toggle` – enable or disable runtime flags.
+- `GET /logs` – search stored logs.
+- `POST /moderation/actions` – apply a moderation action.
+- `GET /sagas` – list saga instances.
+- `GET /sagas/{id}/steps` – inspect steps for a saga instance.
 
 ```bash
 curl http://localhost:8080/ping
@@ -97,6 +103,7 @@ details on shared infrastructure components.
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+- REST endpoints listen on port `8080` and gRPC on port `6565`.
 
 ## Environment Variables
 
@@ -114,6 +121,8 @@ Additional variables specific to this service:
 | `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWT validation | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
+| `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
+| `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
 
 ## Proto Files
 
