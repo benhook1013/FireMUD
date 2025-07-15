@@ -1,6 +1,5 @@
 package net.firedevops.firemud.service.generator;
 
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;

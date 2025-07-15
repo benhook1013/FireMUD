@@ -61,10 +61,43 @@ spec:
               port: 8080
             initialDelaySeconds: 15
             periodSeconds: 20
+        - name: fluent-bit
+          image: fluent/fluent-bit:2.2.2
+          imagePullPolicy: Always
+          args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
+          env:
+            - name: FLUENT_ELASTICSEARCH_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FLUENT_ELASTICSEARCH_HOST
+            - name: FLUENT_ELASTICSEARCH_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: firemud-config
+                  key: FLUENT_ELASTICSEARCH_PORT
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: containers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
       volumes:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-tls
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: containers
+          hostPath:
+            path: /var/lib/docker/containers
 ---
 apiVersion: v1
 kind: Service

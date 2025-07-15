@@ -6,7 +6,7 @@ This document consolidates the platform's observability architecture.
 
 ## 🔍 Logging Pipeline
 
-- **Fluent Bit** sidecars collect service logs.
+- **Fluent Bit** sidecars collect service logs from every microservice.
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
 - The **Logging & Admin Service** exposes moderation tools and log queries.
 - Logs are emitted in JSON with request tracing fields (e.g., `traceId`, `playerId`)
