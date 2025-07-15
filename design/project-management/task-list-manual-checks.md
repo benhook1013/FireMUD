@@ -6,13 +6,27 @@ This checklist covers optional manual steps to verify that development tooling a
 
 - [ ] Install required command line tools
   - [ ] `Java 21+`
+    - [ ] Verify installation with `java --version`
   - [ ] `Node.js` (latest LTS)
+    - [ ] Verify installation with `node --version`
   - [ ] `Docker` and `Docker Compose`
-  - [ ] Verify Docker Compose with `docker compose version`
+    - [ ] Verify Docker Compose with `docker compose version`
   - [ ] `buf` for proto linting
+    - [ ] Verify installation with `buf --version`
   - [ ] `pre-commit` Python package
+    - [ ] Verify installation with `pre-commit --version`
   - [ ] `hadolint` for Dockerfile linting
+    - [ ] Verify installation with `hadolint --version`
   - [ ] `shellcheck` for shell script validation
+    - [ ] Verify installation with `shellcheck --version`
+  - [ ] `helm` for chart management
+    - [ ] Verify installation with `helm version`
+  - [ ] `kubectl` for Kubernetes interaction
+    - [ ] Verify installation with `kubectl version --client`
+  - [ ] `terraform` for infrastructure modules
+    - [ ] Verify installation with `terraform version`
+  - [ ] `trivy` for dependency scanning
+    - [ ] Verify installation with `trivy --version`
   - [ ] Verify Gradle wrapper with `./gradlew --version`
 - [ ] Set up git hooks
   - [ ] `pip install pre-commit`
