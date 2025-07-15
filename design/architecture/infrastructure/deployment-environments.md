@@ -17,6 +17,8 @@ FireMUD uses Docker Compose for local development and testing:
   profile of `application.yml`.
 - Connection settings for PostgreSQL and Redis are loaded from a `.env` file.
   A sample `.env.sample` is provided with default credentials.
+- Start the stack with `./gradlew devUp` and shut it down with `./gradlew devDown` (see [Developer Setup](../../DEVELOPER_SETUP.md)).
+- For details on all configuration variables, see [Environment Variables & Secrets Management](./environment-and-secrets.md).
 
 ### 🩺 Docker Health Checks
 
@@ -52,9 +54,9 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
-- Redis runs as a clustered StatefulSet with automatic failover. Details are in [Redis Architecture](../system-architecture-redis.md). Redis persistence uses **AOF**, as described there.
+- Redis runs as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`. Both setups enable **AOF** persistence.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md).
-- Deployments use Helm charts but are triggered manually. The `manual-helm-deploy.yml` GitHub workflow runs `helm upgrade` against a local cluster when invoked. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
+- Deployments use Helm charts but are triggered manually via [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml), which runs `helm upgrade` against a selected cluster when invoked. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
 A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../k8s/helm) to deploy services locally.
 
@@ -115,6 +117,7 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 ## 🎮 Staging Environment for Playtesting
 
 A minimal staging cluster mirrors production but uses smaller node sizes. Pull requests can deploy preview versions so playtesters can experiment without affecting live games. Test data resets nightly.
+Preview deployments are orchestrated by [preview.yml](../../../.github/workflows/preview.yml). For details on collecting tester feedback see [Playtesting & Feedback Plan](../../project-management/playtesting-feedback.md).
 
 ---
 
