@@ -93,16 +93,16 @@ After tests pass, each service is packaged into a Docker image:
           context: ./services/${{ matrix.service }}
           push: true
           tags: |
-            ghcr.io/firemud/${{ matrix.service }}:${{ github.sha }}
-            ghcr.io/firemud/${{ matrix.service }}:latest
-            ghcr.io/firemud/${{ matrix.service }}:${{ github.ref_name }}
+            ghcr.io/benhook1013/${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/benhook1013/${{ matrix.service }}:latest
+            ghcr.io/benhook1013/${{ matrix.service }}:${{ github.ref_name }}
 ```
 
 Images are tagged with the commit SHA and pushed to **GitHub Container Registry (GHCR)**.
 
 ### Base Docker Image
 
-The firemud-base image provides a consistent OS and JVM setup across all service containers. It is built using the `buildBaseImage` Gradle task and referenced in each microservice Dockerfile as `ghcr.io/firedevops/firemud-base:latest`.
+The firemud-base image provides a consistent OS and JVM setup across all service containers. It is built using the `buildBaseImage` Gradle task and referenced in each microservice Dockerfile as `ghcr.io/benhook1013/firemud-base:latest`.
 
 ---
 

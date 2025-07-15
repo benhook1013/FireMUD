@@ -22,7 +22,7 @@ publishing {
     repositories {
         maven {
             name = "github"
-            url = uri("https://maven.pkg.github.com/firedevops/firemud")
+            url = uri("https://maven.pkg.github.com/benhook1013/firemud")
             credentials {
                 username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
                 password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")

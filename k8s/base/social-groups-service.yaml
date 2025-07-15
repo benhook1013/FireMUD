@@ -17,7 +17,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: social-groups-service
-          image: ghcr.io/firemud/social-groups-service:latest
+          image: ghcr.io/benhook1013/social-groups-service:latest
           imagePullPolicy: Always
           env:
             - name: SPRING_PROFILES_ACTIVE

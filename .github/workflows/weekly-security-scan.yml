@@ -31,7 +31,7 @@ jobs:
       - name: 🛡️ Trivy container and dependency scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ghcr.io/firemud/${{ matrix.service }}:latest
+          image-ref: ghcr.io/benhook1013/${{ matrix.service }}:latest
           format: 'table'
           output: 'trivy-report.txt'
           exit-code: '1'

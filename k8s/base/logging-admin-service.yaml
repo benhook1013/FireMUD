@@ -17,7 +17,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: logging-admin-service
-          image: ghcr.io/firemud/logging-admin-service:latest
+          image: ghcr.io/benhook1013/logging-admin-service:latest
           imagePullPolicy: Always
           env:
             - name: SPRING_PROFILES_ACTIVE

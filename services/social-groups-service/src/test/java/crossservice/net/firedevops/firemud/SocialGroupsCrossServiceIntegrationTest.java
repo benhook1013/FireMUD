@@ -34,7 +34,8 @@ import org.testcontainers.utility.DockerImageName;
 class SocialGroupsCrossServiceIntegrationTest {
 
   static GenericContainer<?> loggingAdminService =
-      new GenericContainer<>(DockerImageName.parse("ghcr.io/firemud/logging-admin-service:latest"))
+      new GenericContainer<>(
+              DockerImageName.parse("ghcr.io/benhook1013/logging-admin-service:latest"))
           .withExposedPorts(8080);
 
   @BeforeAll
