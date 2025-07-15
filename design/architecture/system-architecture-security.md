@@ -13,12 +13,19 @@ seamlessly with cert-manager for automatic rotation.
 - The **Account Service** signs JWTs used for internal gRPC authorization.
 - Signing keys are stored as **Kubernetes Secrets**, provisioned and rotated using **cert-manager**.
 - Keys are **never committed** to the repository and can be rotated without redeploying other services.
-- A **JWKS endpoint** exposes public keys for internal services to validate tokens.
+- A **JWKS endpoint** exposes public keys for internal services to validate tokens. The
+  Account Service serves these keys at `/.well-known/jwks.json`.
 
 ### Key and Certificate Rotation
 
 - cert-manager issues both JWT signing keys and mTLS certificates, backed by an internal CA.
-- All services poll their mounted secrets for updates and support **hot reload** of keys and certificates. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH` so that rotation occurs without restarts. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for variable definitions.
+- All services poll their mounted secrets for updates and support **hot reload** of keys
+  and certificates via the shared `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and
+  `JwtSecretWatcher` utilities. JWT secrets can be mounted from a file defined by
+  `FIREMUD_AUTH_JWT_SECRET_PATH` so that rotation occurs without restarts. See
+  [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)
+  and [Shared Libraries](./system-architecture-shared-libraries.md) for variable
+  definitions and watchers.
 - During rotation, services cache both current and previous credentials to allow for **seamless transition**.
 - The JWKS endpoint currently serves a static key file. Rotation requires updating this file manually, though automated JWKS generation is planned.
 
