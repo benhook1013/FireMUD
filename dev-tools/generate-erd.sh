@@ -49,7 +49,7 @@ for service in "${SERVICES[@]}"; do
       --command=schema \
       --info-level=standard \
       --output-format=png \
-      --output-file=/output/${service}.png
+      --output-file="/output/${service}.png"
   fi
 
 done
