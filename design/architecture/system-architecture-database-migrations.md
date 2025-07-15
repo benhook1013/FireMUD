@@ -21,15 +21,19 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - Common tables shared by multiple services reside in the `common-library` module with its own migrations.
 - It contains saga table migrations described in [System Architecture – Transactions](./system-architecture-transactions.md).
 - Services that need these shared tables include the module as a dependency during their build.
+- The library packages its migrations inside the JAR, so Flyway automatically
+  picks them up from the classpath when the service starts.
 - New migrations are committed alongside service code so history stays with the owning service.
 
 ## 🔄 CI/CD Execution
 
 - Flyway runs automatically when a service container starts.
 - In development you can run `./gradlew flywayMigrate` for a single service.
-- You can also run `./gradlew :service:flywayInfo` or `flywayClean` to troubleshoot local databases.
+- Execute this task from the service directory or prefix the project name (e.g.,
+  `./gradlew :account-service:flywayMigrate`).
+- You can also run `./gradlew :service:flywayInfo`, `flywayClean`, or `flywayRepair` to troubleshoot local databases. **Use `flywayClean` with caution** because it drops tables.
 - Run `./gradlew :service:flywayValidate` to verify migrations before committing.
-- See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance.
+- See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.
 - During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service.
 - On startup the container executes Flyway against its database schema before the Spring application fully starts.
 - The `dev-tools/generate-erd.sh` script uses Flyway to clean and migrate temporary databases when generating ERD diagrams.
