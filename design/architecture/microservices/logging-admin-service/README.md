@@ -16,9 +16,7 @@ Centralized logging and administration tools for the platform. Collects log data
 Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
 All admin APIs are secured via role-based access control integrated with the Account Service.
 
-- Access to this service is protected by mTLS and JWT validation using a shared
-  secret loaded from `FIREMUD_AUTH_JWT_SECRET` or `FIREMUD_AUTH_JWT_SECRET_PATH`.
-  See [Security Architecture](../system-architecture-security.md).
+- Access to this service is protected by mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
 - The security model relies solely on JWT roles; there is no additional
   network-layer isolation for admin endpoints.
 - Moderation data and log indices include a `tenantId` field so administrators
