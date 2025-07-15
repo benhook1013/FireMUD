@@ -218,8 +218,8 @@ The process is **asynchronous and multi-phased**:
    [Redis Key Naming](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline)).
 3. The target region processes the action during its next tick and determines
    the outcome locally.
-4. The Game Session Service routes the result back to the origin region or
-   directly to the player's active session.
+4. The Game Session Service uses the `sourceEntityId` to route the result back
+   to the origin region or directly to the player's active session.
 
 Players experience a smooth flow:
 
