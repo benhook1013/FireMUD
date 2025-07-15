@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package shared.v1;
+
+option java_package = "net.firedevops.firemud.shared.v1";
+option java_multiple_files = true;
+
+/** Standard paging request for list RPCs. */
+message PagingRequest {
+  // 1-based page index.
+  int32 page = 1;
+
+  // Maximum number of items per page.
+  int32 page_size = 2;
+}

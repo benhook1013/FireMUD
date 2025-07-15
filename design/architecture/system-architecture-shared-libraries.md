@@ -23,13 +23,18 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   attach a `correlationId` via `SagaRunner` for cross-service tracing.
 - **Security Utilities** – `JwtUtil` for verifying tokens (and building them
   within the Account Service only) plus `AuthTokenInterceptor`,
-  `SessionContext`, and `RequireAdminRole` helpers for centrally enforcing
-  JWT-based roles. See the [Authentication Design](./system-architecture-authentication.md).
+  `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for
+  centrally enforcing JWT-based roles and supporting secret rotation. See the
+  [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
 - `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`.
-- **Spring Boot Starter** – Lightweight autoconfiguration for logging, JWT, Redis and PostgreSQL so services can opt in.
+- **Spring Boot Starter** – Provides `DatabaseAutoConfiguration` for
+  PostgreSQL/Redis and `CommonAutoConfiguration` for shared service properties.
+  Logging and JWT helpers are available but are configured manually.
+- **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
+  tick conflicts in Redis for hotspot detection.
 - **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
