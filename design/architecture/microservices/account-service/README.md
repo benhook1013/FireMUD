@@ -9,16 +9,16 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Registration and login flows, including password resets
 - Issuing short-lived JWT tokens for internal gRPC authorization between
   meta/control services
-- Tracking profiles, achievements, and external account links
-- Managing subscription status and bans
+- Tracking profiles and external account links. Achievement tracking is planned for a future release.
+- Managing subscription status. Ban management is planned.
 
 ## Architecture / Design Notes
 
 - Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
 - Passwords are hashed with strong salts and stored only in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
-- Emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
-- Maintains account-to-character relationships so players can own characters across multiple games.
+- Pending implementation: emits account lifecycle events (creation, ban, recovery) for auditing by the Logging & Admin Service.
+- Planned account-to-character relationships will allow players to own characters across multiple games.
 - All tables include a `tenantId` column so the same platform account can join
   multiple games without data leakage. Every query enforces this tenant filter as
   described in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
@@ -42,19 +42,19 @@ Manages user accounts and authentication for the platform. It stores profile dat
 
 - Account registration and login.
 - Profile management and email notifications.
-- Profiles track optional game history and achievements for each player.
+- Profiles track optional game history. Achievement tracking is planned.
 - Password reset and verification flows.
-- Banning and subscription tracking.
+- Subscription tracking. Ban management is planned.
 - External account linking (Google, Discord, Steam) allows unified logins.
 - Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
-- Links accounts to player characters for ownership and permissions.
+- Planned: link accounts to player characters for ownership and permissions.
 - gRPC APIs for account creation, authentication, and profile queries.
 
 ### Data Model
 
 - `account` table stores username, password hash, email, and status flags.
 - `profile` table captures optional user details and preferences.
-- `achievement` table records earned achievements keyed by account and game.
+- An `achievement` table is planned to record earned achievements keyed by account and game.
 - `external_account` table links third-party OAuth IDs to platform accounts.
 - `session` keys in Redis map temporary session tokens to account IDs for quick
   reconnects.
@@ -70,6 +70,13 @@ resolved during authentication.
 - `Authenticate` – verifies credentials and issues a session token.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
+- `CreatePaymentIntent` – initiate a Stripe payment.
+- `CreateSubscription` – start a recurring subscription.
+- `CreateDonation` – process a donation payment.
+- `RefundPayment` – issue a refund for a payment.
+- `GetBalance` – retrieve a virtual currency balance.
+- `AddCurrency` – increase virtual currency for an account.
+- `SpendCurrency` – deduct virtual currency from an account.
 
 ### REST APIs
 
@@ -106,6 +113,7 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 variables.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
+JWT signing keys use `FIREMUD_AUTH_JWT_SECRET` or `FIREMUD_AUTH_JWT_SECRET_PATH` with lifetimes set by `FIREMUD_AUTH_JWT_EXPIRATION_MS` and `FIREMUD_AUTH_SESSION_EXPIRATION_MS`.
 
 Additional variables configure outbound email delivery:
 
@@ -120,6 +128,10 @@ Additional variables configure outbound email delivery:
 | `FIREMUD_MAIL_RESET_URL` | Public URL for password reset links | `http://localhost:8080/reset-password?token=%s` |
 | `FIREMUD_PAYMENT_STRIPE_API_KEY` | Stripe API key used for payments | *(none)* |
 | `FIREMUD_PAYMENT_PLATFORM_FEE_PERCENT` | Platform fee percentage applied to transactions | `0` |
+| `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
+| `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
+| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Server-side session TTL in milliseconds | `3600000` |
 
 ## Proto Files
 
@@ -236,6 +248,13 @@ Example login response:
 - `SendNotification(SendNotificationRequest) returns (SendNotificationResponse)` – deliver account notifications asynchronously.
 - `RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse)` – send a verification email for the account.
 - `VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse)` – confirm the email token.
+- `CreatePaymentIntent(CreatePaymentIntentRequest) returns (CreatePaymentIntentResponse)` – initiate a payment.
+- `CreateSubscription(CreateSubscriptionRequest) returns (CreateSubscriptionResponse)` – start a recurring subscription.
+- `CreateDonation(CreateDonationRequest) returns (CreateDonationResponse)` – create a donation payment.
+- `RefundPayment(RefundPaymentRequest) returns (RefundPaymentResponse)` – refund a payment.
+- `GetBalance(GetBalanceRequest) returns (GetBalanceResponse)` – retrieve a virtual currency balance.
+- `AddCurrency(AddCurrencyRequest) returns (AddCurrencyResponse)` – add virtual currency for an account.
+- `SpendCurrency(SpendCurrencyRequest) returns (SpendCurrencyResponse)` – spend virtual currency for an account.
 
 Call the gRPC method with:
 
