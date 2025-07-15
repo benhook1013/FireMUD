@@ -17,6 +17,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `velero` CLI for backup validation
 - [ ] `aws` CLI if uploading backups to object storage
 - [ ] Verify Gradle wrapper with `./gradlew --version`
+- [ ] Generate wrappers if missing with `gradle wrapper --gradle-version 8.14.3 --distribution-type bin` (or run `services/init-gradle-wrappers.ps1` on Windows)
 - [ ] Verify tool versions
   - [ ] `java --version`
   - [ ] `node --version`
@@ -51,6 +52,7 @@ This checklist covers optional manual steps to verify that development tooling a
 ## 📦 Node & OpenAPI Tasks
 
 - [ ] `npm ci` inside `web-client`
+- [ ] `npm ci` in the repository root to install doc tools
 - [ ] `npm run lint`
 - [ ] `npm run format -- -c`
 - [ ] `npm run format:fix`
