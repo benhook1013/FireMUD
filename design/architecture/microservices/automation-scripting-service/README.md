@@ -21,7 +21,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Scripts run inside a sandboxed engine to prevent malicious behavior.
 - Scripts are authored in a **component-based DSL** using a visual editor so
   designers can build behaviors without coding.
-- AI computations are optimized for large worlds using tick-based batching.
+- AI computations are optimized for large worlds by evaluating scripts on a separate schedule and batching the resulting commands before handing them to the tick system.
 - Script definitions are versioned and can be hot reloaded without downtime as
   described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
 - The service listens for a `NotifyScriptVersionUpdate` event and reloads the
@@ -42,7 +42,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Scriptable quests and event triggers
 - Persistent NPC memory and dynamic reactions
 - Timers and delayed actions for asynchronous events
-- Tick-based AI execution for efficient CPU usage and fair scheduling — AI logic runs during tick cycles only when triggered by events, avoiding constant background processing
+- Script evaluation occurs outside the tick system. Results are queued as commands that run during tick cycles, ensuring fair scheduling without blocking gameplay.
 - Faction reputation influences NPC aggression states. NPCs may become **FLEEING** or **SURRENDERED** when low on health or morale, allowing players to resolve encounters non-lethally.
 
 ### PvE Mechanics
@@ -72,9 +72,9 @@ random when the Game Session Service requests a PvE interaction.
 - Events from the Game Session Service trigger script execution via gRPC.
 - The sandboxed engine limits CPU time and memory for each script to prevent
   runaway behavior.
-- Tick execution uses `ScriptTickService` to stage, commit, and roll back events
-  in Redis. Locks `tick:lock:{tenantId}:{scriptId}` ensure only one tick runs at
-  a time. See [Tick System and Runtime Design](../system-architecture-ticks.md).
+- The service uses `ScriptTickService` to stage, commit, and roll back events in Redis.
+  This runs independently of the main game tick loop. Locks `tick:lock:{tenantId}:{scriptId}`
+  ensure only one script tick operates at a time. See [Tick System and Runtime Design](../system-architecture-ticks.md) for how queued commands are processed.
 
 ### gRPC APIs
 
