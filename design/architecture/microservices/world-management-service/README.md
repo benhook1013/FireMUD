@@ -35,6 +35,8 @@ The World Management Service stores and manages game world data such as rooms, r
   token validation during gameplay. All traffic still uses mutual TLS as described in the
   [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- gRPC endpoints include the shared `LoggingInterceptor`, `MetricsInterceptor`, and
+  `TracingInterceptor` so logs, metrics, and traces are emitted consistently.
 
 ## Key Features
 
@@ -47,16 +49,17 @@ The World Management Service stores and manages game world data such as rooms, r
 - Procedural generation tools for rooms and terrain.
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
 - `TravelService` implements Dijkstra-based pathfinding using the `room_exit` table.
-- Event scheduling for world-wide holidays or timed modifiers, communicating changes over gRPC. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state before notifying listeners.
-- Chunk-based world snapshots for backup and recovery.
+  A gRPC API to expose pathfinding results is planned for a future release.
+- Event scheduling for world-wide holidays or timed modifiers. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state. Emitting gRPC notifications to other services is planned but not yet implemented.
+- Chunk-based world snapshots for backup and recovery *(planned).*
 
 ### Data Model
 
 - Tables for `region`, `zone`, and `room` define the world hierarchy.
-- `terrain` and `object_spawn` tables support procedural generation.
+- `terrain` and `object_spawn` tables support procedural generation *(planned).*
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
-- `character_location` table records the current room for each character,
+- `character_location` table (planned) records the current room for each character,
   including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.
 - `region.weather` column records the current weather state.
