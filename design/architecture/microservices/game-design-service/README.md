@@ -53,7 +53,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 - `game` table defines the project and its owner account.
 - `revision` table stores individual asset changes with author metadata.
-- `version` table groups revisions into immutable snapshots for publishing.
+- `version` table groups revisions into immutable snapshots for publishing. It includes `version_number`, `base_version_id`, `script_patch_version`, `is_script_only` and `notes` columns.
+- `game_templates` table stores predefined configuration templates for new games.
 - `runtime_flag` table holds feature flag definitions copied to the Game Session Service.
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
 
@@ -70,6 +71,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 - `SaveRevision` – persists a new or updated design asset.
 - `PublishVersion` – freezes a set of revisions and notifies downstream services.
+- `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.
 
@@ -151,6 +153,8 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /assets` – upload a binary asset for a tenant.
+- `POST /templates` – create a new game template.
+- `GET /templates` – list templates for a tenant.
 
 ```bash
 curl http://localhost:8080/ping
@@ -161,6 +165,7 @@ curl http://localhost:8080/ping
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_design_service.proto`](../../../protos/game-design/v1/game_design_service.proto).
 - `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a design change.
 - `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
+- `PublishScriptPatchVersion(PublishScriptPatchVersionRequest) returns (PublishScriptPatchVersionResponse)` – publishes a script-only patch version.
 - `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.
 
 ```bash
