@@ -11,7 +11,9 @@ FireMUD uses Docker Compose for local development and testing:
 ### 🔧 Docker Compose Characteristics
 
 - All services, including the gateway, are built locally via `Dockerfile`s.
-- Docker Compose orchestrates container startup, but not readiness.
+- Docker Compose orchestrates container startup. `depends_on` is configured with
+  `condition: service_healthy` so services wait for PostgreSQL and Redis to pass
+  health checks before starting.
 - Service discovery is handled by Docker's internal DNS (e.g., `game-session-service:8080`).
 - Route URIs in Spring Cloud Gateway use static hostnames defined in the `dev`
   profile of `application.yml`.
@@ -19,17 +21,20 @@ FireMUD uses Docker Compose for local development and testing:
   A sample `.env.sample` is provided with default credentials.
 - Start the stack with `./gradlew devUp` and shut it down with `./gradlew devDown` (see [Developer Setup](../../DEVELOPER_SETUP.md)).
 - For details on all configuration variables, see [Environment Variables & Secrets Management](./environment-and-secrets.md).
+  Standard ports include **8080** for HTTP, **6565** for gRPC, and **2323** for
+  the TCP proxy.
 
 ### 🩺 Docker Health Checks
 
 - Services expose Spring Boot’s `/actuator/health` for basic health status.
 - Docker Compose can monitor health using `healthcheck` blocks in `docker-compose.yml`.
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
-  - Docker does **not** automatically restart unhealthy containers by default.
-    Even with `restart: unless-stopped` configured, containers remain
-    running in an `unhealthy` state until manually restarted.
-  - Docker’s `depends_on` only controls startup order, not service readiness.
-  - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
+  - Docker does **not** automatically restart containers that become `unhealthy`.
+      Even with `restart: unless-stopped` configured, services remain running
+      until manually restarted.
+    - `depends_on` waits for initial health checks, but ongoing readiness still
+      requires manual monitoring.
+    - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
 
 💡 **Tip**: For more reliable startup coordination, use **Gateway retry filters** or utilities like `wait-for-it.sh`.
 The gateway now includes a default *Retry* filter in `application.yml` so failed
@@ -53,6 +58,9 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly.
 - The external load balancer exposes only the Gateway and TCP Proxy Service, forming a DMZ that shields internal services.
 - See [Security Architecture](../system-architecture-security.md) for TLS termination, mTLS certificates, and network policy details.
+- Sample `NetworkPolicy` manifests to restrict internal traffic are provided in
+  [`k8s/network-policies`](../../k8s/network-policies) and can be applied after
+  deploying the base manifests.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
 - The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
@@ -96,6 +104,7 @@ FireMUD uses the same observability stack in all environments. Docker Compose an
 - **Fluent Bit** agents collect container logs from each pod.
 - **Elasticsearch** stores structured log data for long-term retention.
 - **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
+  Log indices are kept for **14 days** in development and **90 days** in production by default.
 
 See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the observability stack.
 
