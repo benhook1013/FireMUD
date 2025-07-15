@@ -16,6 +16,13 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - Gameplay session state and real-time coordination data
   _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
 - Retry metadata and inter-tick conflict tracking
+- TTL-based service caches such as hot room lookups and recent chat history
+  _(see [Performance Optimization Guidelines](./performance-optimization.md))_
+- Automation queue keys for script events (`automation_queue:{tenantId}:{entityId}`)
+
+Services connect to Redis using the `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT`
+environment variables described in
+[Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#redis-connection).
 
 All **canonical game data** — accounts, entities, items, rooms — resides in **PostgreSQL**, owned by domain-specific services.
 
@@ -64,6 +71,8 @@ Redis keys follow strict naming conventions to ensure:
 - Clean atomic execution across tick regions
 - Conflict and retry isolation
 - Debuggable and traceable behavior
+- Tenant-based prefixes for multi-tenant isolation
+  _(see [Multi-Tenancy](./system-architecture-multi-tenancy.md))_
 
 ### Key Format Examples
 
@@ -189,10 +198,12 @@ FireMUD actively monitors Redis performance and tick health:
   - Lock contention
   - Retry queue depth
   - Keyspace and memory usage
+- Metrics are scraped via a [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment
+  (applyable via [`k8s/README.md`](../../k8s/README.md))
 - **Grafana dashboards** visualize tick throughput and hotspots
 - **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
-- Redis is the **only** volatile coordination layer — no per-service caches are used
+- Redis is the **single shared** volatile coordination layer — services do not maintain separate in-memory caches or alternative cache technologies
 
 > 🔗 Redis observability feeds into the common stack described in [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 
