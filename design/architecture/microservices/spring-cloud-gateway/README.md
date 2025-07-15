@@ -4,6 +4,8 @@
 
 This service exposes WebSocket and HTTP endpoints for all clients. It routes requests to backend services and integrates with the TCP Proxy Service for Telnet clients.
 
+An OpenAPI specification for these REST endpoints lives in `services/spring-cloud-gateway/src/main/resources/openapi.yaml`.
+
 ### Responsibilities
 
 - Terminate TLS and enforce authentication for admin routes
@@ -46,7 +48,7 @@ environments work out of the box.
 ### Filter Chain
 
 - Authentication, rate limiting, and logging filters run before routing.
-- `JwtAuthFilter` passes any provided JWT to backend admin services; validation occurs in those services.
+- `JwtAuthFilter` validates JWTs for admin endpoints and only forwards requests when the token contains `platformAdmin` or `moderator` roles.
 - WebSocket upgrades are handled with heartbeat and idle timeout logic.
 
 ### Key Routes
@@ -141,7 +143,7 @@ curl -X DELETE http://localhost:8080/routes/demo
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`gateway_management_service.proto`](../../../protos/spring-cloud-gateway/v1/gateway_management_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`gateway_management_service.proto`](../../../../protos/spring-cloud-gateway/v1/gateway_management_service.proto).
 - `UpsertRoute(RouteDefinition) returns (RouteResponse)` – adds or updates a gateway route.
 - `RemoveRoute(RouteRequest) returns (RouteResponse)` – deletes a route.
 
