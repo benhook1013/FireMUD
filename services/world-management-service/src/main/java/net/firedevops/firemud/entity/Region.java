@@ -5,7 +5,7 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "regions")
+@Table(name = "region")
 public class Region {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
