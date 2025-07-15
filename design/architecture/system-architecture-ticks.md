@@ -152,6 +152,11 @@ Each tick enforces a **soft execution budget** (e.g., 100ms):
   `automation.tick-max-events`) spread heavy workloads across ticks so one
   player or script cannot monopolize the loop.
 
+Commands flagged with `requiresSoloTick` run in an isolated tick so expensive
+operations do not stall other players. See the
+[Game Session Service design](./microservices/game-session-service/README.md#tick-execution-model)
+for how these solo ticks are orchestrated.
+
 Runtime procedural generation commands set `requiresSoloTick: true`. The Game Session Service
 detects this flag and schedules the command alone in its own tick, allowing up to
 500&nbsp;ms for execution without competing player actions.
