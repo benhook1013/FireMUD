@@ -4,6 +4,8 @@ This document describes how FireMUD authenticates clients, issues internal JWTs,
 
 Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; session state is managed server-side in Redis and restored via the Game Session Service.
 
+Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards the OTP when needed. Issued JWTs are stored in Redis with an expiration controlled by `session-expiration-ms`.
+
 ---
 
 ## 🔁 Login and Session Flow
@@ -123,6 +125,7 @@ The Game Session Service is responsible for:
 | Role Enforcement      | Meta/control services only; gameplay services trust Game Session Service |
 | Role Updates          | Refreshed in-session; no client interaction needed              |
 | Multi-Client Behavior | One session per character; new login replaces old session        |
+| Two-Factor Auth       | Optional TOTP for admin and moderator accounts via `/auth/login` |
 
 ---
 
@@ -131,3 +134,5 @@ The Game Session Service is responsible for:
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [Redis Architecture](./system-architecture-redis.md)
+- [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication)
+- [User Journeys – Sign Up](./user-journeys.md#1-sign-up)

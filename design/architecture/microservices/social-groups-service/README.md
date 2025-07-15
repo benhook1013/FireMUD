@@ -61,10 +61,10 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 - `chat_message` table persists guild and private messages.
 - `guild` and `guild_member` tables store group ownership and membership roles.
-- `friend_link` table tracks account or character friendships and blocks.
-- Per-game friendships are stored on character records in the Entity Management
-  Service. When a game opts in, account-level friends from this service are
-  mirrored as in-game friends automatically.
+- `friend_link` table tracks both account-to-account and per-game friendships.
+  All friendship data lives in this service. Per-game friend records include the
+  `tenantId` and player IDs, while account-level friends reference global account
+  IDs only. Games can mirror these links in their UI when the feature is enabled.
 - `mail_message` table stores asynchronous player mail.
 - `faction` and `faction_standing` tables maintain player reputation. The
   [Automation & Scripting Service](../automation-scripting-service/README.md)

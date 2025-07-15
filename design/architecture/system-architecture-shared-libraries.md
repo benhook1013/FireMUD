@@ -1,6 +1,6 @@
 # 📚 Shared Libraries Overview
 
-FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud.shared` with the **artifact ID** `firemud-common`.
+FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud` with the **artifact ID** `firemud-common`.
 
 ---
 
@@ -19,16 +19,18 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 ## 🔧 Utility Packages
 
-- **Logging Utilities** – SLF4J wrappers and helpers for correlation IDs.
+- **Logging Utilities** – `LoggingUtil` wraps SLF4J. Saga workflows automatically
+  attach a `correlationId` via `SagaRunner` for cross-service tracing.
 - **Security Utilities** – `JwtUtil` for verifying tokens (and building them
-  within the Account Service only) plus `AuthTokenInterceptor` and
-  `SessionContext` for centrally accessing JWT claims in meta or control
-  services. See the [Authentication Design](./system-architecture-authentication.md).
+  within the Account Service only) plus `AuthTokenInterceptor`,
+  `SessionContext`, and `RequireAdminRole` helpers for centrally enforcing
+  JWT-based roles. See the [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
 - `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`.
 - **Spring Boot Starter** – Lightweight autoconfiguration for logging, JWT, Redis and PostgreSQL so services can opt in.
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
@@ -90,6 +92,8 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
+`SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding
+ a `correlationId` to logs for easier troubleshooting.
 
 ## 📚 Related Documentation
 

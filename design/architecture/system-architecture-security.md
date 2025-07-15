@@ -18,9 +18,9 @@ seamlessly with cert-manager for automatic rotation.
 ### Key and Certificate Rotation
 
 - cert-manager issues both JWT signing keys and mTLS certificates, backed by an internal CA.
-- All services poll their mounted secrets for updates and support **hot reload** of keys and certificates. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH` so that rotation occurs without restarts.
+- All services poll their mounted secrets for updates and support **hot reload** of keys and certificates. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH` so that rotation occurs without restarts. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for variable definitions.
 - During rotation, services cache both current and previous credentials to allow for **seamless transition**.
-- JWKS is updated automatically to reflect the current public keyset.
+- The JWKS endpoint currently serves a static key file. Rotation requires updating this file manually, though automated JWKS generation is planned.
 
 ---
 
@@ -55,7 +55,7 @@ seamlessly with cert-manager for automatic rotation.
 
 ## 🔐 Brute-Force Defense and Abuse Handling
 
-- The **Game Session Service** monitors login attempts **per IP**:
+- The **Game Session Service** is planned to monitor login attempts **per IP** (not yet implemented):
   - Repeated failures result in **connection closure** and **temporary IP blacklisting**.
   - Global login spikes introduce **artificial delay** to slow brute-force attempts.
   - Suspicious login activity triggers **notification emails** to the account holder.
@@ -77,7 +77,7 @@ seamlessly with cert-manager for automatic rotation.
 ## 🔌 Telnet Command Handling and Future Controls
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ and **never contacts internal services directly**.
-- The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences.
+- The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences. See [`TelnetServerHandler`](../../services/tcp-proxy-service/src/main/java/net/firedevops/firemud/telnet/TelnetServerHandler.java) for the implementation.
 
 ---
 
@@ -85,7 +85,7 @@ seamlessly with cert-manager for automatic rotation.
 
 - Admin functionality is **entirely controlled through JWT `roles`**, issued and managed by the **Account Service**.
 - There is **no special network-level access or infrastructure isolation** for admin features — this is an intentional design decision to rely solely on internal authentication and scoped authorization.
-- Future enhancements may include **2FA** support for admin roles via TOTP or hardware keys, but this is not currently required.
+- Admin and moderator accounts can enable **two-factor authentication** using TOTP codes. When enabled, login requests must supply an `otp` field to the Account Service.
 
 ---
 
@@ -94,16 +94,16 @@ seamlessly with cert-manager for automatic rotation.
 | Topic                     | Strategy                                                                 |
 |---------------------------|--------------------------------------------------------------------------|
 | JWT Secret Storage        | Kubernetes Secrets via cert-manager                                      |
-| Key & Cert Rotation       | Hot-reload with caching of old credentials                               |
+| Key & Cert Rotation       | Hot-reload with caching of old credentials; JWKS rotation still manual |
 | TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets                                              |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
-| Brute-Force Defense       | Per-IP tracking, blacklisting, global throttle delays                    |
+| Brute-Force Defense       | Planned per-IP tracking and throttling (not yet implemented) |
 | Abuse Detection           | Current: login only; Future: command-level heuristics                    |
 | Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
 | Admin Role Access         | JWT-only; no special network-level restrictions                          |
 | Zero Trust                | Not currently adopted; mTLS and JWTs provide strong internal identity    |
-| 2FA                       | Not implemented; optional future enhancement for elevated roles          |
+| 2FA                       | Available for admin and moderator accounts via TOTP codes               |
 
 ---
 

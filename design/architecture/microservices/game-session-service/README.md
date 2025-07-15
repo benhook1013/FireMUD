@@ -54,8 +54,9 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ### Data Model
 
-- `session` table tracks active games with a `runtime_version` referencing the published design version and an optional `script_patch_version` linked to that base version.
+- `game_instances` table tracks running sessions. Each row stores a `runtime_version`, optional `script_patch_version`, the owning account and a `status` value (`RUNNING` or `STOPPED`).
 - `feature_flag` table stores runtime configuration overrides per tenant.
+- `game_manifest` table lists available runtime versions that can be started.
 - Redis stores volatile queues, timers, and reconnect metadata.
 - Redis session state records the active `script_patch_version` so it can be restored for replay or debugging.
 
@@ -70,7 +71,10 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ### gRPC APIs
 
+- `Ping` – basic connectivity check.
 - `StartSession` – spins up a game instance from a published version.
+- `StopSession` – stops a running session.
+- `RestartSession` – restarts a stopped session.
 - `EnqueueCommand` – adds a player action to the next tick's queue.
 - `QueryState` – retrieves condensed session or player state for monitoring.
 - `ToggleFeatureFlag` – updates runtime flags for a tenant.
@@ -107,6 +111,7 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 | `GAME_TICK_BUDGET_MS` | Soft execution budget for a tick in milliseconds | `100` |
 | `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (host:port) for the Game Logic Service | *(none)* |
+| `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
 
 ## Proto Files
 
@@ -160,8 +165,11 @@ curl -X POST http://localhost:8080/sessions \
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_session_service.proto`](../../../protos/game-session/v1/game_session_service.proto).
 - `StartSession(StartSessionRequest) returns (StartSessionResponse)` – creates a new game instance.
+- `StopSession(StopSessionRequest) returns (StopSessionResponse)` – stops a running session.
+- `RestartSession(RestartSessionRequest) returns (RestartSessionResponse)` – restarts a stopped session.
 - `EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse)` – queues a player action.
 - `QueryState(QueryStateRequest) returns (QueryStateResponse)` – retrieves current game or player state.
+- `ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse)` – updates runtime flags for a tenant.
 
 ```bash
 grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping

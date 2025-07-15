@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.saga;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,6 +15,9 @@ import org.springframework.stereotype.Component;
 
 /** Executes sagas with correlation ID handling and metrics. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Repositories and metrics are injected and immutable")
 public class SagaRunner {
   private final SagaMetrics metrics;
   private final SagaInstanceRepository instanceRepository;

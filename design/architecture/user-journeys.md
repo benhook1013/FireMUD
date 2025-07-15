@@ -41,6 +41,7 @@ This guide summarizes typical workflows for creators and players. Each numbered 
 
 Players register for an account through the [Account Service](./microservices/account-service/README.md). Email verification and login flows are outlined in [Authentication & Authorization](./system-architecture-authentication.md).
 Admins and moderators can enable **two-factor authentication** (TOTP) as described in the [Security Architecture](./system-architecture-security.md).
+Players may also link external accounts such as **Google**, **Discord**, or **Steam** for simplified logins, as detailed in the Account Service documentation.
 
 ```plaintext
 Player → Account Service
@@ -127,7 +128,7 @@ Players connect through the networking layer:
 
 1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details.
 2. **Session Management** – The [Game Session Service](./microservices/game-session-service/README.md) retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
-3. **Authentication** – Login credentials are validated by the [Game Session Service](./microservices/game-session-service/README.md).
+3. **Authentication** – Credentials are verified by the [Account Service](./microservices/account-service/README.md), which issues a short-lived session token. The [Game Session Service](./microservices/game-session-service/README.md) stores this token in Redis and rebinds the session when players reconnect.
    See [Authentication & Authorization](./system-architecture-authentication.md)
    for supported `LOGIN` commands and token handling.
 4. **Frontend** – The React client connects through the Gateway using the same WebSocket flow. Component structure and state management are detailed in the [Frontend Architecture](./system-architecture-frontend.md).
@@ -335,7 +336,9 @@ observability stack:
 5. **Operator Dashboards** – Additional Grafana and Kibana views are described in the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) document.
 
 ```plaintext
-Service Logs → Elasticsearch → Kibana / Jaeger
+Service Logs → Elasticsearch → Kibana
+Metrics → Prometheus → Grafana / Alertmanager
+Traces → Jaeger
 ```
 
 Common troubleshooting steps are documented in the [Operational Runbooks](./system-architecture-runbooks.md).
