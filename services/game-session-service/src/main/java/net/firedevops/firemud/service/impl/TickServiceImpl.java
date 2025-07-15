@@ -2,7 +2,6 @@ package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
@@ -147,12 +146,11 @@ public class TickServiceImpl implements TickService {
       Long tenantId =
           gameInstanceRepository.findById(sessionId).map(i -> i.getTenantId()).orElse(0L);
       double depth = pending != null ? pending.doubleValue() : 0.0;
-      meterRegistry
-          .gauge(
-              "tick_retry_queue_depth",
-              io.micrometer.core.instrument.Tags.of(
-                  "tenantId", tenantId.toString(), "regionId", sessionId.toString()),
-              depth);
+      meterRegistry.gauge(
+          "tick_retry_queue_depth",
+          io.micrometer.core.instrument.Tags.of(
+              "tenantId", tenantId.toString(), "regionId", sessionId.toString()),
+          depth);
       if (pending != null && pending > 0) {
         logger.info("Replaying {} pending commands for {}", pending, sessionId);
         tickTimer.record(
