@@ -3,7 +3,7 @@
 ## Overview
 
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
-REST endpoints are documented in `openapi.yaml` located in the service's `src/main/resources` directory.
+An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
 
 ### Responsibilities
 
@@ -53,6 +53,7 @@ events used internally when communicating with other microservices:
 - **PushBufferedInput** – forwards any queued commands after a reconnect
     event.
 These gRPC events are defined but the current implementation does not yet invoke them.
+At present the service only logs when these methods are called; no other microservices are contacted.
 These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Command Handling
@@ -92,6 +93,7 @@ details on how Telnet connections are integrated into the platform.
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+- A simple `smoke-test.sh` script in the service directory checks the REST and gRPC endpoints.
 
 ## Environment Variables
 
@@ -112,6 +114,8 @@ Additional variables control the proxy runtime behaviour:
 | `TCP_PROXY_TLS_KEY` | Path to the TLS private key | *(empty)* |
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent connections per client IP | `5` |
 | `TCP_PROXY_MAX_MSGS_PER_SEC` | Allowed messages per second per client | `5` |
+
+The gRPC server listens on port `6565` by default as configured in `src/main/resources/application.yml`.
 
 ### Metrics & Tracing
 
