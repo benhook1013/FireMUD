@@ -1,4 +1,4 @@
-package net.firedevops.firemud.config;
+package net.firedevops.firemud.common.config;
 
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
@@ -13,12 +13,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/** Basic OpenTelemetry configuration exporting spans to the OTLP collector. */
+/** Provides OpenTelemetry beans configured for FireMUD services. */
 @Configuration
 public class TracingConfig {
 
   @Value("${otel.endpoint:http://otel-collector:4317}")
   private String otelEndpoint;
+
+  @Value("${spring.application.name}")
+  private String serviceName;
 
   @Bean
   public OpenTelemetry openTelemetry() {
@@ -29,8 +32,7 @@ public class TracingConfig {
         SdkTracerProvider.builder()
             .addSpanProcessor(BatchSpanProcessor.builder(exporter).build())
             .setResource(
-                Resource.create(
-                    Attributes.of(AttributeKey.stringKey("service.name"), "game-logic-service")))
+                Resource.create(Attributes.of(AttributeKey.stringKey("service.name"), serviceName)))
             .build();
 
     return OpenTelemetrySdk.builder().setTracerProvider(tracerProvider).build();
@@ -38,6 +40,6 @@ public class TracingConfig {
 
   @Bean
   public Tracer tracer(OpenTelemetry openTelemetry) {
-    return openTelemetry.getTracer("game-logic-service");
+    return openTelemetry.getTracer(serviceName);
   }
 }

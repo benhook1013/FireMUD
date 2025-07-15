@@ -9,11 +9,11 @@ This document explains how distributed traces are collected and visualized acros
 All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK. A dedicated **OpenTelemetry Collector** runs inside the Kubernetes cluster to receive OTLP traffic and forward it to storage backends.
 
 - Deploy using the official [`opentelemetry-collector`](https://github.com/open-telemetry/opentelemetry-helm-charts) Helm chart or the sample manifest in `k8s/monitoring/otel-collector.yaml`.
-- The collector exposes a `4317` gRPC endpoint. Services export spans to `http://otel-collector:4317` by default. The endpoint can be overridden via the `OTEL_ENDPOINT` environment variable (`otel.endpoint` property).
+- The collector exposes a `4317` gRPC endpoint. Services export spans to `http://otel-collector:4317` by default. The endpoint can be overridden via the `OTEL_ENDPOINT` environment variable (`otel.endpoint` property). See `.env.sample` and [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for defaults.
 - The collector forwards spans to Jaeger over gRPC port `14250`.
 - Metrics about the collector itself are scraped by Prometheus at `/metrics`.
 
-Each service includes a small `TracingConfig` bean that sets `service.name` and exports spans to the collector. A `TracingInterceptor` registered in `GrpcServerConfig` wraps every gRPC call so that request processing is recorded as spans automatically.
+Every service relies on a shared `TracingConfig` in the `common-library`. This configuration sets the `service.name` resource from `spring.application.name`, uses a `BatchSpanProcessor`, and sends spans to the collector. `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` are registered in each `GrpcServerConfig` so requests are instrumented with logs, metrics, and spans consistently.
 
 ## 🎛️ Jaeger UI
 
