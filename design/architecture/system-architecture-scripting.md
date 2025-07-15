@@ -82,6 +82,7 @@ The scripting engine exposes several environment variables so operators can tune
 | `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds |
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a script processing tick in milliseconds |
 | `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick |
+| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds |
 
 See the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#environment-variables) for default values and additional details.
 
