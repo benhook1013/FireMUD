@@ -26,6 +26,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] Run `./gradlew check` to execute unit tests, Spotless, Checkstyle and SpotBugs
 - [ ] Run `./gradlew build` to compile all services
 - [ ] Build container images with `./gradlew buildDockerImages`
+- [ ] Build the base container image with `./gradlew buildBaseImage`
 - [ ] Start the local stack with `./gradlew devUp`
   - [ ] Verify services respond to `curl -fsSL http://localhost:8080/ping`
 - [ ] Stop services with `./gradlew devDown`
@@ -71,6 +72,7 @@ This checklist covers optional manual steps to verify that development tooling a
 
 - [ ] `./dev-tools/firemud-cli.sh up|down|ping`
 - [ ] Generate TLS certificates with `./dev-tools/generate-dev-certs.sh`
+- [ ] Generate TLS certificates via Gradle with `./gradlew generateDevCerts`
 - [ ] Run cross-service tests via `./gradlew crossServiceTest` when needed
 - [ ] Execute load tests via `./gradlew :load-testing:gatlingRun`
 
@@ -87,6 +89,7 @@ This checklist covers optional manual steps to verify that development tooling a
 
 ## ☸ Kubernetes & Helm
 
+- [ ] `helm dependency update k8s/helm/firemud` to pull chart dependencies
 - [ ] `helm lint k8s/helm/firemud` to validate charts
 - [ ] `helm upgrade --install firemud k8s/helm/firemud -f k8s/helm/values-dev.yaml`
 - [ ] `helm install game-session k8s/helm/game-session-service -f k8s/helm/values-local.yaml`
@@ -97,6 +100,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `terraform init` in `k8s/terraform-production`
 - [ ] `terraform plan` to preview infrastructure changes
 - [ ] `terraform fmt -check` to ensure formatting
+- [ ] `terraform validate` to check module syntax
 
 ## 🔥 Service Smoke Tests
 
