@@ -137,10 +137,10 @@ Service** identifies every active region and **fan-outs tick tasks**:
 1. Commands are injected into each region’s shard-local keyspace.
 2. A tick is triggered in that region to apply the effect atomically.
 
-This ensures every shard processes the global event even if it would not tick
-naturally. The approach preserves shard-local atomicity and deterministic
-recovery without cross-shard locks or speculative polling. It also avoids
-scheduling global keys that might wake otherwise idle regions.
+This ensures global events are processed by all active regions, even if those
+regions would otherwise remain idle. The approach preserves shard-local atomicity
+and deterministic recovery without cross-shard locks or speculative polling. It
+also avoids scheduling global keys that might wake otherwise idle regions.
 
 Regions still run a lightweight background tick (for example every second) so
 queued timers, cooldowns, or delayed events progress even when no players are
