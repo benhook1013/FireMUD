@@ -40,8 +40,9 @@ protos/
       entity_service.proto
       entity_types.proto
   shared/
-    errors.proto
-    common_types.proto
+    v1/
+      errors.proto
+      common_types.proto
 ```
 
 Each service folder typically includes:
@@ -50,9 +51,11 @@ Each service folder typically includes:
 - `*_types.proto` — defines request/response messages and shared types
 - Optional `*_events.proto` — server-side streaming RPCs for event notifications (no separate message bus)
 
-Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `protos/shared/`.
+Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `protos/shared/v1/` so they version alongside all other APIs.
 
 Directory names may use hyphens (for example `game-design`), while proto packages use underscores (`gamedesign.v1`) so that package declarations remain valid.
+
+All proto files use `syntax = "proto3"` and set `java_package` and `java_multiple_files` options so Java packages remain consistent across services.
 
 ## 🛠️ Tooling
 
@@ -86,24 +89,39 @@ private ErrorDetail error(String code, String message) {
 
 ## 🧪 Example Code Generation (Java)
 
-Using `buf.gen.yaml`:
-
-```yaml
-version: v1
-plugins:
-  - plugin: buf.build/protocolbuffers/java
-    out: gen/java
-  - plugin: buf.build/grpc/java
-    out: gen/java
-```
-
-Then compile generated sources via Gradle:
+Services use **Buf** for linting and schema enforcement, while source generation
+is handled by the Gradle `com.google.protobuf` plugin:
 
 ```kotlin
-sourceSets["main"].java.srcDirs("gen/java")
+protobuf {
+  protoc { artifact = "com.google.protobuf:protoc:4.31.1" }
+  plugins {
+    id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:1.73.0" }
+  }
+  generateProtoTasks {
+    ofSourceSet("main").forEach { it.plugins { id("grpc") } }
+  }
+}
+
+sourceSets["main"].java.srcDirs(
+  "build/generated/source/proto/main/java",
+  "build/generated/source/proto/main/grpc"
+)
 ```
 
-Each service applies the `com.google.protobuf` Gradle plugin so that running `./gradlew generateProto` compiles stubs into `build/generated/source/proto`.
+Running `./gradlew generateProto` compiles stubs into `build/generated/source/proto` for each service.
+
+## 🔒 TLS Requirements
+
+All internal gRPC calls use **mutual TLS**. Each service sets the following environment variables so certificates can be mounted from Secrets or local files:
+
+| Variable | Description |
+| -------- | ----------- |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Path to the service certificate chain |
+| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Path to the private key |
+| `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle used to verify peers |
+
+The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a [`GrpcServerTlsReloader`](./system-architecture-shared-libraries.md) component that hot reloads certificates when they change.
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs.
 
