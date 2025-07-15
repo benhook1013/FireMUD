@@ -8,6 +8,7 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `Java 21+`
   - [ ] `Node.js` (latest LTS)
   - [ ] `Docker` and `Docker Compose`
+  - [ ] Verify Docker Compose with `docker compose version`
   - [ ] `buf` for proto linting
   - [ ] `pre-commit` Python package
   - [ ] `hadolint` for Dockerfile linting
@@ -42,6 +43,8 @@ This checklist covers optional manual steps to verify that development tooling a
 ## 📜 Protobuf & Documentation Scripts
 
 - [ ] `buf lint` for proto consistency
+- [ ] `buf breaking --against origin/main` to check for API changes
+- [ ] `./gradlew generateProto` to regenerate Java stubs
 - [ ] `./dev-tools/generate-grpc-docs.sh` to update gRPC docs
 - [ ] `./dev-tools/generate-erd.sh` to produce ERD diagrams
 - [ ] `./dev-tools/link-check.sh` to validate links in docs
@@ -88,6 +91,7 @@ This checklist covers optional manual steps to verify that development tooling a
 
 - [ ] `terraform init` in `k8s/terraform-production`
 - [ ] `terraform plan` to preview infrastructure changes
+- [ ] `terraform fmt -check` to ensure formatting
 
 ## 🔥 Service Smoke Tests
 
