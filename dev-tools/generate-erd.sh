@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Generate ERD diagrams and verify Flyway migrations for all services.
 set -euo pipefail
 
