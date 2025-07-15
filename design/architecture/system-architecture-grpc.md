@@ -59,9 +59,13 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 ## 🛠️ Tooling
 
-- **Buf** (`buf.yaml`) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`.
+- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
 - **`protoc-gen-doc`** — Produces HTML or Markdown API documentation to encourage inline comments.
+
+## 🚦 Shared Interceptors
+
+Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from the [Shared Libraries](./system-architecture-shared-libraries.md). These interceptors add trace identifiers to logs, record request metrics, and create OpenTelemetry spans so observability is consistent across services.
 
 ## 🔄 Schema Evolution Rules
 
