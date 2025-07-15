@@ -16,6 +16,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - **Stateless and horizontally scalable** – no sticky sessions required
 - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
+- The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](../system-architecture-security.md#🌐-network-security--boundary-design) for details.
 
 > **Important:**
 > Spring Cloud Gateway is responsible for routing **only external client requests**.
@@ -28,6 +29,8 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   (used by Docker Compose)
 - Kubernetes DNS-based service names configured in the `prod` profile of
   `application.yml` (used in production)
+- Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
+- Service hostnames can be overridden using environment variables prefixed `FIREMUD_SERVICES_`; see [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
 
 ---
 
@@ -72,6 +75,7 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 
 - JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
+- `application.yml` defines `RequestRateLimiter` and `Retry` filters that apply to every route by default.
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
 - TLS termination and mTLS between services are described in [Security Architecture](../system-architecture-security.md).
@@ -83,7 +87,7 @@ add, update, or remove routes using either the REST API (`/routes`) or the
 `GatewayManagementService` gRPC API. This allows on‑the‑fly changes without
 restarting the service. See the
 [Spring Cloud Gateway microservice documentation](./microservices/spring-cloud-gateway/README.md#rest--grpc-endpoints)
-for example requests and supported fields.
+for example requests and supported fields. The gRPC interface is defined in [`gateway_management_service.proto`](../../protos/spring-cloud-gateway/v1/gateway_management_service.proto) and the REST schema in [`openapi.yaml`](../../services/spring-cloud-gateway/src/main/resources/openapi.yaml).
 
 ## 📈 Observability
 
