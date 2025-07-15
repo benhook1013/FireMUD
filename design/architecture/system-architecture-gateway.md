@@ -76,6 +76,23 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - Easy expansion of routes for new microservices
 - TLS termination and mTLS between services are described in [Security Architecture](../system-architecture-security.md).
 
+## ⚙️ Dynamic Route Management
+
+The gateway supports **runtime configuration** of custom routes. Operators can
+add, update, or remove routes using either the REST API (`/routes`) or the
+`GatewayManagementService` gRPC API. This allows on‑the‑fly changes without
+restarting the service. See the
+[Spring Cloud Gateway microservice documentation](./microservices/spring-cloud-gateway/README.md#rest--grpc-endpoints)
+for example requests and supported fields.
+
+## 📈 Observability
+
+All gateway gRPC endpoints and WebSocket connections are instrumented with the
+shared `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor`.
+These interceptors record structured logs, Prometheus metrics, and OpenTelemetry
+spans for every interaction so usage and performance can be monitored across the
+cluster.
+
 ## 🔗 Internal gRPC Communication
 
 Internal services communicate directly with each other over **gRPC**.
@@ -104,5 +121,6 @@ Spring profiles defined in `application.yml` and selected via
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Spring Cloud Gateway Service Details](./microservices/spring-cloud-gateway/README.md)
 
 ---
