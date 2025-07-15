@@ -74,6 +74,7 @@ Redis keys follow strict naming conventions to ensure:
 | `room:{tenantId}:{roomId}:occupants`     | Room occupancy snapshot                  |
 | `retry:{tenantId}:{regionId}`            | Retry queue for failed actions           |
 | `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
+| `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
 
 > 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
