@@ -3,6 +3,7 @@
 ## Overview
 
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
+REST endpoints are documented in `openapi.yaml` located in the service's `src/main/resources` directory.
 
 ### Responsibilities
 
@@ -15,6 +16,7 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 - Spring Boot service hosting a lightweight Netty-based Telnet server.
 - Buffers incoming input during brief disconnects and clears it on connection loss.
 - Handles Telnet negotiation and character encoding quirks.
+- Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md).
 - Works with the Reconnection Strategy to resume sessions transparently.
 - Can optionally terminate Telnet-over-TLS. Forwarding to the gateway currently
   uses plain WebSocket connections; mutual TLS support is planned. See
