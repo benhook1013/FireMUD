@@ -53,7 +53,7 @@ Use the aggregated task to build container images for all services:
 
 Each invocation runs Spring Boot's `bootBuildImage` for every module and tags the images with `latest`.
 The microservice Dockerfiles extend the shared base image
-`ghcr.io/firedevops/firemud-base:latest`. If the base image is missing or out of
+`ghcr.io/benhook1013/firemud-base:latest`. If the base image is missing or out of
 date, build it locally with `./gradlew buildBaseImage` or pull the published
 version from GitHub Container Registry.
 

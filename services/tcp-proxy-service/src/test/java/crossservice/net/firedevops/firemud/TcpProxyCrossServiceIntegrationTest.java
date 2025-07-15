@@ -37,7 +37,8 @@ import org.testcontainers.utility.DockerImageName;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
   static GenericContainer<?> gateway =
-      new GenericContainer<>(DockerImageName.parse("ghcr.io/firemud/spring-cloud-gateway:latest"))
+      new GenericContainer<>(
+              DockerImageName.parse("ghcr.io/benhook1013/spring-cloud-gateway:latest"))
           .withExposedPorts(8080);
 
   private static boolean gatewayStarted = false;

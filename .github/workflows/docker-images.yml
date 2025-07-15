@@ -38,6 +38,6 @@ jobs:
           context: ./services/${{ matrix.service }}
           push: true
           tags: |
-            ghcr.io/firemud/${{ matrix.service }}:${{ github.sha }}
-            ghcr.io/firemud/${{ matrix.service }}:latest
-            ghcr.io/firemud/${{ matrix.service }}:${{ github.ref_name }}
+            ghcr.io/benhook1013/${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/benhook1013/${{ matrix.service }}:latest
+            ghcr.io/benhook1013/${{ matrix.service }}:${{ github.ref_name }}

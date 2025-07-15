@@ -138,7 +138,7 @@ tasks.register<Exec>("buildBaseImage") {
         "-f",
         "docker/base.Dockerfile",
         "-t",
-        "ghcr.io/firedevops/firemud-base:latest",
+        "ghcr.io/benhook1013/firemud-base:latest",
         "."
     )
 }

@@ -17,7 +17,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: entity-management-service
-          image: ghcr.io/firemud/entity-management-service:latest
+          image: ghcr.io/benhook1013/entity-management-service:latest
           imagePullPolicy: Always
           env:
             - name: SPRING_PROFILES_ACTIVE
