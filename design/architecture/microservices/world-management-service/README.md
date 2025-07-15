@@ -118,6 +118,7 @@ Additional variables configure world data caching and sharding:
 | `WORLD_LOCAL_SHARD_ID` | Numeric identifier for this shard instance | `0` |
 | `WORLD_ROOM_CACHE_TTL_SECONDS` | Seconds to retain room data in the cache | `60` |
 | `WORLD_INSTANCE_EXPIRATION_HOURS` | Hours before a transient instance expires | `24` |
+| `WORLD_EVENT_CHECK_DELAY_MS` | Delay between event processing checks (ms) | `60000` |
 
 ## Proto Files
 
@@ -146,13 +147,15 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 
 ## Additional Details
 
-The service creates temporary **instances** of zones for dungeons or housing. Instances expire automatically based on the `world.instance.expiration-hours` property.
+The service creates temporary **instances** of zones for dungeons or housing. Instances expire automatically based on the `world.instance.expiration-hours` property and a scheduled cleanup task removes expired records hourly.
 
 ### REST & gRPC Endpoints
 
 #### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
+- `GET /regions?tenantId=...` – list regions for a tenant.
+- `POST /regions/{id}/move` – change a region's shard assignment.
 
 The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger UI at `/swagger-ui.html` when running locally.
 
