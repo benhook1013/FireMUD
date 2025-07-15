@@ -114,10 +114,9 @@ When an action crosses regional boundaries (for example a player moving between
 rooms on different shards) the Game Session Service decomposes the transition
 into **two sequential ticks**:
 
-1. **Tick&nbsp;A** *(Shard&nbsp;X)* — executes exit logic and clears local
-   state.
-2. **Tick&nbsp;B** *(Shard&nbsp;Y)* — performs entry logic and rebinds the
-   player's session in the new region.
+1. **Tick&nbsp;A** on _Shard&nbsp;X_ performs exit logic and clears local state.
+2. **Tick&nbsp;B** on _Shard&nbsp;Y_ applies entry logic and rebinds the
+   session in the new region.
 
 No lock, Lua script, or tick context may span shards. The Game Session Service
 guarantees these ticks execute sequentially without overlap so no effect runs
