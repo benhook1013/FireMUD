@@ -9,7 +9,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 ### Responsibilities
 
 - Terminate TLS and enforce authentication for admin routes
-- Upgrade WebSocket connections and route to the correct tenant
+- Upgrade WebSocket connections and forward them to backend services
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
 
@@ -24,10 +24,8 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Relies on the Game Session Service for gameplay login and session management.
 - Terminates external TLS and forwards traffic to backend services using mutual
   TLS, as described in the [Security Architecture](../system-architecture-security.md).
-- Hostnames or path prefixes map incoming connections to a `tenantId` so the
-  gateway can route players to the correct game instance. See
-  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
 ## Key Features
 
@@ -40,8 +38,9 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 ### Data Model
 
 The gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
-Route configurations are stored in `application-*.yml` and reloaded on startup.
-No persistent database is required.
+Route configurations live in `routes-dev.yml` and `routes-prod.yml`, which are
+imported by `application.yml` based on the active profile and reloaded on
+startup. No persistent database is required.
 The default configuration defines routes for the core services so Docker Compose
 environments work out of the box.
 
@@ -56,6 +55,12 @@ environments work out of the box.
 - `/api/session/**` → Game Session Service (WebSocket and REST endpoints).
 - `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
+- `/api/account/**` → Account Service for user profiles.
+- `/api/automation/**` → Automation Scripting Service.
+- `/api/entity/**` → Entity Management Service.
+- `/api/logic/**` → Game Logic Service.
+- `/api/social/**` → Social Groups Service.
+- `/api/world/**` → World Management Service.
 
 ## Dependencies
 
@@ -82,7 +87,8 @@ and Kubernetes deployments behave consistently. It follows
 The database variables
 ([PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
-may be present for consistency but are ignored by this service.
+may be present for consistency. PostgreSQL variables are unused, but Redis
+connection variables are required for the `RequestRateLimiter` filter.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
