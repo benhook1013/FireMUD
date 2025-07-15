@@ -1,6 +1,14 @@
 image:
   repository: firemud/account-service
   tag: latest
+replicaCount: 2
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "400m"
+    memory: "512Mi"
 service:
   type: ClusterIP
   port: 8080

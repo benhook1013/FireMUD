@@ -2,6 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: internal-services
+# Ensure Helm release names for PostgreSQL and Redis match the labels below.
 spec:
   podSelector:
     matchExpressions:

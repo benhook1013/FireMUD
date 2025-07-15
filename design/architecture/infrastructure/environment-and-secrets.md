@@ -127,6 +127,8 @@ Spring property `otel.endpoint`):
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
+| `FLUENT_ELASTICSEARCH_HOST` | Hostname of the log storage backend | `elasticsearch` |
+| `FLUENT_ELASTICSEARCH_PORT` | Port for the log storage backend | `9200` |
 
 Service design documents reference this table for the OpenTelemetry endpoint configuration.
 

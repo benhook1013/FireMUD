@@ -9,6 +9,9 @@ x-service-environment: &service-env
   FIREMUD_REDIS_HOST: ${FIREMUD_REDIS_HOST:-redis}
   FIREMUD_REDIS_PORT: ${FIREMUD_REDIS_PORT:-6379}
   SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+  OTEL_ENDPOINT: ${OTEL_ENDPOINT:-http://otel-collector:4317}
+  FLUENT_ELASTICSEARCH_HOST: ${FLUENT_ELASTICSEARCH_HOST:-elasticsearch}
+  FLUENT_ELASTICSEARCH_PORT: ${FLUENT_ELASTICSEARCH_PORT:-9200}
 
 x-service-healthcheck: &service-health
   test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
