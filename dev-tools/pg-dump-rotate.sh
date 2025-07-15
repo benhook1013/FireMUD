@@ -28,7 +28,7 @@ pg_dump -h "$FIREMUD_POSTGRES_HOST" -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POS
 
 # keep last 96 daily dumps
 cd "$BACKUP_DIR/daily"
-ls -1t ${PREFIX}_*.sql.gz | tail -n +97 | xargs -r rm --
+find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +97 | cut -d' ' -f2- | xargs -r rm --
 
 DOW=$(date +%u) # 1-7 (Mon-Sun)
 DOM=$(date +%d)
@@ -37,14 +37,14 @@ if [ "$DOW" = "7" ]; then
   WEEKLY_DEST="$BACKUP_DIR/weekly/${PREFIX}_${TS}.sql.gz"
   cp "$DUMP" "$WEEKLY_DEST"
   cd "$BACKUP_DIR/weekly"
-  ls -1t ${PREFIX}_*.sql.gz | tail -n +4 | xargs -r rm --
+  find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm --
 fi
 
 if [ "$DOM" = "01" ]; then
   MONTHLY_DEST="$BACKUP_DIR/monthly/${PREFIX}_${TS}.sql.gz"
   cp "$DUMP" "$MONTHLY_DEST"
   cd "$BACKUP_DIR/monthly"
-  ls -1t ${PREFIX}_*.sql.gz | tail -n +4 | xargs -r rm --
+  find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +4 | cut -d' ' -f2- | xargs -r rm --
 fi
 
 if [ -n "$BUCKET" ]; then
@@ -53,18 +53,18 @@ if [ -n "$BUCKET" ]; then
     AWS_ARGS="--endpoint-url $ENDPOINT"
   fi
   echo "Uploading $DUMP to s3://$BUCKET"
-  if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" $AWS_ARGS; then
+  if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" "$AWS_ARGS"; then
     echo "Failed to upload daily dump" >&2
     exit 1
   fi
   if [ "$DOW" = "7" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" $AWS_ARGS; then
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" "$AWS_ARGS"; then
       echo "Failed to upload weekly dump" >&2
       exit 1
     fi
   fi
   if [ "$DOM" = "01" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/monthly/" $AWS_ARGS; then
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/monthly/" "$AWS_ARGS"; then
       echo "Failed to upload monthly dump" >&2
       exit 1
     fi

@@ -1,11 +1,11 @@
 package net.firedevops.firemud.common.conflict;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-import io.micrometer.core.instrument.MeterRegistry;
 
 /** Records conflict metadata in Redis for hotspot detection. */
 @Component
