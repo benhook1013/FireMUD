@@ -8,20 +8,20 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 
 - Accept Telnet connections and perform protocol negotiation
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames
-- Tag connections with tenant information for accurate routing
+- Tag connections with tenant information for accurate routing *(planned)*
 - Provide graceful disconnect and reconnection handling
 
 ## Architecture / Design Notes
 
-- Lightweight custom service separate from Spring Boot.
+- Spring Boot service hosting a lightweight Netty-based Telnet server.
 - Buffers incoming input during brief disconnects and clears it on connection loss.
 - Handles Telnet negotiation and character encoding quirks.
 - Works with the Reconnection Strategy to resume sessions transparently.
-- Can optionally terminate Telnet-over-TLS and then forward traffic to the
-  gateway using mutual TLS. See
+- Can optionally terminate Telnet-over-TLS. Forwarding to the gateway currently
+  uses plain WebSocket connections; mutual TLS support is planned. See
   [Security Architecture](../system-architecture-security.md).
-- During the login handshake the proxy tags the connection with the selected
-  `tenantId` so the gateway can route commands to the proper game. See
+- During the login handshake the proxy is intended to tag the connection with the selected
+  `tenantId` so the gateway can route commands to the proper game (not yet implemented). See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
@@ -54,6 +54,7 @@ events used internally when communicating with other microservices:
     drops so the session may be suspended.
 - **PushBufferedInput** – forwards any queued commands after a reconnect
     event.
+These gRPC events are defined but the current implementation does not yet invoke them.
 These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Command Handling
@@ -63,6 +64,16 @@ The proxy sanitizes incoming bytes and allows only a safe subset of
 [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
 This avoids implementing the full Telnet specification while still protecting
 against malformed negotiation sequences and other legacy edge cases.
+
+Example filtering logic from `TelnetServerHandler`:
+
+```java
+private static final byte IAC = (byte) 255;
+private static final Set<Byte> ALLOWED_COMMANDS =
+    Set.of((byte) 240, (byte) 241, (byte) 249, (byte) 251, (byte) 252, (byte) 253, (byte) 254);
+```
+
+Commands outside this list are discarded and only sanitized printable characters are forwarded to the gateway.
 
 ## Dependencies
 
@@ -90,7 +101,7 @@ The proxy uses minimal configuration. It still follows the scheme in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
 so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be present
 but are ignored.
-TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
+TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
 
 Additional variables control the proxy runtime behaviour:
 
@@ -166,6 +177,8 @@ Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are 
 The `src/test/java/crossservice` directory contains an integration test that
 launches this service alongside Spring Cloud Gateway with **Testcontainers**.
 Run it after the Gateway image is built:
+
+This test requires the Spring Cloud Gateway Docker image to be available. Build it with `./gradlew :spring-cloud-gateway:bootBuildImage` or pull from the registry.
 
 ```bash
 ./gradlew :tcp-proxy-service:test --tests "*CrossServiceIntegrationTest"
