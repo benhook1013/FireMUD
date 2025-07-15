@@ -17,6 +17,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] Set up git hooks
   - [ ] `pip install pre-commit`
   - [ ] `pre-commit install`
+  - [ ] `git config core.hooksPath config/git-hooks`
   - [ ] `pre-commit run --all-files`
   - [ ] Copy `.env.sample` to `.env` and adjust values as needed
 
@@ -34,9 +35,11 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `npm ci` inside `web-client`
 - [ ] `npm run lint`
 - [ ] `npm run format -- -c`
+- [ ] `npm run format:fix`
 - [ ] `npm run openapi:lint`
 - [ ] `npm run accessibility` (requires Google Chrome)
 - [ ] `npm run build` to generate the production bundle
+- [ ] `npm run preview` to verify the production bundle
 - [ ] `npm run dev` to start the Vite development server
 - [ ] `npm run test` to execute frontend unit tests
 
@@ -48,6 +51,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `./dev-tools/generate-grpc-docs.sh` to update gRPC docs
 - [ ] `./dev-tools/generate-erd.sh` to produce ERD diagrams
 - [ ] `./dev-tools/link-check.sh` to validate links in docs
+- [ ] `./gradlew lintMarkdown` to check Markdown formatting
 - [ ] `./gradlew lintMarkdownFix` to auto-fix Markdown
 - [ ] `hadolint` on all Dockerfiles
 - [ ] `shellcheck` on scripts under `dev-tools/`
@@ -85,6 +89,7 @@ This checklist covers optional manual steps to verify that development tooling a
 
 - [ ] `helm lint k8s/helm/firemud` to validate charts
 - [ ] `helm upgrade --install firemud k8s/helm/firemud -f k8s/helm/values-dev.yaml`
+- [ ] `helm install game-session k8s/helm/game-session-service -f k8s/helm/values-local.yaml`
 - [ ] `kubectl get pods -n firemud` to verify running services
 
 ## 🌍 Terraform Modules
