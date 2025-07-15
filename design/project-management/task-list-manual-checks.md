@@ -9,11 +9,22 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `Node.js` (latest LTS)
   - [ ] `Docker` and `Docker Compose`
   - [ ] Verify Docker Compose with `docker compose version`
-  - [ ] `buf` for proto linting
-  - [ ] `pre-commit` Python package
-  - [ ] `hadolint` for Dockerfile linting
-  - [ ] `shellcheck` for shell script validation
-  - [ ] Verify Gradle wrapper with `./gradlew --version`
+- [ ] `buf` for proto linting
+- [ ] `pre-commit` Python package
+- [ ] `hadolint` for Dockerfile linting
+- [ ] `shellcheck` for shell script validation
+- [ ] Verify Gradle wrapper with `./gradlew --version`
+- [ ] Verify tool versions
+  - [ ] `java --version`
+  - [ ] `node --version`
+  - [ ] `docker --version`
+  - [ ] `buf --version`
+  - [ ] `pre-commit --version`
+  - [ ] `hadolint --version`
+  - [ ] `shellcheck --version`
+  - [ ] `helm version`
+  - [ ] `kubectl version --client`
+  - [ ] `terraform version`
 - [ ] Set up git hooks
   - [ ] `pip install pre-commit`
   - [ ] `pre-commit install`
@@ -75,6 +86,8 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] Generate TLS certificates via Gradle with `./gradlew generateDevCerts`
 - [ ] Run cross-service tests via `./gradlew crossServiceTest` when needed
 - [ ] Execute load tests via `./gradlew :load-testing:gatlingRun`
+- [ ] Test wait helper with `./dev-tools/wait-for-it.sh localhost 5432 -- echo ready`
+- [ ] Verify Docker entrypoint `docker/start-service.sh` runs with local JAR
 
 ## 🌱 Data Seeding & API Clients
 
