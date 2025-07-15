@@ -2,6 +2,8 @@
 
 This document describes the default Grafana and Kibana dashboards shipped with the **Logging & Admin Service**. They give operators visibility into game health, player activity, and moderation trends.
 
+> **Status: In Progress** – Additional real-time analytics and export options are planned.
+
 ## Grafana Dashboards
 
 - **Service Overview** – CPU, memory, and request rates for each microservice.

@@ -2,6 +2,8 @@
 
 This document describes the planned **visual editing front end** for the Game Design Service. It will allow creators to build worlds, scripts and game assets entirely from a browser.
 
+> **Status: In Progress** – The web-based editor is still under construction.
+
 ## Overview
 
 - **React + Material UI** provide the core component library.

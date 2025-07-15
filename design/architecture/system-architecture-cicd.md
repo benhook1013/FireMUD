@@ -2,6 +2,8 @@
 
 This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, and containerized. Deployment to Kubernetes is triggered manually using a dedicated workflow until cloud hosting is available.
 
+> **Status: In Progress** – Full automation of Kubernetes deployments is still being developed.
+
 ---
 
 ## 🎯 Goals
