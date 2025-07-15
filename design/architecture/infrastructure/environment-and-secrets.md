@@ -96,6 +96,7 @@ environment variables point to that directory.
 
 JWT tokens secure internal service calls. Production keys are provided via
 environment variables while development instances generate random secrets.
+When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for changes so keys can be rotated without restarts.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
@@ -132,11 +133,20 @@ Spring property `otel.endpoint`):
 
 Service design documents reference this table for the OpenTelemetry endpoint configuration.
 
+### Backup & Restore Variables
+
+Operational scripts and CronJobs rely on the following variables when uploading or restoring database dumps.
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `PG_DUMP_BUCKET` | Object storage bucket for pg_dump files | *(none)* |
+| `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
+
+See [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) for schedules and retention policies.
+
 ### Additional Notes
 
-Service-specific settings such as SMTP credentials for the Account Service or
-`GAME_TICK_DURATION_MS` for the Game Session Service are documented in each
-service's design file. This document covers only shared configuration keys.
+Service-specific settings such as SMTP credentials for the Account Service or `GAME_TICK_DURATION_MS` for the Game Session Service are documented in each service's design README. See the "Environment Variables" section in those files for details. This document covers only shared configuration keys.
 
 Operational scripts like `dev-tools/restore-cluster.sh` use an optional
 `FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults
@@ -146,3 +156,5 @@ to `firemud` when unset.
 
 - [Deployment Environments](./deployment-environments.md)
 - [System Architecture: Security](../system-architecture-security.md)
+- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Operational Runbooks](../system-architecture-runbooks.md)
