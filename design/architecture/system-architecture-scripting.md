@@ -17,6 +17,20 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 - The editor exports structured data—**not raw Lua or general-purpose code**—which the service compiles into execution units.
 - This approach prevents arbitrary behavior and limits scripts to the capabilities exposed by the platform.
 
+## Supported Script Events
+
+Scripts may register handlers for a set of standard lifecycle events. The Automation & Scripting Service emits these events and queues them as commands so they run during the normal tick flow.
+
+- `onLoad` – when the script is first loaded or hot reloaded
+- `onSpawn` – when the associated entity enters the world
+- `onDeath` – when the entity dies
+- `onDestroy` – when the entity is permanently removed
+- `onEnterRegion` – when the entity moves into a new region
+- `onLeaveRegion` – when the entity leaves a region
+- `onTimerExpire` – when a scheduled timer finishes
+- `onCommand` – when a player targets the entity with a command
+- `onInterval` – periodic execution at a configured rate
+
 ## 🔒 Sandboxing & Security
 
 - Script execution occurs in a **sandbox** with restricted APIs and resource limits.
@@ -25,16 +39,20 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 
 ## ⚙️ Integration with Game Logic & Tick System
 
-- **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and injects the resulting commands into command queues.
-- These commands are processed during the **next tick cycle** by the Game Logic Service, preserving fairness, determinism, and replay safety.
+- **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and enqueues the resulting commands into each entity's command queue.
+- These queued commands run during the **next tick cycle** via the normal Game Session and Game Logic flow, ensuring deterministic, replayable behavior that follows the tick system's fairness and retry rules.
 - Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
+- Script-generated commands may fail due to lock contention or because the target resides in another region. These cases are retried or routed across regions by the Game Session Service just like player actions.
+- The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 
 ## 🔄 Deployment & Versioning
 
 - Script definitions are stored in the **Game Design Service** and versioned alongside other game assets.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
 - Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly.
-- Previous versions remain available for rollback or auditing.
+- The Game Session Service tracks the active script version for each running game and notifies the Automation & Scripting Service when a new version should be loaded.
+- Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
+- Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
 ## 🛡️ Fairness & Abuse Prevention
 
