@@ -8,10 +8,12 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `Java 21+`
   - [ ] `Node.js` (latest LTS)
   - [ ] `Docker` and `Docker Compose`
+  - [ ] Verify Docker Compose with `docker compose version`
   - [ ] `buf` for proto linting
   - [ ] `pre-commit` Python package
   - [ ] `hadolint` for Dockerfile linting
   - [ ] `shellcheck` for shell script validation
+  - [ ] Verify Gradle wrapper with `./gradlew --version`
 - [ ] Set up git hooks
   - [ ] `pip install pre-commit`
   - [ ] `pre-commit install`
@@ -21,6 +23,7 @@ This checklist covers optional manual steps to verify that development tooling a
 ## ✅ Build & Test Commands
 
 - [ ] Run `./gradlew check` to execute unit tests, Spotless, Checkstyle and SpotBugs
+- [ ] Run `./gradlew build` to compile all services
 - [ ] Build container images with `./gradlew buildDockerImages`
 - [ ] Start the local stack with `./gradlew devUp`
   - [ ] Verify services respond to `curl -fsSL http://localhost:8080/ping`
@@ -33,13 +36,19 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `npm run format -- -c`
 - [ ] `npm run openapi:lint`
 - [ ] `npm run accessibility` (requires Google Chrome)
+- [ ] `npm run build` to generate the production bundle
+- [ ] `npm run dev` to start the Vite development server
+- [ ] `npm run test` to execute frontend unit tests
 
 ## 📜 Protobuf & Documentation Scripts
 
 - [ ] `buf lint` for proto consistency
+- [ ] `buf breaking --against origin/main` to check for API changes
+- [ ] `./gradlew generateProto` to regenerate Java stubs
 - [ ] `./dev-tools/generate-grpc-docs.sh` to update gRPC docs
 - [ ] `./dev-tools/generate-erd.sh` to produce ERD diagrams
 - [ ] `./dev-tools/link-check.sh` to validate links in docs
+- [ ] `./gradlew lintMarkdownFix` to auto-fix Markdown
 - [ ] `hadolint` on all Dockerfiles
 - [ ] `shellcheck` on scripts under `dev-tools/`
 
@@ -82,6 +91,7 @@ This checklist covers optional manual steps to verify that development tooling a
 
 - [ ] `terraform init` in `k8s/terraform-production`
 - [ ] `terraform plan` to preview infrastructure changes
+- [ ] `terraform fmt -check` to ensure formatting
 
 ## 🔥 Service Smoke Tests
 

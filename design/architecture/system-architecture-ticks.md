@@ -3,7 +3,6 @@
 📄 This document expands on the [Game Loop / Tick Model](./system-architecture-overview.md#⏱️-game-loop--tick-model) section of the FireMUD System Architecture Overview. It defines how ticks execute, resolve concurrency, handle crashes, and preserve deterministic, fair game logic under load. Cross-service operations triggered by ticks rely on Redis scripts and gRPC; sagas are unnecessary for these gameplay actions as explained in [Transaction Strategies](./system-architecture-transactions.md).
 
 > 🔗 For Redis keys, Lua-based atomicity, and operational guarantees, see the [Redis Architecture](./system-architecture-redis.md).
-
 ---
 
 ## 🧠 Hybrid Tick Model
@@ -94,7 +93,6 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 > [Global Effects and Region-Wide Coordination](./system-architecture-redis.md#🌀-global-effects-and-region-wide-coordination)
 > for details on the underlying Redis pattern.
 > 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
-
 ---
 
 ## 🔄 Tick Execution Flow
@@ -216,7 +214,8 @@ The process is **asynchronous and multi-phased**:
 
 1. A tick-local command executes in the **origin region**.
 2. A follow-up action — including the `sourceEntityId` — is enqueued in the
-   **target region's** command queue (often under a `remote:{entityId}` key).
+   **target region's** command queue (often under a `remote:{tenantId}:{entityId}` key; see
+   [Redis Key Naming](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline)).
 3. The target region processes the action during its next tick and determines
    the outcome locally.
 4. The Game Session Service routes the result back to the origin region or
@@ -224,7 +223,7 @@ The process is **asynchronous and multi-phased**:
 
 Players experience a smooth flow:
 
-```
+```text
 🕒 You cast Fireball...
 🔥 Your Fireball hits Player B for 12 damage!
 ```

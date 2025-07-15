@@ -13,6 +13,8 @@ spec:
       labels:
         app: tcp-proxy-service
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: tcp-proxy-service
           image: ghcr.io/firemud/tcp-proxy-service:latest
@@ -21,6 +23,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
+            allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
           resources:
             requests:
