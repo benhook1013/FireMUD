@@ -2,6 +2,12 @@
 # Generate ERD diagrams and verify Flyway migrations for all services.
 set -euo pipefail
 
+# Check for Docker since ERD generation requires it
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Error: Docker is not installed or not in PATH" >&2
+  exit 1
+fi
+
 SERVICES=(
   account-service
   automation-scripting-service
