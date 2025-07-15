@@ -52,21 +52,18 @@ game instance starts or reloads scripts for patch versions.
 
 The **Game Session Service** controls which published version is active for each live game instance. See the [User Journeys](./user-journeys.md#5-publish-and-start-a-game-instance) document for the high level flow.
 
-- When starting a game, it reads the desired `version_id` from a manifest or launch request.
+- When starting a game, it reads the desired `version_id` from a manifest or launch request and stores this value as `runtime_version` in the `game_instances` table.
 - Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.
-- All runtime services read their data using the active `version_id`, ensuring consistent rules during play.
+- All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
 
 ## 🔧 Runtime Feature Flags
 
 Runtime feature flags allow limited behavior changes without publishing a new design version. They are **defined in the Game Design Service** and copied into the **Game Session Service** (typically in a configuration table keyed by `tenantId`) when a version is published.
 
 - Designers create and maintain the set of flag definitions in the Game Design Service.
-- Administrators edit flag values through the [**Logging & Admin Service**](./microservices/logging-admin-service/README.md), which exposes management APIs and a web UI.
-- The Game Session Service loads these flags during initialization and may re-check them periodically or in response to admin updates.
-- The Logging & Admin Service persists flag changes in its own `feature_flag` table
-  for auditing and updates the Game Session Service via gRPC.
-- The Game Session Service stores active flag values in its `feature_flag` table so
-  sessions use consistent configuration even after reconnects.
+- Administrators toggle flag values through the [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface.
+- The Logging & Admin Service forwards each change to the Game Session Service using its [`ToggleFeatureFlag`](./microservices/game-session-service/README.md#runtime-feature-flags) gRPC endpoint.
+- The Game Session Service persists active flag values in its `feature_flag` table so sessions use consistent configuration even after reconnects. The Logging & Admin Service may store audit entries but is not the source of truth for runtime behavior.
 - Flags are separate from design-time configuration but still scoped by `version_id` to avoid mismatched behavior.
 - During each tick cycle the active flags are applied before executing game logic; see [Tick System](./system-architecture-ticks.md) for details.
 
@@ -79,7 +76,7 @@ flowchart TD
     C --> D[Game Session Service notified of new version]
     D --> E[Session starts game using chosen version_id]
     E --> F[Runtime flags loaded and applied]
-    F -->|Admin edits| G[Logging & Admin Service updates flags]
+    F -->|Admin edits| G[Logging & Admin Service calls Game Session Service]
 ```
 
 By decoupling published versions from runtime flags, FireMUD can rapidly iterate on new content while still allowing safe toggles for experimental features during live gameplay.
