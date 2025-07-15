@@ -11,7 +11,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Deliver real-time chat notifications
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
-- Feed chat logs to the Logging & Admin Service for moderation
+- Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
 
 ## Architecture / Design Notes
 
@@ -35,7 +35,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Guild creation and membership changes participate in Saga workflows so other
   services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
 - Chat history and guild data are stored with a `tenantId` so conversations are
-  isolated per game. Redis stream keys also include this prefix. See
+  isolated per game. Redis list keys also include this prefix. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - Cross-service calls always forward the `tenantId` so features remain isolated;
   see [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details.
@@ -57,10 +57,9 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 - `chat_message` table persists guild and private messages.
 - `guild` and `guild_member` tables store group ownership and membership roles.
-- `friend_link` table tracks both account-to-account and per-game friendships.
-  All friendship data lives in this service. Per-game friend records include the
-  `tenantId` and player IDs, while account-level friends reference global account
-  IDs only. Games can mirror these links in their UI when the feature is enabled.
+- `friend_links` table stores per-game friendships scoped by `tenantId`.
+- `account_friend_links` table stores account-to-account friendships shared across games.
+- Games can mirror these links in their UI when the feature is enabled.
 - `mail_message` table stores asynchronous player mail.
 - `faction` and `faction_standing` tables maintain player reputation. The
   [Automation & Scripting Service](../automation-scripting-service/README.md)
@@ -68,7 +67,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ### Chat Pipeline
 
-- Messages are published to Redis streams and fanned out to WebSocket channels
+- Messages are cached in Redis lists and delivered to WebSocket channels
   through the Spring Cloud Gateway.
 - Guild and direct messages share a common persistence model for history.
 
