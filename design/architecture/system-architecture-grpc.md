@@ -52,10 +52,12 @@ Each service folder typically includes:
 
 Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `protos/shared/`.
 
+Directory names may use hyphens (for example `game-design`), while proto packages use underscores (`gamedesign.v1`) so that package declarations remain valid.
+
 ## 🛠️ Tooling
 
-- **Buf** (`buf.yaml`) — Lints proto files, detects breaking changes, and drives code generation.
-- **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle or a Makefile.
+- **Buf** (`buf.yaml`) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`.
+- **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
 - **`protoc-gen-doc`** — Produces HTML or Markdown API documentation to encourage inline comments.
 
 ## 🔄 Schema Evolution Rules
@@ -71,6 +73,16 @@ Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `
 - Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
 - Prefer returning structured errors over using gRPC metadata for application faults.
 - All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric labeled with `error.code`, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures.
+  See [AI Project Rules](../project-management/ai-rules-local.md) for required logging and metrics interceptors.
+
+Example implementation:
+
+```java
+private ErrorDetail error(String code, String message) {
+  meterRegistry.counter("grpc.app_error", "code", code).increment();
+  return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
+}
+```
 
 ## 🧪 Example Code Generation (Java)
 
@@ -79,10 +91,9 @@ Using `buf.gen.yaml`:
 ```yaml
 version: v1
 plugins:
-  - name: java
+  - plugin: buf.build/protocolbuffers/java
     out: gen/java
-    opt: lite
-  - name: grpc-java
+  - plugin: buf.build/grpc/java
     out: gen/java
 ```
 
@@ -91,6 +102,8 @@ Then compile generated sources via Gradle:
 ```kotlin
 sourceSets["main"].java.srcDirs("gen/java")
 ```
+
+Each service applies the `com.google.protobuf` Gradle plugin so that running `./gradlew generateProto` compiles stubs into `build/generated/source/proto`.
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs.
 
