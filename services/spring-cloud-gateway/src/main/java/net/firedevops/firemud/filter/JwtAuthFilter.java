@@ -1,10 +1,5 @@
 package net.firedevops.firemud.filter;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jws;
-import io.jsonwebtoken.JwtException;
-import java.util.List;
-import net.firedevops.firemud.common.security.JwtUtil;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -14,14 +9,14 @@ import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
-/** Global filter validating JWTs on admin routes. */
+/**
+ * Global filter ensuring admin routes include an Authorization header.
+ *
+ * <p>The gateway does not validate or inspect JWTs. Services that require role-based access parse
+ * tokens themselves.
+ */
 @Component
 public class JwtAuthFilter implements WebFilter, Ordered {
-  private final JwtUtil jwtUtil;
-
-  public JwtAuthFilter(JwtUtil jwtUtil) {
-    this.jwtUtil = jwtUtil;
-  }
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
@@ -36,19 +31,7 @@ public class JwtAuthFilter implements WebFilter, Ordered {
       return exchange.getResponse().setComplete();
     }
 
-    String token = authHeader.substring(7);
-    try {
-      Jws<Claims> claims = jwtUtil.parseToken(token);
-      List<String> roles = claims.getBody().get("globalRoles", List.class);
-      if (roles == null || (!roles.contains("platformAdmin") && !roles.contains("moderator"))) {
-        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
-        return exchange.getResponse().setComplete();
-      }
-      return chain.filter(exchange);
-    } catch (JwtException ex) {
-      exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-      return exchange.getResponse().setComplete();
-    }
+    return chain.filter(exchange);
   }
 
   @Override

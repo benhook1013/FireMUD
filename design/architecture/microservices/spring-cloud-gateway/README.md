@@ -46,7 +46,7 @@ environments work out of the box.
 ### Filter Chain
 
 - Authentication, rate limiting, and logging filters run before routing.
-- `JwtAuthFilter` passes any provided JWT to backend admin services; validation occurs in those services.
+- `JwtAuthFilter` requires an `Authorization` header on admin routes and forwards the JWT unmodified. Validation occurs in the consuming service.
 - WebSocket upgrades are handled with heartbeat and idle timeout logic.
 
 ### Key Routes
