@@ -149,6 +149,8 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 
 ### REST & gRPC Endpoints
 
+Default ports: REST on `8080`, gRPC on `6565`.
+
 #### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
@@ -178,7 +180,7 @@ Publishing a game version is coordinated using the Saga utilities from `firemud-
 
 ## Local Development Notes
 
-`TestDataSeeder` populates a demo game, template, revision and version when the `dev` Spring profile is active. A simple smoke-test script verifies both REST and gRPC endpoints. Cross-service integration tests live under `src/test/java/crossservice` and can be executed once dependent services are available.
+`TestDataSeeder` populates a demo game, template, revision and version when the `dev` Spring profile is active. Run `services/game-design-service/smoke-test.sh` to verify both REST and gRPC endpoints. Cross-service integration tests live under `src/test/java/crossservice` and can be executed once dependent services are available.
 
 ## Future Enhancements
 

@@ -3,6 +3,7 @@ package net.firedevops.firemud.service.impl;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.RevisionDto;
 import net.firedevops.firemud.dto.VersionDto;
@@ -20,6 +21,7 @@ import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.RevisionService;
 import net.firedevops.firemud.service.VersionService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
@@ -28,6 +30,12 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final PingService pingService;
   private final RevisionService revisionService;
   private final VersionService versionService;
+  private final MeterRegistry meterRegistry;
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
+  }
 
   @Override
   @Timed(value = "gamedesignGrpc.ping")
@@ -41,38 +49,41 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   @Timed(value = "gamedesignGrpc.saveRevision")
   public void saveRevision(
       SaveRevisionRequest request, StreamObserver<SaveRevisionResponse> responseObserver) {
+    SaveRevisionResponse.Builder builder = SaveRevisionResponse.newBuilder();
     try {
       RevisionDto dto =
           new RevisionDto(
               null, request.getTenantId(), request.getAuthorAccountId(), request.getData(), null);
       RevisionDto saved = revisionService.saveRevision(dto);
-      responseObserver.onNext(SaveRevisionResponse.newBuilder().setRevisionId(saved.id()).build());
-      responseObserver.onCompleted();
+      builder.setRevisionId(saved.id());
     } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
+      builder.setError(error("INVALID_ARGUMENT", ex.getMessage()));
     } catch (Exception ex) {
       responseObserver.onError(
           Status.INTERNAL.withDescription("failed").withCause(ex).asRuntimeException());
+      return;
     }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
   }
 
   @Override
   @Timed(value = "gamedesignGrpc.publishVersion")
   public void publishVersion(
       PublishVersionRequest request, StreamObserver<PublishVersionResponse> responseObserver) {
+    PublishVersionResponse.Builder builder = PublishVersionResponse.newBuilder();
     try {
       VersionDto version = versionService.publishVersion(request.getTenantId(), request.getNotes());
-      responseObserver.onNext(
-          PublishVersionResponse.newBuilder().setVersionId(version.id()).build());
-      responseObserver.onCompleted();
+      builder.setVersionId(version.id());
     } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
+      builder.setError(error("INVALID_ARGUMENT", ex.getMessage()));
     } catch (Exception ex) {
       responseObserver.onError(
           Status.INTERNAL.withDescription("failed").withCause(ex).asRuntimeException());
+      return;
     }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -80,6 +91,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   public void publishScriptPatchVersion(
       PublishScriptPatchVersionRequest request,
       StreamObserver<PublishScriptPatchVersionResponse> responseObserver) {
+    PublishScriptPatchVersionResponse.Builder builder =
+        PublishScriptPatchVersionResponse.newBuilder();
     try {
       VersionDto version =
           versionService.publishScriptPatchVersion(
@@ -87,16 +100,16 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
               request.getNotes());
-      responseObserver.onNext(
-          PublishScriptPatchVersionResponse.newBuilder().setVersionId(version.id()).build());
-      responseObserver.onCompleted();
+      builder.setVersionId(version.id());
     } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
+      builder.setError(error("INVALID_ARGUMENT", ex.getMessage()));
     } catch (Exception ex) {
       responseObserver.onError(
           Status.INTERNAL.withDescription("failed").withCause(ex).asRuntimeException());
+      return;
     }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
   }
 
   @Override
