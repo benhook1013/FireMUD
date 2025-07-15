@@ -1,6 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  namespace: firemud
   name: account-service-egress
 # Release names "firemud-postgresql" and "firemud-redis" must match the
 # corresponding Helm deployments.

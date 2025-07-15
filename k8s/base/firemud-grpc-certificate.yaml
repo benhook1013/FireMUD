@@ -1,6 +1,7 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
+  namespace: firemud
   name: firemud-grpc-tls
 spec:
   secretName: firemud-grpc-tls

@@ -3,19 +3,20 @@
 This directory contains Kubernetes manifests and Helm chart placeholders for deploying the FireMUD services.
 
 The `base/` folder provides minimal deployment files that can be applied to a development cluster:
+These manifests assume a `firemud` namespace; include `-n firemud` when applying them.
 
 ```bash
-kubectl apply -f base/account-service.yaml
-kubectl apply -f base/automation-scripting-service.yaml
-kubectl apply -f base/entity-management-service.yaml
-kubectl apply -f base/game-design-service.yaml
-kubectl apply -f base/game-logic-service.yaml
-kubectl apply -f base/game-session-service.yaml
-kubectl apply -f base/logging-admin-service.yaml
-kubectl apply -f base/social-groups-service.yaml
-kubectl apply -f base/tcp-proxy-service.yaml
-kubectl apply -f base/world-management-service.yaml
-kubectl apply -f base/spring-cloud-gateway.yaml
+kubectl apply -n firemud -f base/account-service.yaml
+kubectl apply -n firemud -f base/automation-scripting-service.yaml
+kubectl apply -n firemud -f base/entity-management-service.yaml
+kubectl apply -n firemud -f base/game-design-service.yaml
+kubectl apply -n firemud -f base/game-logic-service.yaml
+kubectl apply -n firemud -f base/game-session-service.yaml
+kubectl apply -n firemud -f base/logging-admin-service.yaml
+kubectl apply -n firemud -f base/social-groups-service.yaml
+kubectl apply -n firemud -f base/tcp-proxy-service.yaml
+kubectl apply -n firemud -f base/world-management-service.yaml
+kubectl apply -n firemud -f base/spring-cloud-gateway.yaml
 ```
 
 The file `base/firemud-db-env.yaml` defines the shared `firemud-config`
@@ -25,8 +26,8 @@ After the services are running, apply the default network policies found in
 `network-policies/` to restrict traffic to internal pods only:
 
 ```bash
-kubectl apply -f network-policies/internal-services.yaml
-kubectl apply -f base/firemud-grpc-certificate.yaml
+kubectl apply -n firemud -f network-policies/internal-services.yaml
+kubectl apply -n firemud -f base/firemud-grpc-certificate.yaml
 ```
 
 The policy allows gRPC (8080, 6565) and OpenTelemetry traffic on port `4317` in
@@ -44,10 +45,10 @@ The `monitoring/` folder provides example manifests for observability tools:
 Apply them with:
 
 ```bash
-kubectl apply -f monitoring/redis-exporter.yaml
-kubectl apply -f monitoring/otel-collector.yaml
-kubectl apply -f monitoring/jaeger.yaml
-kubectl apply -f monitoring/alertmanager.yaml
+kubectl apply -n firemud -f monitoring/redis-exporter.yaml
+kubectl apply -n firemud -f monitoring/otel-collector.yaml
+kubectl apply -n firemud -f monitoring/jaeger.yaml
+kubectl apply -n firemud -f monitoring/alertmanager.yaml
 ```
 
 Customize these manifests with proper image repositories and resource limits before running in production.
@@ -71,4 +72,10 @@ The [`helm/`](./helm) folder contains example charts. Use `values-local.yaml` or
 
 ```bash
 helm install game-session ./helm/game-session-service -f helm/values-local.yaml
+```
+
+For production deployments, use the umbrella chart:
+
+```bash
+helm upgrade --install firemud ./charts/firemud -n firemud --create-namespace
 ```
