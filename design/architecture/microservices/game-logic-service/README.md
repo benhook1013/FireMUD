@@ -13,6 +13,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Forward chat actions to the Social & Groups Service for delivery and
   profanity checks after verifying room context via the World Management
   Service and character state via the Entity Management Service
+- See the [Service Responsibility Matrix](../service-responsibility-matrix.md)
+  for how this service fits into the overall architecture.
 
 ## Architecture / Design Notes
 
@@ -46,6 +48,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Effect stacking and cooldown calculation.
 - Environmental effect resolution (weather, lighting) influencing gameplay.
 - Economy logic for trading, shops, and pricing adjustments.
+- Procedural generation commands such as `generate-dungeon`, which run in a
+  solo tick to avoid impacting other players.
 
 ### Data Model
 
@@ -66,6 +70,8 @@ This service is largely stateless. It relies on:
 - `Ping` – basic connectivity check.
 - `ExecuteCommand` – evaluates a parsed command and returns the outcome.
 - All responses include a `shared.v1.ErrorDetail` field for standardized error handling.
+  Application errors are returned in this field while the gRPC status remains
+  `OK`, and a `grpc.app_error` metric is recorded with the error code.
 
 ## Dependencies
 
@@ -90,9 +96,10 @@ details on shared infrastructure components.
 
 This service follows the conventions in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
-It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
-and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection).
-TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
+Unlike other services, it does not connect to PostgreSQL or Redis at runtime;
+those credentials are present in the shared `.env` file only for consistency.
+TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
+Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
 Additional variables specific to this service:
@@ -131,6 +138,8 @@ the generated code with `./gradlew generateProto` after making changes.
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /command` – submit a gameplay command body as plain text.
+These are currently the only REST endpoints; gameplay commands are primarily
+processed through the gRPC interface.
 
 ```bash
 curl http://localhost:8080/ping
