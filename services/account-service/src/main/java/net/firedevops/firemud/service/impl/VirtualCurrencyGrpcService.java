@@ -4,8 +4,8 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.account.v1.AddCurrencyRequest;
 import net.firedevops.firemud.account.v1.AddCurrencyResponse;
-import net.firedevops.firemud.account.v1.GetCurrencyBalanceRequest;
-import net.firedevops.firemud.account.v1.GetCurrencyBalanceResponse;
+import net.firedevops.firemud.account.v1.GetBalanceRequest;
+import net.firedevops.firemud.account.v1.GetBalanceResponse;
 import net.firedevops.firemud.account.v1.SpendCurrencyRequest;
 import net.firedevops.firemud.account.v1.SpendCurrencyResponse;
 import net.firedevops.firemud.account.v1.VirtualCurrencyServiceGrpc;
@@ -24,15 +24,13 @@ public class VirtualCurrencyGrpcService
   @Override
   @Timed(value = "currencyGrpc.getBalance")
   public void getBalance(
-      GetCurrencyBalanceRequest request,
-      StreamObserver<GetCurrencyBalanceResponse> responseObserver) {
+      GetBalanceRequest request, StreamObserver<GetBalanceResponse> responseObserver) {
     long balance =
         currencyService.getBalance(
             Long.valueOf(request.getTenantId()),
             Long.valueOf(request.getAccountId()),
             request.getCurrencyCode());
-    GetCurrencyBalanceResponse response =
-        GetCurrencyBalanceResponse.newBuilder().setBalance(balance).build();
+    GetBalanceResponse response = GetBalanceResponse.newBuilder().setBalance(balance).build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
