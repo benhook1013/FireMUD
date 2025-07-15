@@ -39,8 +39,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   gateway:
@@ -55,8 +57,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   automation-scripting-service:
@@ -71,8 +75,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   entity-management-service:
@@ -87,8 +93,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   game-design-service:
@@ -103,8 +111,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   game-logic-service:
@@ -119,8 +129,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   game-session-service:
@@ -135,8 +147,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   logging-admin-service:
@@ -151,8 +165,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   social-groups-service:
@@ -167,8 +183,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   tcp-proxy-service:
@@ -183,8 +201,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
   world-management-service:
@@ -199,8 +219,10 @@ services:
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       <<: *service-health
 
