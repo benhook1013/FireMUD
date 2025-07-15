@@ -54,8 +54,9 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 - WebSocket loss (Web clients)
 
 Redis-backed session state enables seamless resumption if valid, or fresh login if expired.
+Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
-> 🧭 For full details on `LOGIN` behavior, argument formats, and session flow, see [Authentication & Authorization](./system-architecture-authentication.md#🔁-login-flow-and-reauthentication)
+> 🧭 For full details on `LOGIN` behavior, argument formats, and session flow, see [Authentication & Authorization](./system-architecture-authentication.md#🔁-login-and-session-flow)
 
 ---
 
@@ -63,7 +64,7 @@ Redis-backed session state enables seamless resumption if valid, or fresh login 
 
 Gameplay resumes cleanly when a session is resumed — whether due to reconnect or takeover.
 
-> 🔄 For full takeover behavior, including forced logins from a different client and Redis socket rebinding, see [Authentication & Authorization](./system-architecture-authentication.md#👥-multi-client-and-session-takeover).
+> 🔄 For full takeover behavior, including forced logins from a different client and Redis socket rebinding, see [Authentication & Authorization](./system-architecture-authentication.md#👥-multi-client-behavior-and-session-takeover).
 
 ---
 
