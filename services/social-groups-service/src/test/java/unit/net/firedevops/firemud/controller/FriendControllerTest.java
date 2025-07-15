@@ -42,7 +42,7 @@ class FriendControllerTest {
 
   @Test
   void addFriendReturnsDto() throws Exception {
-    AddFriendRequest request = new AddFriendRequest(1L, 2L, 3L);
+    AddFriendRequest request = new AddFriendRequest(1L, 2L, 3L, false);
     FriendLinkDto response = new FriendLinkDto(1L, 1L, 2L, 3L, "active", null);
     when(friendService.addFriend(request)).thenReturn(response);
 

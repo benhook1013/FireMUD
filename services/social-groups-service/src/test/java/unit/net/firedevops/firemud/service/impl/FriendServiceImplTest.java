@@ -9,6 +9,7 @@ import net.firedevops.firemud.dto.AddFriendRequest;
 import net.firedevops.firemud.dto.FriendLinkDto;
 import net.firedevops.firemud.entity.FriendLink;
 import net.firedevops.firemud.mapper.FriendLinkMapper;
+import net.firedevops.firemud.repository.AccountFriendLinkRepository;
 import net.firedevops.firemud.repository.FriendLinkRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,13 +23,14 @@ class FriendServiceImplTest {
   @BeforeEach
   void setUp() {
     repository = Mockito.mock(FriendLinkRepository.class);
+    AccountFriendLinkRepository accountRepo = Mockito.mock(AccountFriendLinkRepository.class);
     FriendLinkMapper mapper = Mappers.getMapper(FriendLinkMapper.class);
-    service = new FriendServiceImpl(repository, mapper);
+    service = new FriendServiceImpl(repository, accountRepo, mapper);
   }
 
   @Test
   void addFriendReturnsDto() {
-    AddFriendRequest request = new AddFriendRequest(1L, 2L, 3L);
+    AddFriendRequest request = new AddFriendRequest(1L, 2L, 3L, false);
     FriendLink saved = new FriendLink();
     saved.setId(1L);
     saved.setTenantId(1L);

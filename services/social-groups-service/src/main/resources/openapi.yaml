@@ -25,6 +25,8 @@ components:
           type: integer
         friendAccountId:
           type: integer
+        accountLevel:
+          type: boolean
       required:
         - tenantId
         - accountId

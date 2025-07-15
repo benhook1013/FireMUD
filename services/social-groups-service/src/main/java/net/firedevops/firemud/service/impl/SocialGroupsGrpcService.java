@@ -116,7 +116,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new AddFriendRequest(
               Long.valueOf(request.getTenantId()),
               Long.valueOf(request.getAccountId()),
-              Long.valueOf(request.getFriendAccountId()));
+              Long.valueOf(request.getFriendAccountId()),
+              request.getAccountLevel());
       friendService.addFriend(dto);
       AddFriendResponse response = AddFriendResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
