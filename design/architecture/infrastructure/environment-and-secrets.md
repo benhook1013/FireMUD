@@ -7,7 +7,7 @@ This document explains how configuration values and sensitive secrets are suppli
 ## 🧪 Local Development
 
 - Environment variables are loaded from a `.env` file when running `./gradlew devUp`.
-- The sample file `.env.sample` contains default credentials for PostgreSQL and Redis.
+- The sample file `.env.sample` contains default credentials for PostgreSQL and Redis. Copy this file to `.env` and adjust values as needed; `.env` is git‑ignored so real credentials remain local.
 - Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
 - Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
 
@@ -86,7 +86,11 @@ Docker Compose mounts `dev-tools/certs` into each service container at `/app/cer
 so the default paths above resolve correctly.
 
 In Kubernetes deployments the certificates are mounted at `/tls`, and the
-environment variables point to that directory.
+environment variables point to that directory (for example,
+`FIREMUD_GRPC_CERT_CHAIN_PATH=/tls/client.crt`). Services watch these files for
+changes so new certificates are loaded without restarts. See
+[System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation)
+for details on the hot reload mechanism.
 
 > **Note**: Certificate files should be loaded from the filesystem rather than
 > packaged inside the application. Avoid `classpath:` URIs so that TLS materials
@@ -96,7 +100,9 @@ environment variables point to that directory.
 
 JWT tokens secure internal service calls. Production keys are provided via
 environment variables while development instances generate random secrets.
-When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for changes so keys can be rotated without restarts.
+When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for
+changes so keys can be rotated without restarts. Certificate and secret watching
+is described in [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation).
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
@@ -141,12 +147,16 @@ Operational scripts and CronJobs rely on the following variables when uploading 
 | -------- | ------- | ------- |
 | `PG_DUMP_BUCKET` | Object storage bucket for pg_dump files | *(none)* |
 | `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
+| `FIREMUD_K8S_NAMESPACE` | Target namespace for restore scripts | `firemud` |
 
 See [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) for schedules and retention policies.
 
 ### Additional Notes
 
-Service-specific settings such as SMTP credentials for the Account Service or `GAME_TICK_DURATION_MS` for the Game Session Service are documented in each service's design README. See the "Environment Variables" section in those files for details. This document covers only shared configuration keys.
+Service-specific settings such as SMTP credentials for the Account Service or `GAME_TICK_DURATION_MS` for the Game Session Service are documented in each service's design README. See the "Environment Variables" sections in
+[Account Service Design](../microservices/account-service/README.md#environment-variables) and
+[Game Session Service Design](../microservices/game-session-service/README.md#environment-variables)
+for concrete examples. This document covers only shared configuration keys.
 
 Operational scripts like `dev-tools/restore-cluster.sh` use an optional
 `FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults
