@@ -1,6 +1,6 @@
 # 📚 Shared Libraries Overview
 
-FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud` with the **artifact ID** `firemud-common`.
+FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud` with the **artifact ID** `firemud-common`. The Gradle subproject lives under `services/common-library`.
 
 ---
 
@@ -35,7 +35,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. These watchers are activated by the environment variables described in [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication).
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. `GrpcServerTlsReloader` is defined but not yet wired into the services (TODO: Not yet implemented). These watchers are activated by the environment variables described in [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication).
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
@@ -63,8 +63,8 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
    ```
 
 3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
-4. Automate tagging and version bumps using `semantic-release`.
-5. Deploy artifacts to GitHub Packages via CI/CD. If needed, publish a separate `firemud-protos` artifact containing only the shared gRPC definitions.
+4. Automate tagging and version bumps using `semantic-release`. (TODO: Not yet implemented)
+5. Deploy artifacts to GitHub Packages via CI/CD. (TODO: Not yet implemented) If needed, publish a separate `firemud-protos` artifact containing only the shared gRPC definitions.
 
 This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
 
