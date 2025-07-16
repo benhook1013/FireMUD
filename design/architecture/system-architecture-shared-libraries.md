@@ -35,7 +35,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. `GrpcServerTlsReloader` is defined but not yet wired into the services (TODO: Not yet implemented). These watchers are activated by the environment variables described in [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication).
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. `GrpcServerTlsReloader` is defined but not yet wired into the services (TODO: Not yet implemented). These watchers monitor files referenced by `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
@@ -64,7 +64,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
 
 3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
 4. Automate tagging and version bumps using `semantic-release`. (TODO: Not yet implemented)
-5. Deploy artifacts to GitHub Packages via CI/CD. (TODO: Not yet implemented) If needed, publish a separate `firemud-protos` artifact containing only the shared gRPC definitions.
+5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD. (TODO: Not yet implemented)
 
 This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
 
