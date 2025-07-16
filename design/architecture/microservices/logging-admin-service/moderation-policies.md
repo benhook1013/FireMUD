@@ -1,8 +1,8 @@
 # 🛡️ Moderation Policies
 
 This file outlines recommended moderation rules for hosted FireMUD games.
-Operators can adapt these policies based on community needs while maintaining a safe environment
-for players.
+Operators can adapt these policies based on community needs while maintaining a safe environment for players.
+Several automated enforcement features mentioned below are planned but not yet available in the implementation.
 
 ## Core Policies
 
@@ -30,8 +30,9 @@ Bypassing the filter with misspellings or Unicode look-alikes is considered a vi
 1. Offending logs or reports are flagged in the Logging & Admin Service dashboards. (TODO: Not yet
    implemented)
 2. Moderators review the context and determine the severity. (TODO: Not yet implemented)
-3. Actions are recorded via `ApplyModerationAction` gRPC calls and stored in the
-   `moderation_action` table.
+3. Actions are recorded via `ApplyModerationAction` gRPC calls. The service
+   coordinates a saga to delete the account and terminate any active sessions.
+   Records are persisted to the `moderation_actions` table.
 4. Notifications are sent to affected players with reason and duration. (TODO: Not yet implemented)
 
 ## Appeals

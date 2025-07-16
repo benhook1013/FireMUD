@@ -30,7 +30,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Kubernetes DNS-based service names configured in the `prod` profile of
   `application.yml` (used in production)
 - Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
-- Service hostnames can be overridden using environment variables prefixed `FIREMUD_SERVICES_`; see [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery). (TODO: Not yet implemented)
+- Initial route targets are fixed, but future versions will allow overrides via environment variables prefixed `FIREMUD_SERVICES_`; see [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery). (TODO: Not yet implemented)
 
 ---
 
@@ -88,7 +88,7 @@ add, update, or remove routes using either the REST API (`/routes`) or the
 restarting the service. See the
 [Spring Cloud Gateway microservice documentation](./microservices/spring-cloud-gateway/README.md#rest--grpc-endpoints)
 for example requests and supported fields. The gRPC interface is defined in [`gateway_management_service.proto`](../../protos/spring-cloud-gateway/v1/gateway_management_service.proto) and the REST schema in [`openapi.yaml`](../../services/spring-cloud-gateway/src/main/resources/openapi.yaml).
-Dynamic routes are currently stored only in memory and are lost on service restart. (TODO: Not yet implemented)
+Dynamic routes are stored only in memory; persistent storage is planned. (TODO: Not yet implemented)
 
 ## 📈 Observability
 

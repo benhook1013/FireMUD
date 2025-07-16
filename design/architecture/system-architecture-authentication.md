@@ -3,7 +3,9 @@
 This document describes how FireMUD authenticates clients, issues internal JWTs, manages session state, and enforces role-based access across services.
 
 Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; session
-state is managed server-side in Redis and restored via the Game Session Service. Accounts may
+state is managed server-side in Redis and restored via the Game Session Service. The service
+delegates credential verification to the Account Service's `/auth/login` endpoint.
+Accounts may
 also authenticate using linked external providers such as Google, Discord, or Steam. (TODO: Not
 yet implemented)
 
@@ -39,7 +41,7 @@ gameplay seamlessly. (TODO: Not yet implemented)
 
 ---
 
-## 👥 Multi-Client Behavior and Session Takeover
+## 👥 Multi-Client Behavior and Session Takeover (TODO: Not yet implemented)
 
 Each character can only be controlled by one session at a time.
 
@@ -54,6 +56,7 @@ This enables:
 - Clean device handoff
 - Forced logins (e.g., "kick and take over")
 - Seamless resumption without gameplay loss
+(TODO: Not yet implemented)
 
 > 🔒 All session rebinding is enforced by the Game Session Service using Redis locks.
 > 🔗 See [Redis Session Keys](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding)
@@ -110,7 +113,7 @@ annotation (or similar). Gameplay services never read or propagate these claims.
 
 ---
 
-## 🔄 Mid-Session Role Updates
+## 🔄 Mid-Session Role Updates (TODO: Not yet implemented)
 
 If roles change during an active session (e.g., a player is promoted to admin):
 
@@ -151,10 +154,10 @@ will be implemented in a future iteration. (TODO: Not yet implemented)
 | Claims                | `accountId`, `globalRoles[]`, `scopedRoles{}`                   |
 | Session State         | Stored in Redis; bound to socket by Game Session Service        |
 | Session TTL           | Controlled by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`             |
-| Reauthentication      | Required after disconnect; resumes via Redis if valid          |
+| Reauthentication      | Required after disconnect; resumes via Redis if valid (TODO: Not yet implemented) |
 | Role Enforcement      | Meta/control services only; gameplay services trust Game Session Service |
-| Role Updates          | Refreshed in-session; no client interaction needed              |
-| Multi-Client Behavior | One session per character; new login replaces old session        |
+| Role Updates          | Refreshed in-session; no client interaction needed (TODO: Not yet implemented) |
+| Multi-Client Behavior | One session per character; new login replaces old session (TODO: Not yet implemented) |
 | Two-Factor Auth       | Optional TOTP for admin and moderator accounts via `/auth/login` |
 
 ---

@@ -6,7 +6,7 @@ This document describes the structure and tooling for FireMUD's browser-based us
 
 ## 📐 Component Hierarchy
 
-FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling (TODO: Not yet implemented):
+FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling. (TODO: Not yet implemented)
 
 ```text
 web-client/
@@ -59,15 +59,15 @@ The frontend uses **Vite** for fast development and production builds:
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
 
-RTK Query works out of the box with Redux Toolkit and TypeScript. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing (TODO: Not yet implemented).
+RTK Query works out of the box with Redux Toolkit and TypeScript. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing. (TODO: Not yet implemented)
 
 ## 🎨 Game-Specific Customization (Planned) (TODO: Not yet implemented)
 
 FireMUD aims to let each hosted game supply its own UI styling and layout tweaks.
 
-- The React app will load theme files and configuration based on the game's `tenantId`.
-- Creators can override Material-UI themes, logos, and optionally define extra routes.
-- Core components remain shared so feature updates reach all games without forks.
+- The React app will load theme files and configuration based on the game's `tenantId`. (TODO: Not yet implemented)
+- Creators can override Material-UI themes, logos, and optionally define extra routes. (TODO: Not yet implemented)
+- Core components remain shared so feature updates reach all games without forks. (TODO: Not yet implemented)
 
 ## 🌍 Internationalization Strategy (TODO: Not yet implemented)
 
