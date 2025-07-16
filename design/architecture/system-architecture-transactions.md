@@ -74,14 +74,14 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Supports compensation
   - Automatic retries and alerting (TODO: Not yet implemented)
   - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow
-  - Operators monitor progress in the Saga Dashboard provided by the Logging & Admin Service
+  - Operators monitor progress in the Saga Dashboard provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
   - All steps are **idempotent**
   - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
-  - Retried automatically or flagged for manual review
+  - Retried automatically or flagged for manual review (TODO: Not yet implemented)
 
 ### Fluent API Example:
 
