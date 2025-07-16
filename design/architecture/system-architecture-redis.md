@@ -161,9 +161,9 @@ regions would otherwise remain idle. The approach preserves shard-local atomicit
 and deterministic recovery without cross-shard locks or speculative polling. It
 also avoids scheduling global keys that might wake otherwise idle regions.
 
-Regions still run a lightweight background tick (for example every second) so (TODO: Not yet implemented)
+Regions still run a lightweight background tick (for example every second) so
 queued timers, cooldowns, or delayed events progress even when no players are
-present.
+present. (TODO: Not yet implemented)
 
 ---
 
@@ -176,7 +176,7 @@ It provides:
 - Per-entity **command queues**
 - Durable **tick staging**
 - Distributed **locks** and **retry tracking**
-- **Conflict metadata** for retry prioritization (TTL controlled by the `FIREMUD_CONFLICT_TTL_SECONDS` environment variable)
+- **Conflict metadata** for retry prioritization (TTL controlled by the `FIREMUD_CONFLICT_TTL_SECONDS` environment variable; see [Game Session Service variables](./microservices/game-session-service/README.md#environment-variables))
 - Accurate **cooldown and timer tracking**
 
 > 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.
