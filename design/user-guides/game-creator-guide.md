@@ -7,13 +7,13 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
 ## Getting Started
 
 1. **Create an Account** – Sign up through the Account Service and verify your email.
-2. **Provision a Game** – Use the Game Design Service to create your first game world. A default world template is provided.
-3. **Open the Game Editor** – Launch the Game Editor from your dashboard to begin customizing zones, rooms, and entities.
+2. **Provision a Game** – Use the Game Design Service to create your first game world. A default world template is provided. See the [Game Templates](../architecture/microservices/game-design-service/game-templates.md) guide. (TODO: Not yet implemented)
+3. **Open the Game Editor** – Launch the Game Editor from your dashboard to begin customizing zones, rooms, and entities. See the [Web-Based Visual Design Interface](../architecture/microservices/game-design-service/web-visual-interface.md) for planned features. (TODO: Not yet implemented)
 
 ## Configuring Hosted Games
 
-- **World Management** – Import or create zones, rooms, and entities using the Game Editor.
-- **Runtime Settings** – Adjust tick intervals and feature flags through the Admin interface.
+- **World Management** – Import or create zones, rooms, and entities using the Game Editor. See [World Editing & Customization Tools](../architecture/microservices/game-design-service/world-editing-tools.md). (TODO: Not yet implemented)
+- **Runtime Settings** – Adjust tick intervals and feature flags through the Admin interface. See the [Role-Based Admin UI](../architecture/microservices/logging-admin-service/admin-ui.md) documentation. (TODO: Not yet implemented)
 - **Multi-Tenancy** – Each game is isolated by a unique identifier so you can manage multiple worlds from one account.
 
 ## Scripting & Integration API
