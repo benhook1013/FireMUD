@@ -62,6 +62,12 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 - AOF files are wiped on each Helm upgrade to start with a clean state
   (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment))
 - Critical Lua writes use `WAIT 1 100` for **replica acknowledgment**
+- Development uses [config/redis.conf](../../config/redis.conf) for the single-node instance and can
+  persist the AOF via the `redis-data` volume. See
+  [Developer Setup](../../DEVELOPER_SETUP.md#optional-redis-persistence) for details and the
+  RedisInsight debugging UI.
+- Production wipes the AOF before pods start using
+  [`redis-aof-reset-job.yaml`](../../k8s/helm/firemud/templates/redis-aof-reset-job.yaml).
 
 ---
 
@@ -170,7 +176,7 @@ It provides:
 - Per-entity **command queues**
 - Durable **tick staging**
 - Distributed **locks** and **retry tracking**
-- **Conflict metadata** for retry prioritization
+- **Conflict metadata** for retry prioritization (TTL controlled by the `FIREMUD_CONFLICT_TTL_SECONDS` environment variable)
 - Accurate **cooldown and timer tracking**
 
 > 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.
@@ -202,12 +208,16 @@ FireMUD actively monitors Redis performance and tick health:
   - Lock contention
   - Retry queue depth
   - Keyspace and memory usage
+  - Basic connection health via the `redis.up` gauge exposed in
+    `DatabaseAutoConfiguration`
 - Metrics are scraped via a [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment
   (applyable via [`k8s/README.md`](../../k8s/README.md))
 - **Grafana dashboards** visualize tick throughput and hotspots
 - **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
 - Redis is the **single shared** volatile coordination layer — services do not maintain separate in-memory caches or alternative cache technologies
+- Local debugging tools such as the Redis CLI and RedisInsight are described in
+  [Developer Setup](../../DEVELOPER_SETUP.md#redis-debugging)
 
 > 🔗 Redis observability feeds into the common stack described in [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 
