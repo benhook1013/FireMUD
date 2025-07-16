@@ -119,10 +119,11 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.command.enqueue")
   public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
+    Long tenantId = findTenantId(sessionId);
     String value = (requiresSoloTick ? "S|" : "N|") + command;
-    redisTemplate.opsForList().rightPush(queueKey(sessionId), value);
+    redisTemplate.opsForList().rightPush(queueKey(tenantId, sessionId), value);
     enqueueCounter.increment();
-    logger.debug("Queued command for {}", sessionId);
+    logger.debug("Queued command for {}:{}", tenantId, sessionId);
   }
 
   @Override
@@ -130,21 +131,20 @@ public class TickServiceImpl implements TickService {
   @Async("tickExecutor")
   public void processTick(Long sessionId) {
     long start = System.nanoTime();
-    String lockKey = lockKey(sessionId);
+    Long tenantId = findTenantId(sessionId);
+    String lockKey = lockKey(tenantId, sessionId);
     Boolean acquired =
         redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
     if (Boolean.FALSE.equals(acquired)) {
       lockContentionCounter.increment();
-      conflictTracker.recordConflict("session:" + sessionId);
+      conflictTracker.recordConflict("session:" + tenantId + ":" + sessionId);
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }
     String head = null;
     boolean solo = false;
     try {
-      Long pending = redisTemplate.opsForList().size(pendingKey(sessionId));
-      Long tenantId =
-          gameInstanceRepository.findById(sessionId).map(i -> i.getTenantId()).orElse(0L);
+      Long pending = redisTemplate.opsForList().size(pendingKey(tenantId, sessionId));
       double depth = pending != null ? pending.doubleValue() : 0.0;
       meterRegistry.gauge(
           "tick_retry_queue_depth",
@@ -156,10 +156,12 @@ public class TickServiceImpl implements TickService {
         tickTimer.record(
             () ->
                 luaTimer.record(
-                    () -> executeScriptWithRetry(commitScript, List.of(pendingKey(sessionId)))));
+                    () ->
+                        executeScriptWithRetry(
+                            commitScript, List.of(pendingKey(tenantId, sessionId)))));
         awaitReplication();
       }
-      Object headObj = redisTemplate.opsForList().index(queueKey(sessionId), 0);
+      Object headObj = redisTemplate.opsForList().index(queueKey(tenantId, sessionId), 0);
       head = headObj != null ? headObj.toString() : null;
       solo = head != null && head.startsWith("S|");
       int max = solo ? 1 : tickMaxCommands;
@@ -168,19 +170,24 @@ public class TickServiceImpl implements TickService {
               luaTimer.record(
                   () ->
                       executeScriptWithRetry(
-                          stageScript, List.of(queueKey(sessionId), pendingKey(sessionId)), max)));
+                          stageScript,
+                          List.of(queueKey(tenantId, sessionId), pendingKey(tenantId, sessionId)),
+                          max)));
       tickTimer.record(
           () ->
               luaTimer.record(
-                  () -> executeScriptWithRetry(commitScript, List.of(pendingKey(sessionId)))));
+                  () ->
+                      executeScriptWithRetry(
+                          commitScript, List.of(pendingKey(tenantId, sessionId)))));
       awaitReplication();
     } catch (Exception ex) {
       logger.error("Tick processing failed, rolling back", ex);
-      conflictTracker.recordConflict("session:" + sessionId);
+      conflictTracker.recordConflict("session:" + tenantId + ":" + sessionId);
       luaTimer.record(
           () ->
               executeScriptWithRetry(
-                  rollbackScript, List.of(pendingKey(sessionId), queueKey(sessionId))));
+                  rollbackScript,
+                  List.of(pendingKey(tenantId, sessionId), queueKey(tenantId, sessionId))));
       requeuedActionCounter.increment();
       awaitReplication();
     } finally {
@@ -197,23 +204,28 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.state.query")
   public String queryState(Long sessionId) {
-    Object state = redisTemplate.opsForValue().get(stateKey(sessionId));
+    Long tenantId = findTenantId(sessionId);
+    Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
     return state != null ? state.toString() : "{}";
   }
 
-  private String queueKey(Long sessionId) {
-    return "tick:queue:" + sessionId;
+  private Long findTenantId(Long sessionId) {
+    return gameInstanceRepository.findById(sessionId).map(i -> i.getTenantId()).orElse(0L);
   }
 
-  private String lockKey(Long sessionId) {
-    return "tick:lock:" + sessionId;
+  private String queueKey(Long tenantId, Long sessionId) {
+    return "tick:queue:" + tenantId + ":" + sessionId;
   }
 
-  private String stateKey(Long sessionId) {
-    return "session:" + sessionId;
+  private String lockKey(Long tenantId, Long sessionId) {
+    return "tick:lock:" + tenantId + ":" + sessionId;
   }
 
-  private String pendingKey(Long sessionId) {
-    return "tick:pending:" + sessionId;
+  private String stateKey(Long tenantId, Long sessionId) {
+    return "session:" + tenantId + ":" + sessionId;
+  }
+
+  private String pendingKey(Long tenantId, Long sessionId) {
+    return "tick:pending:" + tenantId + ":" + sessionId;
   }
 }

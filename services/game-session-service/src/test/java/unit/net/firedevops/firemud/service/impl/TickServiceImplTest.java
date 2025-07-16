@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,6 +36,9 @@ class TickServiceImplTest {
     repository = mock(net.firedevops.firemud.repository.GameInstanceRepository.class);
     service = new TickServiceImpl(redisTemplate, meterRegistry, conflictTracker, repository);
     ((TickServiceImpl) service).init();
+    var instance = new net.firedevops.firemud.entity.GameInstance();
+    instance.setTenantId(1L);
+    when(repository.findById(anyLong())).thenReturn(java.util.Optional.of(instance));
   }
 
   @Test
@@ -60,7 +64,7 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
-    verify(conflictTracker).recordConflict("session:2");
+    verify(conflictTracker).recordConflict("session:1:2");
   }
 
   @Test
