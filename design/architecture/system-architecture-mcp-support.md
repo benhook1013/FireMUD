@@ -10,7 +10,7 @@ This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP
 
 ## Overview
 
-The TCP Proxy Service will negotiate MCP with connecting clients. When enabled, JSON payloads are exchanged inside MCP packages. The Game Design Service exposes commands for creating and updating content. These commands are wrapped in MCP messages so external tools, including AI assistants, can drive world creation.
+The TCP Proxy Service will negotiate MCP with connecting clients. (TODO: Not yet implemented) When enabled, JSON payloads are exchanged inside MCP packages. (TODO: Not yet implemented) The Game Design Service exposes commands for creating and updating content. (TODO: Not yet implemented) These commands are wrapped in MCP messages so external tools, including AI assistants, can drive world creation. (TODO: Not yet implemented)
 
 ## Example Workflow
 
@@ -19,7 +19,9 @@ The TCP Proxy Service will negotiate MCP with connecting clients. When enabled, 
 3. The Game Design Service validates the request and persists the new room.
 4. A confirmation package containing the new room ID is returned.
 
-Future enhancements will include bulk import and transaction support for batch creation.
+This workflow is planned for future development. (TODO: Not yet implemented)
+
+Future enhancements will include bulk import and transaction support for batch creation. (TODO: Not yet implemented)
 
 ## 📚 Related Documentation
 
