@@ -22,9 +22,9 @@ Offers tools for building worlds, items, actions, and events that make up each g
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
   The workflow is implemented using the Saga utilities from `firemud-common`
-  with compensation steps to roll back if downstream copies fail. The
-  implementation currently persists the new version, but the copy steps are
-  not yet implemented. (TODO: Not yet implemented)
+  with compensation steps to roll back if downstream copies fail. The current
+  implementation only persists the new version; copying data to downstream
+  services has not been wired up yet. (TODO: Not yet implemented)
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
@@ -51,7 +51,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 ### Data Model
 
-- `game` table defines the project and reserves an `owner_id` column for the future owner account field. (TODO: Not yet implemented)
+- `game` table defines the project. A planned `owner_id` reference is reserved for associating the game with an account. (TODO: Not yet implemented)
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing. It includes `version_number`, `base_version_id`, `script_patch_version`, `is_script_only` and `notes` columns.
 - `game_templates` table stores predefined configuration templates for new games.
