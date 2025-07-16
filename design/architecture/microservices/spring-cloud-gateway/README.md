@@ -17,9 +17,9 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 - Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
 - Event-driven updates synchronize game state across connected players. (TODO: Not yet implemented)
-- Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md).
-- Gateway restarts are transparent thanks to the layered reconnection model
-  outlined in [Reconnection Strategy](../system-architecture-reconnection.md).
+- Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
+- Gateway restarts are intended to be transparent thanks to the layered reconnection model
+  outlined in [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
 - External TLS is terminated by the load balancer; the gateway forwards traffic to backend services over mutual TLS as described in the [Security Architecture](../system-architecture-security.md).
@@ -30,7 +30,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 - Central API gateway and authentication point.
 - Real-time state synchronization for multiplayer actions. (TODO: Not yet implemented)
-- Reconnection support for dropped clients.
+- Reconnection support for dropped clients. (TODO: Not yet implemented)
 - Routes REST and gRPC traffic to appropriate backend services.
 - Supports dynamic route management via the `GatewayManagementService` gRPC API.
 
@@ -39,9 +39,10 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 The gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
 Route configurations live in `routes-dev.yml` and `routes-prod.yml`, which are
 imported by `application.yml` based on the active profile and reloaded on
-startup. No persistent database is required.
-The default configuration defines routes for the core services so Docker Compose
-environments work out of the box.
+startup. Dynamic routes added via the API are stored only in memory and are
+lost on service restart. (TODO: Not yet implemented)
+No persistent database is required. The default configuration defines routes
+for the core services so Docker Compose environments work out of the box.
 
 ### Filter Chain
 
