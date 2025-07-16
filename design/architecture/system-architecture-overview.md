@@ -14,12 +14,13 @@ This document provides a high-level view of FireMUD’s system architecture, sho
    > 🛑 **Gameplay login is handled by the Game Session Service** — the Gateway simply forwards any admin tokens. JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input**, but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
-- **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency
+- **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md)
 - **Session state is stored in Redis** to keep services stateless and support gameplay recovery
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**
 - **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one
+- **Multi-tenant architecture shares infrastructure across games; per-game resource quotas are planned to prevent one tenant from exhausting cluster capacity.** (TODO: Not yet implemented)
 
 🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
 
