@@ -26,7 +26,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   games remain isolated. The platform may enforce per-game resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../system-architecture-multi-tenancy.md) document.
   Session state for reconnect recovery lives in Redis using keys of the form
-  `session:{tenantId}:{sessionId}` and is purged when the session ends.
+  `session:{tenantId}:{sessionId}` and is purged when the session ends. All tick queues, locks and pending sets share this tenant-prefixed scheme.
   - Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
@@ -55,7 +55,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ### Data Model
 
-- `game_instances` table tracks running sessions. Each row stores a `runtime_version`, optional `script_patch_version`, the owning account and a `status` value (`RUNNING` or `STOPPED`).
+- `game_instances` table tracks running sessions with columns `tenant_id`, `runtime_version`, optional `script_patch_version`, `owner_account_id`, `status` (`RUNNING` or `STOPPED`), and `created_at`.
 - `feature_flag` table stores runtime configuration overrides per tenant.
 - `game_manifest` table lists available runtime versions that can be started.
 - Redis stores volatile queues, timers, and reconnect metadata.
@@ -113,6 +113,8 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 | `GAME_SOLO_TICK_BUDGET_MS` | Execution budget for isolated solo ticks | `500` |
 | `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (host:port) for the Game Logic Service | *(none)* |
+| `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint (host:port) for the World Management Service | `world-management-service:6565` |
+| `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (host:port) for the Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
 
 ## Proto Files
@@ -190,7 +192,7 @@ grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVer
 
 ### Additional Notes
 
-- See the "Cross-Region Sharding and Session Handoff" section in the central [Game Session Service design](../microservices/game-session-service/README.md) for how sessions migrate between clusters.
+- See [Cross-Region Sharding and Session Handoff](#cross-region-sharding-and-session-handoff) for how sessions migrate between clusters.
 - Metrics emitted by this service feed the operator [Analytics Dashboards](../microservices/logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
 - Logs and metrics include a `script_patch_version` label so operators know which
   hotfix revision is currently active.
@@ -205,7 +207,7 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 
 ### Redis Keys
 
-Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. Keys are removed when a session stops.
+Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. Tick queues, locks and pending sets use the same prefix. Keys are removed when a session stops.
 
 - [Logging & Monitoring](../system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)

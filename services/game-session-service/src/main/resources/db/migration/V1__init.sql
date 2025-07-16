@@ -1,7 +1,9 @@
 CREATE TABLE game_instances (
     id BIGSERIAL PRIMARY KEY,
-    version_id BIGINT NOT NULL,
+    tenant_id BIGINT NOT NULL,
+    runtime_version VARCHAR(100) NOT NULL,
+    script_patch_version VARCHAR(100),
     owner_account_id BIGINT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    tenant_id BIGINT NOT NULL
+    status VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
