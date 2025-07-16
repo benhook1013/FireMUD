@@ -8,7 +8,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ### Responsibilities
 
-- Terminate TLS and enforce authentication for admin routes
+- Enforce authentication for admin routes. TLS termination occurs at the load balancer as described in the [Security Architecture](../system-architecture-security.md)
 - Upgrade WebSocket connections and forward them to backend services
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
@@ -16,21 +16,20 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 ## Architecture / Design Notes
 
 - Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
-- Event-driven updates synchronize game state across connected players.
+- Event-driven updates synchronize game state across connected players. (TODO: Not yet implemented)
 - Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md).
 - Gateway restarts are transparent thanks to the layered reconnection model
   outlined in [Reconnection Strategy](../system-architecture-reconnection.md).
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
-- Terminates external TLS and forwards traffic to backend services using mutual
-  TLS, as described in the [Security Architecture](../system-architecture-security.md).
+- External TLS is terminated by the load balancer; the gateway forwards traffic to backend services over mutual TLS as described in the [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
 ## Key Features
 
 - Central API gateway and authentication point.
-- Real-time state synchronization for multiplayer actions.
+- Real-time state synchronization for multiplayer actions. (TODO: Not yet implemented)
 - Reconnection support for dropped clients.
 - Routes REST and gRPC traffic to appropriate backend services.
 - Supports dynamic route management via the `GatewayManagementService` gRPC API.
@@ -165,4 +164,4 @@ grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementServi
 
 ## Future Enhancements
 
-- Horizontal scaling for high concurrency.
+- Horizontal scaling for high concurrency. (TODO: Not yet implemented)
