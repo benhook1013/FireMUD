@@ -89,6 +89,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `./dev-tools/restore-cluster.sh <backup-name>` for full cluster recovery
 - [ ] Verify PostgreSQL access with `psql -h localhost -U firemud -d firemud -c '\dt'`
 - [ ] Verify Redis access with `redis-cli -h localhost -p 6379 ping`
+- [ ] Verify RedisInsight UI at <http://localhost:8001>
 
 ## ⚙️ Miscellaneous Helpers
 
