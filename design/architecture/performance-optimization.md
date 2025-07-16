@@ -17,7 +17,7 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Database writes during gameplay are **deferred and batched**. The Game Session
   Service coordinates commits at the end of each tick so the Entity Management
   Service only persists changes once per tick. This reduces write frequency and
-  lock contention.
+  lock contention. (TODO: Not yet implemented)
 - The Entity Management Service uses optimistic locking with `@Version` columns
   on all entity tables to prevent lost updates.
 
@@ -57,7 +57,7 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Each tick enforces a **soft execution budget** (~100ms). Slow actions are
   deferred to follow-up ticks so long-running commands never block the game
   loop. Conflict metadata collected during retries highlights hotspots for
-  operators.
+  operators. (TODO: Not yet implemented)
 - Lua staging scripts move only a limited number of commands or events per tick
   (configurable via `game.tick-max-commands` and `automation.tick-max-events`).
   This prevents runaway loops and keeps work evenly distributed across ticks.
