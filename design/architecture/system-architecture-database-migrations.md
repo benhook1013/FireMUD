@@ -34,10 +34,10 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - You can also run `./gradlew :service:flywayInfo`, `flywayClean`, or `flywayRepair` to troubleshoot local databases. **Use `flywayClean` with caution** because it drops tables.
 - Run `./gradlew :service:flywayValidate` to verify migrations before committing.
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.
-- During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service.
+- During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service. Full automation of this step is still being developed (TODO: Not yet implemented).
 - On startup the container executes Flyway against its database schema before the Spring application fully starts.
 - The `dev-tools/generate-erd.sh` script uses Flyway to clean and migrate temporary databases when generating ERD diagrams.
-- Diagrams are written to `design/erd-diagrams/` and uploaded as artifacts in CI.
+- Diagrams are written to `design/erd/` and uploaded as artifacts in CI.
 
 Migrations are therefore applied consistently in every environment without manual steps.
 

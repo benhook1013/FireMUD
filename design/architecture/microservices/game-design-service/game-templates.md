@@ -7,15 +7,15 @@ creators can quickly spin up new projects without starting from scratch.
 ## Template Contents
 
 - **World Layout** – predefined regions and rooms loaded from the World
-  Management Service.
-- **Starter Items and NPCs** – basic entity definitions for a new game.
+  Management Service. (TODO: Not yet implemented)
+- **Starter Items and NPCs** – basic entity definitions for a new game. (TODO: Not yet implemented)
 - **Default Rulesets** – gameplay rules and runtime flags stored with the
-  template.
-- **Admin Accounts** – initial administrators configured at template creation.
+  template. (TODO: Not yet implemented)
+- **Admin Accounts** – initial administrators configured at template creation. (TODO: Not yet implemented)
 
-Templates are versioned like any other design asset. Publishing a version copies
+Templates are versioned like any other design asset. Publishing a version is intended to copy
 these templates to the domain services using the `version_id` workflow described
-in [Versioning & Runtime Configuration](../../../design/architecture/system-architecture-versioning-runtime.md).
+in [Versioning & Runtime Configuration](../../../design/architecture/system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
 
 ## Creating Templates
 
@@ -29,6 +29,8 @@ curl -X POST http://localhost:8080/templates \
 
 The service validates the payload and stores it in the `game_templates` table.
 Templates can then be listed per `tenantId` to help bootstrap new games.
+
+Update or delete operations for templates are not yet available. (TODO: Not yet implemented)
 
 ## 📚 Related Documentation
 

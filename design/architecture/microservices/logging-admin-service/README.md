@@ -28,23 +28,23 @@ All admin APIs are secured via role-based access control integrated with the Acc
 ## Key Features
 
 - Central log collection and search.
-- [Analytics dashboards](./analytics-dashboards.md) for operators.
+- [Analytics dashboards](./analytics-dashboards.md) for operators. (TODO: Not yet implemented)
 - Tools for banning or restricting accounts.
-- [Role-based admin UI](./admin-ui.md) for moderators.
+- [Role-based admin UI](./admin-ui.md) for moderators. (TODO: Not yet implemented)
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../system-architecture-transactions.md).
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
-- Audit trail for account actions and world changes.
-- Transaction logs for purchases and subscription events.
+- Audit trail for account actions and world changes. (TODO: Not yet implemented)
+- Transaction logs for purchases and subscription events. (TODO: Not yet implemented)
 - Captures failed login attempts and suspicious activity reported by the Game
-  Session Service for operator review.
+  Session Service for operator review. (TODO: Not yet implemented)
 - Works with Saga workflows to record state changes across services. See
   [Transaction Strategies](../system-architecture-transactions.md).
 
 ### Data Model
 
-- Log events are stored exclusively in Elasticsearch indexes for search.
-- `moderation_action` table records bans and warnings with timestamps and includes a `tenant_id` column.
+- Log events are persisted in the `log_events` table and mirrored in Elasticsearch indexes for search.
+- `moderation_actions` table records bans and warnings with timestamps and includes a `tenant_id` column.
 - `player_reports` table stores abuse and bug reports with a `tenant_id` column.
 - `feature_flag` table mirrors active runtime settings for auditing and stores the `tenant_id` of the owning game.
 
@@ -162,9 +162,9 @@ Saga usage across FireMUD.
 
 ## Future Enhancements
 
-- [Role-based admin UI](./admin-ui.md).
+- [Role-based admin UI](./admin-ui.md). (TODO: Not yet implemented)
 - Automated alerting for suspicious activity is configured via Prometheus
   Alertmanager (see `k8s/monitoring/alertmanager.yaml`).
-- Real-time analytics on game performance.
-- Optional 2FA support for administrator accounts, pending
-  [Security Architecture](../system-architecture-security.md) enhancements.
+- Real-time analytics on game performance. (TODO: Not yet implemented)
+- Optional 2FA support for administrator accounts via TOTP codes. See
+  [Security Architecture](../system-architecture-security.md).

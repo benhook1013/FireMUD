@@ -34,7 +34,7 @@ flowchart TD
         FluentBit[Fluent Bit]
         Prom[Prometheus]
         Alertmgr[Alertmanager]
-        OTel[OTel Collector]
+        OTel[OpenTelemetry Collector]
         Kibana[Kibana]
         Grafana[Grafana]
         Jaeger[Jaeger]
@@ -75,6 +75,8 @@ flowchart TD
 The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md).
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
+
+Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design) for details.
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, and send structured logs to Elasticsearch.
 

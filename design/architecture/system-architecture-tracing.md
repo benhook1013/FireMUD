@@ -18,7 +18,7 @@ All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK
 - The collector forwards spans to Jaeger over gRPC port `14250`.
 - Metrics about the collector itself are scraped by Prometheus at `/metrics` on
   port `8888`. Expose this port in the service definition if using the sample
-  manifest.
+  manifest. (TODO: Not yet implemented)
 
 Every service relies on a shared `TracingConfig` in the `common-library`. This configuration sets the `service.name` resource from `spring.application.name`, uses a `BatchSpanProcessor`, and sends spans to the collector. `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` are registered in each `GrpcServerConfig` so requests are instrumented with logs, metrics, and spans consistently.
 `TracingInterceptor` opens a span for each gRPC method and marks it successful or cancelled when the call completes.
@@ -29,7 +29,7 @@ Traces are stored and visualized with **Jaeger**. A minimal Jaeger deployment is
 
 - Jaeger receives OTLP data from the collector.
 - The web UI is exposed on port `16686` within the cluster.
-- Retention settings are environment specific; development keeps a few days of data, while production retains up to 30 days.
+- Retention settings are environment specific; development keeps a few days of data, while production retains up to 30 days. (TODO: Not yet implemented)
 - Access the UI locally with:
 
   ```bash

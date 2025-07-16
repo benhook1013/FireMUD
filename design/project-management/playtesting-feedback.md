@@ -1,10 +1,13 @@
 # 🔄 Playtesting & Feedback Plan
 
-Early adopters will access a staging environment to experiment with new gameplay features.
+Early adopters can try new features in a short-lived staging environment created
+by the [`preview.yml`](../../.github/workflows/preview.yml) workflow. This
+environment mirrors production but uses smaller node sizes.
 
-1. **Invite testers** from the community via Discord and email.
-2. **Collect feedback** using a shared form linked in the web client.
-3. **Review metrics** in Grafana and Kibana to detect crashes or errors.
-4. **Iterate on the UI** based on usability issues reported by testers.
+1. **Invite testers** from the community via Discord and email. (TODO: Not yet implemented)
+2. **Collect feedback** using a shared form linked in the web client. (TODO: Not yet implemented)
+3. **Review metrics** in Grafana and Kibana to detect crashes or errors. (TODO: Not yet implemented)
+4. **Iterate on the UI** based on usability issues reported by testers. (TODO: Not yet implemented)
 
-The staging cluster resets nightly so broken worlds or accounts do not persist. Feedback informs our UI/UX roadmap and upcoming releases.
+The staging cluster resets nightly so broken worlds or accounts do not persist. (TODO: Not yet implemented)
+Feedback informs our UI/UX roadmap and upcoming releases.

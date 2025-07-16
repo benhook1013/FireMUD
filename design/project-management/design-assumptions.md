@@ -8,7 +8,7 @@ This document outlines high-level design and technology assumptions for the Fire
 
 - **Language**: Java 21+
 - **Framework**: Spring Boot 3.x
-- **Architecture**: Microservices
+- **Architecture**: Microservices (see [System Architecture Overview](../architecture/system-architecture-overview.md))
 - **Boilerplate Reduction**: Lombok
 - **DTO Mapping**: MapStruct
 - **Build Integration**: Each service declares Lombok and MapStruct dependencies with annotation processors enabled.
@@ -31,9 +31,9 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Database Access**: Spring Data JPA
 - **Caching**: Redis for transient session and gameplay state
 - **Redis Consistency**: Lua scripts enforce atomic updates with `WAIT` for replica acknowledgment
-- **Game Session Service** orchestrates ticks and runtime flags using Redis
+- **Game Session Service** orchestrates ticks and runtime flags using Redis (see [Tick System](../architecture/system-architecture-ticks.md))
 - **Single Session** per character with layered reconnection (Proxy → Gateway → Session)
-- **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service
+- **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service (see [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md))
 
 ### Operations & Support
 
@@ -52,7 +52,7 @@ This document outlines high-level design and technology assumptions for the Fire
 ## Platform Interfaces
 
 - **Web-based MUD Client**: Browser-based interface for players.
-- **Web-based MUD Game Editor**: Browser-based editor for designing game content.
+- **Web-based MUD Game Editor**: Browser-based editor for designing game content. (TODO: Not yet implemented)
 
 ## Testing
 

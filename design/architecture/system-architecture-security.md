@@ -21,8 +21,8 @@ seamlessly with cert-manager for automatic rotation.
 - cert-manager issues both JWT signing keys and mTLS certificates, backed by an internal CA.
 - All services poll their mounted secrets for updates and support **hot reload** via the shared `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` utilities. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
-- During rotation, services cache both current and previous credentials to allow for **seamless transition**.
-- The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually, though automated JWKS generation is planned.
+- During rotation, services reload credentials when files change. Caching of old credentials to allow for seamless transitions is planned. (TODO: Not yet implemented)
+- The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually. Automated JWKS generation is planned. (TODO: Not yet implemented)
 
 ---
 
@@ -51,19 +51,19 @@ seamlessly with cert-manager for automatic rotation.
 - Internal microservices are not directly exposed externally.
 - Traffic flow is controlled via **NetworkPolicies**, which whitelist internal service access.
    A baseline policy restricts **ingress** for all microservice pods (except the Gateway and TCP proxy) so they only accept traffic from other pods in the namespace. The manifests are provided under [`k8s/network-policies/`](../../k8s/network-policies).
-- **Zero-trust** principles are **not currently required** or implemented beyond mTLS and JWT-based validation, but may be reconsidered in future hardening efforts.
+- **Zero-trust** principles are **not currently required** or implemented beyond mTLS and JWT-based validation, but may be reconsidered in future hardening efforts. (TODO: Not yet implemented)
 
 ---
 
 ## 🔐 Brute-Force Defense and Abuse Handling
 
-- The **Game Session Service** is planned to monitor login attempts **per IP** (not yet implemented):
-  - Repeated failures result in **connection closure** and **temporary IP blacklisting**.
-  - Global login spikes introduce **artificial delay** to slow brute-force attempts.
-  - Suspicious login activity triggers **notification emails** to the account holder.
+- The **Game Session Service** is planned to monitor login attempts **per IP**. (TODO: Not yet implemented)
+  - Repeated failures result in **connection closure** and **temporary IP blacklisting**. (TODO: Not yet implemented)
+  - Global login spikes introduce **artificial delay** to slow brute-force attempts. (TODO: Not yet implemented)
+  - Suspicious login activity triggers **notification emails** to the account holder. (TODO: Not yet implemented)
 
-- Abuse detection is planned to expand to include **heuristics** around spam commands, hotspot behaviors, or abnormal tick patterns.
-  - These heuristics are **future additions**, intended to detect unusual command frequencies, teleportation loops, or flooding patterns.
+- Abuse detection is planned to expand to include **heuristics** around spam commands, hotspot behaviors, or abnormal tick patterns. (TODO: Not yet implemented)
+  - These heuristics are **future additions**, intended to detect unusual command frequencies, teleportation loops, or flooding patterns. (TODO: Not yet implemented)
 
 ---
 
@@ -72,7 +72,7 @@ seamlessly with cert-manager for automatic rotation.
 - All failed logins, suspicious activity, and abuse attempts are captured in:
   - **Elasticsearch-backed logs**
   - The **Logging & Admin Service dashboard** ([design](./microservices/logging-admin-service/README.md))
-- Admin actions (e.g., bans, role changes) are tracked for auditability.
+- Admin actions (e.g., bans, role changes) are tracked for auditability. (TODO: Not yet implemented)
 
 ---
 

@@ -14,7 +14,7 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
    ```
 
 3. Verify pods are running with `kubectl get pods -n firemud`.
-4. Monitor rollout progress in the CI job summary and Grafana dashboards.
+4. Monitor rollout progress in the CI job summary and Grafana dashboards (TODO: Not yet implemented).
 
 For local development, use `./gradlew devUp` to start Docker Compose.
 
@@ -26,8 +26,8 @@ For local development, use `./gradlew devUp` to start Docker Compose.
    kubectl scale deploy account-service --replicas=3 -n firemud
    ```
 
-2. Update Horizontal Pod Autoscaler settings if enabled.
-3. Review Prometheus metrics to ensure CPU and memory usage remain healthy.
+2. Update Horizontal Pod Autoscaler settings if enabled (TODO: Not yet implemented).
+3. Review Prometheus metrics to ensure CPU and memory usage remain healthy (TODO: Not yet implemented).
 4. For database or Redis clusters, scale StatefulSets according to their respective runbooks.
 
 ## 🔄 Recovery
