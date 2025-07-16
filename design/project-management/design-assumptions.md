@@ -21,8 +21,8 @@ This document outlines high-level design and technology assumptions for the Fire
   - **Local Development**: Docker internal DNS-based discovery
   - **Production**: Kubernetes DNS-based discovery
 - **API Gateway**: Spring Cloud Gateway
-- **TCP Proxy Service** bridges Telnet clients to the Gateway
-- **Inter-Service Communication**: gRPC secured with mTLS
+- **TCP Proxy Service** bridges Telnet clients to the Gateway via WebSocket
+- **Inter-Service Communication**: gRPC secured with mTLS and instrumented with logging, metrics, and tracing interceptors
 - **Real-Time Networking**: WebSocket/TCP
 
 ### Data & Session Management
@@ -37,9 +37,9 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ### Operations & Support
 
-- **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
+- **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager with Micrometer instrumentation (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
-- **Certificate Management**: TLS and mTLS certificates issued by **cert-manager** and stored as Kubernetes Secrets
+- **Certificate Management**: cert-manager issues TLS and mTLS certificates stored as Kubernetes Secrets with hot reload via shared watchers
 - **Cluster Backups**: **Velero** backs up Kubernetes manifests only. PostgreSQL volumes are dumped via a CronJob. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the backup schedule.
 - **Payment Gateway**: Stripe (with custom subscription integration)
 
