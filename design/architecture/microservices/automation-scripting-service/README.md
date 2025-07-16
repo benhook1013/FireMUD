@@ -78,8 +78,6 @@ random when the Game Session Service requests a PvE interaction.
 
 ### gRPC APIs
 
-- `TriggerEvent` – informs the service of an in-game event so matching scripts
-  can run.
 - `UpdateScript` – uploads or replaces a script definition for later use.
 - `GetScriptStatus` – queries whether a script is queued or running for a given
   entity.

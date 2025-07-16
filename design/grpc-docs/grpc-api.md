@@ -1,219 +1,236 @@
 # Protocol Documentation
 
+This reference is generated from the protobuf files under `protos/` using
+[protoc-gen-doc](https://github.com/pseudomuto/protoc-gen-doc). After editing any
+`.proto` definitions, run:
+
+```bash
+./gradlew generateProto
+./dev-tools/generate-grpc-docs.sh
+```
+
+to regenerate these docs.
+
 <a name="top"></a>
 
 ## Table of Contents
 
 - [account/v1/account_service.proto](#account_v1_account_service-proto)
-  - [AuthenticateRequest](#account-v1-AuthenticateRequest)
-  - [AuthenticateResponse](#account-v1-AuthenticateResponse)
-  - [CompletePasswordResetRequest](#account-v1-CompletePasswordResetRequest)
-  - [CompletePasswordResetResponse](#account-v1-CompletePasswordResetResponse)
-  - [CreateAccountRequest](#account-v1-CreateAccountRequest)
-  - [CreateAccountResponse](#account-v1-CreateAccountResponse)
-  - [DeleteAccountRequest](#account-v1-DeleteAccountRequest)
-  - [DeleteAccountResponse](#account-v1-DeleteAccountResponse)
-  - [ExportAccountRequest](#account-v1-ExportAccountRequest)
-  - [ExportAccountResponse](#account-v1-ExportAccountResponse)
-  - [GetProfileRequest](#account-v1-GetProfileRequest)
-  - [GetProfileResponse](#account-v1-GetProfileResponse)
-  - [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest)
-  - [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse)
-  - [PingRequest](#account-v1-PingRequest)
-  - [PingResponse](#account-v1-PingResponse)
-  - [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest)
-  - [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse)
-  - [RequestPasswordResetRequest](#account-v1-RequestPasswordResetRequest)
-  - [RequestPasswordResetResponse](#account-v1-RequestPasswordResetResponse)
-  - [UpdateProfileRequest](#account-v1-UpdateProfileRequest)
-  - [UpdateProfileResponse](#account-v1-UpdateProfileResponse)
-  - [VerifyEmailRequest](#account-v1-VerifyEmailRequest)
-  - [VerifyEmailResponse](#account-v1-VerifyEmailResponse)
+    - [AuthenticateRequest](#account-v1-AuthenticateRequest)
+    - [AuthenticateResponse](#account-v1-AuthenticateResponse)
+    - [CompletePasswordResetRequest](#account-v1-CompletePasswordResetRequest)
+    - [CompletePasswordResetResponse](#account-v1-CompletePasswordResetResponse)
+    - [CreateAccountRequest](#account-v1-CreateAccountRequest)
+    - [CreateAccountResponse](#account-v1-CreateAccountResponse)
+    - [DeleteAccountRequest](#account-v1-DeleteAccountRequest)
+    - [DeleteAccountResponse](#account-v1-DeleteAccountResponse)
+    - [ExportAccountRequest](#account-v1-ExportAccountRequest)
+    - [ExportAccountResponse](#account-v1-ExportAccountResponse)
+    - [GetProfileRequest](#account-v1-GetProfileRequest)
+    - [GetProfileResponse](#account-v1-GetProfileResponse)
+    - [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest)
+    - [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse)
+    - [PingRequest](#account-v1-PingRequest)
+    - [PingResponse](#account-v1-PingResponse)
+    - [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest)
+    - [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse)
+    - [RequestPasswordResetRequest](#account-v1-RequestPasswordResetRequest)
+    - [RequestPasswordResetResponse](#account-v1-RequestPasswordResetResponse)
+    - [UpdateProfileRequest](#account-v1-UpdateProfileRequest)
+    - [UpdateProfileResponse](#account-v1-UpdateProfileResponse)
+    - [VerifyEmailRequest](#account-v1-VerifyEmailRequest)
+    - [VerifyEmailResponse](#account-v1-VerifyEmailResponse)
   
-  - [AccountService](#account-v1-AccountService)
+    - [AccountService](#account-v1-AccountService)
   
 - [account/v1/notification_service.proto](#account_v1_notification_service-proto)
-  - [SendNotificationRequest](#account-v1-SendNotificationRequest)
-  - [SendNotificationResponse](#account-v1-SendNotificationResponse)
+    - [SendNotificationRequest](#account-v1-SendNotificationRequest)
+    - [SendNotificationResponse](#account-v1-SendNotificationResponse)
   
-  - [NotificationService](#account-v1-NotificationService)
+    - [NotificationService](#account-v1-NotificationService)
   
 - [account/v1/payment_service.proto](#account_v1_payment_service-proto)
-  - [CreateDonationRequest](#account-v1-CreateDonationRequest)
-  - [CreateDonationResponse](#account-v1-CreateDonationResponse)
-  - [CreatePaymentIntentRequest](#account-v1-CreatePaymentIntentRequest)
-  - [CreatePaymentIntentResponse](#account-v1-CreatePaymentIntentResponse)
-  - [CreateSubscriptionRequest](#account-v1-CreateSubscriptionRequest)
-  - [CreateSubscriptionResponse](#account-v1-CreateSubscriptionResponse)
-  - [RefundPaymentRequest](#account-v1-RefundPaymentRequest)
-  - [RefundPaymentResponse](#account-v1-RefundPaymentResponse)
+    - [CreateDonationRequest](#account-v1-CreateDonationRequest)
+    - [CreateDonationResponse](#account-v1-CreateDonationResponse)
+    - [CreatePaymentIntentRequest](#account-v1-CreatePaymentIntentRequest)
+    - [CreatePaymentIntentResponse](#account-v1-CreatePaymentIntentResponse)
+    - [CreateSubscriptionRequest](#account-v1-CreateSubscriptionRequest)
+    - [CreateSubscriptionResponse](#account-v1-CreateSubscriptionResponse)
+    - [RefundPaymentRequest](#account-v1-RefundPaymentRequest)
+    - [RefundPaymentResponse](#account-v1-RefundPaymentResponse)
   
-  - [PaymentService](#account-v1-PaymentService)
+    - [PaymentService](#account-v1-PaymentService)
   
 - [account/v1/virtual_currency_service.proto](#account_v1_virtual_currency_service-proto)
-  - [AddCurrencyRequest](#account-v1-AddCurrencyRequest)
-  - [AddCurrencyResponse](#account-v1-AddCurrencyResponse)
-  - [GetBalanceRequest](#account-v1-GetBalanceRequest)
-  - [GetBalanceResponse](#account-v1-GetBalanceResponse)
-  - [SpendCurrencyRequest](#account-v1-SpendCurrencyRequest)
-  - [SpendCurrencyResponse](#account-v1-SpendCurrencyResponse)
+    - [AddCurrencyRequest](#account-v1-AddCurrencyRequest)
+    - [AddCurrencyResponse](#account-v1-AddCurrencyResponse)
+    - [GetBalanceRequest](#account-v1-GetBalanceRequest)
+    - [GetBalanceResponse](#account-v1-GetBalanceResponse)
+    - [SpendCurrencyRequest](#account-v1-SpendCurrencyRequest)
+    - [SpendCurrencyResponse](#account-v1-SpendCurrencyResponse)
   
-  - [VirtualCurrencyService](#account-v1-VirtualCurrencyService)
+    - [VirtualCurrencyService](#account-v1-VirtualCurrencyService)
   
 - [automation-scripting/v1/automation_scripting_service.proto](#automation-scripting_v1_automation_scripting_service-proto)
-  - [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest)
-  - [AddFormationMemberResponse](#automation_scripting-v1-AddFormationMemberResponse)
-  - [CreateFormationRequest](#automation_scripting-v1-CreateFormationRequest)
-  - [CreateFormationResponse](#automation_scripting-v1-CreateFormationResponse)
-  - [GetScriptStatusRequest](#automation_scripting-v1-GetScriptStatusRequest)
-  - [GetScriptStatusResponse](#automation_scripting-v1-GetScriptStatusResponse)
-  - [ListFormationMembersRequest](#automation_scripting-v1-ListFormationMembersRequest)
-  - [ListFormationMembersResponse](#automation_scripting-v1-ListFormationMembersResponse)
-  - [NotifyScriptVersionUpdateRequest](#automation_scripting-v1-NotifyScriptVersionUpdateRequest)
-  - [NotifyScriptVersionUpdateResponse](#automation_scripting-v1-NotifyScriptVersionUpdateResponse)
-  - [PingRequest](#automation_scripting-v1-PingRequest)
-  - [PingResponse](#automation_scripting-v1-PingResponse)
-  - [UpdateScriptRequest](#automation_scripting-v1-UpdateScriptRequest)
-  - [UpdateScriptResponse](#automation_scripting-v1-UpdateScriptResponse)
+    - [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest)
+    - [AddFormationMemberResponse](#automation_scripting-v1-AddFormationMemberResponse)
+    - [CreateFormationRequest](#automation_scripting-v1-CreateFormationRequest)
+    - [CreateFormationResponse](#automation_scripting-v1-CreateFormationResponse)
+    - [GetScriptStatusRequest](#automation_scripting-v1-GetScriptStatusRequest)
+    - [GetScriptStatusResponse](#automation_scripting-v1-GetScriptStatusResponse)
+    - [ListFormationMembersRequest](#automation_scripting-v1-ListFormationMembersRequest)
+    - [ListFormationMembersResponse](#automation_scripting-v1-ListFormationMembersResponse)
+    - [NotifyScriptVersionUpdateRequest](#automation_scripting-v1-NotifyScriptVersionUpdateRequest)
+    - [NotifyScriptVersionUpdateResponse](#automation_scripting-v1-NotifyScriptVersionUpdateResponse)
+    - [PingRequest](#automation_scripting-v1-PingRequest)
+    - [PingResponse](#automation_scripting-v1-PingResponse)
+    - [UpdateScriptRequest](#automation_scripting-v1-UpdateScriptRequest)
+    - [UpdateScriptResponse](#automation_scripting-v1-UpdateScriptResponse)
   
-  - [AutomationScriptingService](#automation_scripting-v1-AutomationScriptingService)
+    - [AutomationScriptingService](#automation_scripting-v1-AutomationScriptingService)
   
 - [entity-management/v1/entity_management_service.proto](#entity-management_v1_entity_management_service-proto)
-  - [Character](#entity_management-v1-Character)
-  - [CreateCharacterRequest](#entity_management-v1-CreateCharacterRequest)
-  - [CreateCharacterResponse](#entity_management-v1-CreateCharacterResponse)
-  - [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest)
-  - [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse)
-  - [PingRequest](#entity_management-v1-PingRequest)
-  - [PingResponse](#entity_management-v1-PingResponse)
-  - [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest)
-  - [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse)
-  - [UpdateEntityRequest](#entity_management-v1-UpdateEntityRequest)
-  - [UpdateEntityResponse](#entity_management-v1-UpdateEntityResponse)
+    - [Character](#entity_management-v1-Character)
+    - [CreateCharacterRequest](#entity_management-v1-CreateCharacterRequest)
+    - [CreateCharacterResponse](#entity_management-v1-CreateCharacterResponse)
+    - [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest)
+    - [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse)
+    - [PingRequest](#entity_management-v1-PingRequest)
+    - [PingResponse](#entity_management-v1-PingResponse)
+    - [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest)
+    - [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse)
+    - [UpdateEntityRequest](#entity_management-v1-UpdateEntityRequest)
+    - [UpdateEntityResponse](#entity_management-v1-UpdateEntityResponse)
   
-  - [EntityManagementService](#entity_management-v1-EntityManagementService)
+    - [EntityManagementService](#entity_management-v1-EntityManagementService)
   
 - [game-design/v1/game_design_service.proto](#game-design_v1_game_design_service-proto)
-  - [ListVersionsRequest](#gamedesign-v1-ListVersionsRequest)
-  - [ListVersionsResponse](#gamedesign-v1-ListVersionsResponse)
-  - [PingRequest](#gamedesign-v1-PingRequest)
-  - [PingResponse](#gamedesign-v1-PingResponse)
-  - [PublishScriptPatchVersionRequest](#gamedesign-v1-PublishScriptPatchVersionRequest)
-  - [PublishScriptPatchVersionResponse](#gamedesign-v1-PublishScriptPatchVersionResponse)
-  - [PublishVersionRequest](#gamedesign-v1-PublishVersionRequest)
-  - [PublishVersionResponse](#gamedesign-v1-PublishVersionResponse)
-  - [SaveRevisionRequest](#gamedesign-v1-SaveRevisionRequest)
-  - [SaveRevisionResponse](#gamedesign-v1-SaveRevisionResponse)
-  - [Version](#gamedesign-v1-Version)
+    - [ListVersionsRequest](#gamedesign-v1-ListVersionsRequest)
+    - [ListVersionsResponse](#gamedesign-v1-ListVersionsResponse)
+    - [PingRequest](#gamedesign-v1-PingRequest)
+    - [PingResponse](#gamedesign-v1-PingResponse)
+    - [PublishScriptPatchVersionRequest](#gamedesign-v1-PublishScriptPatchVersionRequest)
+    - [PublishScriptPatchVersionResponse](#gamedesign-v1-PublishScriptPatchVersionResponse)
+    - [PublishVersionRequest](#gamedesign-v1-PublishVersionRequest)
+    - [PublishVersionResponse](#gamedesign-v1-PublishVersionResponse)
+    - [SaveRevisionRequest](#gamedesign-v1-SaveRevisionRequest)
+    - [SaveRevisionResponse](#gamedesign-v1-SaveRevisionResponse)
+    - [Version](#gamedesign-v1-Version)
   
-  - [GameDesignService](#gamedesign-v1-GameDesignService)
+    - [GameDesignService](#gamedesign-v1-GameDesignService)
   
 - [game-logic/v1/game_logic_service.proto](#game-logic_v1_game_logic_service-proto)
-  - [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest)
-  - [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse)
-  - [PingRequest](#game_logic-v1-PingRequest)
-  - [PingResponse](#game_logic-v1-PingResponse)
+    - [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest)
+    - [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse)
+    - [PingRequest](#game_logic-v1-PingRequest)
+    - [PingResponse](#game_logic-v1-PingResponse)
   
-  - [GameLogicService](#game_logic-v1-GameLogicService)
+    - [GameLogicService](#game_logic-v1-GameLogicService)
   
 - [game-session/v1/game_session_service.proto](#game-session_v1_game_session_service-proto)
-  - [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest)
-  - [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse)
-  - [PingRequest](#game_session-v1-PingRequest)
-  - [PingResponse](#game_session-v1-PingResponse)
-  - [QueryStateRequest](#game_session-v1-QueryStateRequest)
-  - [QueryStateResponse](#game_session-v1-QueryStateResponse)
-  - [RestartSessionRequest](#game_session-v1-RestartSessionRequest)
-  - [RestartSessionResponse](#game_session-v1-RestartSessionResponse)
-  - [StartSessionRequest](#game_session-v1-StartSessionRequest)
-  - [StartSessionResponse](#game_session-v1-StartSessionResponse)
-  - [StopSessionRequest](#game_session-v1-StopSessionRequest)
-  - [StopSessionResponse](#game_session-v1-StopSessionResponse)
-  - [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest)
-  - [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse)
+    - [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest)
+    - [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse)
+    - [PingRequest](#game_session-v1-PingRequest)
+    - [PingResponse](#game_session-v1-PingResponse)
+    - [QueryStateRequest](#game_session-v1-QueryStateRequest)
+    - [QueryStateResponse](#game_session-v1-QueryStateResponse)
+    - [RestartSessionRequest](#game_session-v1-RestartSessionRequest)
+    - [RestartSessionResponse](#game_session-v1-RestartSessionResponse)
+    - [StartSessionRequest](#game_session-v1-StartSessionRequest)
+    - [StartSessionResponse](#game_session-v1-StartSessionResponse)
+    - [StopSessionRequest](#game_session-v1-StopSessionRequest)
+    - [StopSessionResponse](#game_session-v1-StopSessionResponse)
+    - [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest)
+    - [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse)
   
-  - [GameSessionService](#game_session-v1-GameSessionService)
+    - [GameSessionService](#game_session-v1-GameSessionService)
   
 - [logging-admin/v1/logging_admin_service.proto](#logging-admin_v1_logging_admin_service-proto)
-  - [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest)
-  - [ApplyModerationActionResponse](#logging_admin-v1-ApplyModerationActionResponse)
-  - [PingRequest](#logging_admin-v1-PingRequest)
-  - [PingResponse](#logging_admin-v1-PingResponse)
-  - [QueryLogsRequest](#logging_admin-v1-QueryLogsRequest)
-  - [QueryLogsResponse](#logging_admin-v1-QueryLogsResponse)
-  - [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest)
-  - [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse)
+    - [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest)
+    - [ApplyModerationActionResponse](#logging_admin-v1-ApplyModerationActionResponse)
+    - [PingRequest](#logging_admin-v1-PingRequest)
+    - [PingResponse](#logging_admin-v1-PingResponse)
+    - [QueryLogsRequest](#logging_admin-v1-QueryLogsRequest)
+    - [QueryLogsResponse](#logging_admin-v1-QueryLogsResponse)
+    - [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest)
+    - [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse)
   
-  - [LoggingAdminService](#logging_admin-v1-LoggingAdminService)
+    - [LoggingAdminService](#logging_admin-v1-LoggingAdminService)
   
 - [logging-admin/v1/report_service.proto](#logging-admin_v1_report_service-proto)
-  - [CreateReportRequest](#logging_admin-v1-CreateReportRequest)
-  - [CreateReportResponse](#logging_admin-v1-CreateReportResponse)
+    - [CreateReportRequest](#logging_admin-v1-CreateReportRequest)
+    - [CreateReportResponse](#logging_admin-v1-CreateReportResponse)
   
-  - [ReportService](#logging_admin-v1-ReportService)
+    - [ReportService](#logging_admin-v1-ReportService)
   
 - [shared/v1/errors.proto](#shared_v1_errors-proto)
-  - [ErrorDetail](#shared-v1-ErrorDetail)
+    - [ErrorDetail](#shared-v1-ErrorDetail)
   
 - [shared/v1/paging.proto](#shared_v1_paging-proto)
-  - [PagingRequest](#shared-v1-PagingRequest)
+    - [PagingRequest](#shared-v1-PagingRequest)
   
 - [social-groups/v1/social_groups_service.proto](#social-groups_v1_social_groups_service-proto)
-  - [AddFriendRequest](#social_groups-v1-AddFriendRequest)
-  - [AddFriendResponse](#social_groups-v1-AddFriendResponse)
-  - [CreateGuildRequest](#social_groups-v1-CreateGuildRequest)
-  - [CreateGuildResponse](#social_groups-v1-CreateGuildResponse)
-  - [PingRequest](#social_groups-v1-PingRequest)
-  - [PingResponse](#social_groups-v1-PingResponse)
-  - [SendMailRequest](#social_groups-v1-SendMailRequest)
-  - [SendMailResponse](#social_groups-v1-SendMailResponse)
-  - [SendMessageRequest](#social_groups-v1-SendMessageRequest)
-  - [SendMessageResponse](#social_groups-v1-SendMessageResponse)
+    - [AddFriendRequest](#social_groups-v1-AddFriendRequest)
+    - [AddFriendResponse](#social_groups-v1-AddFriendResponse)
+    - [CreateGuildRequest](#social_groups-v1-CreateGuildRequest)
+    - [CreateGuildResponse](#social_groups-v1-CreateGuildResponse)
+    - [PingRequest](#social_groups-v1-PingRequest)
+    - [PingResponse](#social_groups-v1-PingResponse)
+    - [SendMailRequest](#social_groups-v1-SendMailRequest)
+    - [SendMailResponse](#social_groups-v1-SendMailResponse)
+    - [SendMessageRequest](#social_groups-v1-SendMessageRequest)
+    - [SendMessageResponse](#social_groups-v1-SendMessageResponse)
   
-  - [ChatType](#social_groups-v1-ChatType)
+    - [ChatType](#social_groups-v1-ChatType)
   
-  - [SocialGroupsService](#social_groups-v1-SocialGroupsService)
+    - [SocialGroupsService](#social_groups-v1-SocialGroupsService)
   
 - [spring-cloud-gateway/v1/gateway_management_service.proto](#spring-cloud-gateway_v1_gateway_management_service-proto)
-  - [PingRequest](#gateway-v1-PingRequest)
-  - [PingResponse](#gateway-v1-PingResponse)
-  - [RemoveRouteRequest](#gateway-v1-RemoveRouteRequest)
-  - [RemoveRouteResponse](#gateway-v1-RemoveRouteResponse)
-  - [UpsertRouteRequest](#gateway-v1-UpsertRouteRequest)
-  - [UpsertRouteResponse](#gateway-v1-UpsertRouteResponse)
+    - [PingRequest](#gateway-v1-PingRequest)
+    - [PingResponse](#gateway-v1-PingResponse)
+    - [RemoveRouteRequest](#gateway-v1-RemoveRouteRequest)
+    - [RemoveRouteResponse](#gateway-v1-RemoveRouteResponse)
+    - [UpsertRouteRequest](#gateway-v1-UpsertRouteRequest)
+    - [UpsertRouteResponse](#gateway-v1-UpsertRouteResponse)
   
-  - [GatewayManagementService](#gateway-v1-GatewayManagementService)
+    - [GatewayManagementService](#gateway-v1-GatewayManagementService)
   
 - [tcp-proxy/v1/tcp_proxy_service.proto](#tcp-proxy_v1_tcp_proxy_service-proto)
-  - [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest)
-  - [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse)
-  - [PingRequest](#tcp_proxy-v1-PingRequest)
-  - [PingResponse](#tcp_proxy-v1-PingResponse)
-  - [PushBufferedInputRequest](#tcp_proxy-v1-PushBufferedInputRequest)
-  - [PushBufferedInputResponse](#tcp_proxy-v1-PushBufferedInputResponse)
+    - [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest)
+    - [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse)
+    - [PingRequest](#tcp_proxy-v1-PingRequest)
+    - [PingResponse](#tcp_proxy-v1-PingResponse)
+    - [PushBufferedInputRequest](#tcp_proxy-v1-PushBufferedInputRequest)
+    - [PushBufferedInputResponse](#tcp_proxy-v1-PushBufferedInputResponse)
   
-  - [TcpProxyService](#tcp_proxy-v1-TcpProxyService)
+    - [TcpProxyService](#tcp_proxy-v1-TcpProxyService)
   
 - [world-management/v1/world_management_service.proto](#world-management_v1_world_management_service-proto)
-  - [GetRoomRequest](#world_management-v1-GetRoomRequest)
-  - [GetRoomResponse](#world_management-v1-GetRoomResponse)
-  - [PingRequest](#world_management-v1-PingRequest)
-  - [PingResponse](#world_management-v1-PingResponse)
-  - [UpdateWorldStateRequest](#world_management-v1-UpdateWorldStateRequest)
-  - [UpdateWorldStateResponse](#world_management-v1-UpdateWorldStateResponse)
+    - [GetRoomRequest](#world_management-v1-GetRoomRequest)
+    - [GetRoomResponse](#world_management-v1-GetRoomResponse)
+    - [PingRequest](#world_management-v1-PingRequest)
+    - [PingResponse](#world_management-v1-PingResponse)
+    - [UpdateWorldStateRequest](#world_management-v1-UpdateWorldStateRequest)
+    - [UpdateWorldStateResponse](#world_management-v1-UpdateWorldStateResponse)
   
-  - [WorldManagementService](#world_management-v1-WorldManagementService)
+    - [WorldManagementService](#world_management-v1-WorldManagementService)
   
 - [Scalar Value Types](#scalar-value-types)
+
+
 
 <a name="account_v1_account_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## account/v1/account_service.proto
 
+
+
 <a name="account-v1-AuthenticateRequest"></a>
 
 ### AuthenticateRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -222,18 +239,32 @@
 | password | [string](#string) |  |  |
 | otp | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-AuthenticateResponse"></a>
 
 ### AuthenticateResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | auth_token | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CompletePasswordResetRequest"></a>
 
 ### CompletePasswordResetRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -241,18 +272,32 @@
 | token | [string](#string) |  |  |
 | new_password | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CompletePasswordResetResponse"></a>
 
 ### CompletePasswordResetResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CreateAccountRequest"></a>
 
 ### CreateAccountRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -261,45 +306,80 @@
 | email | [string](#string) |  |  |
 | password | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CreateAccountResponse"></a>
 
 ### CreateAccountResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | account_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-DeleteAccountRequest"></a>
 
 ### DeleteAccountRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-DeleteAccountResponse"></a>
 
 ### DeleteAccountResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-ExportAccountRequest"></a>
 
 ### ExportAccountRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-ExportAccountResponse"></a>
 
 ### ExportAccountResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -307,27 +387,48 @@
 | profile_json | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-GetProfileRequest"></a>
 
 ### GetProfileRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-GetProfileResponse"></a>
 
 ### GetProfileResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | profile_json | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-LinkExternalAccountRequest"></a>
 
 ### LinkExternalAccountRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -336,67 +437,122 @@
 | provider | [string](#string) |  |  |
 | external_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-LinkExternalAccountResponse"></a>
 
 ### LinkExternalAccountResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="account-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-RequestEmailVerificationRequest"></a>
 
 ### RequestEmailVerificationRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-RequestEmailVerificationResponse"></a>
 
 ### RequestEmailVerificationResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-RequestPasswordResetRequest"></a>
 
 ### RequestPasswordResetRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | email | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-RequestPasswordResetResponse"></a>
 
 ### RequestPasswordResetResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-UpdateProfileRequest"></a>
 
 ### UpdateProfileRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -404,36 +560,69 @@
 | account_id | [string](#string) |  |  |
 | profile_json | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-UpdateProfileResponse"></a>
 
 ### UpdateProfileResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-VerifyEmailRequest"></a>
 
 ### VerifyEmailRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | token | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-VerifyEmailResponse"></a>
 
 ### VerifyEmailResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="account-v1-AccountService"></a>
 
 ### AccountService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -450,14 +639,22 @@
 | RequestEmailVerification | [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest) | [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse) |  |
 | VerifyEmail | [VerifyEmailRequest](#account-v1-VerifyEmailRequest) | [VerifyEmailResponse](#account-v1-VerifyEmailResponse) |  |
 
+ 
+
+
+
 <a name="account_v1_notification_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## account/v1/notification_service.proto
 
+
+
 <a name="account-v1-SendNotificationRequest"></a>
 
 ### SendNotificationRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -465,51 +662,92 @@
 | account_id | [string](#string) |  |  |
 | message | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-SendNotificationResponse"></a>
 
 ### SendNotificationResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="account-v1-NotificationService"></a>
 
 ### NotificationService
 
+
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | SendNotification | [SendNotificationRequest](#account-v1-SendNotificationRequest) | [SendNotificationResponse](#account-v1-SendNotificationResponse) |  |
+
+ 
+
+
 
 <a name="account_v1_payment_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## account/v1/payment_service.proto
 
+
+
 <a name="account-v1-CreateDonationRequest"></a>
 
 ### CreateDonationRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 | amount_cents | [int64](#int64) |  |  |
+
+
+
+
+
 
 <a name="account-v1-CreateDonationResponse"></a>
 
 ### CreateDonationResponse
 
+
+
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | intent_id | [string](#string) |  |  |
 | client_secret | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CreatePaymentIntentRequest"></a>
 
 ### CreatePaymentIntentRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -517,9 +755,16 @@
 | account_id | [string](#string) |  |  |
 | amount_cents | [int64](#int64) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CreatePaymentIntentResponse"></a>
 
 ### CreatePaymentIntentResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -527,9 +772,16 @@
 | client_secret | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CreateSubscriptionRequest"></a>
 
 ### CreateSubscriptionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -537,36 +789,69 @@
 | account_id | [string](#string) |  |  |
 | plan_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-CreateSubscriptionResponse"></a>
 
 ### CreateSubscriptionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | subscription_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-RefundPaymentRequest"></a>
 
 ### RefundPaymentRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | payment_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-RefundPaymentResponse"></a>
 
 ### RefundPaymentResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="account-v1-PaymentService"></a>
 
 ### PaymentService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -575,14 +860,22 @@
 | CreateDonation | [CreateDonationRequest](#account-v1-CreateDonationRequest) | [CreateDonationResponse](#account-v1-CreateDonationResponse) |  |
 | RefundPayment | [RefundPaymentRequest](#account-v1-RefundPaymentRequest) | [RefundPaymentResponse](#account-v1-RefundPaymentResponse) |  |
 
+ 
+
+
+
 <a name="account_v1_virtual_currency_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## account/v1/virtual_currency_service.proto
 
+
+
 <a name="account-v1-AddCurrencyRequest"></a>
 
 ### AddCurrencyRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -590,19 +883,33 @@
 | account_id | [string](#string) |  |  |
 | currency_code | [string](#string) |  |  |
 | amount | [int64](#int64) |  |  |
+
+
+
+
+
 
 <a name="account-v1-AddCurrencyResponse"></a>
 
 ### AddCurrencyResponse
 
+
+
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | balance | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-GetBalanceRequest"></a>
 
 ### GetBalanceRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -610,18 +917,32 @@
 | account_id | [string](#string) |  |  |
 | currency_code | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="account-v1-GetBalanceResponse"></a>
 
 ### GetBalanceResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | balance | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="account-v1-SpendCurrencyRequest"></a>
 
 ### SpendCurrencyRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -630,18 +951,37 @@
 | currency_code | [string](#string) |  |  |
 | amount | [int64](#int64) |  |  |
 
+
+
+
+
+
 <a name="account-v1-SpendCurrencyResponse"></a>
 
 ### SpendCurrencyResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | balance | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="account-v1-VirtualCurrencyService"></a>
 
 ### VirtualCurrencyService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -649,14 +989,22 @@
 | AddCurrency | [AddCurrencyRequest](#account-v1-AddCurrencyRequest) | [AddCurrencyResponse](#account-v1-AddCurrencyResponse) |  |
 | SpendCurrency | [SpendCurrencyRequest](#account-v1-SpendCurrencyRequest) | [SpendCurrencyResponse](#account-v1-SpendCurrencyResponse) |  |
 
+ 
+
+
+
 <a name="automation-scripting_v1_automation_scripting_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## automation-scripting/v1/automation_scripting_service.proto
 
+
+
 <a name="automation_scripting-v1-AddFormationMemberRequest"></a>
 
 ### AddFormationMemberRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -664,18 +1012,32 @@
 | formation_id | [string](#string) |  |  |
 | npc_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-AddFormationMemberResponse"></a>
 
 ### AddFormationMemberResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-CreateFormationRequest"></a>
 
 ### CreateFormationRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -684,27 +1046,48 @@
 | leader_npc_id | [string](#string) |  |  |
 | formation_type | [string](#string) |  | LINE, WEDGE, CIRCLE |
 
+
+
+
+
+
 <a name="automation_scripting-v1-CreateFormationResponse"></a>
 
 ### CreateFormationResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | formation_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-GetScriptStatusRequest"></a>
 
 ### GetScriptStatusRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | script_name | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-GetScriptStatusResponse"></a>
 
 ### GetScriptStatusResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -712,27 +1095,48 @@
 | running | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-ListFormationMembersRequest"></a>
 
 ### ListFormationMembersRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | formation_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-ListFormationMembersResponse"></a>
 
 ### ListFormationMembersResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | npc_ids | [string](#string) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-NotifyScriptVersionUpdateRequest"></a>
 
 ### NotifyScriptVersionUpdateRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -740,31 +1144,58 @@
 | script_patch_version | [string](#string) |  |  |
 | affected_scripts | [string](#string) | repeated |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-NotifyScriptVersionUpdateResponse"></a>
 
 ### NotifyScriptVersionUpdateResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="automation_scripting-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-UpdateScriptRequest"></a>
 
 ### UpdateScriptRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -773,37 +1204,64 @@
 | version | [string](#string) |  |  |
 | definition | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="automation_scripting-v1-UpdateScriptResponse"></a>
 
 ### UpdateScriptResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="automation_scripting-v1-AutomationScriptingService"></a>
 
 ### AutomationScriptingService
 
+
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| Ping | [PingRequest](#automation_scripting-v1-PingRequest) | [PingResponse](#automation_scripting-v1-PingResponse) |  |
-| CreateFormation | [CreateFormationRequest](#automation_scripting-v1-CreateFormationRequest) | [CreateFormationResponse](#automation_scripting-v1-CreateFormationResponse) |  |
-| AddFormationMember | [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest) | [AddFormationMemberResponse](#automation_scripting-v1-AddFormationMemberResponse) |  |
-| ListFormationMembers | [ListFormationMembersRequest](#automation_scripting-v1-ListFormationMembersRequest) | [ListFormationMembersResponse](#automation_scripting-v1-ListFormationMembersResponse) |  |
-| UpdateScript | [UpdateScriptRequest](#automation_scripting-v1-UpdateScriptRequest) | [UpdateScriptResponse](#automation_scripting-v1-UpdateScriptResponse) |  |
-| GetScriptStatus | [GetScriptStatusRequest](#automation_scripting-v1-GetScriptStatusRequest) | [GetScriptStatusResponse](#automation_scripting-v1-GetScriptStatusResponse) | (TODO: Not yet implemented) |
-| NotifyScriptVersionUpdate | [NotifyScriptVersionUpdateRequest](#automation_scripting-v1-NotifyScriptVersionUpdateRequest) | [NotifyScriptVersionUpdateResponse](#automation_scripting-v1-NotifyScriptVersionUpdateResponse) |  |
+| Ping | [PingRequest](#automation_scripting-v1-PingRequest) | [PingResponse](#automation_scripting-v1-PingResponse) | Simple ping used by health checks |
+| CreateFormation | [CreateFormationRequest](#automation_scripting-v1-CreateFormationRequest) | [CreateFormationResponse](#automation_scripting-v1-CreateFormationResponse) | Creates a new NPC formation |
+| AddFormationMember | [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest) | [AddFormationMemberResponse](#automation_scripting-v1-AddFormationMemberResponse) | Adds an NPC to an existing formation |
+| ListFormationMembers | [ListFormationMembersRequest](#automation_scripting-v1-ListFormationMembersRequest) | [ListFormationMembersResponse](#automation_scripting-v1-ListFormationMembersResponse) | Lists all NPCs belonging to a formation |
+| UpdateScript | [UpdateScriptRequest](#automation_scripting-v1-UpdateScriptRequest) | [UpdateScriptResponse](#automation_scripting-v1-UpdateScriptResponse) | Uploads or replaces a script definition |
+| GetScriptStatus | [GetScriptStatusRequest](#automation_scripting-v1-GetScriptStatusRequest) | [GetScriptStatusResponse](#automation_scripting-v1-GetScriptStatusResponse) | Checks if a script is queued or currently running |
+| NotifyScriptVersionUpdate | [NotifyScriptVersionUpdateRequest](#automation_scripting-v1-NotifyScriptVersionUpdateRequest) | [NotifyScriptVersionUpdateResponse](#automation_scripting-v1-NotifyScriptVersionUpdateResponse) | Signals that a new script patch version is available |
+
+ 
+
+
 
 <a name="entity-management_v1_entity_management_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## entity-management/v1/entity_management_service.proto
 
+
+
 <a name="entity_management-v1-Character"></a>
 
 ### Character
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -820,9 +1278,16 @@
 | health | [int32](#int32) |  |  |
 | mana | [int32](#int32) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-CreateCharacterRequest"></a>
 
 ### CreateCharacterRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -830,82 +1295,156 @@
 | account_id | [string](#string) |  |  |
 | name | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-CreateCharacterResponse"></a>
 
 ### CreateCharacterResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | character_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-ListCharactersByAccountRequest"></a>
 
 ### ListCharactersByAccountRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | account_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-ListCharactersByAccountResponse"></a>
 
 ### ListCharactersByAccountResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | characters | [Character](#entity_management-v1-Character) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="entity_management-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-QueryInventoryRequest"></a>
 
 ### QueryInventoryRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | entity_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-QueryInventoryResponse"></a>
 
 ### QueryInventoryResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | item_ids | [string](#string) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-UpdateEntityRequest"></a>
 
 ### UpdateEntityRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | entity_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="entity_management-v1-UpdateEntityResponse"></a>
 
 ### UpdateEntityResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="entity_management-v1-EntityManagementService"></a>
 
 ### EntityManagementService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -915,44 +1454,79 @@
 | QueryInventory | [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest) | [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse) |  |
 | ListCharactersByAccount | [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest) | [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse) |  |
 
+ 
+
+
+
 <a name="game-design_v1_game_design_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## game-design/v1/game_design_service.proto
 
+
+
 <a name="gamedesign-v1-ListVersionsRequest"></a>
 
 ### ListVersionsRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [int64](#int64) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-ListVersionsResponse"></a>
 
 ### ListVersionsResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | versions | [Version](#gamedesign-v1-Version) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="gamedesign-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-PublishScriptPatchVersionRequest"></a>
 
 ### PublishScriptPatchVersionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -961,36 +1535,64 @@
 | script_patch_version | [string](#string) |  |  |
 | notes | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-PublishScriptPatchVersionResponse"></a>
 
 ### PublishScriptPatchVersionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | version_id | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-PublishVersionRequest"></a>
 
 ### PublishVersionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [int64](#int64) |  |  |
 | notes | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-PublishVersionResponse"></a>
 
 ### PublishVersionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | version_id | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-SaveRevisionRequest"></a>
 
 ### SaveRevisionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -998,18 +1600,32 @@
 | tenant_id | [int64](#int64) |  |  |
 | author_account_id | [int64](#int64) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-SaveRevisionResponse"></a>
 
 ### SaveRevisionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | revision_id | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="gamedesign-v1-Version"></a>
 
 ### Version
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1019,9 +1635,21 @@
 | is_script_only | [bool](#bool) |  |  |
 | notes | [string](#string) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="gamedesign-v1-GameDesignService"></a>
 
 ### GameDesignService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -1031,14 +1659,22 @@
 | PublishScriptPatchVersion | [PublishScriptPatchVersionRequest](#gamedesign-v1-PublishScriptPatchVersionRequest) | [PublishScriptPatchVersionResponse](#gamedesign-v1-PublishScriptPatchVersionResponse) |  |
 | ListVersions | [ListVersionsRequest](#gamedesign-v1-ListVersionsRequest) | [ListVersionsResponse](#gamedesign-v1-ListVersionsResponse) |  |
 
+ 
+
+
+
 <a name="game-logic_v1_game_logic_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## game-logic/v1/game_logic_service.proto
 
+
+
 <a name="game_logic-v1-ExecuteCommandRequest"></a>
 
 ### ExecuteCommandRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1046,45 +1682,85 @@
 | session_id | [string](#string) |  |  |
 | command | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="game_logic-v1-ExecuteCommandResponse"></a>
 
 ### ExecuteCommandResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | result | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="game_logic-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="game_logic-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="game_logic-v1-GameLogicService"></a>
 
 ### GameLogicService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#game_logic-v1-PingRequest) | [PingResponse](#game_logic-v1-PingResponse) |  |
 | ExecuteCommand | [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest) | [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse) |  |
 
+ 
+
+
+
 <a name="game-session_v1_game_session_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## game-session/v1/game_session_service.proto
 
+
+
 <a name="game_session-v1-EnqueueCommandRequest"></a>
 
 ### EnqueueCommandRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1092,65 +1768,120 @@
 | command | [string](#string) |  |  |
 | requires_solo_tick | [bool](#bool) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-EnqueueCommandResponse"></a>
 
 ### EnqueueCommandResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | accepted | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="game_session-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-QueryStateRequest"></a>
 
 ### QueryStateRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-QueryStateResponse"></a>
 
 ### QueryStateResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | state_json | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-RestartSessionRequest"></a>
 
 ### RestartSessionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-RestartSessionResponse"></a>
 
 ### RestartSessionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-StartSessionRequest"></a>
 
 ### StartSessionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1158,35 +1889,63 @@
 | runtime_version | [string](#string) |  |  |
 | script_patch_version | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-StartSessionResponse"></a>
 
 ### StartSessionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-StopSessionRequest"></a>
 
 ### StopSessionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-StopSessionResponse"></a>
 
 ### StopSessionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-ToggleFeatureFlagRequest"></a>
 
 ### ToggleFeatureFlagRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1194,18 +1953,37 @@
 | name | [string](#string) |  |  |
 | enabled | [bool](#bool) |  |  |
 
+
+
+
+
+
 <a name="game_session-v1-ToggleFeatureFlagResponse"></a>
 
 ### ToggleFeatureFlagResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="game_session-v1-GameSessionService"></a>
 
 ### GameSessionService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -1217,14 +1995,22 @@
 | QueryState | [QueryStateRequest](#game_session-v1-QueryStateRequest) | [QueryStateResponse](#game_session-v1-QueryStateResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse) |  |
 
+ 
+
+
+
 <a name="logging-admin_v1_logging_admin_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## logging-admin/v1/logging_admin_service.proto
 
+
+
 <a name="logging_admin-v1-ApplyModerationActionRequest"></a>
 
 ### ApplyModerationActionRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1233,49 +2019,90 @@
 | action | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="logging_admin-v1-ApplyModerationActionResponse"></a>
 
 ### ApplyModerationActionResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="logging_admin-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="logging_admin-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="logging_admin-v1-QueryLogsRequest"></a>
 
 ### QueryLogsRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | filter | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="logging_admin-v1-QueryLogsResponse"></a>
 
 ### QueryLogsResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | entries | [string](#string) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="logging_admin-v1-ToggleFeatureFlagRequest"></a>
 
 ### ToggleFeatureFlagRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1283,18 +2110,37 @@
 | name | [string](#string) |  |  |
 | enabled | [bool](#bool) |  |  |
 
+
+
+
+
+
 <a name="logging_admin-v1-ToggleFeatureFlagResponse"></a>
 
 ### ToggleFeatureFlagResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="logging_admin-v1-LoggingAdminService"></a>
 
 ### LoggingAdminService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -1303,14 +2149,22 @@
 | ApplyModerationAction | [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest) | [ApplyModerationActionResponse](#logging_admin-v1-ApplyModerationActionResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse) |  |
 
+ 
+
+
+
 <a name="logging-admin_v1_report_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## logging-admin/v1/report_service.proto
 
+
+
 <a name="logging_admin-v1-CreateReportRequest"></a>
 
 ### CreateReportRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1320,61 +2174,122 @@
 | type | [string](#string) |  |  |
 | description | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="logging_admin-v1-CreateReportResponse"></a>
 
 ### CreateReportResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | report_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="logging_admin-v1-ReportService"></a>
 
 ### ReportService
 
+
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | CreateReport | [CreateReportRequest](#logging_admin-v1-CreateReportRequest) | [CreateReportResponse](#logging_admin-v1-CreateReportResponse) |  |
+
+ 
+
+
 
 <a name="shared_v1_errors-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## shared/v1/errors.proto
 
+
+
 <a name="shared-v1-ErrorDetail"></a>
 
 ### ErrorDetail
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | code | [string](#string) |  |  |
 | message | [string](#string) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="shared_v1_paging-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## shared/v1/paging.proto
 
+
+
 <a name="shared-v1-PagingRequest"></a>
 
 ### PagingRequest
-
 Standard paging request for list RPCs.
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | page | [int32](#int32) |  | 1-based page index. |
 | page_size | [int32](#int32) |  | Maximum number of items per page. |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
 <a name="social-groups_v1_social_groups_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## social-groups/v1/social_groups_service.proto
 
+
+
 <a name="social_groups-v1-AddFriendRequest"></a>
 
 ### AddFriendRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1383,18 +2298,32 @@ Standard paging request for list RPCs.
 | friend_account_id | [string](#string) |  |  |
 | account_level | [bool](#bool) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-AddFriendResponse"></a>
 
 ### AddFriendResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-CreateGuildRequest"></a>
 
 ### CreateGuildRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1402,31 +2331,58 @@ Standard paging request for list RPCs.
 | owner_account_id | [string](#string) |  |  |
 | name | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-CreateGuildResponse"></a>
 
 ### CreateGuildResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | guild_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="social_groups-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-SendMailRequest"></a>
 
 ### SendMailRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1436,18 +2392,32 @@ Standard paging request for list RPCs.
 | subject | [string](#string) |  |  |
 | content | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-SendMailResponse"></a>
 
 ### SendMailResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-SendMessageRequest"></a>
 
 ### SendMessageRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1460,18 +2430,33 @@ Standard paging request for list RPCs.
 | guild_id | [string](#string) |  |  |
 | city_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="social_groups-v1-SendMessageResponse"></a>
 
 ### SendMessageResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+
 <a name="social_groups-v1-ChatType"></a>
 
 ### ChatType
+
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
@@ -1482,9 +2467,16 @@ Standard paging request for list RPCs.
 | CHAT_TYPE_CITY | 4 |  |
 | CHAT_TYPE_ACCOUNT | 5 |  |
 
+
+ 
+
+ 
+
+
 <a name="social_groups-v1-SocialGroupsService"></a>
 
 ### SocialGroupsService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -1494,47 +2486,78 @@ Standard paging request for list RPCs.
 | AddFriend | [AddFriendRequest](#social_groups-v1-AddFriendRequest) | [AddFriendResponse](#social_groups-v1-AddFriendResponse) |  |
 | SendMail | [SendMailRequest](#social_groups-v1-SendMailRequest) | [SendMailResponse](#social_groups-v1-SendMailResponse) |  |
 
+ 
+
+
+
 <a name="spring-cloud-gateway_v1_gateway_management_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## spring-cloud-gateway/v1/gateway_management_service.proto
 
+
+
 <a name="gateway-v1-PingRequest"></a>
 
 ### PingRequest
+
+
+
+
+
+
 
 <a name="gateway-v1-PingResponse"></a>
 
 ### PingResponse
 
+
+
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="gateway-v1-RemoveRouteRequest"></a>
 
 ### RemoveRouteRequest
-
 Request to operate on a specific route.
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | route_id | [string](#string) |  | Identifier of the route to remove |
 
+
+
+
+
+
 <a name="gateway-v1-RemoveRouteResponse"></a>
 
 ### RemoveRouteResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="gateway-v1-UpsertRouteRequest"></a>
 
 ### UpsertRouteRequest
-
 Route configuration details for dynamic updates.
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1543,21 +2566,36 @@ Route configuration details for dynamic updates.
 | predicates | [string](#string) | repeated | Spring Cloud Gateway predicates |
 | filters | [string](#string) | repeated | Additional filters to apply |
 
+
+
+
+
+
 <a name="gateway-v1-UpsertRouteResponse"></a>
 
 ### UpsertRouteResponse
-
 Standard response wrapper.
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="gateway-v1-GatewayManagementService"></a>
 
 ### GatewayManagementService
-
 GatewayManagementService allows remote configuration of Spring Cloud Gateway routes.
 
 | Method Name | Request Type | Response Type | Description |
@@ -1566,43 +2604,78 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | UpsertRoute | [UpsertRouteRequest](#gateway-v1-UpsertRouteRequest) | [UpsertRouteResponse](#gateway-v1-UpsertRouteResponse) | Adds or updates a custom route for the gateway. |
 | RemoveRoute | [RemoveRouteRequest](#gateway-v1-RemoveRouteRequest) | [RemoveRouteResponse](#gateway-v1-RemoveRouteResponse) | Removes a route by ID. |
 
+ 
+
+
+
 <a name="tcp-proxy_v1_tcp_proxy_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## tcp-proxy/v1/tcp_proxy_service.proto
 
+
+
 <a name="tcp_proxy-v1-NotifyDisconnectRequest"></a>
 
 ### NotifyDisconnectRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="tcp_proxy-v1-NotifyDisconnectResponse"></a>
 
 ### NotifyDisconnectResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="tcp_proxy-v1-PingRequest"></a>
 
 ### PingRequest
+
+
+
+
+
+
 
 <a name="tcp_proxy-v1-PingResponse"></a>
 
 ### PingResponse
 
+
+
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="tcp_proxy-v1-PushBufferedInputRequest"></a>
 
 ### PushBufferedInputRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
@@ -1610,17 +2683,36 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | commands | [string](#string) | repeated |  |
 | tenant_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="tcp_proxy-v1-PushBufferedInputResponse"></a>
 
 ### PushBufferedInputResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="tcp_proxy-v1-TcpProxyService"></a>
 
 ### TcpProxyService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
@@ -1628,68 +2720,126 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | NotifyDisconnect | [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest) | [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse) |  |
 | PushBufferedInput | [PushBufferedInputRequest](#tcp_proxy-v1-PushBufferedInputRequest) | [PushBufferedInputResponse](#tcp_proxy-v1-PushBufferedInputResponse) |  |
 
+ 
+
+
+
 <a name="world-management_v1_world_management_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## world-management/v1/world_management_service.proto
 
+
+
 <a name="world_management-v1-GetRoomRequest"></a>
 
 ### GetRoomRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | room_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="world_management-v1-GetRoomResponse"></a>
 
 ### GetRoomResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | room_json | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="world_management-v1-PingRequest"></a>
 
 ### PingRequest
 
+
+
+
+
+
+
 <a name="world_management-v1-PingResponse"></a>
 
 ### PingResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+
 <a name="world_management-v1-UpdateWorldStateRequest"></a>
 
 ### UpdateWorldStateRequest
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 
+
+
+
+
+
 <a name="world_management-v1-UpdateWorldStateResponse"></a>
 
 ### UpdateWorldStateResponse
+
+
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
+
+
+
+
+ 
+
+ 
+
+ 
+
+
 <a name="world_management-v1-WorldManagementService"></a>
 
 ### WorldManagementService
+
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#world_management-v1-PingRequest) | [PingResponse](#world_management-v1-PingResponse) |  |
 | GetRoom | [GetRoomRequest](#world_management-v1-GetRoomRequest) | [GetRoomResponse](#world_management-v1-GetRoomResponse) |  |
 | UpdateWorldState | [UpdateWorldStateRequest](#world_management-v1-UpdateWorldStateRequest) | [UpdateWorldStateResponse](#world_management-v1-UpdateWorldStateResponse) |  |
+
+ 
+
+
 
 ## Scalar Value Types
 
@@ -1710,3 +2860,4 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | <a name="bool" /> bool |  | bool | boolean | boolean | bool | bool | boolean | TrueClass/FalseClass |
 | <a name="string" /> string | A string must always contain UTF-8 encoded or 7-bit ASCII text. | string | String | str/unicode | string | string | string | String (UTF-8) |
 | <a name="bytes" /> bytes | May contain any arbitrary sequence of bytes. | string | ByteString | str | []byte | ByteString | string | String (ASCII-8BIT) |
+
