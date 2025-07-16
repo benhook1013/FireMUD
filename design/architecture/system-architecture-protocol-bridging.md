@@ -10,7 +10,7 @@ FireMUD enables real-time interaction through two types of client connections:
 
 | Client Type             | Protocol       | Entry Point                     |
 |-------------------------|----------------|----------------------------------|
-| Web-based clients       | WebSocket      | Spring Cloud Gateway (`/ws`) |
+| Web-based clients       | WebSocket      | Spring Cloud Gateway (`/ws/game/**`) |
 | Traditional MUD clients | TCP (Telnet)   | TCP Proxy Service (custom)      |
 
 Despite their differences, both protocols are normalized into the same internal architecture using a **WebSocket-based session layer**.
@@ -39,6 +39,8 @@ Despite their differences, both protocols are normalized into the same internal 
   connect without additional configuration. This and the gateway WebSocket URL
   can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment
   variables described in the TCP Proxy Service README.
+  See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)
+  for general configuration guidance.
 - Handled by a dedicated **TCP Proxy Service**.
 - The service:
   - Accepts and parses Telnet line-based input.
@@ -48,6 +50,7 @@ Despite their differences, both protocols are normalized into the same internal 
   - Runs alongside Spring Cloud Gateway in the network **DMZ**, so no client ever reaches internal services directly.
   - Normalizes the connection.
   - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set.
+    Certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
   - Applies per-IP connection and message rate limits using
     `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and `TCP_PROXY_MAX_MSGS_PER_SEC`.
   - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
@@ -60,6 +63,10 @@ Despite their differences, both protocols are normalized into the same internal 
   - Disconnect handling is **layered**: the proxy cleans up Telnet sessions,
     the gateway automatically recreates WebSocket backends, and the Game Session
     Service reloads state from Redis.
+  - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput`
+    so the Game Session Service can recover Telnet sessions.
+  - Metrics are exported at `/actuator/prometheus` and tracing data is sent to
+    the collector configured by `OTEL_ENDPOINT`.
 
 ### 🌟 TCP Flow Benefits
 
@@ -89,3 +96,4 @@ The `game-session-service` is the central component responsible for:
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [MCP Support](./system-architecture-mcp-support.md)
+- [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)
