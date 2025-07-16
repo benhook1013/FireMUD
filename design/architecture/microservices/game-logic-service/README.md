@@ -102,6 +102,8 @@ Unlike other services, it does not connect to PostgreSQL or Redis at runtime;
 those credentials are present in the shared `.env` file only for consistency.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
 Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
+These variables are reserved for future service discovery logic and are not yet consumed by the implementation.
+The gRPC server listens on port `6565` by default as configured in `application.yml`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
 Additional variables referencing dependent services:
@@ -163,7 +165,7 @@ Expected response:
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_logic_service.proto`](../../../protos/game-logic/v1/game_logic_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` – process a command and return the result.
 
 ```bash
@@ -197,7 +199,8 @@ and gRPC endpoints.
 
 ### Cross-Service Integration Test
 
-An integration test in `services/game-session-service/src/test/java/crossservice`
+An integration test at
+`services/game-session-service/src/test/java/crossservice/net/firedevops/firemud/GameSessionCrossServiceIntegrationTest.java`
 starts this service alongside the Game Session Service using **Testcontainers**.
 Run it manually after building the Docker images:
 
@@ -209,3 +212,5 @@ Run it manually after building the Docker images:
 
 - Scripting hooks for custom actions.
 - Performance optimizations for large-scale battles.
+- Effect stacking and environmental resolution modules referenced in **Key Features**
+  are still under development.
