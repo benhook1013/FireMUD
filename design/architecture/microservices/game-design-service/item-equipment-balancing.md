@@ -2,11 +2,13 @@
 
 Game balance relies heavily on item statistics and equipment progression. This document describes helper tools for tuning those values.
 
+> **Status: In Progress** – These balancing tools are still under development. (TODO: Not yet implemented)
+
 ## Features
 
-- **Item Stat Editor** – adjust damage, defense and stat bonuses with real‑time validation.
-- **Equipment Curves** – visualize power growth across item tiers to spot outliers.
-- **Economy Impact** – preview vendor prices and drop rates to maintain a healthy economy.
+- **Item Stat Editor** – adjust damage, defense, and stat bonuses with real‑time validation. (TODO: Not yet implemented)
+- **Equipment Curves** – visualize power growth across item tiers to spot outliers. (TODO: Not yet implemented)
+- **Economy Impact** – preview vendor prices and drop rates to maintain a healthy in-game economy. (TODO: Not yet implemented)
 
 ## Workflow
 
