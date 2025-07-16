@@ -49,7 +49,7 @@ Each service folder typically includes:
 
 - `*_service.proto` — defines the gRPC service and its RPC methods
 - `*_types.proto` — defines request/response messages and shared types
-- Optional `*_events.proto` — server-side streaming RPCs for event notifications (no separate message bus)
+- Optional `*_events.proto` — server-side streaming RPCs for event notifications (no separate message bus) *(TODO: Not yet implemented)*
 
 Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `protos/shared/v1/` so they version alongside all other APIs.
 
@@ -61,7 +61,7 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 - **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
-- **`protoc-gen-doc`** — Produces HTML or Markdown API documentation to encourage inline comments.
+- **`protoc-gen-doc`** — Produces HTML or Markdown API documentation to encourage inline comments. *(TODO: Not yet implemented)*
 
 ## 🚦 Shared Interceptors
 
