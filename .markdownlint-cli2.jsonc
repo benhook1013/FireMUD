@@ -12,7 +12,8 @@
     "**/node_modules/**",
     "**/.gradle/**",
     "**/build/**",
-    "**/.git/**"
+    "**/.git/**",
+    "design/grpc-docs/**"
   ],
   "gitignore": true
 }
