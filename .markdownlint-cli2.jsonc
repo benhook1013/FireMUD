@@ -1,11 +1,7 @@
 {
   "config": {
     "default": true,
-    "MD013": {
-      "line_length": 100,
-      "code_blocks": false,
-      "tables": false
-    },
+    "MD013": false,
     "MD026": false
   },
   "ignores": [
