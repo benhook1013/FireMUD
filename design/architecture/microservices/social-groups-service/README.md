@@ -61,9 +61,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - `account_friend_links` table stores account-to-account friendships shared across games.
 - Games can mirror these links in their UI when the feature is enabled.
 - `mail_message` table stores asynchronous player mail.
-- `faction` and `faction_standing` tables maintain player reputation. The
-  [Automation & Scripting Service](../automation-scripting-service/README.md)
-  queries these standings to influence NPC behaviour.
+- `faction` and `faction_standing` tables maintain player reputation and are managed by the [Automation & Scripting Service](../automation-scripting-service/README.md). This service will reference them for NPC behaviour. (TODO: Not yet implemented)
 
 ### Chat Pipeline
 
@@ -80,7 +78,7 @@ Service issues temporary WebRTC tokens and records basic session metadata so the
 Logging & Admin Service can audit voice activity. Tokens are issued only via the
 REST endpoint `/voice/token` (see `openapi.yaml` lines 499–520); there is no
 gRPC method for this feature. Voice chat is disabled by default and can be
-enabled per tenant through configuration.
+enabled per tenant through configuration. (TODO: Not yet implemented)
 
 ### gRPC APIs
 
@@ -220,7 +218,7 @@ guidance.
 
 ## Future Enhancements
 
-- Rich moderation tools for chat including profanity filtering and moderator dashboards.
-- Optional voice chat integration via a WebRTC gateway.
-- Presence indicators and notifications when friends come online.
-- Broadcast and out-of-game email capabilities for game creators.
+- Rich moderation tools for chat including profanity filtering and moderator dashboards. (TODO: Not yet implemented)
+- Optional voice chat integration via a WebRTC gateway. (TODO: Not yet implemented)
+- Presence indicators and notifications when friends come online. (TODO: Not yet implemented)
+- Broadcast and out-of-game email capabilities for game creators. (TODO: Not yet implemented)
