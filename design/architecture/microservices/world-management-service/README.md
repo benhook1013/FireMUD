@@ -9,10 +9,10 @@ The World Management Service stores and manages game world data such as rooms, r
 ### Responsibilities
 
 - Persist region, zone, and room data with tenant isolation
-- Execute scheduled world events and procedural generation
-- Provide pathfinding and navmesh information
-- Notify Game Session and Automation services when the world changes
-- Track character locations and instance occupancy
+- Execute scheduled world events and procedural generation (TODO: Not yet implemented)
+- Provide pathfinding and navmesh information (TODO: Not yet implemented)
+- Notify Game Session and Automation services when the world changes (TODO: Not yet implemented)
+- Track character locations and instance occupancy (TODO: Not yet implemented)
 
 ## Architecture / Design Notes
 
@@ -46,22 +46,22 @@ The World Management Service stores and manages game world data such as rooms, r
   `shard_id` value so the world can span multiple servers.
 - Instance-based zones are treated as regular rooms; this service records which
   characters occupy each instance so private dungeons or housing do not affect
-  the shared world map.
+  the shared world map. (TODO: Not yet implemented)
 - Persistent world state with incremental saves.
-- Procedural generation tools for rooms and terrain.
+- Procedural generation tools for rooms and terrain. (TODO: Not yet implemented)
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
 - `TravelService` implements Dijkstra-based pathfinding using the `room_exit` table.
-  A gRPC API to expose pathfinding results is planned for a future release.
-- Event scheduling for world-wide holidays or timed modifiers. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state. Emitting gRPC notifications to other services is planned but not yet implemented.
-- Chunk-based world snapshots for backup and recovery *(planned).*
+  A gRPC API to expose pathfinding results is planned for a future release. (TODO: Not yet implemented)
+- Event scheduling for world-wide holidays or timed modifiers. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state. Emitting gRPC notifications to other services is planned but not yet implemented. (TODO: Not yet implemented)
+- Chunk-based world snapshots for backup and recovery *(planned).* (TODO: Not yet implemented)
 
 ### Data Model
 
 - Tables for `region`, `zone`, and `room` define the world hierarchy.
-- `terrain` and `object_spawn` tables support procedural generation *(planned).*
+- `terrain` and `object_spawn` tables support procedural generation *(planned).* (TODO: Not yet implemented)
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
-- `character_location` table (planned) records the current room for each character,
+- `character_location` table (planned) records the current room for each character, (TODO: Not yet implemented)
   including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.
 - `region.weather` column records the current weather state.
