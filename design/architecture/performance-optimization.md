@@ -12,7 +12,7 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Prefer pagination for large result sets. Core services expose pageable
   endpoints so huge lists are avoided.
 - Use Spring Cache backed by Redis for expensive queries. The Entity Management
-  service caches character inventory graphs and the World Management service
+  service caches character inventory graphs and the World Management Service
   caches hot rooms with TTL-based eviction.
 - Database writes during gameplay are **deferred and batched**. The Game Session
   Service coordinates commits at the end of each tick so the Entity Management
@@ -39,8 +39,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   `script_quota_denied_total`) and automation queue metrics
   (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide
   visibility into heavy script load.
-- A Redis exporter publishes Lua latency, lock contention, and retry queue depth
-  metrics so operators can spot hotspots in Grafana dashboards.
+- A Redis exporter publishes Lua latency, lock contention, and retry queue depth metrics via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment so operators can spot hotspots in Grafana dashboards.
 - The Game Session Service exposes `tick_retry_queue_depth`,
   `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
   per-region visibility into retries and backoff behavior.
@@ -83,7 +82,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   `gateway.connections.active`) help operators track usage and capacity.
 - Redis caches common lookups to reduce database load. The World Management
   service stores hot rooms with configurable TTL and hit/miss metrics
-  (`room_cache_hits_total`, `room_cache_misses_total`). The Social Groups service
+  (`room_cache_hits_total`, `room_cache_misses_total`). The Social Groups Service
   stores recent chat messages in Redis and records `chat_messages_published_total`.
   Chat history caches expire based on message type:
   - **Says:** 2 hours or 50 messages per player
