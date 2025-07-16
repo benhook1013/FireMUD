@@ -22,14 +22,14 @@ Offers tools for building worlds, items, actions, and events that make up each g
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
   The workflow is implemented using the Saga utilities from `firemud-common`
-  with compensation steps to roll back if downstream copies fail.
+  with compensation steps to roll back if downstream copies fail. The
+  implementation currently persists the new version but the copy steps are
+  still TODO.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
 - All APIs require JWT authentication between services. Tokens are parsed by a
-  shared `AuthTokenInterceptor` which stores claims in `SessionContext` for role
-  checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager
-  as described in the [Security Architecture](../system-architecture-security.md).
+  shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
@@ -55,7 +55,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing. It includes `version_number`, `base_version_id`, `script_patch_version`, `is_script_only` and `notes` columns.
 - `game_templates` table stores predefined configuration templates for new games.
-- `runtime_flag` table holds feature flag definitions copied to the Game Session Service.
+- `runtime_flag` table reserved for future feature flag management. No API currently
+  exposes these records.
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
 
 ### Design Workflow
@@ -100,13 +101,14 @@ Configuration uses the conventions defined in
 This service relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
 Redis variables are not used.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
+For example, set `FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE` to override the default gRPC endpoint used by `ServiceEndpointsProperties`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
 Additional variables specific to this service:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| *(none)* | This service relies only on the shared configuration variables. | *(none)* |
+| `FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE` | gRPC endpoint for the Automation & Scripting Service | *(none)* |
 
 ## Proto Files
 
