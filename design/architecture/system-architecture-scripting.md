@@ -31,11 +31,18 @@ Scripts may register handlers for a set of standard lifecycle events. The Automa
 - `onCommand` – when a player targets the entity with a command
 - `onInterval` – periodic execution at a configured rate
 
+## Advanced NPC Behavior Modules
+
+- `NpcMoraleService` adjusts aggression based on health and morale so NPCs may flee or surrender.
+- `PveEncounterService` generates random encounters and environmental hazards.
+- `NpcFormationService` coordinates squad positioning for groups of NPCs.
+Refer to the Automation & Scripting Service README for implementation details.
+
 ## 🔒 Sandboxing & Security
 
 - Script execution occurs in a **sandbox** with restricted APIs and resource limits.
 - Components interact with the **Game Logic Service** through validated gRPC calls.
-- The service enforces **per-script quotas** (CPU time, memory, tick budget) to contain runaway logic.
+- The service enforces **per-script quotas** that limit how many events a script may enqueue and the duration of each tick. CPU and memory limits are planned for a future release.
 
 ## ⚙️ Integration with Game Logic & Tick System
 
@@ -51,7 +58,7 @@ Scripts may register handlers for a set of standard lifecycle events. The Automa
 - Script definitions are stored in the **Game Design Service** and versioned alongside other game assets.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
 - Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
-- The Game Session Service tracks the active script version for each running game and notifies the Automation & Scripting Service when a new version should be loaded.
+- The Game Session Service tracks the active script version for each running game and sends a `NotifyScriptVersionUpdate` event when a new version should be loaded. The Automation & Scripting Service uses `ScriptVersionService` to reload the updated definitions without downtime.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
@@ -66,8 +73,7 @@ scripts and ensure fair resource usage:
   `script_quota_denied_total` metric is incremented. Successful executions are tracked via
   `script_quota_allowed_total`.
 - The tick system only processes these queued commands—it never runs script logic itself.
-- Metrics track script execution and help detect logic that attempts to monopolize
-  CPU time or grief other players.
+- Metrics such as `automation_tick_events_enqueued_total`, `script_quota_allowed_total`, and `script_quota_denied_total` expose script activity for monitoring.
 - Administrators may disable or throttle problematic scripts via the Game Design
   Service, which updates definitions and triggers hot reloads in the Automation &
   Scripting Service.
@@ -76,13 +82,15 @@ scripts and ensure fair resource usage:
 
 The scripting engine exposes several environment variables so operators can tune quotas and tick behavior:
 
-| Variable | Purpose |
-| -------- | ------- |
-| `SCRIPT_QUOTA_LIMIT` | Events a script may process per window |
-| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds |
-| `AUTOMATION_TICK_DURATION_MS` | Duration of a script processing tick in milliseconds |
-| `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick |
-| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds |
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` |
+| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` |
+| `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
+| `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` |
+| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` |
+
+These variables map to Spring Boot properties `script.quota.limit`, `script.quota.windowSeconds`, `automation.tick-duration-ms`, `automation.tick-max-events`, and `automation.tick-budget-ms`.
 
 See the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#environment-variables) for default values and additional details.
 
