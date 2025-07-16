@@ -6,7 +6,7 @@ This document describes the structure and tooling for FireMUD's browser-based us
 
 ## 📐 Component Hierarchy
 
-FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling:
+FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling (TODO: Not yet implemented):
 
 ```text
 web-client/
@@ -24,7 +24,7 @@ web-client/
 ```
 
 - **Pages** represent top-level routes and compose smaller **UI widgets**.
-- Reusable UI elements live under a shared `components/` directory.
+- Reusable UI elements live under a shared `components/` directory. (TODO: Not yet implemented)
 - Material-UI provides the base widgets and theme customization.
 
 ## ⚛️ State Management
@@ -47,7 +47,7 @@ RTK Query automatically handles:
 - Error and loading state tracking
 - Background polling and refetching
 
-WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. RTK Query hooks can be invalidated or updated in response to WebSocket messages for live state updates.
+WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. RTK Query hooks can be invalidated or updated in response to WebSocket messages for live state updates (TODO: Not yet implemented).
 
 ## 🛠️ Build Tooling
 
@@ -55,13 +55,13 @@ The frontend uses **Vite** for fast development and production builds:
 
 - `npm run dev` starts the local development server with hot module replacement.
 - `npm run build` produces an optimized bundle under `dist/`.
-- `npm run test` runs unit tests with Jest and React Testing Library.
+- `npm run test` runs unit tests with Jest and React Testing Library. (TODO: Not yet implemented)
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
 
-RTK Query works out of the box with Redux Toolkit and TypeScript. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing.
+RTK Query works out of the box with Redux Toolkit and TypeScript. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing (TODO: Not yet implemented).
 
-## 🎨 Game-Specific Customization (Planned)
+## 🎨 Game-Specific Customization (Planned) (TODO: Not yet implemented)
 
 FireMUD aims to let each hosted game supply its own UI styling and layout tweaks.
 
@@ -69,11 +69,11 @@ FireMUD aims to let each hosted game supply its own UI styling and layout tweaks
 - Creators can override Material-UI themes, logos, and optionally define extra routes.
 - Core components remain shared so feature updates reach all games without forks.
 
-## 🌍 Internationalization Strategy
+## 🌍 Internationalization Strategy (TODO: Not yet implemented)
 
 The React client uses **react-i18next** to load translation JSON files at runtime. Players select a language in the settings menu, and the UI strings update without a page reload. Locale files live under `src/i18n/` and can be extended by hosted games.
 
-## 🧪 End-to-End Testing
+## 🧪 End-to-End Testing (TODO: Not yet implemented)
 
 After the UI stabilizes, **Playwright** tests will exercise key flows by starting the Docker Compose stack and running a headless browser against the web client.
 
