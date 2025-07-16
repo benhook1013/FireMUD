@@ -66,15 +66,17 @@ Account Service (user) → Game Design Service (new game)
 Creators refine the world and its inhabitants using several services:
 
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors, and runtime flag definitions.
-- **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data. Scheduled world events notify other services when the environment changes.
+- **[World Management Service](./microservices/world-management-service/README.md)** –
+  Stores zones and maps, generates new areas, and maintains pathfinding data.
+  Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 - **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
-- **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
+- **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md). (TODO: Not yet implemented)
 - **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
-- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing. *Status: In Progress – not yet production ready.*
+- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing. *Status: In Progress – not yet production ready.* (TODO: Not yet implemented)
 - **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
 - **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
 
@@ -89,11 +91,10 @@ Game Design ↔ World Management ↔ Entity Management
 Dynamic behavior is implemented via the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md):
 
 - Script quests and NPC routines.
-- Trigger world events in response to player actions.
+- Trigger world events in response to player actions. (TODO: Not yet implemented)
 - See [Scripting & Automation Framework](./system-architecture-scripting.md) for
   details on the component-based DSL and sandboxing model.
-- [Modding Framework](./microservices/game-design-service/modding-framework.md)
-  enables runtime plugins using the same scripting sandbox. *Status: In Progress – still under development.*
+- [Modding Framework](./microservices/game-design-service/modding-framework.md) enables runtime plugins using the same scripting sandbox. *Status: In Progress – still under development.* (TODO: Not yet implemented)
 
 ---
 
@@ -102,7 +103,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 Once the world is ready:
 
 1. **Publish a Version** – Creators publish the current design in the Game Design Service.
-2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. (TODO: Not yet implemented) For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (start instance)
@@ -187,7 +188,7 @@ Review these guides alongside the
 4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
-5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
+5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. (TODO: Not yet implemented) See [Transaction Strategies](./system-architecture-transactions.md).
 
 6. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
@@ -275,7 +276,7 @@ Creators can change the look and feel of their games without altering the code b
 
 ## 16. Playtesting & Analytics
 
-Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) (TODO: Not yet implemented).
 
 ---
 
@@ -283,7 +284,7 @@ Before launch or after major updates, creators invite testers to staged environm
 
 1. **Pre‑Commit Hooks** – Developers run `pre-commit run --all-files` or `./gradlew check` to format code and execute tests before pushing.
 2. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
-3. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation. *Full automation of Kubernetes deployments is still a work in progress.*
+3. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation. *Full automation of Kubernetes deployments is still a work in progress. (TODO: Not yet implemented)*
 4. **Database Migrations** – Schemas are migrated with Flyway on startup; see [Database Migrations](./system-architecture-database-migrations.md).
 
 ```plaintext
