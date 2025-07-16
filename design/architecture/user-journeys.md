@@ -74,7 +74,7 @@ Creators refine the world and its inhabitants using several services:
 - **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
 - **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
 - **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
-- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing.
+- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing. *Status: In Progress – not yet production ready.*
 - **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
 - **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
 
@@ -93,7 +93,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 - See [Scripting & Automation Framework](./system-architecture-scripting.md) for
   details on the component-based DSL and sandboxing model.
 - [Modding Framework](./microservices/game-design-service/modding-framework.md)
-  enables runtime plugins using the same scripting sandbox.
+  enables runtime plugins using the same scripting sandbox. *Status: In Progress – still under development.*
 
 ---
 
@@ -102,7 +102,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 Once the world is ready:
 
 1. **Publish a Version** – Creators publish the current design in the Game Design Service.
-2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (start instance)
@@ -169,10 +169,12 @@ For usage examples see the
 The service also exposes moderation tools such as bans and runtime feature toggles.
 Administrators review logs and configure these options through the
 [Admin UI](./microservices/logging-admin-service/admin-ui.md).
-Policies are summarized in
+Policies are summarized in the
 [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
-and complex workflows are coordinated using the
+document. Complex workflows are coordinated using the
 [Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md).
+Review these guides alongside the
+[Security Architecture](./system-architecture-security.md) to ensure moderation actions follow platform rules.
 
 ---
 
@@ -281,7 +283,7 @@ Before launch or after major updates, creators invite testers to staged environm
 
 1. **Pre‑Commit Hooks** – Developers run `pre-commit run --all-files` or `./gradlew check` to format code and execute tests before pushing.
 2. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
-3. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation.
+3. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation. *Full automation of Kubernetes deployments is still a work in progress.*
 4. **Database Migrations** – Schemas are migrated with Flyway on startup; see [Database Migrations](./system-architecture-database-migrations.md).
 
 ```plaintext
