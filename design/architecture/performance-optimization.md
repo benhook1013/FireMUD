@@ -45,7 +45,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
   per-region visibility into retries and backoff behavior.
 - Graceful degradation logic in the Game Session Service retries failed
-  Redis operations so stalled ticks do not block gameplay.
+  Redis operations so stalled ticks do not block gameplay. (TODO: Not yet implemented)
 - The Game Session Service records `game_session_commands_enqueued_total` and
   `game_session_tick_duration_ms` metrics so operators can monitor throughput
   and tick performance.
