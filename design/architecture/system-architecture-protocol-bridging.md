@@ -61,7 +61,7 @@ Despite their differences, both protocols are normalized into the same internal 
     session recovery are handled as described in
     [Reconnection Strategy](./system-architecture-reconnection.md) _(TODO: Not yet implemented)_.
   - Disconnect handling is **layered**: the proxy cleans up Telnet sessions,
-    the gateway automatically recreates WebSocket backends, and the Game Session
+    the gateway automatically recreates WebSocket backends _(TODO: Not yet implemented)_, and the Game Session
     Service reloads state from Redis _(TODO: Not yet implemented)_.
   - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput`
     so the Game Session Service can recover Telnet sessions _(TODO: Not yet implemented)_.
@@ -83,7 +83,7 @@ The `game-session-service` is the central component responsible for:
 - Maintaining game session state per client connection.
 - Handling command parsing and game world interaction.
 - Sending and receiving text streams in a line-based protocol format.
-- Managing disconnects, reconnections, and session cleanup.
+- Managing disconnects, reconnections, and session cleanup _(TODO: Not yet implemented)_.
 
 > Whether a client is connected via WebSocket directly or tunneled through the TCP Proxy Service, the backend **treats all sessions the same**.
 
