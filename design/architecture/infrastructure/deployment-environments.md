@@ -20,6 +20,7 @@ FireMUD uses Docker Compose for local development and testing:
 - Connection settings for PostgreSQL and Redis are loaded from a `.env` file.
   A sample `.env.sample` is provided with default credentials.
 - Start the stack with `./gradlew devUp` and shut it down with `./gradlew devDown` (see [Developer Setup](../../DEVELOPER_SETUP.md)).
+- The stack also runs a `pg-dump-cron` container that creates and rotates PostgreSQL dumps under `./backups`.
 - For details on all configuration variables, see [Environment Variables & Secrets Management](./environment-and-secrets.md).
   Standard ports include **8080** for HTTP, **6565** for gRPC, and **2323** for
   the TCP proxy.
@@ -63,10 +64,10 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   deploying the base manifests.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
-- The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
-- Redis runs as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`. Both setups enable **AOF** persistence.
-- PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md).
-- Deployments use Helm charts but are triggered manually via [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml), which runs `helm upgrade` against a selected cluster when invoked. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
+- The cluster is planned to use **IPVS** (or a similar load-balancing mode) to route service traffic efficiently. This configuration is pending implementation.
+- Redis runs as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence.
+- PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#🔄-recovery).
+- Deployments use Helm charts but are triggered manually via [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml), which runs `helm upgrade` with `k8s/helm/values-local.yaml` by default. Use `values-dev.yaml` or other values files for non-local clusters. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
 A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../k8s/helm) to deploy services locally.
 
