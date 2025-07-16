@@ -7,20 +7,20 @@ An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-s
 
 ### Responsibilities
 
-- Accept Telnet connections and perform protocol negotiation
+- Accept Telnet connections and perform protocol negotiation (TODO: Not yet implemented)
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames
-- Provide graceful disconnect and reconnection handling
+- Provide graceful disconnect and reconnection handling (TODO: Not yet implemented)
 
 ## Architecture / Design Notes
 
 - Spring Boot service hosting a lightweight Netty-based Telnet server.
 - Buffers incoming input during brief disconnects and clears it on connection loss.
-- Handles Telnet negotiation and character encoding quirks.
-- Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md).
-- Works with the Reconnection Strategy to resume sessions transparently.
+- Handles Telnet negotiation and character encoding quirks (TODO: Not yet implemented).
+- Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md). (TODO: Not yet implemented)
+- Works with the Reconnection Strategy to resume sessions transparently. (TODO: Not yet implemented)
 - Can optionally terminate Telnet-over-TLS. Forwarding to the gateway currently
-  uses plain WebSocket connections; mutual TLS support is planned. See
-  [Security Architecture](../system-architecture-security.md).
+  uses plain WebSocket connections; mutual TLS support is planned. (TODO: Not yet implemented)
+  See [Security Architecture](../system-architecture-security.md).
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
    **Telnet protocol commands** as described in the
@@ -33,7 +33,7 @@ An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-s
 - **Telnet Compatibility** — accepts standard MUD clients over TCP.
 - **WebSocket Bridging** — forwards all traffic to the gateway via WebSocket.
 - **Connection Buffering** — temporarily queues input to handle latency.
-- **Graceful Disconnects** — informs the Game Session Service when a client drops.
+- **Graceful Disconnects** — informs the Game Session Service when a client drops. (TODO: Not yet implemented)
 
 ### Data Flow
 
@@ -49,9 +49,9 @@ The proxy does not expose a public client API. Instead it defines two gRPC
 events used internally when communicating with other microservices:
 
 - **NotifyDisconnect** – informs the Game Session Service when a Telnet client
-    drops so the session may be suspended.
+    drops so the session may be suspended. (TODO: Not yet implemented)
 - **PushBufferedInput** – forwards any queued commands after a reconnect
-    event.
+    event. (TODO: Not yet implemented)
 These gRPC events are defined but the current implementation does not yet invoke them.
 At present the service only logs when these methods are called; no other microservices are contacted.
 These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).

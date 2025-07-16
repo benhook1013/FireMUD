@@ -39,7 +39,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   `script_quota_denied_total`) and automation queue metrics
   (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide
   visibility into heavy script load.
-- Redis exporters publish Lua latency, lock contention and retry queue depth
+- A Redis exporter publishes Lua latency, lock contention, and retry queue depth
   metrics so operators can spot hotspots in Grafana dashboards.
 - The Game Session Service exposes `tick_retry_queue_depth`,
   `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
@@ -62,13 +62,15 @@ These notes summarize typical optimizations applied across FireMUD services.
   (configurable via `game.tick-max-commands` and `automation.tick-max-events`).
   This prevents runaway loops and keeps work evenly distributed across ticks.
 - The TCP Proxy Service limits connections per IP and throttles messages per
-  client to shield the gateway from abuse.
+  client using `ConnectionThrottler` and a per-session rate limiter to shield
+  the gateway from abuse.
 
 ## Network Traffic
 
-- gRPC calls enable compression and keep-alive pings to reduce latency.
+- gRPC clients enable compression and keep-alive pings to reduce latency.
 - HTTP response compression is enabled via Spring Boot.
-- The Gateway applies connection pooling and caches static assets.
+- The Gateway applies HTTP client connection pooling and caches static assets
+  using Spring's resource cache.
 - gRPC and REST endpoints are instrumented with Micrometer metrics and
   OpenTelemetry tracing using shared interceptors to monitor latency and error
   rates.

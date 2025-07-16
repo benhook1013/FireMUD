@@ -19,7 +19,7 @@ seamlessly with cert-manager for automatic rotation.
 ### Key and Certificate Rotation
 
 - cert-manager issues both JWT signing keys and mTLS certificates, backed by an internal CA.
-- All services poll their mounted secrets for updates and support **hot reload** via the shared `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` utilities. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
+- All services poll their mounted secrets for updates and support **hot reload** via the shared `TlsCertificateWatcher` and `JwtSecretWatcher` utilities. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services. (TODO: Not yet implemented) JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
 - During rotation, services reload credentials when files change. Caching of old credentials to allow for seamless transitions is planned. (TODO: Not yet implemented)
 - The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually. Automated JWKS generation is planned. (TODO: Not yet implemented)
@@ -72,7 +72,7 @@ seamlessly with cert-manager for automatic rotation.
 - All failed logins, suspicious activity, and abuse attempts are captured in:
   - **Elasticsearch-backed logs**
   - The **Logging & Admin Service dashboard** ([design](./microservices/logging-admin-service/README.md))
-- Admin actions (e.g., bans, role changes) are tracked for auditability. (TODO: Not yet implemented)
+  - Admin actions such as bans are recorded by the Logging & Admin Service for auditability. Tracking of role changes is planned. (TODO: Not yet implemented)
 
 ---
 
@@ -96,12 +96,12 @@ seamlessly with cert-manager for automatic rotation.
 | Topic                     | Strategy                                                                 |
 |---------------------------|--------------------------------------------------------------------------|
 | JWT Secret Storage        | Kubernetes Secrets via cert-manager                                      |
-| Key & Cert Rotation       | Hot-reload with caching of old credentials; JWKS rotation still manual |
+| Key & Cert Rotation       | Hot-reload; caching of old credentials and automated JWKS rotation planned (TODO: Not yet implemented) |
 | TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets                                              |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
 | Brute-Force Defense       | Planned per-IP tracking and throttling (not yet implemented) |
-| Abuse Detection           | Current: login only; Future: command-level heuristics                    |
+| Abuse Detection           | Current: login only; Future: command-level heuristics (TODO: Not yet implemented) |
 | Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
 | Admin Role Access         | JWT-only; no special network-level restrictions                          |
 | Zero Trust                | Not currently adopted; mTLS and JWTs provide strong internal identity    |

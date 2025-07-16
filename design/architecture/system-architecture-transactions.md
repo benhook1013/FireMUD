@@ -74,14 +74,14 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Supports compensation
   - Automatic retries and alerting (TODO: Not yet implemented)
   - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow
-  - Operators monitor progress in the Saga Dashboard provided by the Logging & Admin Service
+  - Operators monitor progress in the Saga Dashboard provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
   - All steps are **idempotent**
   - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
-  - Retried automatically or flagged for manual review
+  - Retried automatically or flagged for manual review (TODO: Not yet implemented)
 
 ### Fluent API Example:
 
@@ -101,7 +101,7 @@ The `firemud-common` library provides a `SagaBuilder` class implementing this pa
 Services include the library and the accompanying Flyway migrations to persist
 saga state in the `saga_instance` and `saga_step` tables.
 Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
-and [Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md).
+and in the Logging & Admin Service README.
 
 ---
 
@@ -136,4 +136,4 @@ Use Redis rollback + tick retries for fast, fair, and consistent gameplay handli
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [Shared Libraries Overview](./system-architecture-shared-libraries.md)
 - [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
-- [Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md)
+- [Logging & Admin Service README](./microservices/logging-admin-service/README.md)
