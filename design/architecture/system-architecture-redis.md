@@ -47,10 +47,10 @@ Redis is a **non-persistent** layer — but FireMUD treats it as **essential** f
 
 FireMUD runs Redis in a **clustered, replicated configuration**:
 
-- Multiple **shards and replicas** for tick region and session partitioning
-- Partitioning aligns with tick region boundaries (typically per-room or per-segment)
-- Kubernetes-native failover
-- **Failover behavior is tested under live tick loads**
+- Multiple **shards and replicas** for tick region and session partitioning (TODO: Not yet implemented)
+- Partitioning aligns with tick region boundaries (typically per-room or per-segment) (TODO: Not yet implemented)
+- Kubernetes-native failover (TODO: Not yet implemented)
+- **Failover behavior is tested under live tick loads** (TODO: Not yet implemented)
 - Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff.
 
 > For operational context on Docker Compose vs Kubernetes, see [Deployment Environments](./infrastructure/deployment-environments.md).
@@ -91,7 +91,7 @@ Redis keys follow strict naming conventions to ensure:
 | `room:{tenantId}:{roomId}`               | Hot room cache as JSON (occupants and metadata)                  |
 | `retry:{tenantId}:{regionId}`            | Retry queue for failed actions           |
 | `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
-| `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
+| `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups (TODO: Not yet implemented) |
 
 > 🔗 `remote:{tenantId}:{entityId}` keys route cross-region commands. See [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
 > for details.
@@ -151,7 +151,7 @@ for how follow-up commands are routed.
 Tick regions **do not execute unless explicitly triggered**. Idle regions will
 never see scheduled global events on their own. To apply a world-wide effect —
 for example, a server-wide freeze or weather change — the **Game Session
-Service** identifies every active region and **fan-outs tick tasks**:
+Service** identifies every active region and **fan-outs tick tasks (TODO: Not yet implemented)**:
 
 1. Commands are injected into each region’s shard-local keyspace.
 2. A tick is triggered in that region to apply the effect atomically.
@@ -161,7 +161,7 @@ regions would otherwise remain idle. The approach preserves shard-local atomicit
 and deterministic recovery without cross-shard locks or speculative polling. It
 also avoids scheduling global keys that might wake otherwise idle regions.
 
-Regions still run a lightweight background tick (for example every second) so
+Regions still run a lightweight background tick (for example every second) so (TODO: Not yet implemented)
 queued timers, cooldowns, or delayed events progress even when no players are
 present.
 
@@ -214,7 +214,7 @@ FireMUD actively monitors Redis performance and tick health:
   (applyable via [`k8s/README.md`](../../k8s/README.md))
 - **Grafana dashboards** visualize tick throughput and hotspots
 - **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
-- **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
+- **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls (TODO: Not yet implemented)
 - Redis is the **single shared** volatile coordination layer — services do not maintain separate in-memory caches or alternative cache technologies
 - Local debugging tools such as the Redis CLI and RedisInsight are described in
   [Developer Setup](../../DEVELOPER_SETUP.md#redis-debugging)

@@ -30,14 +30,14 @@ This document outlines the **core functional and non-functional requirements** f
 
 ### 2.1 Multi-Tenancy & Game Hosting
 
-- The platform supports **multiple hosted games**, each **isolated at the game level**.
+- The platform supports **multiple hosted games**, each **isolated at the game level**. See [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md).
 - Each hosted game has **separate world data, player characters, and configurations**.
 - Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
 - Game creators can **host multiple games** with independent settings.
 
 ### 2.2 Game Design & Customization
 
-- Provides **game editing tools** for modifying world layouts, NPCs, items, and abilities. (TODO: Not yet implemented)
+- Provides **game editing tools** for modifying world layouts, NPCs, items, and abilities. (TODO: Not yet implemented) See [Game Design Service](../architecture/microservices/game-design-service/README.md).
 - Allows **game creators to configure rulesets and mechanics** without requiring code changes. (TODO: Not yet implemented)
 - Supports **game balancing, including experience curves, combat formulas, and economy adjustments**. (TODO: Not yet implemented)
 - Enables **scripted event design for quests, encounters, and world events**. (TODO: Not yet implemented)
@@ -50,9 +50,10 @@ This document outlines the **core functional and non-functional requirements** f
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
 - **Expanded Account Features**:
-- Players should be able to **link external accounts** (Google, Discord, Steam) for login.
-- Profiles should include **game history, achievements, and social features**. (TODO: Not yet implemented)
-- Persistent session tracking to **ensure seamless reconnection across devices**.
+  - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
+  - Profiles should include **game history, achievements, and social features**. (TODO: Not yet implemented)
+  - Persistent session tracking to **ensure seamless reconnection across devices**.
+See [Account Service](../architecture/microservices/account-service/README.md) for implementation details.
 
 ### 2.4 Game World & Entity Management
 
@@ -64,6 +65,7 @@ This document outlines the **core functional and non-functional requirements** f
 - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
 - NPC actions and environmental changes should **continue in a believable way even if no players are online**. (TODO: Not yet implemented)
 - Persistent storage for **player, NPC, and item data**.
+See [World Management Service](../architecture/microservices/world-management-service/README.md) for additional details.
 
 ### 2.5 Game Logic & Automation
 
@@ -74,7 +76,8 @@ This document outlines the **core functional and non-functional requirements** f
   - NPCs react dynamically to the world using **event-driven** (trigger-based) and **state-driven** (persistent memory) behaviors. (TODO: Not yet implemented)
   - NPCs maintain **awareness of past interactions**, allowing dynamic responses. (TODO: Not yet implemented)
   - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online. (TODO: Not yet implemented)
-  - Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions. (TODO: Not yet implemented)
+- Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions. (TODO: Not yet implemented)
+See [Game Logic Service](../architecture/microservices/game-logic-service/README.md) and [Automation & Scripting Service](../architecture/microservices/automation-scripting-service/README.md) for design details.
 
 ### 2.6 Real-Time Multiplayer & Communication
 
@@ -82,6 +85,7 @@ This document outlines the **core functional and non-functional requirements** f
 - In-game **chat system, mail messaging, and guild/group communications**.
 - **PvP & cooperative multiplayer support**. (TODO: Not yet implemented)
 - **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff.
+See [Social & Groups Service](../architecture/microservices/social-groups-service/README.md) for chat and guild features.
 
 ### 2.7 Extensibility & Game Customization
 
@@ -93,6 +97,8 @@ This document outlines the **core functional and non-functional requirements** f
   - Scripts are authored through a **component-based DSL** with a **visual editor**. (TODO: Not yet implemented)
   - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse. (TODO: Not yet implemented)
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance. (TODO: Not yet implemented)
+See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
+
 
 ### 2.8 Moderation, Administration & Monetization
 
@@ -107,6 +113,7 @@ This document outlines the **core functional and non-functional requirements** f
   - A **platform fee** applies to all transactions.
   - **External payment methods are not allowed** to ensure security and compliance.
   - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
+See [Logging & Admin Service](../architecture/microservices/logging-admin-service/README.md) for moderation features and [Account Service](../architecture/microservices/account-service/README.md) for payment processing.
 
 ---
 
@@ -117,6 +124,7 @@ This document outlines the **core functional and non-functional requirements** f
 - The **Game Session Service** activates the desired `version_id` when starting a game instance.
 - Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
 - The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time.
+See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.
 
 ---
 
@@ -131,12 +139,14 @@ This document outlines the **core functional and non-functional requirements** f
 - **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
 - **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
 - Multi-server support enables **scaling hosted games separately**.
+See [Gateway Architecture](../architecture/system-architecture-gateway.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for network flow details.
 
 ### 3.2 Persistence & Caching
 
 - **PostgreSQL** is the primary database for game world, entity, and account storage.
 - **Redis** stores transient gameplay and session state only; all authoritative data remains in PostgreSQL.
 - **Database migrations are managed per service using [Flyway](../architecture/system-architecture-database-migrations.md).**
+See [Redis Architecture](../architecture/system-architecture-redis.md) for key conventions and caching strategy.
 
 ### 3.3 Deployment Model
 
@@ -147,6 +157,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Supports **multi-region deployments** to provide better latency for global users. (TODO: Not yet implemented)
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
 - **Velero** backs up Kubernetes manifests only. PostgreSQL data is protected by a `pg_dump` CronJob. The production backup schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
+See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workflow details.
 
 ### 3.4 Gameplay Session Architecture
 
@@ -156,6 +167,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Redis runs with **AOF persistence** and synchronous replication so tick state can be recovered after failover.
 - Lua scripts in Redis ensure atomic tick updates and use `WAIT` for replica acknowledgment.
 - A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows transparent service restarts.
+See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for implementation details.
 
 ---
 

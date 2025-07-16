@@ -2,7 +2,7 @@
 
 This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, and containerized. Deployment to Kubernetes is triggered manually using a dedicated workflow until cloud hosting is available.
 
-> **Status: In Progress** – Full automation of Kubernetes deployments is still being developed.
+> **Status: In Progress** – Full automation of Kubernetes deployments is still being developed. (TODO: Not yet implemented)
 
 ---
 
@@ -10,13 +10,13 @@ This document describes the basic continuous integration and deployment strategy
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes manually** using the manifests in [`k8s/`](../../k8s/), with automation planned for the future.
+- **Deploy to Kubernetes manually** using the manifests in [`k8s/`](../../k8s/), with automation planned for the future. (TODO: Not yet implemented)
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
 - **Publish documentation** to GitHub Pages after successful builds.
 - **Create release PRs automatically** using the `release-please` workflow.
-- **Generate database ERD diagrams** as build artifacts after each run. The diagrams are stored in `design/erd/` and uploaded as workflow artifacts.
+- **Generate database ERD diagrams** as build artifacts after each run. The diagrams are stored in `design/erd-diagrams/` and uploaded as workflow artifacts.
 
 The CI job first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by a matrix of Gradle `check` tasks—one per microservice—which compile and test each module while running Spotless, Checkstyle, and SpotBugs. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. Node 20 is also configured so the pipeline can lint OpenAPI definitions, run the React client’s linters, and execute an accessibility audit using headless Chrome. After the scan, the job executes `dev-tools/generate-erd.sh` to build ERD diagrams from the service migrations and uploads them as artifacts. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
 
@@ -165,11 +165,11 @@ Docker Compose has default environment variables available.
 
 ## ➕ Optional Add-Ons
 
-- **Nightly builds or scheduled jobs** for integration testing.
+- **Nightly builds or scheduled jobs** for integration testing. (TODO: Not yet implemented)
 - **Security scanning** using tools like Trivy. The `weekly-security-scan.yml`
   workflow runs on a schedule to scan dependencies and container images for
   vulnerabilities.
-- **Notifications** via email when workflows fail.
+- **Notifications** via email when workflows fail. (TODO: Not yet implemented)
 
 These can be added as separate workflows or additional jobs in the main pipeline.
 

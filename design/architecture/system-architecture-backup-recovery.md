@@ -6,7 +6,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 
 ## 📦 PostgreSQL Logical Backups
 
-- A `firemud-pg-dump` CronJob runs **every 15 minutes** and stores compressed SQL dumps.
+- A `firemud-pg-dump` CronJob (defined in `k8s/postgres/pg-dump-cronjob.yaml`) runs **every 15 minutes** and stores compressed SQL dumps.
 - Retention policy:
   - **24 hours** of 15‑minute dumps
   - **3 weekly** dumps
@@ -16,41 +16,38 @@ This document defines the backup schedule and disaster recovery procedures for F
   environment variable `PG_DUMP_BUCKET` is set, the script also uploads each
   dump to the specified S3/MinIO bucket.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests.
-- Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example snippet:
+- Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
 
-    ```yaml
-    configuration:
-      provider: aws
-      defaultVolumesToFsBackup: false
-      backupStorageLocation:
-        bucket: firemud-backups
-      ```
-    Always leave `defaultVolumesToFsBackup` set to `false` so Velero backs up
-    only Kubernetes manifests and not persistent volume contents.
+```yaml
+configuration:
+  provider: aws
+  defaultVolumesToFsBackup: false
+  backupStorageLocation:
+    bucket: firemud-backups
+```
 
-    For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml`
-    manifest and configure Velero with a local backup location:
+Always leave `defaultVolumesToFsBackup` set to `false` so Velero backs up only Kubernetes manifests and not persistent volume contents.
 
-    ```yaml
-    configuration:
-      provider: aws
-      defaultVolumesToFsBackup: false
-      backupStorageLocation:
-        name: local
-        provider: aws
-        bucket: firemud-backups
-        config:
-          region: minio
-          s3Url: http://minio.minio.svc.cluster.local:9000
-          insecureSkipTLSVerify: true
-      credentials:
-        useSecret: true
-        existingSecret: velero-minio-creds
-      ```
+For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml` manifest and configure Velero with a local backup location:
 
-      Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the
-      `firemud-backups` bucket, and install Velero automatically. Keep
-      `defaultVolumesToFsBackup` disabled to avoid saving PVC data.
+```yaml
+configuration:
+  provider: aws
+  defaultVolumesToFsBackup: false
+  backupStorageLocation:
+    name: local
+    provider: aws
+    bucket: firemud-backups
+    config:
+      region: minio
+      s3Url: http://minio.minio.svc.cluster.local:9000
+      insecureSkipTLSVerify: true
+credentials:
+  useSecret: true
+  existingSecret: velero-minio-creds
+```
+
+Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the `firemud-backups` bucket, and install Velero automatically. Keep `defaultVolumesToFsBackup` disabled to avoid saving PVC data.
 
   - If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.

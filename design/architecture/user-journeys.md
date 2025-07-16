@@ -71,11 +71,11 @@ Creators refine the world and its inhabitants using several services:
   Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
-- **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
+- **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation. (TODO: Not yet implemented)
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
-- **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
+- **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing. (TODO: Not yet implemented)
 - **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md). (TODO: Not yet implemented)
-- **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
+- **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md). (TODO: Not yet implemented)
 - **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing. *Status: In Progress – not yet production ready.* (TODO: Not yet implemented)
 - **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
 - **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
@@ -166,14 +166,14 @@ Logs, metrics, and traces flow into **Elasticsearch**, **Prometheus**, and **Jae
 [Logging & Monitoring](./system-architecture-logging-monitoring.md) and
 [Tracing](./system-architecture-tracing.md).
 For usage examples see the
-[Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+[Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). (TODO: Not yet implemented)
 The service also exposes moderation tools such as bans and runtime feature toggles.
 Administrators review logs and configure these options through the
 [Admin UI](./microservices/logging-admin-service/admin-ui.md).
 Policies are summarized in the
 [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
-document. Complex workflows are coordinated using the
-[Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md).
+document. Complex moderation workflows are coordinated using saga patterns as described in
+[Transaction Strategies](./system-architecture-transactions.md).
 Review these guides alongside the
 [Security Architecture](./system-architecture-security.md) to ensure moderation actions follow platform rules.
 
@@ -339,7 +339,7 @@ observability stack:
 4. **Kibana Dashboards** – Pre-built views like the
    [Log Volume dashboard](../observability/kibana/log-volume.json) help monitor
    logging rates.
-5. **Operator Dashboards** – Additional Grafana and Kibana views are described in the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) document.
+5. **Operator Dashboards** – Additional Grafana and Kibana views are described in the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) document. (TODO: Not yet implemented)
 
 ```plaintext
 Service Logs → Elasticsearch → Kibana
@@ -355,8 +355,8 @@ Common troubleshooting steps are documented in the [Operational Runbooks](./syst
 
 Creators extend gameplay using external editors and runtime plugins:
 
-1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so tools can create rooms, items, and NPCs programmatically. See [MCP Support](./system-architecture-mcp-support.md).
-2. **Modding Framework** – Plugins packaged through the [Game Design Service](./microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) executes them in a sandbox.
+1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so tools can create rooms, items, and NPCs programmatically. See [MCP Support](./system-architecture-mcp-support.md). (TODO: Not yet implemented)
+2. **Modding Framework** – Plugins packaged through the [Game Design Service](./microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) executes them in a sandbox. (TODO: Not yet implemented)
 
 ```plaintext
 Editor/Tool → TCP Proxy Service → Game Design Service → Automation & Scripting Service

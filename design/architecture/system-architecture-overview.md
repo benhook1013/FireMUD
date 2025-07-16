@@ -14,12 +14,13 @@ This document provides a high-level view of FireMUD’s system architecture, sho
    > 🛑 **Gameplay login is handled by the Game Session Service** — the Gateway simply forwards any admin tokens. JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input**, but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
-- **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency
+- **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md)
 - **Session state is stored in Redis** to keep services stateless and support gameplay recovery
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**
 - **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one
+- **Multi-tenant architecture shares infrastructure across games; per-game resource quotas are planned to prevent one tenant from exhausting cluster capacity.** (TODO: Not yet implemented)
 
 🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
 
@@ -48,13 +49,13 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
 | **Game Session Service**          | Manages player sessions, tick orchestration, stores runtime flags, input validation |
-| **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
+| **Account Service**               | Manages player accounts, login, auth, subscription status; ban workflows are planned (TODO: Not yet implemented) |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
-| **World Management Service**      | Owns maps, rooms, and tick region structure                            |
+| **World Management Service**      | Owns maps, rooms, and tick region structure; pathfinding APIs and world snapshots are planned (TODO: Not yet implemented) |
 | **Game Logic Service**            | Executes gameplay mechanics; resolves actions deterministically        |
 | **Automation & Scripting Service**| Triggers AI and scripted behaviors                                     |
 | **Social & Groups Service**     | Manages chat, mail, guilds, and social features                        |
-| **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs, toggles runtime flags                   |
+| **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs, toggles runtime flags (TODO: Not yet implemented)                  |
 | **Game Design Service**           | Authoring tool for designing and publishing game data; defines feature flags                  |
 
 ---

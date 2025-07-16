@@ -14,7 +14,14 @@ The `game_assets` table stores the raw binary data. Columns include:
 - `data` – binary blob
 - `created_at` – upload timestamp
 
-Assets are uploaded via `POST /assets` and returned as `GameAssetDto` objects.
+An index named `idx_game_assets_tenant` speeds up queries scoped to a tenant.
+
+## API
+
+Assets are uploaded via `POST /assets` and the saved record is returned as a `GameAssetDto`.
+See the [OpenAPI specification](../../../../services/game-design-service/src/main/resources/openapi.yaml) for request details.
+Endpoints for downloading or deleting assets are not provided yet. (TODO: Not yet implemented)
+
 A basic repository and service persist uploads using Spring Data JPA.
 
 See [Game Design Service Architecture](../../../design/architecture/microservices/game-design-service/README.md) for how these assets fit into published versions.

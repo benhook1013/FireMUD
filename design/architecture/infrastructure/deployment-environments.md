@@ -64,8 +64,8 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   deploying the base manifests.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
-- The cluster is planned to use **IPVS** (or a similar load-balancing mode) to route service traffic efficiently. This configuration is pending implementation.
-- Redis runs as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence.
+- The cluster is planned to use **IPVS** (or a similar load-balancing mode) to route service traffic efficiently. This configuration is pending implementation. (TODO: Not yet implemented)
+- Redis is planned to run as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence. (TODO: Not yet implemented)
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#🔄-recovery).
 - Deployments use Helm charts but are triggered manually via [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml), which runs `helm upgrade` with `k8s/helm/values-local.yaml` by default. Use `values-dev.yaml` or other values files for non-local clusters. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
@@ -128,8 +128,8 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 
 ## 🎮 Staging Environment for Playtesting
 
-A minimal staging cluster mirrors production but uses smaller node sizes. Pull requests can deploy preview versions so playtesters can experiment without affecting live games. Test data resets nightly.
-Preview deployments are orchestrated by [preview.yml](../../../.github/workflows/preview.yml). For details on collecting tester feedback see [Playtesting & Feedback Plan](../../project-management/playtesting-feedback.md).
+A dedicated staging cluster is planned to mirror production using smaller node sizes. (TODO: Not yet implemented) Pull requests currently spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
+For details on collecting tester feedback see [Playtesting & Feedback Plan](../../project-management/playtesting-feedback.md).
 
 ---
 
