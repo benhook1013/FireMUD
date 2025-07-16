@@ -30,6 +30,7 @@ Once your environment is running you can create a feature branch and submit a PR
 - Backend code targets Java 21+ with Spring Boot 3.x; frontend code follows standard React/TypeScript conventions.
 - Document public methods and classes with brief Javadoc comments.
 - Install the git hook in `config/git-hooks/pre-commit` to automatically format and lint your commits.
+- Wrap all Markdown files at 100 characters. Use `./gradlew lintMarkdownFix` or your editor's rewrap command.
 
 ## Pre-commit Hooks
 
