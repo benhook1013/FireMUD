@@ -48,13 +48,13 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
 | **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
 | **Game Session Service**          | Manages player sessions, tick orchestration, stores runtime flags, input validation |
-| **Account Service**               | Manages player accounts, login, auth, subscriptions, and bans          |
+| **Account Service**               | Manages player accounts, login, auth, subscription status; ban workflows are planned (TODO: Not yet implemented) |
 | **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
-| **World Management Service**      | Owns maps, rooms, and tick region structure                            |
+| **World Management Service**      | Owns maps, rooms, and tick region structure; pathfinding APIs and world snapshots are planned (TODO: Not yet implemented) |
 | **Game Logic Service**            | Executes gameplay mechanics; resolves actions deterministically        |
 | **Automation & Scripting Service**| Triggers AI and scripted behaviors                                     |
 | **Social & Groups Service**     | Manages chat, mail, guilds, and social features                        |
-| **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs, toggles runtime flags                   |
+| **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs, toggles runtime flags (TODO: Not yet implemented)                  |
 | **Game Design Service**           | Authoring tool for designing and publishing game data; defines feature flags                  |
 
 ---
