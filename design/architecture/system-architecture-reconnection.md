@@ -8,13 +8,13 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 | Layer              | Responsibility                                                               |
 |-------------------|-------------------------------------------------------------------------------|
-| **TCP Proxy Service**      | Parses Telnet input; clears input buffer on disconnect                        |
-| **Spring Cloud Gateway** | Stateless WebSocket passthrough; re-establishes backend connection automatically |
-| **Game Session Service**   | Restores session from Redis; rebinds socket, tick region, and timers          |
+| **TCP Proxy Service**      | Parses Telnet input, clears buffer, gRPC hooks (TODO: Not yet implemented) |
+| **Spring Cloud Gateway** | Stateless WebSocket passthrough; reconnects backend automatically (TODO: Not yet implemented) |
+| **Game Session Service**   | Restores session from Redis; rebinds socket, region, and timers (TODO: Not yet implemented) |
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.**
-Game Session Service restarts are **transparent** if the client remains connected. The Gateway automatically re-establishes WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. TCP Proxy restarts drop Telnet clients.
+Game Session Service restarts are **transparent** if the client remains connected. The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. TCP Proxy restarts drop Telnet clients. (TODO: Not yet implemented)
 
 ---
 
@@ -25,19 +25,20 @@ Game Session Service restarts are **transparent** if the client remains connecte
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
 - No gameplay state is preserved across reconnects — Game Session Service handles recovery
+- Provides gRPC hooks (`NotifyDisconnect`, `PushBufferedInput`) for session recovery integration (TODO: Not yet implemented)
 - Runtime options such as the listening port and gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service README](./microservices/tcp-proxy-service/README.md#environment-variables)).
 
 ### Spring Cloud Gateway (Web Clients)
 
 - Stateless WebSocket router
-- Automatically re-establishes backend connections if restarted
+- Automatically re-establishes backend connections if restarted (TODO: Not yet implemented)
 - Holds no gameplay, auth, or session state
 
-> TCP Proxy restarts drop Telnet connections. Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically. Telnet clients proxied through the Gateway remain connected.
+> TCP Proxy restarts drop Telnet connections. Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically (TODO: Not yet implemented). Telnet clients proxied through the Gateway remain connected.
 
 ### Game Session Service
 
-- Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info
+- Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info (TODO: Not yet implemented)
 - On reconnect, rebinds:
   - Socket connection
   - Tick region context
@@ -78,7 +79,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 | Client disconnect (TCP/WebSocket)              | Requires new `LOGIN`; may resume via Redis     |
 | TCP Proxy Service restart                              | Telnet clients disconnected; new `LOGIN` required       |
 | Spring Cloud Gateway restart                           | Web clients disconnected; Telnet clients stay connected |
-| Game Session Service restart                          | Transparent if client remains connected         |
+| Game Session Service restart                          | Transparent if client remains connected (TODO: Not yet implemented)         |
 | Manual re-`LOGIN` from same character          | Treated as reconnect; resumes if Redis intact  |
 | Redis session expired/missing                  | Treated as fresh login; gameplay starts anew   |
 | New client logs in as same character           | Old session terminated; new one resumes control |
