@@ -18,6 +18,7 @@ This document explains how configuration values and sensitive secrets are suppli
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
 - Secrets are provisioned by **cert-manager** and rotated automatically. The
   sample `firemud-secret` Secret is defined in `k8s/base/firemud-db-env.yaml` and contains placeholder values only for local demos; production deployments must supply real credentials.
+- Services reload TLS certificates and JWT secrets at runtime when these Secrets update.
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
   stage.
