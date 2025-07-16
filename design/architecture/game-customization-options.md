@@ -4,12 +4,12 @@ This brief document summarizes the ways a hosted game can change its look and fe
 
 ## Theme and Branding
 
-- Each tenant provides a Material‑UI theme file that overrides default colors and fonts.
+- Each tenant provides a Material‑UI theme file that overrides default colors and fonts. (TODO: Not yet implemented)
 - Logos and favicon assets are loaded at runtime based on the `tenantId` and
   are stored through the Game Design Service's
-  [asset storage system](./microservices/game-design-service/asset-storage.md).
+  [asset storage system](./microservices/game-design-service/asset-storage.md). (TODO: Not yet implemented)
 - The React client loads theme and asset files per tenant at runtime; see
-  [Frontend Architecture](./system-architecture-frontend.md).
+  [Frontend Architecture](./system-architecture-frontend.md). (TODO: Not yet implemented)
 - Optional layout tweaks can be enabled via **runtime feature flags** defined in
   the Game Design Service and toggled through the
   [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)

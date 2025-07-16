@@ -50,9 +50,9 @@ This document outlines the **core functional and non-functional requirements** f
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
 - **Expanded Account Features**:
-  - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
-  - Profiles should include **game history, achievements, and social features**. (TODO: Not yet implemented)
-  - Persistent session tracking to **ensure seamless reconnection across devices**.
+- Players should be able to **link external accounts** (Google, Discord, Steam) for login.
+- Profiles should include **game history, achievements, and social features**. (TODO: Not yet implemented)
+- Persistent session tracking to **ensure seamless reconnection across devices**.
 
 ### 2.4 Game World & Entity Management
 
@@ -60,46 +60,46 @@ This document outlines the **core functional and non-functional requirements** f
 - **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing).
 - Game creators can configure **instance rules, expiration, and persistence settings**.
 - **World Persistence & Scheduled Events**:
-  - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
-  - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
-  - NPC actions and environmental changes should **continue in a believable way even if no players are online**. (TODO: Not yet implemented)
+- The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
+- **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
+- NPC actions and environmental changes should **continue in a believable way even if no players are online**. (TODO: Not yet implemented)
 - Persistent storage for **player, NPC, and item data**.
 
 ### 2.5 Game Logic & Automation
 
 - Players interact with the game via **text-based command parsing** (e.g., `"move north"`, `"attack goblin"`).
- - The platform must support **custom game logic per hosted game**. (TODO: Not yet implemented)
- - **Action processing** for combat, trading, crafting, and roleplay actions. (TODO: Not yet implemented)
+- The platform must support **custom game logic per hosted game**. (TODO: Not yet implemented)
+- **Action processing** for combat, trading, crafting, and roleplay actions. (TODO: Not yet implemented)
 - **NPC AI Behaviors**:
   - NPCs react dynamically to the world using **event-driven** (trigger-based) and **state-driven** (persistent memory) behaviors. (TODO: Not yet implemented)
   - NPCs maintain **awareness of past interactions**, allowing dynamic responses. (TODO: Not yet implemented)
   - The system supports **world simulation**, enabling **autonomous NPC actions** even when no players are online. (TODO: Not yet implemented)
- - Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions. (TODO: Not yet implemented)
+  - Uses a **hybrid tick model** with **one action per entity per tick** for deterministic processing across independently scaled regions. (TODO: Not yet implemented)
 
 ### 2.6 Real-Time Multiplayer & Communication
 
 - **WebSockets/TCP-based real-time networking** for player interactions.
 - In-game **chat system, mail messaging, and guild/group communications**.
- - **PvP & cooperative multiplayer support**. (TODO: Not yet implemented)
+- **PvP & cooperative multiplayer support**. (TODO: Not yet implemented)
 - **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff.
 
 ### 2.7 Extensibility & Game Customization
 
- - Games should support **custom game rules, abilities, and world data**. (TODO: Not yet implemented)
+- Games should support **custom game rules, abilities, and world data**. (TODO: Not yet implemented)
 - **Scripting API & Advanced AI Customization**:
   - The platform offers **AI & scripting tools** for creating deep, dynamic game interactions. (TODO: Not yet implemented)
   - Games can define **unique AI behaviors, quest logic, and in-game events** without requiring custom code deployments. (TODO: Not yet implemented)
   - AI behaviors should be flexible enough to allow **autonomous world simulation**, making the game feel persistent and alive. (TODO: Not yet implemented)
   - Scripts are authored through a **component-based DSL** with a **visual editor**. (TODO: Not yet implemented)
   - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse. (TODO: Not yet implemented)
- - **Item & equipment balancing tools** to allow game creators to tweak in-game balance. (TODO: Not yet implemented)
+- **Item & equipment balancing tools** to allow game creators to tweak in-game balance. (TODO: Not yet implemented)
 
 ### 2.8 Moderation, Administration & Monetization
 
- - **Admin dashboard** for monitoring and moderating hosted games. (TODO: Not yet implemented)
- - **In-game reporting & ban system** for handling violations. (TODO: Not yet implemented)
- - **Moderation policy definitions** including profanity filters. (TODO: Not yet implemented)
- - **Central analytics dashboards and logging** for tracking player activity and game performance. (TODO: Not yet implemented)
+- **Admin dashboard** for monitoring and moderating hosted games. (TODO: Not yet implemented)
+- **In-game reporting & ban system** for handling violations. (TODO: Not yet implemented)
+- **Moderation policy definitions** including profanity filters. (TODO: Not yet implemented)
+- **Central analytics dashboards and logging** for tracking player activity and game performance. (TODO: Not yet implemented)
 - **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for details.
 - **Monetization & Payment System**:
   - The platform integrates **Stripe or similar services** for in-game purchases.
@@ -141,10 +141,10 @@ This document outlines the **core functional and non-functional requirements** f
 ### 3.3 Deployment Model
 
 - The platform is designed for **cloud-native deployment**, using:
-  - **Docker & Kubernetes** for containerization and scaling.
-  - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)). (TODO: Not yet implemented)
+- **Docker & Kubernetes** for containerization and scaling.
+- **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)). (TODO: Not yet implemented)
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
-  - Supports **multi-region deployments** to provide better latency for global users. (TODO: Not yet implemented)
+- Supports **multi-region deployments** to provide better latency for global users. (TODO: Not yet implemented)
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
 - **Velero** backs up Kubernetes manifests only. PostgreSQL data is protected by a `pg_dump` CronJob. The production backup schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
 
