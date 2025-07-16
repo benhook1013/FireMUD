@@ -162,7 +162,14 @@ files change.
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /friends` – create a friend link.
 - `POST /mail` – send an asynchronous in-game mail message.
+- `POST /guilds` – create a guild.
 - `POST /guilds/storage` – add an item to guild storage.
+- `POST /guilds/alliances` – create a guild alliance.
+- `POST /guilds/members` – add a guild member.
+- `POST /guilds/members/role` – update a guild member's role.
+- `POST /guilds/members/remove` – remove a guild member.
+- `POST /chat` – send a chat message filtered for profanity.
+- `POST /voice/token` – issue a temporary WebRTC token for voice chat. (TODO: Not yet implemented)
 
 ```bash
 curl http://localhost:8080/ping
