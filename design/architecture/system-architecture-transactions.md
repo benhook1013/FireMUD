@@ -63,19 +63,22 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
 
 - **Orchestration**:
   - Centralized in the **firemud-common** library (saga package)
+  - The engine and its Flyway migrations live in `services/common-library`
   - Hosts define saga flows declaratively using a fluent API
   - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
+  - Participating services include **Account**, **Game Session**, **World Management**, **Social Groups**, and **Logging & Admin**
   
 - **State Management**:
   - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library
   - Tracks in-progress, completed, and failed workflows
   - Supports retry, compensation, and alerting
-  - Emits a `sagas.active` metric and logs a `correlationId` for each workflow
+  - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow
   - Operators monitor progress in the Saga Dashboard provided by the Logging & Admin Service
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
   - All steps are **idempotent**
+  - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
   - Retried automatically or flagged for manual review
 
@@ -96,6 +99,8 @@ This design centralizes logic, improves visibility, and avoids coupling orchestr
 The `firemud-common` library provides a `SagaBuilder` class implementing this pattern.
 Services include the library and the accompanying Flyway migrations to persist
 saga state in the `saga_instance` and `saga_step` tables.
+Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
+and [Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md).
 
 ---
 
@@ -129,3 +134,5 @@ Use Redis rollback + tick retries for fast, fair, and consistent gameplay handli
 - [Game Session Service](./microservices/game-session-service/README.md)
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [Shared Libraries Overview](./system-architecture-shared-libraries.md)
+- [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
+- [Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md)
