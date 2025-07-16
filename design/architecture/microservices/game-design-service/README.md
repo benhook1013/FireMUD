@@ -23,8 +23,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
   and [Transaction Strategies](../system-architecture-transactions.md).
   The workflow is implemented using the Saga utilities from `firemud-common`
   with compensation steps to roll back if downstream copies fail. The
-  implementation currently persists the new version but the copy steps are
-  still TODO.
+  implementation currently persists the new version, but the copy steps are
+  not yet implemented. (TODO: Not yet implemented)
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
@@ -34,29 +34,29 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 ## Key Features
 
-- World and room editors.
-- [Ability & Action Design Tools](ability-action-tools.md)
-- Scripting and event workflow creation.
+- World and room editors. (TODO: Not yet implemented)
+- [Ability & Action Design Tools](ability-action-tools.md) (TODO: Not yet implemented)
+- Scripting and event workflow creation. (TODO: Not yet implemented)
 - Visual editor for building scripts in the same component-based DSL used by the
-  Automation & Scripting Service.
-- [Game templates](game-templates.md) with predefined rulesets and administrators.
-- Version and patch note management for published games.
+  Automation & Scripting Service. (TODO: Not yet implemented)
+- [Game templates](game-templates.md) with predefined rulesets and administrators. (TODO: Not yet implemented)
+- Version and patch note management for published games. (TODO: Not yet implemented)
 - Supports script-only patch versions that reference a `baseVersionId` and
   generate a new `scriptPatchVersion` without requiring a full publish.
 - Does not track individual script definitions at runtime; only the patch
   version metadata is recorded. Runtime services manage the active script
   registry and are notified when a patch version is published.
-- [Item & Equipment Balancing Tools](item-equipment-balancing.md)
-- Import/export of design assets for sharing between game worlds.
+- [Item & Equipment Balancing Tools](item-equipment-balancing.md) (TODO: Not yet implemented)
+- Import/export of design assets for sharing between game worlds. (TODO: Not yet implemented)
 
 ### Data Model
 
-- `game` table defines the project and its owner account.
+- `game` table defines the project and reserves an `owner_id` column for the future owner account field. (TODO: Not yet implemented)
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing. It includes `version_number`, `base_version_id`, `script_patch_version`, `is_script_only` and `notes` columns.
 - `game_templates` table stores predefined configuration templates for new games.
 - `runtime_flag` table reserved for future feature flag management. No API currently
-  exposes these records.
+  exposes these records. (TODO: Not yet implemented)
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
 
 ### Design Workflow
@@ -186,6 +186,6 @@ Publishing a game version is coordinated using the Saga utilities from `firemud-
 
 ## Future Enhancements
 
-- [Web-based visual design interface](web-visual-interface.md)
-- [Version control integration for design assets](version-control.md)
-- [In-game modding and plugin framework](modding-framework.md)
+- [Web-based visual design interface](web-visual-interface.md) (TODO: Not yet implemented)
+- [Version control integration for design assets](version-control.md) (TODO: Not yet implemented)
+- [In-game modding and plugin framework](modding-framework.md) (TODO: Not yet implemented)
