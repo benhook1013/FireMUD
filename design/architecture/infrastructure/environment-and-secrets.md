@@ -16,9 +16,8 @@ This document explains how configuration values and sensitive secrets are suppli
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
-- Secrets are provisioned by **cert-manager** and rotated automatically. The
-  sample `firemud-secret` Secret is defined in `k8s/base/firemud-db-env.yaml` and contains placeholder values only for local demos; production deployments must supply real credentials.
-- Services reload TLS certificates and JWT secrets at runtime when these Secrets update.
+- TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords, are stored in standard Kubernetes `Secret` objects and must be rotated manually. (TODO: Not yet implemented)
+- Services reload TLS certificates and JWT secrets at runtime when these Secrets update. gRPC server certificate hot reload will be added in a future release. (TODO: Not yet implemented)
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
   stage.
@@ -89,8 +88,9 @@ so the default paths above resolve correctly.
 In Kubernetes deployments the certificates are mounted at `/tls`, and the
 environment variables point to that directory (for example,
 `FIREMUD_GRPC_CERT_CHAIN_PATH=/tls/client.crt`). Services watch these files for
-changes so new certificates are loaded without restarts. See
-[System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation)
+changes so new certificates are loaded without restarts. Certificate reload for
+gRPC servers is not yet wired into the services and will be addressed later. (TODO: Not yet implemented)
+See [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation)
 for details on the hot reload mechanism.
 
 > **Note**: Certificate files should be loaded from the filesystem rather than
