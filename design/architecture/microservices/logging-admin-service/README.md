@@ -31,7 +31,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - [Analytics dashboards](./analytics-dashboards.md) for operators.
 - Tools for banning or restricting accounts.
 - [Role-based admin UI](./admin-ui.md) for moderators.
-- [Admin operations saga](./admin-operations-saga.md) coordinates bans across services.
+- Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../system-architecture-transactions.md).
 - [Moderation policies](./moderation-policies.md) including profanity filters.
 - UI and APIs for toggling runtime feature flags. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.

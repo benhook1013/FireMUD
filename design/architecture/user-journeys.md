@@ -171,8 +171,8 @@ Administrators review logs and configure these options through the
 [Admin UI](./microservices/logging-admin-service/admin-ui.md).
 Policies are summarized in the
 [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
-document. Complex workflows are coordinated using the
-[Admin Operations Saga](./microservices/logging-admin-service/admin-operations-saga.md).
+document. Complex moderation workflows are coordinated using saga patterns as described in
+[Transaction Strategies](./system-architecture-transactions.md).
 Review these guides alongside the
 [Security Architecture](./system-architecture-security.md) to ensure moderation actions follow platform rules.
 
