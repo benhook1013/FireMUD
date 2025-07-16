@@ -59,7 +59,7 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 ## 🛠️ Tooling
 
-- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`.
+- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../buf.work.yaml) and [buf.gen.yaml](../../buf.gen.yaml) specify modules and plugins for generation.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
 - **`protoc-gen-doc`** — Produces HTML or Markdown API documentation to encourage inline comments. *(TODO: Not yet implemented)*
 
@@ -127,7 +127,7 @@ All internal gRPC calls use **mutual TLS**. Each service sets the following envi
 
 The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a [`GrpcServerTlsReloader`](./system-architecture-shared-libraries.md) component that hot reloads certificates when they change.
 
-Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs.
+Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#🤝-cross-service-trust) for mTLS design.
 
 ## 📚 Related Documentation
 
