@@ -61,9 +61,9 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 - **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing).
 - Game creators can configure **instance rules, expiration, and persistence settings**.
 - **World Persistence & Scheduled Events**:
-  - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
-  - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
-  - NPC actions and environmental changes should **continue in a believable way even if no players are online**. (TODO: Not yet implemented)
+- The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
+- **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
+- NPC actions and environmental changes should **continue in a believable way even if no players are online**. (TODO: Not yet implemented)
 - Persistent storage for **player, NPC, and item data**.
 See [World Management Service](../architecture/microservices/world-management-service/README.md) for additional details.
 
@@ -98,6 +98,7 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
   - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse. (TODO: Not yet implemented)
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance. (TODO: Not yet implemented)
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
+
 
 ### 2.8 Moderation, Administration & Monetization
 
@@ -150,10 +151,10 @@ See [Redis Architecture](../architecture/system-architecture-redis.md) for key c
 ### 3.3 Deployment Model
 
 - The platform is designed for **cloud-native deployment**, using:
-  - **Docker & Kubernetes** for containerization and scaling.
-  - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)). (TODO: Not yet implemented)
+- **Docker & Kubernetes** for containerization and scaling.
+- **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)). (TODO: Not yet implemented)
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
-  - Supports **multi-region deployments** to provide better latency for global users. (TODO: Not yet implemented)
+- Supports **multi-region deployments** to provide better latency for global users. (TODO: Not yet implemented)
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
 - **Velero** backs up Kubernetes manifests only. PostgreSQL data is protected by a `pg_dump` CronJob. The production backup schedule is defined in [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md).
 See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workflow details.
