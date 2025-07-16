@@ -2,7 +2,7 @@
 
 ## Overview
 
-The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events, notifying other services over gRPC when the environment changes.
+The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events, notifying other services over gRPC when the environment changes. (TODO: Not yet implemented)
 
 > **Status: In Progress** – Planned features like pathfinding APIs and world snapshots are not yet implemented.
 
@@ -18,10 +18,10 @@ The World Management Service stores and manages game world data such as rooms, r
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
 - Changes are persisted incrementally to avoid heavy writes.
-- Background tasks trigger scheduled world changes (daily resets or seasonal shifts) and notify relevant services via gRPC.
-- Supports procedural generation with options for dynamic world expansion.
+- Background tasks trigger scheduled world changes (daily resets or seasonal shifts) and notify relevant services via gRPC. (TODO: Not yet implemented)
+- Supports procedural generation with options for dynamic world expansion. (TODO: Not yet implemented)
 - Uses a region → zone → room hierarchy for efficient lookups.
-- Publishes world event notifications for NPC scripts and game logic processing.
+- Publishes world event notifications for NPC scripts and game logic processing. (TODO: Not yet implemented)
 - During version publishing the service participates in a Saga that copies design
   data into its schema, ensuring world data matches the active version. See
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
@@ -189,7 +189,7 @@ Expected response:
 
 ### World Events
 
-World events are persisted in the `world_event` table and processed periodically by `WorldEventService`. A weather change event updates the `region.weather` column before notifying other services.
+World events are persisted in the `world_event` table and processed periodically by `WorldEventService`. A weather change event updates the `region.weather` column before notifying other services. (TODO: Not yet implemented)
 
 ### Saga Participation
 
