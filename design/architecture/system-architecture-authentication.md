@@ -2,9 +2,19 @@
 
 This document describes how FireMUD authenticates clients, issues internal JWTs, manages session state, and enforces role-based access across services.
 
-Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; session state is managed server-side in Redis and restored via the Game Session Service. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
+Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; session
+state is managed server-side in Redis and restored via the Game Session Service. Accounts may
+also authenticate using linked external providers such as Google, Discord, or Steam. (TODO: Not
+yet implemented)
 
-Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards the OTP when needed. Issued JWTs are stored in Redis with an expiration controlled by `session-expiration-ms`. JWT and session lifetimes are configured via the `FIREMUD_AUTH_JWT_EXPIRATION_MS` and `FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variables documented in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
+Admin and moderator accounts can optionally enable **two-factor authentication**. When a
+`two_factor_secret` is present, the Account Service expects a one-time TOTP code during login.
+The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for
+this purpose. The Game Session Service forwards the OTP when needed. (TODO: Not yet
+implemented) Issued JWTs are stored in Redis with an expiration controlled by `session-expiration-ms`.
+JWT and session lifetimes are configured via the `FIREMUD_AUTH_JWT_EXPIRATION_MS` and
+`FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variables documented in
+[Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
 ---
 
@@ -16,10 +26,14 @@ All clients — whether connecting via Telnet or WebSocket — must authenticate
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
-Only the account credentials (and optional OTP code) are supplied during login. A `tenantId` is **not** part of the login request; players select the game tenant after authentication. All in-game API calls include a `tenantId` to identify the target game, but account management endpoints rely solely on the account ID.
+Only the account credentials (and optional OTP code) are supplied during login. A `tenantId` is
+**not** part of the login request; players select the game tenant after authentication. All
+in-game API calls include a `tenantId` to identify the target game, but account management
+endpoints rely solely on the account ID.
 
 Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss).
-If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes gameplay seamlessly.
+If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes
+gameplay seamlessly. (TODO: Not yet implemented)
 
 > 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
@@ -48,7 +62,10 @@ This enables:
 
 ## 🧾 JWT Format and Role Claims
 
-Internal JWTs are issued by the Account Service and used for backend gRPC authorization. Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are validated by the Logging & Admin Service or other admin consumers. The Gateway and Game Session Service simply forward tokens without validation.
+Internal JWTs are issued by the Account Service and used for backend gRPC authorization.
+Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are
+validated by the Logging & Admin Service or other admin consumers. The Gateway and Game Session
+Service simply forward tokens without validation.
 
 ### 🧠 Claims
 
@@ -66,7 +83,8 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
   - `"tenant-abc"` → `["admin", "designer"]`
   - `"tenant-def"` → `["moderator"]`
 
-> Tokens are short-lived and internal only. Gameplay context (e.g., `playerId`, `tenantId`) is stored in Redis and sent via command envelopes.
+> Tokens are short-lived and internal only. Gameplay context (e.g., `playerId`, `tenantId`) is
+> stored in Redis and sent via command envelopes.
 
 ---
 
@@ -82,7 +100,8 @@ Access to services is governed by roles from the JWT:
 ### JWT Usage Scope
 
 - ✅ **Meta/control services** (e.g. Game Design, Admin, Account) validate JWTs to authorize access
-- 🚫 **Gameplay services** (e.g. Game Logic, Entity, World) do **not** validate JWTs — they rely on the Game Session Service to enforce access
+- 🚫 **Gameplay services** (e.g. Game Logic, Entity, World) do **not** validate JWTs — they
+  rely on the Game Session Service to enforce access
 
 All meta services use a shared `AuthTokenInterceptor` that extracts claims from
 the `Authorization` header and stores them in a thread-local `SessionContext`.
@@ -95,11 +114,13 @@ annotation (or similar). Gameplay services never read or propagate these claims.
 
 If roles change during an active session (e.g., a player is promoted to admin):
 
-1. The Game Session Service detects or requests a role refresh
+1. The Game Session Service detects or requests a role refresh (TODO: Not yet implemented)
 2. It contacts the Account Service to obtain a new JWT
 3. Updated claims are injected into subsequent gRPC calls
 
-The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manual refreshes. The current implementation simply logs the request and returns `"refreshed"`; full token regeneration will be implemented in a future iteration.
+The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manual refreshes. The
+current implementation simply logs the request and returns `"refreshed"`; full token regeneration
+will be implemented in a future iteration. (TODO: Not yet implemented)
 
 > ✅ This process is invisible to the client — no re-login is needed.
 
@@ -107,15 +128,17 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 
 ## 🧠 Session and Identity Management
 
-The Game Session Service is responsible for:
+- The Game Session Service is responsible for:
 
-- Authenticating sockets and binding identity context
+- Authenticating sockets and binding identity context (TODO: Not yet implemented)
 - Managing Redis session state (e.g. `playerId`, `tenantId`, tick region)
-- Managing JWTs for backend interactions
-- Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds so abandoned sessions cannot linger indefinitely.
-  The default value is `3600000` ms as defined by `AuthProperties.sessionExpirationMs`.
+- Managing JWTs for backend interactions (TODO: Not yet implemented)
+- Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds so
+  abandoned sessions cannot linger indefinitely. The default value is `3600000` ms as defined by
+  `AuthProperties.sessionExpirationMs`.
 
-> 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
+> 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding)
+> for Redis structure and gameplay rebinding.
 
 ---
 
