@@ -72,7 +72,7 @@ flowchart TD
 
 ```
 
-The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md).
+The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md). (TODO: Not yet implemented)
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
 
@@ -92,13 +92,13 @@ The diagram covers every microservice currently in the repository:
 - **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** – Routes HTTP and WebSocket traffic to internal services.
 - **[Game Session Service](./microservices/game-session-service/README.md)** – Orchestrates sessions, ticks, and runtime configuration.
 - **[Account Service](./microservices/account-service/README.md)** – Handles accounts, authentication, and subscriptions.
-- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps. Pathfinding APIs and world snapshots are planned (TODO: Not yet implemented).
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages players, NPCs, items, and inventory data.
 - **[Game Logic Service](./microservices/game-logic-service/README.md)** – Resolves commands and core gameplay mechanics.
-- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags.
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags. Version publishing copy steps and the web-based editor are in progress (TODO: Not yet implemented).
 - **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** – Executes AI behaviors and custom scripts.
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
-- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools.
+- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools. Advanced analytics dashboards are planned (TODO: Not yet implemented).
 
 ## 🔍 Observability Components
 
