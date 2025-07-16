@@ -20,6 +20,7 @@ root
 ├── dev-tools/
 ├── docker/
 ├── k8s/
+├── charts/
 ├── gradle/
 ├── .github/
 ├── buf.gen.yaml
@@ -40,9 +41,12 @@ root
 - `web-client/` – React web application.
 - `design/` – Architecture, operations, and user guide documentation.
 - `config/` – Checkstyle, git hooks, and SpotBugs configs.
-- `dev-tools/` – Utility scripts and API client configurations.
+- `dev-tools/` – Utility scripts, API client configs, and a Gatling load-testing module.
 - `docker/` – Base Dockerfiles used by the build process.
-- `k8s/` – Helm charts, network policies, and Terraform modules.
+- `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs,
+  network policies, and sample Terraform modules for local and production clusters.
+  (TODO: Not yet implemented)
+- `charts/` – Umbrella Helm chart for deploying all services together. (TODO: Not yet implemented)
 - `.github/` – GitHub Actions workflows and issue templates.
 - `gradle/` – Gradle wrapper binaries.
 - `buf.gen.yaml` and `buf.work.yaml` – Buf configuration for protobuf linting and code generation.
@@ -53,7 +57,9 @@ root
 - `docker-compose.yml` – Local development environment.
 - `docker-compose.override.yml` – Extra services for local testing.
 
-Proto definitions live under `protos/` organized by service and version as described in the gRPC design document. Database migration scripts for each service reside in `src/main/resources/db/migration/`.
+Proto definitions live under `protos/` organized by service and version as described in the
+gRPC design document. Database migration scripts for each service reside in
+`src/main/resources/db/migration/`.
 
 ## 📚 Related Documentation
 
