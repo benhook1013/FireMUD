@@ -58,8 +58,8 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 ### 2.4 Game World & Entity Management
 
 - Support for **multi-room game worlds** with region-based navigation.
-- **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing).
-- Game creators can configure **instance rules, expiration, and persistence settings**.
+- **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing). (TODO: Not yet implemented)
+- Game creators can configure **instance rules, expiration, and persistence settings**. (TODO: Not yet implemented)
 - **World Persistence & Scheduled Events**:
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
   - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
@@ -122,7 +122,7 @@ See [Logging & Admin Service](../architecture/microservices/logging-admin-servic
 - Domain services copy design data by `version_id` and do not query the design database at runtime.
 - The **Game Session Service** activates the desired `version_id` when starting a game instance.
 - Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
-- The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time.
+- The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time. (TODO: Not yet implemented)
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.
 
 ---
