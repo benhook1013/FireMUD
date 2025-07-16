@@ -49,7 +49,7 @@ credentials:
 
 Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the `firemud-backups` bucket, and install Velero automatically. Keep `defaultVolumesToFsBackup` disabled to avoid saving PVC data.
 
-  - If the database service fails completely:
+- If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
   2. Restart services to resume operation.
   3. Redis repopulates transient state from PostgreSQL on access.
