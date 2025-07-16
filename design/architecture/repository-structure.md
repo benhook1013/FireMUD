@@ -21,6 +21,8 @@ root
 ├── docker/
 ├── k8s/
 ├── charts/
+├── .env.sample
+├── .pre-commit-config.yaml
 ├── gradle/
 ├── .github/
 ├── buf.gen.yaml
@@ -45,10 +47,11 @@ root
 - `docker/` – Base Dockerfiles used by the build process.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs,
   network policies, and sample Terraform modules for local and production clusters.
-  (TODO: Not yet implemented)
-- `charts/` – Umbrella Helm chart for deploying all services together. (TODO: Not yet implemented)
+- `charts/` – Umbrella Helm chart for deploying all services together.
 - `.github/` – GitHub Actions workflows and issue templates.
 - `gradle/` – Gradle wrapper binaries.
+- `.env.sample` – Example environment variables used by `docker-compose` and tests.
+- `.pre-commit-config.yaml` – Formatting and linting rules run by the git hook.
 - `buf.gen.yaml` and `buf.work.yaml` – Buf configuration for protobuf linting and code generation.
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.
 - `settings.gradle.kts` – Declares Gradle subprojects.
@@ -58,8 +61,9 @@ root
 - `docker-compose.override.yml` – Extra services for local testing.
 
 Proto definitions live under `protos/` organized by service and version as described in the
-gRPC design document. Database migration scripts for each service reside in
-`src/main/resources/db/migration/`.
+[gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
+Database migration scripts for each service reside in
+`services/<service>/src/main/resources/db/migration/`.
 
 ## 📚 Related Documentation
 
