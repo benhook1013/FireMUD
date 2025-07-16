@@ -59,12 +59,12 @@ Despite their differences, both protocols are normalized into the same internal 
     the TCP connection drops.
   - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and
     session recovery are handled as described in
-    [Reconnection Strategy](./system-architecture-reconnection.md).
+    [Reconnection Strategy](./system-architecture-reconnection.md) _(TODO: Not yet implemented)_.
   - Disconnect handling is **layered**: the proxy cleans up Telnet sessions,
     the gateway automatically recreates WebSocket backends, and the Game Session
-    Service reloads state from Redis.
+    Service reloads state from Redis _(TODO: Not yet implemented)_.
   - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput`
-    so the Game Session Service can recover Telnet sessions.
+    so the Game Session Service can recover Telnet sessions _(TODO: Not yet implemented)_.
   - Metrics are exported at `/actuator/prometheus` and tracing data is sent to
     the collector configured by `OTEL_ENDPOINT`.
 
