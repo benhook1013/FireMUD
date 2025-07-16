@@ -36,7 +36,7 @@ This brief document summarizes the ways a hosted game can change its look and fe
   [Multi-Tenancy](./system-architecture-multi-tenancy.md)).
   Per-tenant tick intervals are planned. (TODO: Not yet implemented)
 - Flags are defined in the Game Design Service but toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
-- The Game Session Service loads these settings at runtime so changes can take effect without republishing.
+- The Game Session Service loads these settings at runtime so changes can take effect without republishing. (TODO: Not yet implemented)
 
 These options allow extensive personalization while keeping the underlying platform maintainable.
 
