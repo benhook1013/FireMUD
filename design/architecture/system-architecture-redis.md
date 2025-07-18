@@ -35,7 +35,7 @@ The **Game Session Service** is responsible for coordinating tick and session be
 - Low-latency access for gameplay-critical state
 - Enables stateless, horizontally scalable services
 - Supports safe concurrent ticks and session handling
-- Facilitates reconnection, failover, and replay
+- Facilitates reconnection, failover, and replay (TODO: Not yet implemented)
 
 ---
 
