@@ -57,8 +57,8 @@ Refer to the Automation & Scripting Service README for implementation details.
 
 - Script definitions are stored in the **Game Design Service** and versioned alongside other game assets.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed. (TODO: Not yet implemented)
-- Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
-- The Game Session Service tracks the active script version for each running game and sends a `NotifyScriptVersionUpdate` event when a new version should be loaded. The Automation & Scripting Service uses `ScriptVersionService` to reload the updated definitions without downtime. (TODO: Not yet implemented)
+- Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work. (TODO: Not yet implemented)
+- The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to reload updated scripts via `ScriptVersionService` without downtime.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run. (TODO: Not yet implemented)
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
