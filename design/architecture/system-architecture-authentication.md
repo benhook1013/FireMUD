@@ -28,10 +28,9 @@ All clients — whether connecting via Telnet or WebSocket — must authenticate
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
-Only the account credentials (and optional OTP code) are supplied during login. A `tenantId` is
-**not** part of the login request; players select the game tenant after authentication. All
-in-game API calls include a `tenantId` to identify the target game, but account management
-endpoints rely solely on the account ID.
+Login commands include the `tenantId` along with the account credentials and optional OTP code.
+This selects the target game during authentication and enforces multi-tenant isolation from the
+start. Account management endpoints still rely solely on the account ID.
 
 Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss).
 If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes
