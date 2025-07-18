@@ -21,17 +21,17 @@ JWT and session lifetimes are configured via the `FIREMUD_AUTH_JWT_EXPIRATION_MS
 
 ## 🔁 Login and Session Flow
 
-All clients — whether connecting via Telnet or WebSocket — must authenticate using the `LOGIN` command:
+All clients — whether connecting via Telnet or WebSocket — must authenticate using the `LOGIN` command (TODO: Not yet implemented):
 
-- `LOGIN` → Starts prompt-based login (username → password)
-- `LOGIN <username> <password>` → Attempts immediate login
-- `LOGON` → Alias for `LOGIN`
+- `LOGIN` → Starts prompt-based login (username → password) (TODO: Not yet implemented)
+- `LOGIN <username> <password>` → Attempts immediate login (TODO: Not yet implemented)
+- `LOGON` → Alias for `LOGIN` (TODO: Not yet implemented)
 
-Login commands include the `tenantId` along with the account credentials and optional OTP code.
+Login commands include the `tenantId` along with the account credentials and optional OTP code (TODO: Not yet implemented).
 This selects the target game during authentication and enforces multi-tenant isolation from the
 start. Account management endpoints still rely solely on the account ID.
 
-Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss).
+Clients must re-authenticate **only after disconnecting** (TCP or WebSocket loss) (TODO: Not yet implemented).
 If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes
 gameplay seamlessly. (TODO: Not yet implemented)
 
