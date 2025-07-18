@@ -14,7 +14,9 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.** (TODO: Not yet implemented)
-Game Session Service restarts are **transparent** if the client remains connected. The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. TCP Proxy restarts drop Telnet clients. (TODO: Not yet implemented)
+Game Session Service restarts are **transparent** if the client remains connected. (TODO: Not yet implemented)
+The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. (TODO: Not yet implemented)
+TCP Proxy restarts drop Telnet clients.
 
 ---
 
@@ -34,7 +36,9 @@ Game Session Service restarts are **transparent** if the client remains connecte
 - Automatically re-establishes backend connections if restarted (TODO: Not yet implemented)
 - Holds no gameplay, auth, or session state
 
-> TCP Proxy restarts drop Telnet connections. Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically (TODO: Not yet implemented). Telnet clients proxied through the Gateway remain connected.
+> TCP Proxy restarts drop Telnet connections.
+> Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically. (TODO: Not yet implemented)
+> Telnet clients proxied through the Gateway remain connected. (TODO: Not yet implemented)
 
 ### Game Session Service
 
