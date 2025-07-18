@@ -97,15 +97,15 @@ Docker Compose and Kubernetes rely on the following monitoring tools:
 
 ### 🔧 Monitoring Stack
 
-- Prometheus scrapes metrics from all services.
-- Grafana dashboards visualize performance metrics.
+- Prometheus scrapes metrics from all services. (TODO: Not yet implemented)
+- Grafana dashboards visualize performance metrics. (TODO: Not yet implemented)
 - Alertmanager notifies on failures or latency spikes.
 - OpenTelemetry spans are emitted by services for distributed tracing.
 
 ### 📜 Log Aggregation
 
-- **Fluent Bit** agents collect container logs from each pod.
-- **Elasticsearch** stores structured log data for long-term retention.
+- **Fluent Bit** agents collect container logs from each pod. (TODO: Not yet implemented)
+- **Elasticsearch** stores structured log data for long-term retention. (TODO: Not yet implemented)
 - **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
   Filtering by `playerId` requires logging the active player context, which is planned
   but not yet implemented. (TODO: Not yet implemented)

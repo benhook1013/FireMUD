@@ -5,7 +5,7 @@ This document describes the default Grafana and Kibana dashboards shipped with t
 These dashboards provide operators with visibility into game health, player activity, and moderation trends.
 Sample JSON templates live under [`design/observability`](../../observability) for local testing.
 
-> **Status: In Progress** – Many dashboards are placeholders. Additional real-time analytics and export options are planned.
+> **Status: In Progress** – Many dashboards are placeholders. Additional real-time analytics and export options are planned. (TODO: Not yet implemented)
 
 ## Grafana Dashboards
 
@@ -26,7 +26,7 @@ Operators can adjust queries or add panels to suit their games.
 - **Search by Trace ID** – correlate logs and traces using the `traceId` field. (TODO: Not yet implemented)
 
 These dashboards rely on structured JSON logs shipped via Fluent Bit.
-Saved searches make it easy to pivot on `tenantId` and player identifiers.
+Saved searches make it easy to pivot on `tenantId` and player identifiers. (TODO: Not yet implemented)
 
 ## Future Enhancements
 

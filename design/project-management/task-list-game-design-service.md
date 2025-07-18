@@ -19,6 +19,9 @@
   - [x] Configure database storage for game assets
     - [x] Provide asset upload API in Game Design Service
     - [x] Document asset storage setup and configuration
+    - [ ] Provide asset download and delete APIs
+    - [ ] Add gRPC endpoints for asset management
+    - [ ] Copy assets to runtime services when publishing versions
 - [x] **Expand Scripting & Modding**
   - [x] Implement event-driven scripting API for game creators
   - [x] Implement in-game modding/plugin framework
