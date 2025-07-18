@@ -13,12 +13,14 @@ This document sketches the planned modding system that allows administrators to 
 ## Outline
 
 1. Plugins are packaged as signed bundles uploaded through the Game Design Service. (TODO: Not yet implemented)
-2. The Automation & Scripting Service executes plugin code with strict quotas similar to regular scripts. (TODO: Not yet implemented)
-3. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service. (TODO: Not yet implemented)
-4. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior. (TODO: Not yet implemented)
+2. Bundles are stored in the same asset repository as icons and sound files so versions can be tracked. (TODO: Not yet implemented)
+3. The Automation & Scripting Service executes plugin code with strict quotas similar to regular scripts. (TODO: Not yet implemented)
+4. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service. (TODO: Not yet implemented)
+5. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior. (TODO: Not yet implemented)
 
 ## 📚 Related Documentation
 
 - [Automation & Scripting Service](../automation-scripting-service/README.md)
 - [Game Design Service Architecture](README.md)
 - [User Journeys – Extensibility & External Tools](../user-journeys.md#21-extensibility--external-tools)
+- [System Architecture – Scripting & Automation](../system-architecture-scripting.md)

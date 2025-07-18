@@ -13,9 +13,11 @@ creators can quickly spin up new projects without starting from scratch.
   template. (TODO: Not yet implemented)
 - **Admin Accounts** – initial administrators configured at template creation. (TODO: Not yet implemented)
 
+The `GameTemplateDto` currently stores a free-form JSON `config` field. A structured schema describing world layout, starter items, default rulesets and admin accounts will be introduced in a future revision. (TODO: Not yet implemented)
+
 Templates are versioned like any other design asset. Publishing a version is intended to copy
 these templates to the domain services using the `version_id` workflow described
-in [Versioning & Runtime Configuration](../../../design/architecture/system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
+in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
 
 ## Creating Templates
 
@@ -30,10 +32,12 @@ curl -X POST http://localhost:8080/templates \
 The service validates the payload and stores it in the `game_templates` table.
 Templates can then be listed per `tenantId` to help bootstrap new games.
 
+Management currently exists only via REST. gRPC endpoints for creating, listing and updating templates are planned. (TODO: Not yet implemented)
+
 Update or delete operations for templates are not yet available. (TODO: Not yet implemented)
 
 ## 📚 Related Documentation
 
-- [Game Design Service Architecture](../../../design/architecture/microservices/game-design-service/README.md)
-- [Multi-Tenancy](../../../design/architecture/system-architecture-multi-tenancy.md)
-- [Service Responsibility Matrix](../../../design/architecture/service-responsibility-matrix.md)
+- [Game Design Service Architecture](README.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
