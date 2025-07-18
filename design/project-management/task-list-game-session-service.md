@@ -13,6 +13,7 @@
   - [x] Plan for cross-region sharding and session handoff
   - [x] Implement `game_manifest` table for version coordination
   - [x] Emit gameplay analytics for operators
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 

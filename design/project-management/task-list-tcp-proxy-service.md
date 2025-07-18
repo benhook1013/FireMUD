@@ -9,6 +9,8 @@
   - [x] Enforce Telnet protocol command whitelist and input sanitization
   - [x] Implement connection throttling and rate limits
   - [x] Support TLS termination for secure Telnet clients
+- [ ] Support Mud Client Protocol (MCP) negotiation with clients
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 
