@@ -37,11 +37,11 @@ An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-s
 
 ### Data Flow
 
-- TCP connections are accepted on a dedicated port and upgraded to WebSocket
-  using a lightweight frame protocol.
+- TCP connections are accepted on a dedicated port and proxied to the gateway
+  using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
-- If the connection is lost, the queue is flushed and the session is marked for
-  possible reconnection. (TODO: Not yet implemented)
+- If the connection is lost, the queue is flushed. Session reconnection hooks are
+  planned. (TODO: Not yet implemented)
 
 ### Service Interactions
 
