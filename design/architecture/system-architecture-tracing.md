@@ -10,18 +10,18 @@ All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK
 
 - Deploy using the official [`opentelemetry-collector`](https://github.com/open-telemetry/opentelemetry-helm-charts) Helm chart or apply the sample manifest in `k8s/monitoring/otel-collector.yaml` for local demos.
 - The collector runs as the `otel-collector` service inside the cluster so other pods can reach it via `http://otel-collector:4317`.
-- The collector exposes a `4317` gRPC endpoint. Services export spans to `http://otel-collector:4317` by default. The endpoint can be overridden via the `OTEL_ENDPOINT` environment variable (`otel.endpoint` property). See `.env.sample` and [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for defaults.
+- The collector exposes a `4317` gRPC endpoint. Services export spans to `http://otel-collector:4317` by default. The endpoint can be overridden via the `OTEL_ENDPOINT` environment variable (`otel.endpoint` property). See `.env.sample` and [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability) for defaults.
 
   ```bash
   OTEL_ENDPOINT=http://collector.internal:4317
   ```
 
 - The collector forwards spans to Jaeger over gRPC port `14250`.
-- Metrics about the collector itself are scraped by Prometheus at `/metrics` on
-  port `8888`. Expose this port in the service definition if using the sample
-  manifest. (TODO: Not yet implemented)
+- Metrics about the collector itself can be scraped by Prometheus from `/metrics`
+  on port `8888`. The example manifest does not currently expose this port, so
+  the collector metrics are unavailable. (TODO: Not yet implemented)
 
-Every service relies on a shared `TracingConfig` in the `common-library`. This configuration sets the `service.name` resource from `spring.application.name`, uses a `BatchSpanProcessor`, and sends spans to the collector. `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` are registered in each `GrpcServerConfig` so requests are instrumented with logs, metrics, and spans consistently.
+Every service relies on a shared `TracingConfig` in the `common-library`. This configuration sets the `service.name` resource from `spring.application.name`, uses a `BatchSpanProcessor`, and sends spans to the collector. `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` are registered in each `GrpcServerConfig` so requests are instrumented with logs, metrics, and spans consistently. See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for additional observability details.
 `TracingInterceptor` opens a span for each gRPC method and marks it successful or cancelled when the call completes.
 
 ## 🎛️ Jaeger UI

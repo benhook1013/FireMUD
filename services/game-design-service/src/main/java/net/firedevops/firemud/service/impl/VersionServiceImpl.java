@@ -91,7 +91,7 @@ public class VersionServiceImpl implements VersionService {
         },
         () -> versionRepository.delete(version));
     sagaRunner.run(builder.build());
-    scriptingClient.notifyScriptVersionUpdate(game.getTenantId(), scriptPatchVersion, List.of());
+    scriptingClient.notifyScriptVersionUpdate(String.valueOf(game.getTenantId()), scriptPatchVersion, List.of());
     return versionMapper.toDto(version);
   }
 

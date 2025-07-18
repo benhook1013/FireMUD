@@ -97,6 +97,7 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
   - Scripts are authored through a **component-based DSL** with a **visual editor**. (TODO: Not yet implemented)
   - The Automation & Scripting Service executes scripts in a **sandbox** with **resource quotas** to prevent abuse. (TODO: Not yet implemented)
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance. (TODO: Not yet implemented)
+
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
 
 ### 2.8 Moderation, Administration & Monetization
