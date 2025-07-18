@@ -10,7 +10,7 @@ This document explains how game data is versioned and activated at runtime. It a
 
 The **Game Design Service** stores the authoritative game configuration (world layouts, scripts, item templates, etc.). Designers iterate on this data and periodically **publish** a new version.
 
-1. When a version is ready, creators trigger a **Publish** action in the Game Design Service.
+1. When a version is ready, creators trigger a **Publish** action in the Game Design Service using the `PublishVersion` gRPC method.
 2. The service writes a new `version_id` and associated records to its database.
 3. Domain services (World Management, Entity Management, etc.) copy the relevant data into their own schemas using this `version_id`. Once copied, this data becomes read-only for that release so runtime services never pull directly from the design database. The copy workflow will be orchestrated by sagas for cross‑service consistency. (TODO: Not yet implemented)
 4. A notification or message informs the Game Session Service that a new version exists so game instances can be restarted or patched. (TODO: Not yet implemented)
@@ -33,7 +33,7 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 ```
 
 Script-only versions appear in version history and audit logs but do not trigger
-a data copy or world restart. (TODO: Not yet implemented)
+a data copy or world restart.
 Runtime services reload the affected scripts in
 memory and continue using the underlying `baseVersionId` for all other assets.
 When a patch is published the Game Design Service calls the
@@ -70,12 +70,11 @@ when a version is published. The definitions table and copy steps are planned bu
 implemented. (TODO: Not yet implemented)
 
 - Designers create and maintain the set of flag definitions in the Game Design Service UI.
-  (TODO: Not yet implemented)
+  Definitions will be stored in a `runtime_flag` table for each tenant. (TODO: Not yet implemented)
 - Administrators toggle flag values through the
   [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface.
 - The Logging & Admin Service forwards each change to the Game Session Service,
-  calling `ToggleFeatureFlag` via gRPC so running instances update immediately.
-  (TODO: Not yet implemented)
+  calling `ToggleFeatureFlag` via gRPC so running instances update immediately. (TODO: Not yet implemented)
 - The Game Session Service persists active flag values in its `feature_flag` table.
   Sessions use consistent configuration even after reconnects.
   The Logging & Admin Service may store audit entries. (TODO: Not yet implemented)

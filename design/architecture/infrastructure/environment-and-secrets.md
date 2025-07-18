@@ -14,10 +14,11 @@ This document explains how configuration values and sensitive secrets are suppli
 ## ☁️ Production
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
-- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects.
+- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. JWT keys and TLS certificates are issued by **cert-manager**.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
-- TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords, are stored in standard Kubernetes `Secret` objects and must be rotated manually. (TODO: Not yet implemented)
+- TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords, are stored in standard Kubernetes `Secret` objects and must be rotated manually. Automated database password rotation is planned. (TODO: Not yet implemented)
 - Services reload TLS certificates and JWT secrets at runtime when these Secrets update. gRPC server certificate hot reload will be added in a future release. (TODO: Not yet implemented)
+- This live reload behavior relies on the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the shared library. A `GrpcServerTlsReloader` exists for server certificates but is not currently wired into the services. (TODO: Not yet implemented)
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
   stage.
@@ -88,8 +89,8 @@ so the default paths above resolve correctly.
 In Kubernetes deployments the certificates are mounted at `/tls`, and the
 environment variables point to that directory (for example,
 `FIREMUD_GRPC_CERT_CHAIN_PATH=/tls/client.crt`). Services watch these files for
-changes so new certificates are loaded without restarts. Certificate reload for
-gRPC servers is not yet wired into the services and will be addressed later. (TODO: Not yet implemented)
+changes so new certificates are loaded without restarts via `TlsCertificateWatcher`. Certificate reload for
+gRPC servers will use `GrpcServerTlsReloader` but is not yet wired into the services. (TODO: Not yet implemented)
 See [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation)
 for details on the hot reload mechanism.
 
@@ -102,7 +103,7 @@ for details on the hot reload mechanism.
 JWT tokens secure internal service calls. Production keys are provided via
 environment variables while development instances generate random secrets.
 When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for
-changes so keys can be rotated without restarts. Certificate and secret watching
+changes using `JwtSecretWatcher` so keys can be rotated without restarts. Certificate and secret watching
 is described in [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation).
 
 | Variable | Purpose | Default |

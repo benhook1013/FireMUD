@@ -106,7 +106,9 @@ Docker Compose and Kubernetes rely on the following monitoring tools:
 
 - **Fluent Bit** agents collect container logs from each pod. (TODO: Not yet implemented)
 - **Elasticsearch** stores structured log data for long-term retention. (TODO: Not yet implemented)
-- **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`. (TODO: Not yet implemented)
+- **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
+  Filtering by `playerId` requires logging the active player context, which is planned
+  but not yet implemented. (TODO: Not yet implemented)
   Log indices are kept for **14 days** in development and **90 days** in production by default.
 
 See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the observability stack.
