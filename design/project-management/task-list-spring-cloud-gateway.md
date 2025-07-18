@@ -15,7 +15,8 @@
   - [ ] Allow route target overrides via FIREMUD_SERVICES_* env vars
   - [ ] Persist dynamic routes in the route_config table
   - [ ] Trace WebSocket requests and responses for observability
-- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+  - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+
 ## Reusable Microservice Checklist
 
 These tasks apply to every FireMUD service unless noted otherwise. Gateway and
