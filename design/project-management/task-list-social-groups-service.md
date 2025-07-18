@@ -1,16 +1,28 @@
 # Social & Groups Service Task List
 
-- [x] __Develop Social & Groups Service__
-  - [x] Enable cross-game friend lists and social graph
-  - [x] Support private messages, global chat, and guild channels
-  - [x] Implement player-to-player mail system (asynchronous in-game messaging)
-  - [x] Allow players to form and manage guilds
-  - [x] Implement guild ranking & permissions system
-  - [x] Implement shared guild storage and alliance system
-  - [x] Provide rich moderation tools for chat
-  - [x] Add optional voice chat integration
+## Social Features
+
+- [x] Enable cross-game friend lists and social graph
+- [x] Support private messages, global chat, and guild channels
+- [x] Implement player-to-player mail system (asynchronous in-game messaging)
+- [ ] Deliver real-time chat notifications via WebSocket channels
+- [ ] Integrate faction reputation data from the Automation & Scripting Service
+- [ ] Show presence indicators when friends come online
+- [ ] Provide broadcast and out-of-game email capabilities for game creators
+
+## Guild Management
+
+- [x] Allow players to form and manage guilds
+- [x] Implement guild ranking & permissions system
+- [x] Implement shared guild storage and alliance system
+- [x] Use saga orchestrator for guild creation workflow
+
+## Moderation & Extras
+
+- [x] Provide rich moderation tools for chat
+- [x] Add optional voice chat integration
+- [ ] Integrate WebRTC voice gateway and record connection events
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
-  - [x] Use saga orchestrator for guild creation workflow
 
 ## Reusable Microservice Checklist
 

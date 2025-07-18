@@ -13,8 +13,9 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **3 weekly** dumps
   - **3 monthly** dumps
 - The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
-  a script (`pg-dump.sh`) that enforces the retention policy. When the
-  environment variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set; otherwise uploads are skipped. When defined, the script also uploads each
+  a script (`pg-dump.sh`) that enforces the retention policy. The environment
+  variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set;
+  otherwise uploads are skipped. When defined, the script also uploads each
   dump to the specified S3/MinIO bucket.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests (`snapshotVolumes: false`). See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
@@ -100,9 +101,9 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 ## ✅ Backup Verification & Restoration Testing
 
-- The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs
-  `dev-tools/verify-backups.sh` daily to ensure recent snapshots are present in
-  the object store. The script now also verifies that the latest PostgreSQL dump
+- The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs nightly at **04:00**
+  and executes `dev-tools/verify-backups.sh` to ensure recent snapshots are present in
+  the object store. The script also verifies that the latest PostgreSQL dump
   exists in `PG_DUMP_BUCKET`, failing the job if no dumps are found. This
   CronJob is installed automatically by the production Terraform modules. See [`k8s/terraform-production`](../../k8s/terraform-production) for the deployment configuration.
 - Operators should periodically test recovery by restoring a snapshot into a

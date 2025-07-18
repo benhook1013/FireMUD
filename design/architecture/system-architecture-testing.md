@@ -2,6 +2,8 @@
 
 FireMUD employs a layered testing approach to keep services reliable while avoiding excessive CI/CD costs. This document describes the scope of each test type, the tooling in use, and how these tests fit into our development workflow.
 
+> **Status: In Progress** – Several testing tasks such as automated cross-service runs are still being built. (TODO: Not yet implemented)
+
 ---
 
 ## 📝 Testing Scope
@@ -62,7 +64,7 @@ Load testing is executed on demand outside of CI and does not block deployments.
 
 ### High-Concurrency Load Testing
 
-Gatling scenarios simulate thousands of concurrent connections to measure service limits and uncover bottlenecks. Results guide scaling decisions and database indexing.
+Gatling scenarios simulate thousands of concurrent connections to measure service limits and uncover bottlenecks. Results guide scaling decisions and database indexing. (TODO: Not yet implemented)
 
 ### Security Testing
 

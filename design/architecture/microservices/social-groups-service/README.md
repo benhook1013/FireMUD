@@ -9,6 +9,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 ### Responsibilities
 
 - Deliver real-time chat notifications. (TODO: Not yet implemented)
+- Synchronize guild and friend lists in real time. (TODO: Not yet implemented)
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
 - Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
@@ -50,7 +51,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Asynchronous player-to-player mail.
 - Guild creation and membership management.
 - Shared guild storage and alliance system.
-- Friend lists scoped both to individual games and to overall accounts.
+- Friend lists scoped both to individual games and to overall accounts. Account-level friends automatically appear in-game when enabled. (TODO: Not yet implemented)
 - In-game social chat plus account-to-account direct messaging.
 
 ### Data Model
@@ -59,7 +60,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - `guild` and `guild_member` tables store group ownership and membership roles.
 - `friend_links` table stores per-game friendships scoped by `tenantId`.
 - `account_friend_links` table stores account-to-account friendships shared across games.
-- Games can mirror these links in their UI when the feature is enabled.
+- Games can mirror these links in their UI when the feature is enabled. (TODO: Not yet implemented)
 - `mail_message` table stores asynchronous player mail.
 - `faction` and `faction_standing` tables are defined in the [Automation & Scripting Service](../automation-scripting-service/README.md) to track player reputation. Integration with this service for NPC behaviour is planned. (TODO: Not yet implemented)
 
