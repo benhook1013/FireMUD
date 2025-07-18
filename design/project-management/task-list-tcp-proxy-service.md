@@ -9,8 +9,12 @@
   - [x] Enforce Telnet protocol command whitelist and input sanitization
   - [x] Implement connection throttling and rate limits
   - [x] Support TLS termination for secure Telnet clients
-- [ ] Support Mud Client Protocol (MCP) negotiation with clients
-- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+  - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+  - [ ] Handle Telnet option negotiation and character encoding quirks
+  - [ ] Negotiate the Mud Client Protocol (MCP) when supported
+  - [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery
+  - [ ] Integrate with the Reconnection Strategy to resume sessions transparently
+  - [ ] Support mutual TLS when forwarding WebSocket traffic to the gateway
 
 ## Reusable Microservice Checklist
 

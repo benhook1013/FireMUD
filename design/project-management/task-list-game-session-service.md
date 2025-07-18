@@ -13,7 +13,11 @@
   - [x] Plan for cross-region sharding and session handoff
   - [x] Implement `game_manifest` table for version coordination
   - [x] Emit gameplay analytics for operators
-- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+  - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+  - [ ] Track login attempts per IP and temporarily blacklist repeated failures
+  - [ ] Send notification emails for suspicious login activity
+  - [ ] Detect command spam or abnormal tick patterns using abuse heuristics
+  - [ ] Implement graceful degradation when Redis operations stall to avoid gameplay interruption
 
 ## Reusable Microservice Checklist
 
