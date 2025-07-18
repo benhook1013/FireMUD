@@ -18,7 +18,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Session state is stored in Redis** to keep services stateless and support gameplay recovery
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**
 - **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration
-- **Feature flags are defined at design-time in the Game Design Service and toggled at runtime by the Game Session Service**
+- **Feature flags are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service**
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas are planned to prevent one tenant from exhausting cluster capacity.** (TODO: Not yet implemented)
 
@@ -55,8 +55,8 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **Game Logic Service**            | Executes gameplay mechanics; resolves actions deterministically        |
 | **Automation & Scripting Service**| Triggers AI and scripted behaviors                                     |
 | **Social & Groups Service**     | Manages chat, mail, guilds, and social features                        |
-| **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs, toggles runtime flags (TODO: Not yet implemented)                  |
-| **Game Design Service**           | Authoring tool for designing and publishing game data; defines feature flags                  |
+| **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service (TODO: Not yet implemented) |
+| **Game Design Service**           | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services (TODO: Not yet implemented) |
 
 ---
 

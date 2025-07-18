@@ -1,6 +1,6 @@
 # 🔁 FireMUD System Architecture: Reconnection Strategy
 
-FireMUD enables seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts — using a **layered reconnection model** and **Redis-backed session state**.
+FireMUD enables seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts — using a **layered reconnection model** and **Redis-backed session state**. Some capabilities described here remain in progress and are noted accordingly.
 
 ---
 
@@ -13,7 +13,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 | **Game Session Service**   | Restores session from Redis; rebinds socket, region, and timers (TODO: Not yet implemented) |
 
 Each layer handles fault tolerance independently.
-**Only client connection loss requires reauthentication.**
+**Only client connection loss requires reauthentication.** (TODO: Not yet implemented)
 Game Session Service restarts are **transparent** if the client remains connected. The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. TCP Proxy restarts drop Telnet clients. (TODO: Not yet implemented)
 
 ---
@@ -40,9 +40,9 @@ Game Session Service restarts are **transparent** if the client remains connecte
 
 - Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info (TODO: Not yet implemented)
 - On reconnect, rebinds:
-  - Socket connection
-  - Tick region context
-  - Timers and in-flight actions
+  - Socket connection (TODO: Not yet implemented)
+  - Tick region context (TODO: Not yet implemented)
+  - Timers and in-flight actions (TODO: Not yet implemented)
 
 > 🔗 Full structure of Redis session keys is documented in [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding).
 > See also the [Game Session Service README](./microservices/game-session-service/README.md#redis-keys) for how session state is stored for reconnect recovery.
@@ -57,7 +57,7 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 - WebSocket loss (Web clients)
 - If two-factor authentication is enabled, include the one-time `otp` value with the `LOGIN` command. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication).
 
-Redis-backed session state enables seamless resumption if valid, or fresh login if expired.
+Redis-backed session state enables seamless resumption if valid, or fresh login if expired. (TODO: Not yet implemented)
 Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds (defaults to `3600000`, or **1 hour**) as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
 > 🧭 For full details on `LOGIN` behavior, argument formats, and session flow, see [Authentication & Authorization](./system-architecture-authentication.md#🔁-login-and-session-flow)
@@ -96,7 +96,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
   - Timers, cooldowns, and retry info
 - Game Session Service governs all reconnection, deduplication, and rebinding
 - Clients are **fully stateless**
-- Transparent failover is supported across infrastructure layers
+- Transparent failover is supported across infrastructure layers (TODO: Not yet implemented)
 
 ---
 

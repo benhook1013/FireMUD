@@ -92,6 +92,9 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 - Create ad hoc snapshots with `dev-tools/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
 - Redis starts empty and repopulates when services access the database.
+- The compose stack includes a `pg-dump-cron` service running
+  `dev-tools/pg-dump-rotate.sh` every 15 minutes to mirror the production
+  backup schedule.
 
 ---
 

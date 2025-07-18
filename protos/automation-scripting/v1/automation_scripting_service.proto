@@ -8,12 +8,25 @@ option java_package = "net.firedevops.firemud.automationscripting.v1";
 option java_multiple_files = true;
 
 service AutomationScriptingService {
+  // Simple ping used by health checks
   rpc Ping(PingRequest) returns (PingResponse);
+
+  // Creates a new NPC formation
   rpc CreateFormation(CreateFormationRequest) returns (CreateFormationResponse);
+
+  // Adds an NPC to an existing formation
   rpc AddFormationMember(AddFormationMemberRequest) returns (AddFormationMemberResponse);
+
+  // Lists all NPCs belonging to a formation
   rpc ListFormationMembers(ListFormationMembersRequest) returns (ListFormationMembersResponse);
+
+  // Uploads or replaces a script definition
   rpc UpdateScript(UpdateScriptRequest) returns (UpdateScriptResponse);
+
+  // Checks if a script is queued or currently running
   rpc GetScriptStatus(GetScriptStatusRequest) returns (GetScriptStatusResponse);
+
+  // Signals that a new script patch version is available
   rpc NotifyScriptVersionUpdate(NotifyScriptVersionUpdateRequest)
       returns (NotifyScriptVersionUpdateResponse);
 }
