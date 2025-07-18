@@ -61,7 +61,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 ### Design Workflow
 
-1. Creators use the web UI to craft worlds, items, and scripts.
+1. Creators use the web UI to craft worlds, items, and scripts. (TODO: Not yet implemented)
 2. Changes are staged as revisions with metadata and author information.
 3. Revisions are grouped into versions that can be published to runtime.
 4. For quick fixes, designers create a script-only patch version which records a
@@ -71,7 +71,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ### gRPC APIs
 
 - `SaveRevision` – persists a new or updated design asset.
-- `PublishVersion` – freezes a set of revisions and notifies downstream services.
+- `PublishVersion` – freezes a set of revisions and notifies downstream services. (TODO: Not yet implemented)
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.

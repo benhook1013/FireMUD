@@ -1142,7 +1142,7 @@ to regenerate these docs and verify compatibility.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
 | script_patch_version | [string](#string) |  |  |
 | affected_scripts | [string](#string) | repeated |  |
 
@@ -1475,7 +1475,7 @@ to regenerate these docs and verify compatibility.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
 
 
 
@@ -1532,7 +1532,7 @@ to regenerate these docs and verify compatibility.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
 | base_version_id | [int64](#int64) |  |  |
 | script_patch_version | [string](#string) |  |  |
 | notes | [string](#string) |  |  |
@@ -1566,7 +1566,7 @@ to regenerate these docs and verify compatibility.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
 | notes | [string](#string) |  |  |
 
 
@@ -1599,7 +1599,7 @@ to regenerate these docs and verify compatibility.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | data | [string](#string) |  |  |
-| tenant_id | [int64](#int64) |  |  |
+| tenant_id | [string](#string) |  |  |
 | author_account_id | [int64](#int64) |  |  |
 
 

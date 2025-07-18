@@ -26,7 +26,8 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
 
   @Override
   @Timed(value = "script.version.notify")
-  public void notifyUpdate(String tenantId, String scriptPatchVersion, List<String> affectedScripts) {
+  public void notifyUpdate(
+      String tenantId, String scriptPatchVersion, List<String> affectedScripts) {
     Long tenantKey = Long.parseLong(tenantId);
     logger.info(
         "Applying script patch {} for tenant {} affecting {} scripts",

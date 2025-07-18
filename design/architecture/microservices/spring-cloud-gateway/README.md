@@ -16,7 +16,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ## Architecture / Design Notes
 
-- Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
+- Handles persistent WebSocket connections and supports raw TCP through the TCP Proxy Service.
 - Event-driven updates synchronize game state across connected players. (TODO: Not yet implemented)
 - Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
 - Gateway restarts are intended to be transparent thanks to the layered reconnection model
@@ -104,6 +104,8 @@ Important variables include:
 | `SERVER_PORT` | HTTP port exposed by the service | `8080` |
 
 The gRPC server listens on port `6565` by default as configured in `application.yml`.
+
+The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are currently unused by the gateway. Token parsing is handled by backend services. (TODO: Not yet implemented)
 
 ## Proto Files
 
