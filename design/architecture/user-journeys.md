@@ -114,7 +114,7 @@ Game Design Service (publish) → Game Session Service (start instance)
 Players create or select a character before entering the world:
 
 1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account.
-2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md).
+2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md). (TODO: Not yet implemented)
 3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service.
 
 ```plaintext
@@ -127,7 +127,7 @@ Account Service → Game Design Service → Entity Management Service
 
 Players connect through the networking layer:
 
-1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details.
+1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. (TODO: Not yet implemented)
 2. **Session Management** – The [Game Session Service](./microservices/game-session-service/README.md) retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
 3. **Authentication** – Credentials are verified by the [Account Service](./microservices/account-service/README.md), which issues a short-lived session token. The [Game Session Service](./microservices/game-session-service/README.md) stores this token in Redis and rebinds the session when players reconnect.
    See [Authentication & Authorization](./system-architecture-authentication.md)
@@ -180,7 +180,7 @@ Review these guides alongside the
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
 3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
-   `scriptPatchVersion` like `v42-script.3` linked to the current version.
+   `scriptPatchVersion` like `v42-script.3` linked to the current version. (TODO: Not yet implemented)
 4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.

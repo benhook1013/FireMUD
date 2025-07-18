@@ -2,20 +2,19 @@
 
 This document describes how FireMUD authenticates clients, issues internal JWTs, manages session state, and enforces role-based access across services.
 
-Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; session
-state is managed server-side in Redis and restored via the Game Session Service (TODO: Not yet implemented). The service
-delegates credential verification to the Account Service's `/auth/login` endpoint.
-Accounts may
-also authenticate using linked external providers such as Google, Discord, or Steam. (TODO: Not
-yet implemented)
+Authentication is performed via plaintext `LOGIN` commands. Clients are stateless;
+session state is managed server-side in Redis and restored via the Game Session
+Service (TODO: Not yet implemented). The service delegates credential verification
+to the Account Service's `/auth/login` endpoint. Accounts may also authenticate
+using linked external providers such as Google, Discord, or Steam (TODO: Not yet
+implemented).
 
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a
 `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login.
 The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for
-this purpose. The Game Session Service should forward this OTP when a player logs in. (TODO: Not yet
-implemented) Issued JWTs are stored in Redis with an expiration controlled by `session-expiration-ms`.
-JWT and session lifetimes are configured via the `FIREMUD_AUTH_JWT_EXPIRATION_MS` and
-`FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variables documented in
+this purpose. The Game Session Service should forward this OTP when a player logs in. (TODO: Not yet implemented)
+Issued JWTs are stored in Redis using keys `session:{tenantId}:{token}` with an expiration controlled by `session-expiration-ms` (default `3600000` ms).
+JWT and session lifetimes are configured via the `FIREMUD_AUTH_JWT_EXPIRATION_MS` and `FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variables documented in
 [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
 ---
