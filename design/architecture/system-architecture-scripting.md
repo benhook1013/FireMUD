@@ -13,7 +13,7 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 ## 🧩 Component‑Based Scripting DSL
 
 - Scripts are authored in a **visual editor** where designers assemble **predefined components** (conditions, actions, timers, etc.). (TODO: Not yet implemented)
-- Each component maps to a safe, well-defined operation in the Automation & Scripting Service.
+- Each component maps to a safe, well-defined operation in the Automation & Scripting Service. (TODO: Not yet implemented)
 - The editor exports structured data—**not raw Lua or general-purpose code**—which the service compiles into execution units. (TODO: Not yet implemented)
 - This approach prevents arbitrary behavior and limits scripts to the capabilities exposed by the platform.
 
@@ -76,7 +76,7 @@ scripts and ensure fair resource usage:
 - Metrics such as `automation_tick_events_enqueued_total`, `script_quota_allowed_total`, and `script_quota_denied_total` expose script activity for monitoring.
 - Administrators may disable or throttle problematic scripts via the Game Design
   Service, which updates definitions and triggers hot reloads in the Automation &
-  Scripting Service.
+  Scripting Service. (TODO: Not yet implemented)
 
 ### Environment Variables
 
