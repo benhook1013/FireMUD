@@ -2,7 +2,7 @@
 
 ## Overview
 
-The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events, notifying other services over gRPC when the environment changes. (TODO: Not yet implemented)
+The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events. Notifying other services over gRPC when the environment changes is planned. (TODO: Not yet implemented)
 
 > **Status: In Progress** – Planned features like pathfinding APIs and world snapshots are not yet implemented.
 
@@ -23,11 +23,11 @@ The World Management Service stores and manages game world data such as rooms, r
 - Uses a region → zone → room hierarchy for efficient lookups.
 - Publishes world event notifications for NPC scripts and game logic processing. (TODO: Not yet implemented)
 - During version publishing the service participates in a Saga that copies design
-  data into its schema, ensuring world data matches the active version. See
+  data into its schema, ensuring world data matches the active version. (TODO: Not yet implemented) See
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
 - World creation for new games also runs as a Saga, outlined in
-  [World Creation Workflow](world-creation-workflow.md).
+  [World Creation Workflow](world-creation-workflow.md). (TODO: Not yet implemented)
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
