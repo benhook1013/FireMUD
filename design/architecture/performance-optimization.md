@@ -13,7 +13,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   endpoints so huge lists are avoided.
 - Use Spring Cache backed by Redis for expensive queries. The Entity Management
   service caches character inventory graphs and the World Management Service
-  caches hot rooms with TTL-based eviction.
+  caches hot rooms with TTL-based eviction (TTL configured via
+  `world.room.cache-ttl-seconds`).
 - Database writes during gameplay are **deferred and batched**. The Game Session
   Service coordinates commits at the end of each tick so the Entity Management
   Service only persists changes once per tick. This reduces write frequency and
@@ -39,7 +40,10 @@ These notes summarize typical optimizations applied across FireMUD services.
   `script_quota_denied_total`) and automation queue metrics
   (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide
   visibility into heavy script load.
-- A Redis exporter publishes Lua latency, lock contention, and retry queue depth metrics via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment so operators can spot hotspots in Grafana dashboards.
+  - A Redis exporter exposes command latency and memory metrics via the
+    [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment so
+    operators can spot hotspots in Grafana dashboards. Lua latency and retry
+    queue depth are recorded by the Game Session Service metrics.
 - The Game Session Service exposes `tick_retry_queue_depth`,
   `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
   per-region visibility into retries and backoff behavior.

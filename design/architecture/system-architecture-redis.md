@@ -45,19 +45,19 @@ Redis is a **non-persistent** layer — but FireMUD treats it as **essential** f
 
 ### Cluster Deployment
 
-FireMUD runs Redis in a **clustered, replicated configuration**:
+FireMUD runs Redis in a **clustered, replicated configuration** (TODO: Not yet implemented):
 
 - Multiple **shards and replicas** for tick region and session partitioning (TODO: Not yet implemented)
 - Partitioning aligns with tick region boundaries (typically per-room or per-segment) (TODO: Not yet implemented)
 - Kubernetes-native failover (TODO: Not yet implemented)
 - **Failover behavior is tested under live tick loads** (TODO: Not yet implemented)
-- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff.
+- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff. (TODO: Not yet implemented)
 
 > For operational context on Docker Compose vs Kubernetes, see [Deployment Environments](./infrastructure/deployment-environments.md).
 
 ### Replication and Durability
 
-- Writes are **asynchronously replicated**
+- Writes are **asynchronously replicated** (TODO: Not yet implemented)
 - **AOF (Append-Only File)** enabled for durability and crash recovery
 - AOF files are wiped on each Helm upgrade to start with a clean state
   (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment))
@@ -106,9 +106,9 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 
 - Entity lock acquisition (`tick:lock:*`)
 - Tick staging, commit, and rollback (`tick:pending:*`)
-- Timer lifecycle management
-- Session rebinding and deduplication (`session:*` keys)
-- Retry queue updates
+- Timer lifecycle management (TODO: Not yet implemented)
+- Session rebinding and deduplication (`session:*` keys) (TODO: Not yet implemented)
+- Retry queue updates (TODO: Not yet implemented)
 
 All Lua scripts are:
 
@@ -238,10 +238,10 @@ configured in [Environment & Secrets](./infrastructure/environment-and-secrets.m
 
 This state is used by the **Game Session Service** to:
 
-- Resume gameplay after disconnects
-- Rebind gameplay context to a new socket
-- Deduplicate reconnect attempts
-- Handle character takeovers (one session per character)
+- Resume gameplay after disconnects (TODO: Not yet implemented)
+- Rebind gameplay context to a new socket (TODO: Not yet implemented)
+- Deduplicate reconnect attempts (TODO: Not yet implemented)
+- Handle character takeovers (one session per character) (TODO: Not yet implemented)
 
 > 🔐 Key formats are internal and subject to change. Services treat Redis as a coordination layer, not a persistent or public contract.
 
