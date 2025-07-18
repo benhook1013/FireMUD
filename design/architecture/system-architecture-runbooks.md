@@ -14,7 +14,7 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
    ```
 
 3. Verify pods are running with `kubectl get pods -n firemud`.
-4. Monitor rollout progress in the CI job summary and Grafana dashboards (TODO: Not yet implemented).
+4. Monitor rollout progress in the CI job summary. Planned Grafana dashboards will provide additional visibility. (TODO: Not yet implemented)
 
 For local development, use `./gradlew devUp` to start Docker Compose.
 
@@ -52,11 +52,11 @@ For local development, use `./gradlew devUp` to start Docker Compose.
      restart containers with `docker compose restart`.
    - Scheduled backups are created automatically by the Terraform modules using
      `k8s/velero/schedule.yaml`.
-   - Daily backup checks are handled by the `verify-backups` CronJob deployed by Terraform.
+   - Daily backup checks are handled by the `verify-backups` CronJob deployed by Terraform (`k8s/velero/verify-backups-cronjob.yaml`).
    - A manual workflow `manual-backup-restore.yml` can verify backups and
      perform an optional restore test in a temporary namespace. Trigger it
      from the GitHub Actions UI when needed.
-   - **Maintain dump volume**: the `firemud-pg-dump` CronJob rotates files automatically,
+   - **Maintain dump volume**: the [`firemud-pg-dump` CronJob](k8s/postgres/pg-dump-cronjob.yaml) rotates files automatically,
     but long-lived persistent volumes can still fill up. The Docker Compose
     stack includes a `pg-dump-cron` service that runs the same rotation script
     every 15 minutes. Periodically check the `firemud-pg-dumps` PVC and prune

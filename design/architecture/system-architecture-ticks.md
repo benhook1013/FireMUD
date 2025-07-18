@@ -12,7 +12,7 @@ FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with de
 - **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues**
 - At regular **tick intervals** (e.g., 1s):
   - One action (if any) is pulled from each entity’s command queue
-  - Actions are resolved in a fair, ordered cycle (e.g. by timestamps or stat priority)
+  - Actions are resolved in FIFO order; stat-based prioritization is planned (TODO: Not yet implemented)
   - Only **one action per entity per tick** is executed for fairness
   - State changes are applied in a single coordinated pass
 
@@ -144,7 +144,7 @@ Each tick enforces a **soft execution budget** (e.g., 100ms):
 - These retries are **not executed in parallel** (TODO: Not yet implemented)
 - **Oldest actions win** in conflict scenarios (TODO: Not yet implemented)
 - Newer submissions are backlogged until resolved (TODO: Not yet implemented)
-- Conflict metadata enables **hotspot detection** and livelock prevention
+- Conflict metadata enables **hotspot detection** and future livelock prevention (TODO: Not yet implemented)
 - Metrics `tick_conflict_hotspot_detected_total` and `tick_retry_queue_depth`
   help operators monitor these hotspots across regions.
 - Lua staging scripts limit how many commands or events move from queue to
@@ -239,7 +239,7 @@ Players experience a smooth flow:
 ```
 
 No region waits synchronously for another shard, preserving responsiveness and
-deterministic replay.
+deterministic replay. (TODO: Not yet implemented)
 
 ### ⛓️ Tick Chaining and Reentrant Effect Control
 
@@ -271,7 +271,7 @@ may be notified that the chain was halted. (TODO: Not yet implemented)
 - ✅ Lock-on-demand using Redis avoids fixed thread ownership
 - ✅ Atomic staging and safe rollback via Lua
 - ✅ Deterministic recovery using AOF + `WAIT`
-- ✅ Conflict metadata avoids livelocks and enables adaptive pacing
+- ✅ Conflict metadata avoids livelocks and enables adaptive pacing (TODO: Not yet implemented)
 - ✅ Flexible time scaling without affecting system cadence (TODO: Not yet implemented)
 - ✅ No in-service volatile state — everything recoverable via Redis
 

@@ -1,10 +1,10 @@
 # Ability & Action Design Tools
 
-This document outlines the planned editors for defining abilities, actions and combat mechanics. The tooling is part of the Game Design Service and will push finalized data to the Game Logic Service during version publishing.
+This document outlines the planned editors for defining abilities, actions and combat mechanics. The tooling is part of the Game Design Service and will push finalized data to the Game Logic Service during version publishing. (TODO: Not yet implemented)
 
 > **Status: In Progress** – These tooling features are not yet implemented.
 
-Game creators will be able to build complex combat systems without modifying the core engine. All definitions are design-time data stored with a tenant so multiple games remain isolated.
+Game creators will be able to build complex combat systems without modifying the core engine. (TODO: Not yet implemented) All definitions are design-time data stored with a tenant so multiple games remain isolated.
 
 ## Capabilities
 
