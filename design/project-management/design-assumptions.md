@@ -32,7 +32,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Caching**: Redis for transient session and gameplay state
 - **Redis Consistency**: Lua scripts enforce atomic updates with `WAIT` for replica acknowledgment
 - **Game Session Service** orchestrates ticks and runtime flags using Redis (see [Tick System](../architecture/system-architecture-ticks.md))
-- **Single Session** per character with layered reconnection (Proxy → Gateway → Session)
+- **Single Session** per character with layered reconnection (Proxy → Gateway → Session) (TODO: Not yet implemented)
 - **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service (see [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md)) (TODO: Not yet implemented)
 
 ### Operations & Support
@@ -45,7 +45,7 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ## Frontend
 
-- **Language**: JavaScript
+- **Language**: TypeScript
 - **Framework**: React
 - **Styling**: Material-UI
 
