@@ -61,7 +61,9 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 - **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
-- **`protoc-gen-doc`** — Produces HTML or Markdown API documentation to encourage inline comments. *(TODO: Not yet implemented)*
+- **`protoc-gen-doc`** — Produces Markdown API documentation. Run
+  `./dev-tools/generate-grpc-docs.sh` after updating proto files to regenerate
+  [`design/grpc-docs/grpc-api.md`](../grpc-docs/grpc-api.md).
 
 ## 🚦 Shared Interceptors
 
