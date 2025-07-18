@@ -1,6 +1,6 @@
 # MCP Support for AI-Assisted Game Creation
 
-This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP) to enable richer tooling for AI-assisted game creation. The protocol reference can be found in the https://github.com/modelcontextprotocol.
+This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP) to enable richer tooling for AI-assisted game creation. The protocol reference can be found in <https://github.com/modelcontextprotocol>.
 
 ## 🎯 Goals
 
