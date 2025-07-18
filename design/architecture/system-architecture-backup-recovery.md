@@ -12,11 +12,9 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **3 weekly** dumps
   - **3 monthly** dumps
 - The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
-  a script (`pg-dump.sh`) that enforces the retention policy. When the
-  environment variable `PG_DUMP_BUCKET` is set, the script also uploads each
-  dump to the specified S3/MinIO bucket.
+  a script (`pg-dump.sh`) that enforces the retention policy. When the `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` environment variables are set, the script also uploads each dump to the specified S3/MinIO bucket.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests.
-- Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
+- Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. See `k8s/velero/README.md` for full setup details. Example:
 
 ```yaml
 configuration:
@@ -92,22 +90,25 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 - Create ad hoc snapshots with `dev-tools/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
 - Redis starts empty and repopulates when services access the database.
+- The compose stack includes a `pg-dump-cron` service running
+  `dev-tools/pg-dump-rotate.sh` every 15 minutes to mirror the production
+  backup schedule.
 
 ---
 
 ## ✅ Backup Verification & Restoration Testing
 
 - The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs
-  `dev-tools/verify-backups.sh` daily to ensure recent snapshots are present in
-  the object store. The script now also verifies that the latest PostgreSQL dump
-  exists in `PG_DUMP_BUCKET`, failing the job if no dumps are found. This
-  CronJob is installed automatically by the production Terraform modules.
+  `dev-tools/verify-backups.sh` daily (scheduled at `0 4 * * *`) to ensure
+  recent snapshots are present in the object store. The script also verifies
+  that the latest PostgreSQL dump exists in `PG_DUMP_BUCKET`, failing the job if
+  no dumps are found. This CronJob is installed automatically by the production
+  Terraform modules.
 - Operators should periodically test recovery by restoring a snapshot into a
-  throwaway namespace with `dev-tools/restore-cluster.sh <backup-name>
-  <namespace>` (or by setting `FIREMUD_K8S_NAMESPACE`) and verifying
-  services start successfully. A manual workflow
-  `.github/workflows/manual-backup-restore.yml` can run these checks on
-  demand from the GitHub Actions UI.
+  throwaway namespace. Set `FIREMUD_K8S_NAMESPACE` to the target namespace and
+  run `dev-tools/restore-cluster.sh <backup-name>` to verify services start
+  successfully. A manual workflow `.github/workflows/manual-backup-restore.yml`
+  can run these checks on demand from the GitHub Actions UI.
 
 ---
 
