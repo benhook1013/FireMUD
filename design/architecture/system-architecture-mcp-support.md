@@ -6,7 +6,7 @@ This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP
 
 - Allow editors and automated tools to communicate with the server using structured MCP messages. (TODO: Not yet implemented)
 - Enable scripted workflows where the AI can create rooms, items, and NPCs via standardized commands. (TODO: Not yet implemented)
-- Maintain backward compatibility with traditional telnet clients that do not understand MCP.
+- Maintain backward compatibility with traditional Telnet clients that do not understand MCP. (TODO: Not yet implemented)
 
 ## Overview
 
