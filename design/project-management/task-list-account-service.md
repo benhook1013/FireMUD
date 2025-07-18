@@ -11,6 +11,7 @@
   - [x] Use saga orchestrator for account creation workflow
   - [x] Implement self-service account recovery
   - [x] Add optional 2FA for admin and moderator roles
+  - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [x] **Develop Email & Notification System**
   - [x] Implement email verification & password resets
   - [x] Implement in-game notification system for events & messages
