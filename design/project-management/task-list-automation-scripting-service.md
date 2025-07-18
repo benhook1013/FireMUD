@@ -14,7 +14,13 @@
   - [x] Support hot reloading of scripts published by the Game Design Service *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
   - [x] Provide web UI for script creation and testing
   - [x] Add advanced AI modules for complex behaviors
+  - [ ] Copy published version data into scripting schema via Saga
   - [x] Enforce fairness quotas and per-script resource limits
+  - [ ] Implement OverworldMapGenerator for biome-based terrain
+  - [ ] Support runtime generation requests via isolated ticks
+  - [ ] Persist generation seed metadata and spacing rules
+  - [ ] Trigger script-driven population after generation
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 

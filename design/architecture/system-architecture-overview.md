@@ -1,6 +1,7 @@
 # 🏗️ FireMUD System Architecture: Overview
 
 This document provides a high-level view of FireMUD’s system architecture, showing how major services, protocols, and data flows interact across the platform.
+Features or workflows that are still in progress are annotated with **(TODO: Not yet implemented)**.
 
 ---
 
@@ -46,19 +47,20 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 |-----------------------------------|-------------------------------------------------------------------------|
 | **Web Clients**                   | Modern browser clients using WebSocket or HTTP to access the platform  |
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
-| **TCP Proxy Service**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
-| **Spring Cloud Gateway**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **Game Session Service**          | Manages player sessions, tick orchestration, stores runtime flags, input validation |
-| **Account Service**               | Manages player accounts, login, auth, subscription status; ban workflows are planned (TODO: Not yet implemented) |
-| **Entity Management Service**     | Handles all entity data: players, NPCs, items, stats, inventories      |
-| **World Management Service**      | Owns maps, rooms, and tick region structure; pathfinding APIs and world snapshots are planned (TODO: Not yet implemented) |
-| **Game Logic Service**            | Executes gameplay mechanics; resolves actions deterministically        |
-| **Automation & Scripting Service**| Triggers AI and scripted behaviors                                     |
-| **Social & Groups Service**     | Manages chat, mail, guilds, and social features                        |
-| **Logging & Admin Service**       | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service (TODO: Not yet implemented) |
-| **Game Design Service**           | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services (TODO: Not yet implemented) |
+| **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
+| **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)**          | Handles WebSocket termination, routing, auth, monitoring                |
+| **[Game Session Service](./microservices/game-session-service/README.md)**          | Manages player sessions, tick orchestration, stores runtime flags, input validation |
+| **[Account Service](./microservices/account-service/README.md)**               | Manages player accounts, login, auth, subscription status; ban workflows are planned (TODO: Not yet implemented) |
+| **[Entity Management Service](./microservices/entity-management-service/README.md)**     | Handles all entity data: players, NPCs, items, stats, inventories      |
+| **[World Management Service](./microservices/world-management-service/README.md)**      | Owns maps, rooms, and tick region structure; pathfinding APIs and world snapshots are planned (TODO: Not yet implemented) |
+| **[Game Logic Service](./microservices/game-logic-service/README.md)**            | Executes gameplay mechanics; resolves actions deterministically        |
+| **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)**| Triggers AI and scripted behaviors                                     |
+| **[Social & Groups Service](./microservices/social-groups-service/README.md)**     | Manages chat, mail, guilds, and social features                        |
+| **[Logging & Admin Service](./microservices/logging-admin-service/README.md)**       | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service (TODO: Not yet implemented) |
+| **[Game Design Service](./microservices/game-design-service/README.md)**           | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services (TODO: Not yet implemented) |
 
 ---
+For a full list of responsibilities and APIs, refer to the [Microservices Documentation](./microservices/README.md).
 
 ## 🌐 Communication Flows
 
@@ -79,7 +81,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 - **Persistent data** (accounts, entities, rooms) is stored in PostgreSQL by domain-aligned services
 - **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service
 - **Redis** is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
-- **Tick regions** are shard-aligned in Redis to preserve atomicity
+- **Tick regions** are shard-aligned in Redis to preserve atomicity (TODO: Not yet implemented)
 
 📌 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -90,7 +92,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
 - **One action per entity per tick** (pulled from command queues)
-- **Region-scoped ticks** execute independently for parallelism
+- **Region-scoped ticks** execute independently for parallelism (TODO: Not yet implemented)
 - **Tick state** (locks, queues, timers) is stored and coordinated via Redis
 
 > 🔗 Tick execution, staging/rollback, retry policies, and crash recovery are detailed in [Tick System and Runtime Design](./system-architecture-ticks.md)

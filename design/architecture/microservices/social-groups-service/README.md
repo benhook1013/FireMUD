@@ -167,7 +167,7 @@ files change.
 - `POST /guilds/members/role` – update a guild member's role.
 - `POST /guilds/members/remove` – remove a guild member.
 - `POST /chat` – send a chat message filtered for profanity.
-- `POST /voice/token` – issue a temporary WebRTC token for voice chat. (TODO: Not yet implemented)
+- `POST /voice/token` – issue a temporary WebRTC token for voice chat. Voice gateway integration is not yet available. (TODO: Not yet implemented)
 
 ```bash
 curl http://localhost:8080/ping
@@ -195,7 +195,7 @@ Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are 
 
 ### Voice Chat
 
-The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. Tokens are issued only via the `/voice/token` REST endpoint (see `openapi.yaml` lines 499–520) and connection events are recorded so moderation actions can be traced. This feature is disabled by default and is intended for games that wish to offer in-client voice without relying on external tools.
+The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. Tokens are already issued via the `/voice/token` REST endpoint (see `openapi.yaml` lines 499–520). Recording of connection events and the gateway itself are not yet implemented. (TODO: Not yet implemented)
 
 #### Example Request
 

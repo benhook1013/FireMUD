@@ -4,21 +4,22 @@ This document outlines how FireMUD secures service communication, manages authen
 
 Kubernetes Secrets has been selected as the platform's unified secret
 storage solution. This keeps credential management simple while working
-seamlessly with cert-manager for automatic rotation.
+seamlessly with cert-manager for automatic rotation of TLS certificates.
+JWT signing keys still require manual rotation. (TODO: Not yet implemented)
 
 ---
 
 ## 🔑 Token Issuance & Secret Storage
 
 - The **Account Service** signs JWTs used for internal gRPC authorization.
-- Signing keys are stored as **Kubernetes Secrets**, provisioned and rotated using **cert-manager**.
+- Signing keys are stored as **Kubernetes Secrets**. Rotation is currently **manual** and may be automated with **cert-manager** in the future. (TODO: Not yet implemented)
 - Keys are **never committed** to the repository and can be rotated without redeploying other services.
 - A **JWKS endpoint** exposes public keys for internal services to validate tokens. The
   Account Service serves these keys at `/.well-known/jwks.json`.
 
 ### Key and Certificate Rotation
 
-- cert-manager issues both JWT signing keys and mTLS certificates, backed by an internal CA.
+- cert-manager issues the mTLS certificates used between services. JWT signing keys are stored as Secrets and rotated manually; automated issuance via cert-manager is planned. (TODO: Not yet implemented)
 - All services poll their mounted secrets for updates and support **hot reload** via the shared `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the `firemud-common` library. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services. (TODO: Not yet implemented) JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
 - During rotation, services reload credentials when files change. Caching of old credentials to allow for seamless transitions is planned. (TODO: Not yet implemented)
@@ -74,7 +75,8 @@ seamlessly with cert-manager for automatic rotation.
 - All failed logins, suspicious activity, and abuse attempts are captured in:
   - **Elasticsearch-backed logs**
   - The **Logging & Admin Service dashboard** ([design](./microservices/logging-admin-service/README.md))
-  - Admin actions such as bans are recorded by the Logging & Admin Service for auditability. Tracking of role changes is planned. (TODO: Not yet implemented)
+  - Admin actions such as bans will be recorded by the Logging & Admin Service for auditability. (TODO: Not yet implemented)
+  - Tracking of role changes is also planned. (TODO: Not yet implemented)
 
 ---
 
@@ -97,7 +99,7 @@ seamlessly with cert-manager for automatic rotation.
 
 | Topic                     | Strategy                                                                 |
 |---------------------------|--------------------------------------------------------------------------|
-| JWT Secret Storage        | Kubernetes Secrets via cert-manager                                      |
+| JWT Secret Storage        | Kubernetes Secrets (manual rotation; cert-manager integration planned) (TODO: Not yet implemented) |
 | Key & Cert Rotation       | Hot-reload; caching of old credentials and automated JWKS rotation planned (TODO: Not yet implemented) |
 | TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets                                              |

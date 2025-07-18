@@ -8,6 +8,8 @@
   - [x] Implement action aliases system (custom command mappings)
   - [x] Add scripting hooks for custom actions
   - [x] Optimize performance for large-scale battles
+  - [ ] Copy published version data into logic schema via Saga
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 
