@@ -100,8 +100,6 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
 
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
 
-### 2.8 Moderation, Administration & Monetization
-
 - **Admin dashboard** for monitoring and moderating hosted games. (TODO: Not yet implemented)
 - **In-game reporting & ban system** for handling violations. (TODO: Not yet implemented)
 - **Moderation policy definitions** including profanity filters. (TODO: Not yet implemented)
