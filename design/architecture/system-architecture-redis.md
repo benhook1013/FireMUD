@@ -12,7 +12,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 
 - In-flight command queues
 - Tick locks and staged results
-- Cooldowns and timer expirations (stored in milliseconds)
+- Cooldowns and timer expirations (stored in milliseconds) (TODO: Not yet implemented)
 - Gameplay session state and real-time coordination data
   _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
 - Retry metadata and inter-tick conflict tracking
@@ -177,7 +177,7 @@ It provides:
 - Durable **tick staging**
 - Distributed **locks** and **retry tracking**
 - **Conflict metadata** for retry prioritization (TTL controlled by the `FIREMUD_CONFLICT_TTL_SECONDS` environment variable; see [Game Session Service variables](./microservices/game-session-service/README.md#environment-variables))
-- Accurate **cooldown and timer tracking**
+- Accurate **cooldown and timer tracking** (TODO: Not yet implemented)
 
 > 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.
 > 🔗 See [Tick Execution Flow](./system-architecture-ticks.md#🔄-tick-execution-flow)
@@ -230,7 +230,7 @@ Redis stores transient gameplay session state for each connected player, includi
 - Socket binding metadata
 - Active `playerId` and `tenantId` context
 - Tick region participation and queued commands
-- Timer and cooldown data
+- Timer and cooldown data (TODO: Not yet implemented)
 - Conflict and retry metadata
 
 Session entries expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as
