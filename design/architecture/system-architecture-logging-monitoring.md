@@ -21,6 +21,8 @@ This document consolidates the platform's observability architecture.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and
   `FLUENT_ELASTICSEARCH_PORT` environment variables
   ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
+- The local Docker Compose stack outputs logs to the console and does not yet
+  include Fluent Bit, Prometheus, or Grafana. (TODO: Not yet implemented)
 - Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
   The Logging & Admin Service will provide a dedicated UI for moderation
   and audit trails. (TODO: Not yet implemented)
