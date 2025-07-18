@@ -19,6 +19,7 @@
 - [x] Track version history and patch notes for published games
 - [x] Build a web-based visual design interface
 - [x] Integrate version control for design assets
+- [ ] Implement data-driven rule configuration so games can adjust mechanics without redeploying
 - [x] Configure database storage for game assets
   - [x] Provide asset upload API in Game Design Service
   - [x] Document asset storage setup and configuration
