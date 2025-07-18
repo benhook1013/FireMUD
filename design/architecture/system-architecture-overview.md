@@ -9,14 +9,14 @@ Features or workflows that are still in progress are annotated with **(TODO: Not
 
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
-- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway
+- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway. Mutual TLS for this link is planned (TODO: Not yet implemented)
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service
 - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
    > 🛑 **Gameplay login is handled by the Game Session Service** — the Gateway simply forwards any admin tokens. JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input**, but **discards it across reconnects** (TODO: Not yet implemented)
 - **Reconnection logic is handled in layers** to preserve gameplay continuity (TODO: Not yet implemented)
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md)
-- **Session state is stored in Redis** to keep services stateless and support gameplay recovery (TODO: Not yet implemented)
+- **Session state is stored in Redis** to keep services stateless. Full reconnect recovery is still in development (TODO: Not yet implemented)
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code** (TODO: Not yet implemented)
 - **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service** (TODO: Not yet implemented)
@@ -47,7 +47,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 |-----------------------------------|-------------------------------------------------------------------------|
 | **Web Clients**                   | Modern browser clients using WebSocket or HTTP to access the platform  |
 | **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
-| **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)**             | Accepts Telnet connections, buffers input, forwards over WebSocket     |
+| **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)**             | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS planned (TODO: Not yet implemented)     |
 | **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)**          | Handles WebSocket termination, routing, auth, monitoring                |
 | **[Game Session Service](./microservices/game-session-service/README.md)**          | Manages player sessions, tick orchestration, stores runtime flags, input validation |
 | **[Account Service](./microservices/account-service/README.md)**               | Manages player accounts, login, auth, subscription status; ban workflows are planned (TODO: Not yet implemented) |

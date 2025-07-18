@@ -4,9 +4,9 @@
 
 Centralized logging and administration tools for the platform. Collects log data from all services and provides moderation capabilities for game operators.
 
--### Responsibilities
+### Responsibilities
 
-- Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs
+- Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs. (TODO: Not yet implemented)
 - Offer dashboards and search for operators and moderators. (TODO: Not yet implemented)
 - Enforce moderation actions such as bans via secured APIs
 - Record audit trails for feature flag changes and account events. (TODO: Not yet implemented)
@@ -33,7 +33,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - [Role-based admin UI](./admin-ui.md) for moderators. (TODO: Not yet implemented)
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../system-architecture-transactions.md).
 - [Moderation policies](./moderation-policies.md) including profanity filters. (TODO: Not yet implemented)
-- UI and APIs for toggling runtime feature flags (UI not yet implemented). See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
+- UI for toggling runtime feature flags. Backend APIs are available. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
 - Audit trail for account actions and world changes. (TODO: Not yet implemented)
 - Transaction logs for purchases and subscription events. (TODO: Not yet implemented)
 - Captures failed login attempts and suspicious activity reported by the Game
@@ -43,7 +43,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ### Data Model
 
-- Log events are persisted in the `log_events` table and mirrored in Elasticsearch indexes for search.
+- Log events are persisted in the `log_events` table and mirrored in Elasticsearch indexes for search. (TODO: Not yet implemented)
 - `moderation_actions` table records bans and warnings with timestamps and includes a `tenant_id` column.
 - `player_reports` table stores abuse and bug reports with a `tenant_id` column.
 - `feature_flag` table mirrors active runtime settings for auditing and stores the `tenant_id` of the owning game.
@@ -89,8 +89,8 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 ## Dependencies
 
 - **Internal:**
-  - Account Service forwards account events and payment notifications.
-  - Game Session Service streams session lifecycle metrics.
+  - Account Service forwards account events and payment notifications. (TODO: Not yet implemented)
+  - Game Session Service streams session lifecycle metrics. (TODO: Not yet implemented)
   - Social & Groups Service delivers chat logs for moderation.
 - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 

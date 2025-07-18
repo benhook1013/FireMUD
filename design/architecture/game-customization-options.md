@@ -27,7 +27,7 @@ This brief document summarizes the ways a hosted game can change its look and fe
 
 - Custom scripts drive dynamic events and NPC behaviour. (TODO: Not yet implemented)
 - The planned [modding framework](./microservices/game-design-service/modding-framework.md) will allow runtime plugins for additional behavior. (TODO: Not yet implemented)
-- Scripts are versioned alongside other game data and can be hot reloaded by the Automation & Scripting Service. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets. (TODO: Not yet implemented)
+- Scripts are versioned alongside other game data and can be hot reloaded by the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md). Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets. (TODO: Not yet implemented)
 
 ## Runtime Settings
 
@@ -36,7 +36,7 @@ This brief document summarizes the ways a hosted game can change its look and fe
   [Multi-Tenancy](./system-architecture-multi-tenancy.md)).
   Per-tenant tick intervals are planned. (TODO: Not yet implemented)
 - Flags are defined in the Game Design Service but toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
-- The Game Session Service loads these settings at runtime so changes can take effect without republishing. (TODO: Not yet implemented)
+- The [Game Session Service](./microservices/game-session-service/README.md) loads these settings at runtime so changes can take effect without republishing. (TODO: Not yet implemented)
 
 These options allow extensive personalization while keeping the underlying platform maintainable.
 

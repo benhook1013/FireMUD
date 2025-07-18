@@ -3,24 +3,28 @@
 World creation is a long running process that will eventually copy design data
 and prepare the initial world state for a new game instance. The workflow uses
 the shared **Saga** utilities from `firemud-common` so each step can be rolled
-back if another step fails. The process is triggered by `WorldCreationService`
-when a tenant launches a new game world.
+back if another step fails. `WorldCreationService` is invoked when a tenant
+launches a new game world, typically from the Game Session Service.
 
-Currently the implementation only inserts a starter region and schedules
-placeholder events; copying the full design from the Game Design Service has not
-been implemented. (TODO: Not yet implemented)
+Currently the implementation only inserts a starter region. The method that
+would schedule placeholder events is a stub and does not yet create records.
+Copying the full design from the Game Design Service has not been implemented
+(TODO: Not yet implemented). Additional steps, such as bulk terrain generation
+or NPC population, remain planned.
 
 ## Steps
 
 1. **Copy Design Data & Create Starter Region** – fetches the published version
    from the Game Design Service and inserts an initial region using the local
    shard configuration (`WORLD_LOCAL_SHARD_ID`). The current code merely verifies
-   connectivity with the Game Design Service and inserts a single starter
-   region. Additional regions and full data copy will follow once more design
-   data is available. (TODO: Not yet implemented)
-2. **Schedule Initial Events** – inserts world events such as an initial
-   weather state so `WorldEventService` can apply them after the world
-   starts. (TODO: Not yet implemented)
+   connectivity with the Game Design Service and inserts a single "Starter
+   Region" record populated with default `SimpleDungeonGenerator` parameters.
+   Additional regions and a true data copy will follow once more design data is
+   available. (TODO: Not yet implemented)
+2. **Schedule Initial Events** – intended to insert world events such as an
+   initial weather state so `WorldEventService` can apply them after the world
+   starts. This step is currently a stub and does not persist any events
+   (TODO: Not yet implemented).
 
 Additional steps may be added for large games
 such as generating terrain chunks or spawning default NPCs. (TODO: Not yet implemented)
@@ -37,7 +41,7 @@ new SagaBuilder()
 
 The saga state is stored in the `saga_instance` and `saga_step` tables defined
 in the common library. Operators can inspect progress through the Logging &
-Admin Service's saga dashboard. (TODO: Not yet implemented)
+Admin Service's saga dashboard.
 
 See [World Management Service](README.md) for additional service context.
 

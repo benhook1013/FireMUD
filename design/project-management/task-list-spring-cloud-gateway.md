@@ -1,17 +1,24 @@
 # Spring Cloud Gateway Task List
 
-- [x] **Finalize Spring Cloud Gateway design**
-- [x] **Develop Spring Cloud Gateway**
-  - [x] Handle API routing and request validation
-  - [x] Terminate TLS and forward traffic to internal services using mTLS
-  - [x] Collect connection metrics and throttle abusive clients
-  - [x] Create gateway route configuration files for all services
-  - [x] Add baseline route configuration for Spring Cloud Gateway
-  - [x] Create `GatewayController` endpoints for dynamic route management
-  - [x] Allow creation of custom gateway routes via API
-- [x] Add gRPC `GatewayManagementService` for remote route configuration
+## Design
+- [x] Finalize Spring Cloud Gateway design
 
+## Core Gateway
+- [x] Handle API routing and request validation
+- [x] Terminate TLS and forward traffic to internal services using mTLS
+- [x] Collect connection metrics and throttle abusive clients
+- [x] Add baseline route configuration for Spring Cloud Gateway
+- [ ] Automatically re-establish WebSocket tunnels on restart
+- [ ] Trace WebSocket requests and responses for observability
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+
+## Dynamic Route Management
+- [x] Create gateway route configuration files for all services
+- [x] Create `GatewayController` endpoints for dynamic route management
+- [x] Allow creation of custom gateway routes via API
+- [x] Add gRPC `GatewayManagementService` for remote route configuration
+- [ ] Allow route target overrides via FIREMUD_SERVICES_* env vars
+- [ ] Persist dynamic routes in the route_config table
 
 ## Reusable Microservice Checklist
 

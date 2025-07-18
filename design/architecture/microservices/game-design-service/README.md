@@ -14,7 +14,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ## Architecture / Design Notes
 
 - Provides REST/gRPC APIs for editing game data.
-- Works closely with World Management and Automation & Scripting Service to apply changes.
+- Works closely with World Management and Automation & Scripting Service to apply changes. (TODO: Not yet implemented)
 - Stores versioned configuration data so new game instances can be generated from templates.
 - Maintains history of revisions so designers can roll back to prior versions.
 - Publishing a new game version triggers a Saga that copies data to other
@@ -28,8 +28,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
-- All APIs require JWT authentication between services. Tokens are parsed by a
-  shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../system-architecture-security.md).
+- All gRPC APIs require JWT authentication between services. REST authentication is planned but not yet implemented. (TODO: Not yet implemented)
+  Tokens are parsed by a shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
@@ -61,7 +61,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 
 ### Design Workflow
 
-1. Creators use the web UI to craft worlds, items, and scripts.
+1. Creators use the web UI to craft worlds, items, and scripts. (TODO: Not yet implemented)
 2. Changes are staged as revisions with metadata and author information.
 3. Revisions are grouped into versions that can be published to runtime.
 4. For quick fixes, designers create a script-only patch version which records a
@@ -71,7 +71,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ### gRPC APIs
 
 - `SaveRevision` – persists a new or updated design asset.
-- `PublishVersion` – freezes a set of revisions and notifies downstream services.
+- `PublishVersion` – freezes a set of revisions and notifies downstream services. (TODO: Not yet implemented)
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.

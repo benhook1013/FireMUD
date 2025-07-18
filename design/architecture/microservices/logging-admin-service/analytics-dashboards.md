@@ -1,11 +1,13 @@
 # 📊 Operator Analytics Dashboards
 
 This document describes the default Grafana and Kibana dashboards shipped with the
-**Logging & Admin Service**.
-These dashboards provide operators with visibility into game health, player activity, and moderation trends.
-Sample JSON templates live under [`design/observability`](../../observability) for local testing.
+**Logging & Admin Service**. These dashboards provide operators with visibility
+into game health, player activity and moderation trends. Sample JSON templates
+live under [`design/observability`](../../observability) for local testing.
+For an overview of the pipeline that feeds these dashboards see
+[Logging & Monitoring](../../system-architecture-logging-monitoring.md).
 
-> **Status: In Progress** – Many dashboards are placeholders. Additional real-time analytics and export options are planned.
+> **Status: In Progress** – Many dashboards are placeholders. Additional real-time analytics and export options are planned. (TODO: Not yet implemented)
 
 ## Grafana Dashboards
 
@@ -23,10 +25,11 @@ Operators can adjust queries or add panels to suit their games.
 - **Log Volume** – ingest rates, log levels, and error hotspots. See `log-volume.json`. (TODO: Not yet implemented)
 - **Player Reports** – breakdown of abuse or bug reports by category. (TODO: Not yet implemented)
 - **Moderation Actions** – bans, warnings, and feature toggles over time. (TODO: Not yet implemented)
-- **Search by Trace ID** – correlate logs and traces using the `traceId` field. (TODO: Not yet implemented)
+- **Search by Trace ID** – correlate logs and traces using the `traceId` field.
 
-These dashboards rely on structured JSON logs shipped via Fluent Bit.
-Saved searches make it easy to pivot on `tenantId` and player identifiers.
+These dashboards rely on structured JSON logs shipped via Fluent Bit. Saved
+searches make it easy to pivot on `tenantId`. Filtering by `playerId` will be
+added once logs include that field. (TODO: Not yet implemented)
 
 ## Future Enhancements
 
