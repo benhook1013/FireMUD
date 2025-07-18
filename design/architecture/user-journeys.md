@@ -65,12 +65,10 @@ Account Service (user) → Game Design Service (new game)
 
 Creators refine the world and its inhabitants using several services:
 
-- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors, and runtime flag definitions.
-- **[World Management Service](./microservices/world-management-service/README.md)** –
-  Stores zones and maps, generates new areas, and maintains pathfinding data.
-  Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors (TODO: Not yet implemented), and runtime flag definitions.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data (TODO: Not yet implemented). Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
-- **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
+- **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md). (TODO: Not yet implemented)
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation. (TODO: Not yet implemented)
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 - **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing. (TODO: Not yet implemented)
@@ -140,7 +138,7 @@ Players connect through the networking layer:
 Client → Proxy/Gateway → Game Session Service → Game Logic Service / Entity & World services
 ```
 
-The [Game Session Service](./microservices/game-session-service/README.md) handles login, session recovery, and active gameplay. Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
+The [Game Session Service](./microservices/game-session-service/README.md) handles login, session recovery, and active gameplay. Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md). (TODO: Not yet implemented)
 
 ---
 
@@ -169,7 +167,7 @@ For usage examples see the
 [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). (TODO: Not yet implemented)
 The service also exposes moderation tools such as bans and runtime feature toggles.
 Administrators review logs and configure these options through the
-[Admin UI](./microservices/logging-admin-service/admin-ui.md).
+[Admin UI](./microservices/logging-admin-service/admin-ui.md). (TODO: Not yet implemented)
 Policies are summarized in the
 [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
 document. Complex moderation workflows are coordinated using saga patterns as described in
