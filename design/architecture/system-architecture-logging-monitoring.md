@@ -10,8 +10,8 @@ This document consolidates the platform's observability architecture.
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
 - The **Logging & Admin Service** exposes moderation tools and log queries.
 - Logs are emitted in JSON with request tracing fields (e.g., `traceId`).
-  Including the active `playerId` in log entries is planned
-  for better moderation context. (TODO: Not yet implemented)
+  Including the active `playerId` in log entries is planned for better
+  moderation context. (TODO: Not yet implemented)
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and
   `correlationId` in every log entry. See
   [Shared Libraries](./system-architecture-shared-libraries.md).
@@ -21,7 +21,7 @@ This document consolidates the platform's observability architecture.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and
   `FLUENT_ELASTICSEARCH_PORT` environment variables
   ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
-- Operators search logs primarily through Kibana.
+- Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
   The Logging & Admin Service will provide a dedicated UI for moderation
   and audit trails. (TODO: Not yet implemented)
 

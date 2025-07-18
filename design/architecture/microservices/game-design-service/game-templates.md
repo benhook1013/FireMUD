@@ -13,7 +13,11 @@ creators can quickly spin up new projects without starting from scratch.
   template. (TODO: Not yet implemented)
 - **Admin Accounts** – initial administrators configured at template creation. (TODO: Not yet implemented)
 
-The `GameTemplateDto` currently stores a free-form JSON `config` field. A structured schema describing world layout, starter items, default rulesets and admin accounts will be introduced in a future revision. (TODO: Not yet implemented)
+`GameTemplateDto` contains `tenantId`, `name`, an optional `description`, the raw
+`config` JSON and a `createdAt` timestamp. The `config` field is currently
+free-form JSON. A structured schema describing world layout, starter items,
+default rulesets and admin accounts will be introduced in a future revision.
+(TODO: Not yet implemented)
 
 Templates are versioned like any other design asset. Publishing a version is intended to copy
 these templates to the domain services using the `version_id` workflow described
@@ -31,10 +35,13 @@ curl -X POST http://localhost:8080/templates \
 
 The service validates the payload and stores it in the `game_templates` table.
 Templates can then be listed per `tenantId` to help bootstrap new games.
+Template names must be unique for each tenant to avoid collisions.
 
-Management currently exists only via REST. gRPC endpoints for creating, listing and updating templates are planned. (TODO: Not yet implemented)
+Management currently exists only via REST. Use `POST /templates` to create templates and
+`GET /templates?tenantId=<id>` to list them. gRPC endpoints for creating,
+listing and updating templates are planned. (TODO: Not yet implemented)
 
-Update or delete operations for templates are not yet available. (TODO: Not yet implemented)
+Viewing, updating or deleting a specific template is not yet available. (TODO: Not yet implemented)
 
 ## 📚 Related Documentation
 

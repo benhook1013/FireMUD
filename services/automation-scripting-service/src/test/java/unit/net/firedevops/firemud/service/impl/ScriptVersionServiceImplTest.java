@@ -26,7 +26,7 @@ class ScriptVersionServiceImplTest {
     def.setDefinition("{}");
     when(repository.findByTenantIdAndNameIn(1L, List.of("npc-barkeep"))).thenReturn(List.of(def));
 
-    service.notifyUpdate(1L, "v1-script.1", List.of("npc-barkeep"));
+    service.notifyUpdate("1", "v1-script.1", List.of("npc-barkeep"));
 
     verify(repository).findByTenantIdAndNameIn(1L, List.of("npc-barkeep"));
   }
