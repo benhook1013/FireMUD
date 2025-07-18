@@ -99,7 +99,6 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance. (TODO: Not yet implemented)
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
 
-
 ### 2.8 Moderation, Administration & Monetization
 
 - **Admin dashboard** for monitoring and moderating hosted games. (TODO: Not yet implemented)
