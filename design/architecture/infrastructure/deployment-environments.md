@@ -18,7 +18,7 @@ FireMUD uses Docker Compose for local development and testing:
 - Route URIs in Spring Cloud Gateway use static hostnames defined in the `dev`
   profile of `application.yml`.
 - Connection settings for PostgreSQL and Redis are loaded from a `.env` file.
-  A sample `.env.sample` is provided with default credentials.
+  A sample `.env.sample` is provided with default credentials. Additional variables are described in [Environment & Secrets Management](./environment-and-secrets.md).
 - Start the stack with `./gradlew devUp` and shut it down with `./gradlew devDown` (see [Developer Setup](../../../DEVELOPER_SETUP.md)).
 - The stack also runs a `pg-dump-cron` container that creates and rotates PostgreSQL dumps under `./backups`.
 - For details on all configuration variables, see [Environment Variables & Secrets Management](./environment-and-secrets.md).
@@ -84,7 +84,7 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 - Kubernetes automatically:
   - Removes unready pods from Services
   - Restarts failing pods based on probe failures
-  - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA)
+  - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA). An example manifest is provided in `k8s/base/hpa-example.yaml` but is not installed by default. (TODO: Not yet implemented)
 - Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
 
 ---
@@ -107,6 +107,8 @@ Docker Compose and Kubernetes rely on the following monitoring tools:
 - **Fluent Bit** agents collect container logs from each pod.
 - **Elasticsearch** stores structured log data for long-term retention.
 - **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
+  Filtering by `playerId` requires logging the active player context, which is planned
+  but not yet implemented. (TODO: Not yet implemented)
   Log indices are kept for **14 days** in development and **90 days** in production by default.
 
 See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the observability stack.
