@@ -53,7 +53,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     try {
       RevisionDto dto =
           new RevisionDto(
-              null, request.getTenantId(), request.getAuthorAccountId(), request.getData(), null);
+              null,
+              Long.parseLong(request.getTenantId()),
+              request.getAuthorAccountId(),
+              request.getData(),
+              null);
       RevisionDto saved = revisionService.saveRevision(dto);
       builder.setRevisionId(saved.id());
     } catch (IllegalArgumentException ex) {
@@ -73,7 +77,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       PublishVersionRequest request, StreamObserver<PublishVersionResponse> responseObserver) {
     PublishVersionResponse.Builder builder = PublishVersionResponse.newBuilder();
     try {
-      VersionDto version = versionService.publishVersion(request.getTenantId(), request.getNotes());
+      VersionDto version =
+          versionService.publishVersion(Long.parseLong(request.getTenantId()), request.getNotes());
       builder.setVersionId(version.id());
     } catch (IllegalArgumentException ex) {
       builder.setError(error("INVALID_ARGUMENT", ex.getMessage()));
@@ -96,7 +101,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     try {
       VersionDto version =
           versionService.publishScriptPatchVersion(
-              request.getTenantId(),
+              Long.parseLong(request.getTenantId()),
               request.getBaseVersionId(),
               request.getScriptPatchVersion(),
               request.getNotes());
@@ -117,7 +122,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   public void listVersions(
       ListVersionsRequest request, StreamObserver<ListVersionsResponse> responseObserver) {
     try {
-      var versions = versionService.listVersions(request.getTenantId());
+      var versions = versionService.listVersions(Long.parseLong(request.getTenantId()));
       ListVersionsResponse.Builder builder = ListVersionsResponse.newBuilder();
       versions.forEach(
           v ->
