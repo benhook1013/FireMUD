@@ -42,6 +42,8 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
+Procedural generators are invoked through `GenerationService`, which looks up the requested `Generator` from `GeneratorRegistry` and runs any registered `GenerationHook` implementations to populate newly created rooms. Current hooks include a simple logger and a basic spawn helper.
+
 ---
 
 ### 2. `OverworldMapGenerator` (In Development) (TODO: Not yet implemented)
@@ -79,7 +81,8 @@ All generators emit a normalized structure:
 | `biome`       | Biome or terrain type (if applicable)              |
 | `elevation`   | Numeric terrain height (used for visuals or logic) |
 | `regionId`    | Optional grouping for partitioned maps             |
-| `spacingMultiplier` | Adjusts travel cost when rooms are sparsely placed |
+
+`spacingMultiplier` is stored on the containing region to adjust travel cost when rooms are sparse. (TODO: Not yet implemented)
 
 In **full-grid mode**, every terrain tile becomes a room.
 In **sparse mode**, only selected POIs and waypoints are emitted.
