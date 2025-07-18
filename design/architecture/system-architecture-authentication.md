@@ -12,7 +12,7 @@ yet implemented)
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a
 `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login.
 The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for
-this purpose. The Game Session Service forwards the OTP when needed. (TODO: Not yet
+this purpose. The Game Session Service should forward this OTP when a player logs in. (TODO: Not yet
 implemented) Issued JWTs are stored in Redis with an expiration controlled by `session-expiration-ms`.
 JWT and session lifetimes are configured via the `FIREMUD_AUTH_JWT_EXPIRATION_MS` and
 `FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variables documented in
@@ -67,7 +67,7 @@ This enables:
 Internal JWTs are issued by the Account Service and used for backend gRPC authorization.
 Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are
 validated by the Logging & Admin Service or other admin consumers. The Gateway and Game Session
-Service simply forward tokens without validation.
+Service simply forward tokens without validation. (TODO: Not yet implemented)
 
 ### 🧠 Claims
 
@@ -75,13 +75,13 @@ Service simply forward tokens without validation.
 |---------------|-------------------------------------------------------------------------|
 | `accountId`   | Identity of the authenticated account                                   |
 | `globalRoles` | Cross-game privileges (e.g., `platformAdmin`, `moderator`)              |
-| `scopedRoles` | Map of `tenantId` → roles (e.g., `"tenant-abc": ["admin", "designer"]`)     |
+| `scopedRoles` | Map of `tenantId` → roles (e.g., `"tenant-abc": ["admin", "designer"]`) (TODO: Not yet implemented) |
 
 ### 🧾 Example JWT Payload
 
 - `accountId`: `"user-123"`
 - `globalRoles`: `["moderator"]`
-- `scopedRoles`:
+- `scopedRoles` (TODO: Not yet implemented):
   - `"tenant-abc"` → `["admin", "designer"]`
   - `"tenant-def"` → `["moderator"]`
 
@@ -150,7 +150,7 @@ will be implemented in a future iteration. (TODO: Not yet implemented)
 |-----------------------|------------------------------------------------------------------|
 | Auth Command          | `LOGIN` (or `LOGON`) — supports prompt or argument input         |
 | JWT Usage             | Internal-only for backend gRPC auth                             |
-| Claims                | `accountId`, `globalRoles[]`, `scopedRoles{}`                   |
+| Claims                | `accountId`, `globalRoles[]`, `scopedRoles{}` (TODO: Not yet implemented) |
 | Session State         | Stored in Redis; bound to socket by Game Session Service (TODO: Not yet implemented) |
 | Session TTL           | Controlled by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`             |
 | Reauthentication      | Required after disconnect; resumes via Redis if valid (TODO: Not yet implemented) |
