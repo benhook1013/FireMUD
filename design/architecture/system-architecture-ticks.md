@@ -11,6 +11,7 @@ FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with de
 
 - **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues** (TODO: Not yet implemented)
 - At regular **tick intervals** (e.g., 1s):
+  - A `TickScheduler` in the Game Session Service triggers `processTick` for each active session
   - One action (if any) is pulled from each entity’s command queue (TODO: Not yet implemented)
   - Actions are resolved in FIFO order; stat-based prioritization is planned (TODO: Not yet implemented)
   - Only **one action per entity per tick** is executed for fairness (TODO: Not yet implemented)
@@ -72,7 +73,7 @@ Future enhancements may include:
 
 ## 🌍 Tick Regions and Parallel Execution
 
-Ticks are **region-scoped**, not globally synchronized. Each **tick region** (typically a room or room cluster) runs its own independent cycle, enabling:
+Ticks are **region-scoped**, not globally synchronized. Each **tick region** (typically a room or room cluster) runs its own independent cycle, enabling: (TODO: Not yet implemented)
 
 - **Parallelism** across threads and servers
 - **Fault isolation** from slow or overloaded regions
