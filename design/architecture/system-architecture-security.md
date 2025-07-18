@@ -32,7 +32,7 @@ cert-manager is planned. (TODO: Not yet implemented)
 ## 🔒 TLS Termination & Internal Encryption
 
 - External `https/wss` traffic is terminated at the load balancer.
-- The **Spring Cloud Gateway** communicates with backend services over **TLS** to protect gameplay traffic.
+- The **Spring Cloud Gateway** communicates with backend services over **TLS** to protect gameplay traffic. (TODO: Not yet implemented)
 - All internal gRPC calls between microservices use **mutual TLS (mTLS)**:
   - Certificates are issued by **cert-manager**
   - Distributed via **Kubernetes Secrets**
@@ -74,7 +74,7 @@ cert-manager is planned. (TODO: Not yet implemented)
 
 ## 🧾 Audit Logging and Abuse Visibility
 
-- All failed logins, suspicious activity, and abuse attempts are captured in:
+- All failed logins, suspicious activity, and abuse attempts will be captured in: (TODO: Not yet implemented)
   - **Elasticsearch-backed logs**
   - The **Logging & Admin Service dashboard** ([design](./microservices/logging-admin-service/README.md))
   - Admin actions such as bans will be recorded by the Logging & Admin Service for auditability. (TODO: Not yet implemented)
