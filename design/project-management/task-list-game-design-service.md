@@ -1,34 +1,38 @@
 # Game Design Service Task List
 
-- [x] **Expand Game Design Service**
-  - [x] Provide game templates and configuration tools
-  - [x] Enable publishing of game versions
-  - [x] Use saga orchestrator for game publishing workflow
-  - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
-  - [x] Create design-time database models
-- [x] **Develop Game Design Service**
-  - [x] Implement world editing & customization tools
-  - [x] Implement scripting & event design tools
-  - [x] Build a **visual scripting editor** using a **component-based DSL**
-  - [x] Sandbox script execution with quotas via the Automation & Scripting Service
-  - [x] Implement ability & action design tools
-  - [x] Implement item & equipment balancing tools
-  - [x] Track version history and patch notes for published games
-  - [x] Build a web-based visual design interface
-  - [x] Integrate version control for design assets
-  - [x] Configure database storage for game assets
-    - [x] Provide asset upload API in Game Design Service
-    - [x] Document asset storage setup and configuration
-    - [ ] Provide asset download and delete APIs
-    - [ ] Add gRPC endpoints for asset management
-    - [ ] Copy assets to runtime services when publishing versions
-- [x] **Expand Scripting & Modding**
-  - [x] Implement event-driven scripting API for game creators
-  - [x] Implement in-game modding/plugin framework
-  - [x] Implement scripted AI behaviors for NPCs
-  - [ ] Notify downstream services when new versions are published
-  - [ ] Add import/export of design assets for sharing between games
-  - [ ] Add `owner_id` association to games and API
+## Game Templates & Publishing
+- [x] Provide game templates and configuration tools
+- [x] Enable publishing of game versions
+- [x] Use saga orchestrator for game publishing workflow
+- [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
+- [x] Create design-time database models
+
+## Design Tools
+- [x] Implement world editing & customization tools
+- [x] Implement scripting & event design tools
+- [x] Build a **visual scripting editor** using a **component-based DSL**
+- [x] Sandbox script execution with quotas via the Automation & Scripting Service
+- [x] Implement ability & action design tools
+- [x] Implement item & equipment balancing tools
+- [x] Track version history and patch notes for published games
+- [x] Build a web-based visual design interface
+- [x] Integrate version control for design assets
+- [x] Configure database storage for game assets
+  - [x] Provide asset upload API in Game Design Service
+  - [x] Document asset storage setup and configuration
+  - [ ] Provide asset download and delete APIs
+  - [ ] Add gRPC endpoints for asset management
+  - [ ] Copy assets to runtime services when publishing versions
+
+## Scripting & Modding
+- [x] Implement event-driven scripting API for game creators
+- [x] Implement in-game modding/plugin framework
+- [x] Implement scripted AI behaviors for NPCs
+- [ ] Notify downstream services when new versions are published
+- [ ] Add import/export of design assets for sharing between games
+- [ ] Add `owner_id` association to games and API
+
+## Admin & Security
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [ ] Add MCP commands for room and item editing
 

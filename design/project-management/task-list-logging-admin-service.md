@@ -1,24 +1,32 @@
 # Logging & Admin Service Task List
 
-- [x] **Develop Logging & Admin Service**
+## Logging & Monitoring
 - [x] Collect logs from all services and provide search dashboards
+- [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
+- [x] Integrate Alertmanager for automated alerts
+- [x] Provide analytics dashboards for operators
+- [x] Evaluate adopting a zero-trust network model for internal traffic
+
+## Moderation Tools
 - [x] Allow players to report others for abuse/violations
 - [x] Store logs for admin moderation and auditing
-- [x] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
-  - [x] Provide analytics dashboards for operators
-  - [x] Define moderation policies including profanity filters
-- [x] Integrate Alertmanager for automated alerts
-- [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
-- [x] Evaluate adopting a zero-trust network model for internal traffic
-- [x] Create **Saga Dashboard** to inspect workflow states and failures
-- [x] Integrate saga metrics and timeout recovery
-- [x] Use saga orchestrator for multi-service admin operations (bans, content revocation)
+- [x] Define moderation policies including profanity filters
+- [ ] Provide web interface to review flagged logs
 - [x] Build role-based admin UI
+- [ ] Implement playtesting feedback form and store results for analytics
+
+## Feature Flags & Configuration
+- [x] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
 - [ ] Add UI for managing runtime feature flags
 - [ ] Record audit trails for feature flag changes and account events
 - [ ] Persist transaction logs for purchases and subscription events
-- [ ] Provide web interface to review flagged logs
-- [ ] Implement playtesting feedback form and store results for analytics
+
+## Saga Operations
+- [x] Create **Saga Dashboard** to inspect workflow states and failures
+- [x] Integrate saga metrics and timeout recovery
+- [x] Use saga orchestrator for multi-service admin operations (bans, content revocation)
+
+## Security
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist

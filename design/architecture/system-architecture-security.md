@@ -5,7 +5,8 @@ This document outlines how FireMUD secures service communication, manages authen
 Kubernetes Secrets has been selected as the platform's unified secret
 storage solution. This keeps credential management simple while working
 seamlessly with cert-manager for automatic rotation of TLS certificates.
-JWT signing keys still require manual rotation. (TODO: Not yet implemented)
+JWT signing keys still require manual rotation; automated rotation via
+cert-manager is planned. (TODO: Not yet implemented)
 
 ---
 
@@ -15,7 +16,8 @@ JWT signing keys still require manual rotation. (TODO: Not yet implemented)
 - Signing keys are stored as **Kubernetes Secrets**. Rotation is currently **manual** and may be automated with **cert-manager** in the future. (TODO: Not yet implemented)
 - Keys are **never committed** to the repository and can be rotated without redeploying other services.
 - A **JWKS endpoint** exposes public keys for internal services to validate tokens. The
-  Account Service serves these keys at `/.well-known/jwks.json`.
+  Account Service serves these keys at `/.well-known/jwks.json`. The JWKS file is static and
+  must be updated manually when signing keys rotate. (TODO: Not yet implemented)
 
 ### Key and Certificate Rotation
 
@@ -99,7 +101,7 @@ JWT signing keys still require manual rotation. (TODO: Not yet implemented)
 
 | Topic                     | Strategy                                                                 |
 |---------------------------|--------------------------------------------------------------------------|
-| JWT Secret Storage        | Kubernetes Secrets (manual rotation; cert-manager integration planned) (TODO: Not yet implemented) |
+| JWT Secret Storage        | Kubernetes Secrets (manual rotation with hot reload; cert-manager integration planned) (TODO: Not yet implemented) |
 | Key & Cert Rotation       | Hot-reload; caching of old credentials and automated JWKS rotation planned (TODO: Not yet implemented) |
 | TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets                                              |

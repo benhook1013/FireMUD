@@ -21,6 +21,8 @@ All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK
   on port `8888`. The example manifest does not currently expose this port, so
   the collector metrics are unavailable. (TODO: Not yet implemented)
 
+- The local Docker Compose stack does not include the collector or Jaeger yet. (TODO: Not yet implemented)
+
 Every service relies on a shared `TracingConfig` in the `common-library`. This
 configuration sets the `service.name` resource from `spring.application.name`,
 uses a `BatchSpanProcessor`, and sends spans to the collector. The
