@@ -33,7 +33,7 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 ```
 
 Script-only versions appear in version history and audit logs but do not trigger
-a data copy or world restart. (TODO: Not yet implemented)
+a data copy or world restart.
 Runtime services reload the affected scripts in
 memory and continue using the underlying `baseVersionId` for all other assets.
 When a patch is published the Game Design Service calls the

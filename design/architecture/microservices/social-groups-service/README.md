@@ -8,7 +8,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ### Responsibilities
 
-- Deliver real-time chat notifications
+- Deliver real-time chat notifications. (TODO: Not yet implemented)
 - Manage guild creation, membership, and roles
 - Maintain friend lists and cross-game social graphs
 - Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
@@ -71,14 +71,12 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ### Voice Chat Integration
 
-Voice chat is an optional feature built on top of a lightweight WebRTC gateway.
-The gateway establishes peer-to-peer connections between players and relays
-media streams when direct communication is not possible. The Social & Groups
-Service issues temporary WebRTC tokens and records basic session metadata so the
-Logging & Admin Service can audit voice activity. Tokens are issued only via the
-REST endpoint `/voice/token` (see `openapi.yaml` lines 499–520); there is no
-gRPC method for this feature. Voice chat is disabled by default and can be
-enabled per tenant through configuration. (TODO: Not yet implemented)
+Voice chat is planned as an optional feature built on top of a lightweight WebRTC gateway.
+The gateway would establish peer-to-peer connections between players and relay
+media streams when direct communication is not possible. Currently the service
+only issues temporary WebRTC tokens via the REST endpoint `/voice/token` (see
+`openapi.yaml` lines 499–520). Logging of voice activity and the gateway itself
+are not yet implemented. (TODO: Not yet implemented)
 
 ### gRPC APIs
 

@@ -44,6 +44,9 @@ components:
           type: string
         contentType:
           type: string
+        data:
+          type: string
+          format: byte
         createdAt:
           type: string
           format: date-time

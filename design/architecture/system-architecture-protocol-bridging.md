@@ -48,8 +48,9 @@ Despite their differences, both protocols are normalized into the same internal 
   - Sanitizes incoming data and allows only a safe subset of
     **Telnet protocol commands** as outlined in
     [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-future-controls).
-  - Runs alongside Spring Cloud Gateway in the network **DMZ**, so no client ever reaches internal services directly.
-  - Normalizes the connection.
+  - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly.
+    See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
+  - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
   - Negotiates the Mud Client Protocol (MCP) when supported (TODO: Not yet implemented).
   - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set.
     Certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
@@ -67,10 +68,11 @@ Despite their differences, both protocols are normalized into the same internal 
   - Disconnect handling is **layered**: the proxy cleans up Telnet sessions,
     the gateway automatically recreates WebSocket backends _(TODO: Not yet implemented)_, and the Game Session
     Service reloads state from Redis _(TODO: Not yet implemented)_.
-  - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput`
-    so the Game Session Service can recover Telnet sessions _(TODO: Not yet implemented)_.
+  - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput` so
+    the Game Session Service can recover Telnet sessions. These stubs currently
+    only log when called. (TODO: Not yet implemented)
   - Metrics are exported at `/actuator/prometheus` and tracing data is sent to
-    the collector configured by `OTEL_ENDPOINT`.
+    the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ### 🌟 TCP Flow Benefits
 
