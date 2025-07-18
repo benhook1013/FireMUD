@@ -3,7 +3,7 @@
 This repository uses a hierarchical Gradle layout. All microservices and the shared
 `common-library` live under a top-level `services/` folder to keep the root tidy. The
 React UI resides in `web-client/` and various infrastructure manifests sit under
-`k8s/`.  Additional build tooling and documentation live at the root.
+`k8s/`. Additional build tooling and documentation live at the root.
 
 ```text
 root
@@ -63,7 +63,10 @@ root
 - `package.json` & `package-lock.json` – Node scripts used for markdown linting and docs.
 - `docker-compose.yml` – Local development environment.
 - `docker-compose.override.yml` – Extra services for local testing.
+- `README.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `DEVELOPER_SETUP.md` and
+  other root Markdown files – Project documentation and guidelines.
 - `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
+- `services/init-gradle-wrappers.ps1` – Utility script to generate Gradle wrappers for each service on Windows.
 
 Proto definitions live under `protos/` organized by service and version as described in the
 [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
