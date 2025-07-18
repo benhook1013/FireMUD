@@ -2,6 +2,8 @@
 
 This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **raw TCP (Telnet)**. Both are routed into a unified backend session service for shared logic and scalability.
 
+Features that are still in progress are annotated with **(TODO: Not yet implemented)**.
+
 ---
 
 ## 🎯 Bridging Overview
@@ -52,13 +54,13 @@ Despite their differences, both protocols are normalized into the same internal 
     See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
   - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
   - Negotiates the Mud Client Protocol (MCP) when supported (TODO: Not yet implemented).
-  - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set.
-    Certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
-    Forwarding to the gateway uses plain WebSocket; mutual TLS is planned. (TODO: Not yet implemented)
+  - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set. Certificates are
+    provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
+  - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
+    Forwarding currently uses plain WebSocket. Mutual TLS for this hop is planned.
+    (TODO: Not yet implemented)
   - Applies per-IP connection and message rate limits using
     `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and `TCP_PROXY_MAX_MSGS_PER_SEC`.
-  - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
-    Forwarding currently uses plain WebSocket; mutual TLS is planned. (TODO: Not yet implemented)
   - Proxies I/O between the TCP client and Spring Cloud Gateway.
   - Buffers active input while the client remains connected and discards it if
     the TCP connection drops.
