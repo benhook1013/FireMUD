@@ -69,10 +69,10 @@ They are **defined in the Game Design Service** and copied into the **Game Sessi
 when a version is published. The definitions table and copy steps are planned but not yet
 implemented. (TODO: Not yet implemented)
 
-- Designers create and maintain the set of flag definitions in the Game Design Service UI.
+- Designers create and maintain the set of flag definitions in the Game Design Service UI. (TODO: Not yet implemented)
   Definitions will be stored in a `runtime_flag` table for each tenant. (TODO: Not yet implemented)
 - Administrators toggle flag values through the
-  [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface.
+  [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface. (TODO: Not yet implemented)
 - The Logging & Admin Service forwards each change to the Game Session Service,
   calling `ToggleFeatureFlag` via gRPC so running instances update immediately. (TODO: Not yet implemented)
 - The Game Session Service persists active flag values in its `feature_flag` table.

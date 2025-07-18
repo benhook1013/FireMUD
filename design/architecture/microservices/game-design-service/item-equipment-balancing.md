@@ -2,6 +2,8 @@
 
 Game balance relies heavily on item statistics and equipment progression. This document describes the planned tools for tuning those values. Balancing data will follow the same revision and version publishing workflow used throughout the Game Design Service so that stats remain consistent across releases. See [Version Control for Design Assets](version-control.md) for more detail. (TODO: Not yet implemented)
 
+All capabilities described below are planned features and are not available in the current implementation. (TODO: Not yet implemented)
+
 > **Status: In Progress** – These balancing tools are still under development. (TODO: Not yet implemented)
 
 ## Features
@@ -21,3 +23,5 @@ Game balance relies heavily on item statistics and equipment progression. This d
 - [Game Design Service Architecture](README.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
 - [Version Control for Design Assets](version-control.md)
+- [Game Design Service gRPC API](../../../../protos/game-design/v1/README.md)
+- [Entity Management Service](../entity-management-service/README.md)

@@ -3,7 +3,7 @@
 ## Overview
 
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
-An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
+The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
 
 ### Responsibilities
 
@@ -25,7 +25,8 @@ An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-s
 - Sanitizes incoming Telnet data and enforces a whitelist of
    **Telnet protocol commands** as described in the
    [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
-- Applies connection throttling and optional TLS termination.
+ - Applies connection throttling via `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and optional TLS termination controlled by `TCP_PROXY_TLS_ENABLED`.
+ - Enforces per-client message rate limits via `TCP_PROXY_MAX_MSGS_PER_SEC`.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features

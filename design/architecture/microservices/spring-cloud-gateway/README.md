@@ -22,7 +22,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
   outlined in [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
-- External TLS is terminated by the load balancer; the gateway forwards traffic to backend services over mutual TLS as described in the [Security Architecture](../system-architecture-security.md).
+- External TLS is terminated by the load balancer; future versions will forward traffic to backend services over mutual TLS as described in the [Security Architecture](../system-architecture-security.md). (TODO: Not yet implemented)
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
@@ -50,6 +50,8 @@ for the core services so Docker Compose environments work out of the box.
 - Authentication, rate limiting, and logging filters run before routing.
 - `JwtAuthFilter` requires an `Authorization` header on admin routes and forwards the JWT unmodified. Validation occurs in the consuming service.
 - WebSocket upgrades are forwarded transparently using Spring Cloud Gateway's built-in support. The `ConnectionMetricsFilter` records active connections for observability.
+
+- Full request and response tracing for WebSocket sessions is planned. (TODO: Not yet implemented)
 
 ### Key Routes
 
