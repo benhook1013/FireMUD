@@ -12,9 +12,9 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Prefer pagination for large result sets. Core services expose pageable
   endpoints so huge lists are avoided.
 - Use Spring Cache backed by Redis for expensive queries. The Entity Management
-  service caches character inventory graphs and the World Management Service
-  caches hot rooms with TTL-based eviction (TTL configured via
-  `world.room.cache-ttl-seconds`).
+  Service caches character inventory graphs (TTL controlled by
+  `entity.cache.character-graph-ttl-seconds`) and the World Management Service
+  caches hot rooms with TTL-based eviction (`world.room.cache-ttl-seconds`).
 - Database writes during gameplay are **deferred and batched**. The Game Session
   Service coordinates commits at the end of each tick so the Entity Management
   Service only persists changes once per tick. This reduces write frequency and
@@ -35,7 +35,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   threads and servers for better scalability and fault isolation.
 - The Automation & Scripting Service evaluates scripts on its own schedule and
   injects resulting commands into tick queues. Per-script quotas are enforced
-  via Redis before queuing to avoid runaway automation.
+  via Redis before queuing to avoid runaway automation. See
+  [Scripting Architecture](./system-architecture-scripting.md) for details.
   Quota enforcement metrics (`script_quota_allowed_total`,
   `script_quota_denied_total`) and automation queue metrics
   (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide
