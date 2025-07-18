@@ -44,13 +44,16 @@ Despite their differences, both protocols are normalized into the same internal 
 - Handled by a dedicated **TCP Proxy Service**.
 - The service:
   - Accepts and parses Telnet line-based input.
+  - Performs basic Telnet option negotiation for compatibility (TODO: Not yet implemented).
   - Sanitizes incoming data and allows only a safe subset of
     **Telnet protocol commands** as outlined in
     [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-future-controls).
   - Runs alongside Spring Cloud Gateway in the network **DMZ**, so no client ever reaches internal services directly.
   - Normalizes the connection.
+  - Negotiates the Mud Client Protocol (MCP) when supported (TODO: Not yet implemented).
   - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set.
     Certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
+    Forwarding to the gateway uses plain WebSocket; mutual TLS is planned. (TODO: Not yet implemented)
   - Applies per-IP connection and message rate limits using
     `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and `TCP_PROXY_MAX_MSGS_PER_SEC`.
   - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
