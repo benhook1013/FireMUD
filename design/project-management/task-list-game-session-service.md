@@ -1,18 +1,29 @@
 # Game Session Service Task List
 
-- [x] **Expand Game Session Service**
-  - [x] Implement game instance lifecycle (start, stop, restart)
-  - [x] Support multi-tenancy for hosted games
-  - [x] Implement tick orchestration using Redis for command queues
-  - [x] Implement Lua-based staging, commit, and rollback scripts for tick transactions
-  - [x] Implement distributed lock acquisition in Redis for tick updates
-  - [x] Implement tick replay and crash recovery logic
-  - [x] Persist session state in Redis for reconnect recovery
-  - [x] Enforce single-session control per character (session takeover on new login)
-  - [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
-  - [x] Plan for cross-region sharding and session handoff
-  - [x] Implement `game_manifest` table for version coordination
-  - [x] Emit gameplay analytics for operators
+## Session Lifecycle
+- [x] Implement game instance lifecycle (start, stop, restart)
+- [x] Support multi-tenancy for hosted games
+- [x] Persist session state in Redis for reconnect recovery
+- [x] Enforce single-session control per character (session takeover on new login)
+- [x] Plan for cross-region sharding and session handoff
+
+## Tick Management
+- [x] Implement tick orchestration using Redis for command queues
+- [x] Implement Lua-based staging, commit, and rollback scripts for tick transactions
+- [x] Implement distributed lock acquisition in Redis for tick updates
+- [x] Implement tick replay and crash recovery logic
+- [ ] Implement graceful degradation when Redis operations stall to avoid gameplay interruption
+
+## Analytics & Coordination
+- [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
+- [x] Implement `game_manifest` table for version coordination
+- [x] Emit gameplay analytics for operators
+
+## Security
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Track login attempts per IP and temporarily blacklist repeated failures
+- [ ] Send notification emails for suspicious login activity
+- [ ] Detect command spam or abnormal tick patterns using abuse heuristics
 
 ## Reusable Microservice Checklist
 

@@ -48,8 +48,9 @@ Despite their differences, both protocols are normalized into the same internal 
   - Sanitizes incoming data and allows only a safe subset of
     **Telnet protocol commands** as outlined in
     [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-future-controls).
-  - Runs alongside Spring Cloud Gateway in the network **DMZ**, so no client ever reaches internal services directly.
-  - Normalizes the connection.
+  - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly.
+    See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
+  - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
   - Negotiates the Mud Client Protocol (MCP) when supported (TODO: Not yet implemented).
   - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set.
     Certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
@@ -63,14 +64,15 @@ Despite their differences, both protocols are normalized into the same internal 
     the TCP connection drops.
   - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and
     session recovery are handled as described in
-    [Reconnection Strategy](./system-architecture-reconnection.md) _(TODO: Not yet implemented)_.
+    [Reconnection Strategy](./system-architecture-reconnection.md) (TODO: Not yet implemented).
   - Disconnect handling is **layered**: the proxy cleans up Telnet sessions,
-    the gateway automatically recreates WebSocket backends _(TODO: Not yet implemented)_, and the Game Session
-    Service reloads state from Redis _(TODO: Not yet implemented)_.
-  - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput`
-    so the Game Session Service can recover Telnet sessions _(TODO: Not yet implemented)_.
+    the gateway automatically recreates WebSocket backends (TODO: Not yet implemented), and the Game Session
+    Service reloads state from Redis (TODO: Not yet implemented).
+  - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput` so
+    the Game Session Service can recover Telnet sessions. These stubs currently
+    only log when called. (TODO: Not yet implemented)
   - Metrics are exported at `/actuator/prometheus` and tracing data is sent to
-    the collector configured by `OTEL_ENDPOINT`.
+    the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ### 🌟 TCP Flow Benefits
 
@@ -87,7 +89,7 @@ The `game-session-service` is the central component responsible for:
 - Maintaining game session state per client connection.
 - Handling command parsing and game world interaction.
 - Sending and receiving text streams in a line-based protocol format.
-- Managing disconnects, reconnections, and session cleanup _(TODO: Not yet implemented)_.
+- Managing disconnects, reconnections, and session cleanup (TODO: Not yet implemented).
 
 > Whether a client is connected via WebSocket directly or tunneled through the TCP Proxy Service, the backend **treats all sessions the same**.
 

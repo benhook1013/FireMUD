@@ -1,16 +1,29 @@
 # World Management Service Task List
 
-- [x] **Develop World Management Service**
-  - [x] Implement world map storage (rooms, regions)
-  - [x] Implement instance-based game spaces (e.g., dungeons, player housing)
-  - [x] Define instance rules, expiration, and persistence
-  - [x] Implement world event scheduling system (seasonal events, resets)
-  - [x] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
-  - [x] Implement travel & navigation system (movement, teleportation, pathfinding)
-  - [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
-  - [x] Use saga orchestrator for world creation workflow
-  - [x] Provide tools to fine-tune procedural generation rules
-  - [x] Support multi-server world shards
+## Map & Instances
+- [x] Implement world map storage (rooms, regions)
+- [x] Implement instance-based game spaces (e.g., dungeons, player housing)
+- [x] Define instance rules, expiration, and persistence
+- [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
+
+## World Events & Effects
+- [x] Implement world event scheduling system (seasonal events, resets)
+- [x] Implement environmental effects & persistent world state (weather, dynamic NPC behaviors)
+- [x] Implement travel & navigation system (movement, teleportation, pathfinding)
+
+## Scalability & Generation
+- [x] Use saga orchestrator for world creation workflow
+- [x] Provide tools to fine-tune procedural generation rules
+- [x] Support multi-server world shards
+
+## Data Sync & Notifications
+- [ ] Copy published version data into world schema via Saga
+- [ ] Publish gRPC notifications when world state changes
+- [ ] Track character locations and instance occupancy
+
+## Administration & Backup
+- [ ] Implement world snapshot API for backup and recovery
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 

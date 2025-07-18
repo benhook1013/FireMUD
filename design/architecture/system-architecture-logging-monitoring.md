@@ -7,11 +7,13 @@ This document consolidates the platform's observability architecture.
 ## 🔍 Logging Pipeline
 
 - **Fluent Bit** sidecars collect service logs from every microservice.
-- Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
+- Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards. (TODO: Not yet implemented)
 - The **Logging & Admin Service** exposes moderation tools and log queries.
 - Logs are emitted in JSON with request tracing fields (e.g., `traceId`).
   Including the active `playerId` in log entries is planned for better
   moderation context. (TODO: Not yet implemented)
+- Kibana dashboards can filter by `traceId` today. Filtering by `playerId`
+  will be added once player context is included in each log entry. (TODO: Not yet implemented)
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and
   `correlationId` in every log entry. See
   [Shared Libraries](./system-architecture-shared-libraries.md).
@@ -21,14 +23,16 @@ This document consolidates the platform's observability architecture.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and
   `FLUENT_ELASTICSEARCH_PORT` environment variables
   ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
-- Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+- The local Docker Compose stack outputs logs to the console and does not yet
+  include Fluent Bit, Prometheus, or Grafana. (TODO: Not yet implemented)
+- Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). (TODO: Not yet implemented)
   The Logging & Admin Service will provide a dedicated UI for moderation
   and audit trails. (TODO: Not yet implemented)
 
 ## 📈 Metrics & Tracing
 
-- **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**.
-- **Grafana** dashboards visualize performance data.
+- **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**. (TODO: Not yet implemented)
+- **Grafana** dashboards visualize performance data. (TODO: Not yet implemented)
 - **OpenTelemetry** spans provide distributed tracing across ticks and requests.
   Traces are collected by an OpenTelemetry Collector and visualized with Jaeger.
   See [Tracing](./system-architecture-tracing.md) for deployment details.

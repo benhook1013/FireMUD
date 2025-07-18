@@ -14,7 +14,9 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.** (TODO: Not yet implemented)
-Game Session Service restarts are **transparent** if the client remains connected. The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. TCP Proxy restarts drop Telnet clients. (TODO: Not yet implemented)
+Game Session Service restarts are **transparent** if the client remains connected. (TODO: Not yet implemented)
+The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. (TODO: Not yet implemented)
+TCP Proxy restarts drop Telnet clients.
 
 ---
 
@@ -24,7 +26,7 @@ Game Session Service restarts are **transparent** if the client remains connecte
 
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
-- No gameplay state is preserved across reconnects — Game Session Service handles recovery
+- No gameplay state is preserved across reconnects — Game Session Service handles recovery (TODO: Not yet implemented)
 - Provides gRPC hooks (`NotifyDisconnect`, `PushBufferedInput`) for session recovery integration (TODO: Not yet implemented)
 - Runtime options such as the listening port and gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service README](./microservices/tcp-proxy-service/README.md#environment-variables)).
 
@@ -34,11 +36,13 @@ Game Session Service restarts are **transparent** if the client remains connecte
 - Automatically re-establishes backend connections if restarted (TODO: Not yet implemented)
 - Holds no gameplay, auth, or session state
 
-> TCP Proxy restarts drop Telnet connections. Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically (TODO: Not yet implemented). Telnet clients proxied through the Gateway remain connected.
+> TCP Proxy restarts drop Telnet connections.
+> Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically. (TODO: Not yet implemented)
+> Telnet clients proxied through the Gateway remain connected. (TODO: Not yet implemented)
 
 ### Game Session Service
 
-- Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info (TODO: Not yet implemented)
+- Uses Redis to store session state such as command queues, tick participation, cooldowns, and retry info. Reconnect logic will restore these details. (TODO: Not yet implemented)
 - On reconnect, rebinds:
   - Socket connection (TODO: Not yet implemented)
   - Tick region context (TODO: Not yet implemented)

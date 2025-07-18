@@ -1,13 +1,21 @@
 # Game Logic Service Task List
 
-- [x] **Develop Game Logic Service**
-  - [x] Implement command parsing & validation
-  - [x] Implement action processing (movement, interactions, combat)
-  - [x] Implement roleplay actions & emotes
-  - [x] Implement event-driven logic processing (triggers, world events)
-  - [x] Implement action aliases system (custom command mappings)
-  - [x] Add scripting hooks for custom actions
-  - [x] Optimize performance for large-scale battles
+## Command & Action Processing
+- [x] Implement command parsing & validation
+- [x] Implement action processing (movement, interactions, combat)
+- [x] Implement action aliases system (custom command mappings)
+- [x] Add scripting hooks for custom actions
+
+## Roleplay & Events
+- [x] Implement roleplay actions & emotes
+- [x] Implement event-driven logic processing (triggers, world events)
+
+## Performance & Data
+- [x] Optimize performance for large-scale battles
+- [ ] Copy published version data into logic schema via Saga
+
+## Security & Operations
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 
