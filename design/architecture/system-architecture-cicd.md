@@ -10,7 +10,7 @@ This document describes the basic continuous integration and deployment strategy
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes manually** using the manifests in [`k8s/`](../../k8s/), with automation planned for the future. (TODO: Not yet implemented)
+- **Deploy to Kubernetes manually** via the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm). Full automation is planned. (TODO: Not yet implemented)
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
@@ -167,9 +167,7 @@ Docker Compose has default environment variables available.
 ## ➕ Optional Add-Ons
 
 - **Nightly builds or scheduled jobs** for integration testing. (TODO: Not yet implemented)
-- **Security scanning** using tools like Trivy. The `weekly-security-scan.yml`
-  workflow runs on a schedule to scan dependencies and container images for
-  vulnerabilities.
+- **Security scanning** using tools like Trivy. The `weekly-security-scan.yml` workflow runs weekly on Sundays at 03:00 UTC to scan dependencies and container images for vulnerabilities.
 - **Notifications** via email when workflows fail. (TODO: Not yet implemented)
 
 These can be added as separate workflows or additional jobs in the main pipeline.
@@ -181,4 +179,5 @@ These can be added as separate workflows or additional jobs in the main pipeline
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Testing Strategy](./system-architecture-testing.md)
+- [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
 - [User Journeys – Testing & Continuous Delivery](./user-journeys.md#17-testing--continuous-delivery)

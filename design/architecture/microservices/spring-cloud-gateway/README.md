@@ -12,10 +12,11 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Upgrade WebSocket connections and forward them to backend services
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
+- Expose gRPC management endpoints on port `6565` for dynamic route control
 
 ## Architecture / Design Notes
 
-- Maintains persistent WebSocket sessions and supports raw TCP through a proxy.
+- Handles persistent WebSocket connections and supports raw TCP through the TCP Proxy Service.
 - Event-driven updates synchronize game state across connected players. (TODO: Not yet implemented)
 - Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
 - Gateway restarts are intended to be transparent thanks to the layered reconnection model
@@ -42,6 +43,7 @@ imported by `application.yml` based on the active profile and reloaded on
 startup. Dynamic routes added via the API are stored only in memory and are
 lost on service restart; persistent storage for these routes is planned.
 (TODO: Not yet implemented)
+A PostgreSQL `route_config` table exists for this purpose but is currently unused. (TODO: Not yet implemented)
 No persistent database is required. The default configuration defines routes
 for the core services so Docker Compose environments work out of the box.
 
@@ -102,6 +104,8 @@ Important variables include:
 | `SERVER_PORT` | HTTP port exposed by the service | `8080` |
 
 The gRPC server listens on port `6565` by default as configured in `application.yml`.
+
+The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are currently unused by the gateway. Token parsing is handled by backend services. (TODO: Not yet implemented)
 
 ## Proto Files
 

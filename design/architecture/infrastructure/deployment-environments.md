@@ -91,7 +91,8 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 
 ## 📈 Monitoring & Logging
 
-FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes, while the Docker Compose setup does not yet include these components. (TODO: Not yet implemented)
+FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes. The Docker Compose environment currently omits these components. (TODO: Not yet implemented)
+Example manifests for the collector and dashboards live under [`k8s/monitoring`](../../../k8s/monitoring).
 
 Docker Compose and Kubernetes rely on the following monitoring tools:
 
@@ -101,6 +102,7 @@ Docker Compose and Kubernetes rely on the following monitoring tools:
 - Grafana dashboards visualize performance metrics. (TODO: Not yet implemented)
 - Alertmanager notifies on failures or latency spikes.
 - OpenTelemetry spans are emitted by services for distributed tracing.
+- Jaeger stores these traces for debugging and analysis.
 
 ### 📜 Log Aggregation
 

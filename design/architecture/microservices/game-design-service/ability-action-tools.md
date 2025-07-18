@@ -2,7 +2,10 @@
 
 This document outlines the planned editors for defining abilities, actions and combat mechanics. The tooling is part of the Game Design Service and will push finalized data to the [Game Logic Service](../game-logic-service/README.md) during version publishing. (TODO: Not yet implemented)
 
+The publish workflow is part of the cross‑service saga described in [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
+
 Data entered in these editors will be stored as revisions using the `SaveRevision` gRPC call defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto). Finalized versions will be published with `PublishVersion` so the Game Logic Service can load the rules as part of the cross-service saga described in the [Game Design Service Architecture](README.md). (TODO: Not yet implemented)
+Ability definitions will use a structured schema delivered through the API. (TODO: Not yet implemented)
 
 > **Status: In Progress** – These tooling features are not yet implemented.
 
@@ -30,3 +33,4 @@ The planned web-based editor described in [Web-Based Visual Design Interface](we
 - [World Editing & Customization Tools](world-editing-tools.md)
 - [Web-Based Visual Design Interface](web-visual-interface.md)
 - [Game Design Service gRPC API](../../../../protos/game-design/v1/README.md)
+- [Version Control for Design Assets](version-control.md)

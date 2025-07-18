@@ -11,9 +11,9 @@ Procedural generation allows games to quickly bootstrap playable areas, spawn in
 ## 🎯 Use Cases
 
 - 🏗️ **World Bootstrapping** – Initialize a new world map without manual design.
-- 🌀 **Dungeon Instances** – Generate instanced interiors on demand (e.g. for quests).
-- 🧱 **Design Templates** – Offer scaffolds for designers to expand on.
-- 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions.
+- 🌀 **Dungeon Instances** – Generate instanced interiors on demand (e.g. for quests). (TODO: Not yet implemented)
+- 🧱 **Design Templates** – Offer scaffolds for designers to expand on. (TODO: Not yet implemented)
+- 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions. (TODO: Not yet implemented)
 
 ---
 
@@ -95,7 +95,7 @@ In **sparse mode**, only selected POIs and waypoints are emitted.
 
 The following rules align generators with the core runtime and tooling:
 
-1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended 500&nbsp;ms budget.
+1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended 500&nbsp;ms budget. (TODO: Not yet implemented)
 2. **Seed Metadata** – All requests specify a seed. During world creation these values are persisted by the World Management Service, while storing them for runtime generation is still pending. (TODO: Not yet implemented)
 3. **Sparse Traversal Rules** – Sparse rooms exist on the map. A `spacingMultiplier` value on each region influences movement cost and travel time between them. (TODO: Not yet implemented)
 4. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone. Basic hooks exist but full script-driven population is pending. (TODO: Not yet implemented)
@@ -112,7 +112,7 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 - **Automation & Scripting Service**
   - Owns and executes all procedural generation logic
   - Registers available generator types
-  - Exposes generation via API and scripting interfaces
+  - Exposes generation via API and scripting interfaces (TODO: Not yet implemented)
 
 - **World Management Service**
   - Persists generated rooms, biomes, and regions
