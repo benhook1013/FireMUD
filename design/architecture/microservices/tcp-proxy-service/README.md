@@ -41,7 +41,7 @@ An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-s
   using a lightweight frame protocol.
 - Incoming bytes are queued and forwarded to the gateway in order.
 - If the connection is lost, the queue is flushed and the session is marked for
-  possible reconnection.
+  possible reconnection. (TODO: Not yet implemented)
 
 ### Service Interactions
 

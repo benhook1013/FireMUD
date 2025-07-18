@@ -6,15 +6,17 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
 
 ## 🚀 Deployment
 
-1. **CI Pipeline** builds Docker images and pushes them to GHCR.
-2. **Helm Charts** deploy each microservice. Install with:
+1. **CI Pipeline** builds Docker images and pushes them to GHCR. See
+   [CI/CD Pipeline](./system-architecture-cicd.md) for workflow details.
+2. **Helm Charts** deploy each microservice. Install the umbrella chart with:
 
    ```bash
    helm install firemud ./k8s/helm/firemud -f k8s/helm/values-dev.yaml
    ```
 
 3. Verify pods are running with `kubectl get pods -n firemud`.
-4. Monitor rollout progress in the CI job summary. Planned Grafana dashboards will provide additional visibility. (TODO: Not yet implemented)
+4. Monitor rollout progress in the CI job summary. Planned Grafana dashboards
+   will provide additional visibility. (TODO: Not yet implemented)
 
 For local development, use `./gradlew devUp` to start Docker Compose.
 
@@ -28,7 +30,8 @@ For local development, use `./gradlew devUp` to start Docker Compose.
 
 2. Update Horizontal Pod Autoscaler settings if enabled (TODO: Not yet implemented).
 3. Review Prometheus metrics to ensure CPU and memory usage remain healthy (TODO: Not yet implemented).
-4. For database or Redis clusters, scale StatefulSets according to their respective runbooks.
+4. For database or Redis clusters, scale StatefulSets according to their
+   respective runbooks. (TODO: Not yet implemented)
 
 ## 🔄 Recovery
 
@@ -63,9 +66,12 @@ For local development, use `./gradlew devUp` to start Docker Compose.
     old `*.sql.gz` files or run `dev-tools/pg-dump-rotate.sh` manually if
     additional cleanup is required.
 2. **Redis Failure**
-   - Redis nodes automatically resync using AOF and replication. Services reconnect on restart.
+   - Redis nodes automatically resync using AOF and replication. Services
+     reconnect on restart. See [Redis Architecture](./system-architecture-redis.md)
+     for persistence and recovery details.
 3. **Full Cluster Restore**
-   - Recreate the cluster using Terraform modules in `k8s/terraform`.
+   - Recreate the cluster using Terraform modules in `k8s/terraform`. See
+     [`k8s/terraform/README.md`](../../k8s/terraform/README.md) for usage.
    - Run `velero restore` to recreate Kubernetes manifests.
 
 See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for backup schedules and retention policies.
