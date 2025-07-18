@@ -26,7 +26,7 @@ TCP Proxy restarts drop Telnet clients.
 
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
-- No gameplay state is preserved across reconnects — Game Session Service handles recovery
+- No gameplay state is preserved across reconnects — Game Session Service handles recovery (TODO: Not yet implemented)
 - Provides gRPC hooks (`NotifyDisconnect`, `PushBufferedInput`) for session recovery integration (TODO: Not yet implemented)
 - Runtime options such as the listening port and gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service README](./microservices/tcp-proxy-service/README.md#environment-variables)).
 
