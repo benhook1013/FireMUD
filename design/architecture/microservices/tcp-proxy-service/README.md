@@ -37,11 +37,11 @@ An OpenAPI specification for these REST endpoints lives in `services/tcp-proxy-s
 
 ### Data Flow
 
-- TCP connections are accepted on a dedicated port and upgraded to WebSocket
-  using a lightweight frame protocol.
+- TCP connections are accepted on a dedicated port and proxied to the gateway
+  using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
-- If the connection is lost, the queue is flushed and the session is marked for
-  possible reconnection. (TODO: Not yet implemented)
+- If the connection is lost, the queue is flushed. Session reconnection hooks are
+  planned. (TODO: Not yet implemented)
 
 ### Service Interactions
 
@@ -157,8 +157,8 @@ curl http://localhost:8080/ping
 #### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check.
-- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected.
-- `PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse)` – delivers queued commands after a reconnect.
+- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected. (TODO: Not yet implemented)
+- `PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse)` – delivers queued commands after a reconnect. (TODO: Not yet implemented)
 
 All RPC definitions live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
