@@ -6,17 +6,11 @@ Several automated enforcement features mentioned below are planned but not yet a
 
 ## Core Policies
 
-1. **Zero Tolerance for Hate Speech** – racial, sexual, or other discriminatory language results in
-   immediate bans. (TODO: Not yet implemented)
-2. **Profanity Filtering** – common swear words are automatically masked by the
-   Social & Groups Service.
-3. **Harassment and Threats** – direct or implied threats lead to temporary suspensions or account
-   deletion. (TODO: Not yet implemented)
-4. **Spam Prevention** – repeated unsolicited messages trigger rate limiting and
-   potential chat mutes.
-   (TODO: Not yet implemented)
-5. **Cheating and Exploits** – using automation or bugs for unfair advantage results in account
-   sanctions. (TODO: Not yet implemented)
+1. **Zero Tolerance for Hate Speech** – racial, sexual, or other discriminatory language results in immediate bans. (TODO: Not yet implemented)
+2. **Profanity Filtering** – common swear words are automatically masked by the Social & Groups Service. Chat profanity events are reported to the Logging & Admin Service for audit purposes.
+3. **Harassment and Threats** – direct or implied threats are intended to lead to temporary suspensions or account deletion (TODO: Not yet implemented; suspension durations not yet supported)
+4. **Spam Prevention** – repeated unsolicited messages should trigger rate limiting and potential chat mutes. (TODO: Not yet implemented)
+5. **Cheating and Exploits** – using automation or bugs for unfair advantage results in account sanctions. (TODO: Not yet implemented)
 
 ## Profanity Filters
 

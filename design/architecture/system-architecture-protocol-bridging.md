@@ -38,22 +38,27 @@ Despite their differences, both protocols are normalized into the same internal 
 - The proxy listens on port `2323` by default so Telnet clients can simply
   connect without additional configuration. This and the gateway WebSocket URL
   can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment
-  variables described in the TCP Proxy Service README.
+  variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables).
   See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)
   for general configuration guidance.
 - Handled by a dedicated **TCP Proxy Service**.
 - The service:
   - Accepts and parses Telnet line-based input.
+  - Performs basic Telnet option negotiation for compatibility (TODO: Not yet implemented).
   - Sanitizes incoming data and allows only a safe subset of
     **Telnet protocol commands** as outlined in
     [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-future-controls).
-  - Runs alongside Spring Cloud Gateway in the network **DMZ**, so no client ever reaches internal services directly.
-  - Normalizes the connection.
+  - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly.
+    See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
+  - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
+  - Negotiates the Mud Client Protocol (MCP) when supported (TODO: Not yet implemented).
   - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set.
     Certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
+    Forwarding to the gateway uses plain WebSocket; mutual TLS is planned. (TODO: Not yet implemented)
   - Applies per-IP connection and message rate limits using
     `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and `TCP_PROXY_MAX_MSGS_PER_SEC`.
   - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
+    Forwarding currently uses plain WebSocket; mutual TLS is planned. (TODO: Not yet implemented)
   - Proxies I/O between the TCP client and Spring Cloud Gateway.
   - Buffers active input while the client remains connected and discards it if
     the TCP connection drops.
@@ -63,10 +68,11 @@ Despite their differences, both protocols are normalized into the same internal 
   - Disconnect handling is **layered**: the proxy cleans up Telnet sessions,
     the gateway automatically recreates WebSocket backends _(TODO: Not yet implemented)_, and the Game Session
     Service reloads state from Redis _(TODO: Not yet implemented)_.
-  - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput`
-    so the Game Session Service can recover Telnet sessions _(TODO: Not yet implemented)_.
+  - The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput` so
+    the Game Session Service can recover Telnet sessions. These stubs currently
+    only log when called. (TODO: Not yet implemented)
   - Metrics are exported at `/actuator/prometheus` and tracing data is sent to
-    the collector configured by `OTEL_ENDPOINT`.
+    the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ### 🌟 TCP Flow Benefits
 

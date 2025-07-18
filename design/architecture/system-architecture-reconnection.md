@@ -14,7 +14,9 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.** (TODO: Not yet implemented)
-Game Session Service restarts are **transparent** if the client remains connected. The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. TCP Proxy restarts drop Telnet clients. (TODO: Not yet implemented)
+Game Session Service restarts are **transparent** if the client remains connected. (TODO: Not yet implemented)
+The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. (TODO: Not yet implemented)
+TCP Proxy restarts drop Telnet clients.
 
 ---
 
@@ -34,7 +36,9 @@ Game Session Service restarts are **transparent** if the client remains connecte
 - Automatically re-establishes backend connections if restarted (TODO: Not yet implemented)
 - Holds no gameplay, auth, or session state
 
-> TCP Proxy restarts drop Telnet connections. Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically (TODO: Not yet implemented). Telnet clients proxied through the Gateway remain connected.
+> TCP Proxy restarts drop Telnet connections.
+> Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically. (TODO: Not yet implemented)
+> Telnet clients proxied through the Gateway remain connected. (TODO: Not yet implemented)
 
 ### Game Session Service
 
@@ -51,7 +55,7 @@ Game Session Service restarts are **transparent** if the client remains connecte
 
 ## 🔐 When Reauthentication Is Required
 
-Clients must send a `LOGIN` command **after any disconnect**, such as:
+Clients must send a `LOGIN` command **after any disconnect** (TODO: Not yet implemented), such as:
 
 - TCP loss (Telnet clients)
 - WebSocket loss (Web clients)
@@ -66,7 +70,7 @@ Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milli
 
 ## 👥 Multi-Client and Session Takeover
 
-Gameplay resumes cleanly when a session is resumed — whether due to reconnect or takeover.
+Gameplay resumes cleanly when a session is resumed — whether due to reconnect or takeover. (TODO: Not yet implemented)
 
 > 🔄 For full takeover behavior, including forced logins from a different client and Redis socket rebinding, see [Authentication & Authorization](./system-architecture-authentication.md#👥-multi-client-behavior-and-session-takeover).
 
@@ -76,13 +80,13 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 | Event                                           | Result                                         |
 |------------------------------------------------|------------------------------------------------|
-| Client disconnect (TCP/WebSocket)              | Requires new `LOGIN`; may resume via Redis     |
+| Client disconnect (TCP/WebSocket)              | Requires new `LOGIN`; may resume via Redis (TODO: Not yet implemented)     |
 | TCP Proxy Service restart                              | Telnet clients disconnected; new `LOGIN` required       |
-| Spring Cloud Gateway restart                           | Web clients disconnected; Telnet clients stay connected |
+| Spring Cloud Gateway restart                           | Web clients disconnected; Telnet clients stay connected (TODO: Not yet implemented) |
 | Game Session Service restart                          | Transparent if client remains connected (TODO: Not yet implemented)         |
-| Manual re-`LOGIN` from same character          | Treated as reconnect; resumes if Redis intact  |
-| Redis session expired/missing                  | Treated as fresh login; gameplay starts anew   |
-| New client logs in as same character           | Old session terminated; new one resumes control |
+| Manual re-`LOGIN` from same character          | Treated as reconnect; resumes if Redis intact (TODO: Not yet implemented) |
+| Redis session expired/missing                  | Treated as fresh login; gameplay starts anew (TODO: Not yet implemented)   |
+| New client logs in as same character           | Old session terminated; new one resumes control (TODO: Not yet implemented) |
 
 > 🔑 Only **client disconnection** requires `LOGIN`. Game Session Service restarts are invisible if the socket stays open. TCP Proxy restarts drop Telnet clients, while Gateway restarts disconnect Web clients; Telnet clients proxied through the Gateway remain connected.
 
@@ -94,7 +98,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
   - Socket bindings and session metadata
   - Queued commands and tick state
   - Timers, cooldowns, and retry info
-- Game Session Service governs all reconnection, deduplication, and rebinding
+- Game Session Service governs all reconnection, deduplication, and rebinding (TODO: Not yet implemented)
 - Clients are **fully stateless**
 - Transparent failover is supported across infrastructure layers (TODO: Not yet implemented)
 

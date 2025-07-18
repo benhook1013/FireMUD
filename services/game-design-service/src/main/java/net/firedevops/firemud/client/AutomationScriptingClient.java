@@ -82,7 +82,7 @@ public class AutomationScriptingClient implements AutoCloseable {
   }
 
   /** Notify the Automation service that a new script patch version is active. */
-  public void notifyScriptVersionUpdate(long tenantId, String patchVersion, List<String> scripts) {
+  public void notifyScriptVersionUpdate(String tenantId, String patchVersion, List<String> scripts) {
     NotifyScriptVersionUpdateRequest request =
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId(tenantId)

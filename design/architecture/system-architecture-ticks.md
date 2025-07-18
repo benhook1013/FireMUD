@@ -9,7 +9,7 @@
 
 FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with deterministic action resolution:
 
-- **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues**
+- **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues** (TODO: Not yet implemented)
 - At regular **tick intervals** (e.g., 1s):
   - One action (if any) is pulled from each entity’s command queue
   - Actions are resolved in FIFO order; stat-based prioritization is planned (TODO: Not yet implemented)
@@ -21,7 +21,7 @@ This model ensures:
 - Responsive feel for players
 - Deterministic conflict resolution (e.g., pickups, interrupts)
 - Equal treatment of AI and player actions
-- Scheduled updates for effects like cooldowns, patrols, regeneration
+- Scheduled updates for effects like cooldowns, patrols, regeneration (TODO: Not yet implemented)
 
 > 🔗 Overview of this model appears in [System Architecture Overview](./system-architecture-overview.md#⏱️-game-loop--tick-model)
 
@@ -55,7 +55,7 @@ FireMUD includes a robust system for **lock contention**, **timeouts**, and **re
 
 When an action fails due to contention:
 
-- Redis logs the **blocking lock** and conflicting region
+- Redis logs the **blocking lock** and conflicting region (TODO: Not yet implemented)
 - The Game Session Service:
   - Reschedules the action within the blocked region (TODO: Not yet implemented)
   - **Prioritizes retries** to minimize player-visible delays (TODO: Not yet implemented)

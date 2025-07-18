@@ -12,7 +12,7 @@ The **Game Design Service** stores the authoritative game configuration (world l
 
 1. When a version is ready, creators trigger a **Publish** action in the Game Design Service.
 2. The service writes a new `version_id` and associated records to its database.
-3. Domain services (World Management, Entity Management, etc.) copy the relevant data into their own schemas using this `version_id`. Once copied, that data becomes read-only for the release so runtime services never pull directly from the design database. The copy workflow will use sagas to coordinate cross‑service updates. (TODO: Not yet implemented)
+3. Domain services (World Management, Entity Management, etc.) copy the relevant data into their own schemas using this `version_id`. Once copied, this data becomes read-only for that release so runtime services never pull directly from the design database. The copy workflow will be orchestrated by sagas for cross‑service consistency. (TODO: Not yet implemented)
 4. A notification or message informs the Game Session Service that a new version exists so game instances can be restarted or patched. (TODO: Not yet implemented)
 
 Published versions are immutable; further changes require publishing a new `version_id`.
@@ -65,15 +65,17 @@ The **Game Session Service** controls which published version is active for each
 ## 🔧 Runtime Feature Flags
 
 Runtime feature flags allow limited behavior changes without publishing a new design version.
-They are **defined in the Game Design Service** and copied into the **Game Session Service**.
-(typically in a configuration table keyed by `tenantId`) when a version is published. (TODO: Not yet implemented)
+They are **defined in the Game Design Service** and copied into the **Game Session Service**
+when a version is published. The definitions table and copy steps are planned but not yet
+implemented. (TODO: Not yet implemented)
 
-- Designers create and maintain the set of flag definitions in the Game Design Service.
+- Designers create and maintain the set of flag definitions in the Game Design Service UI.
   (TODO: Not yet implemented)
 - Administrators toggle flag values through the
   [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface.
-- The Logging & Admin Service forwards each change to the Game Session Service.
-  Calls `ToggleFeatureFlag` via gRPC. (TODO: Not yet implemented)
+- The Logging & Admin Service forwards each change to the Game Session Service,
+  calling `ToggleFeatureFlag` via gRPC so running instances update immediately.
+  (TODO: Not yet implemented)
 - The Game Session Service persists active flag values in its `feature_flag` table.
   Sessions use consistent configuration even after reconnects.
   The Logging & Admin Service may store audit entries. (TODO: Not yet implemented)

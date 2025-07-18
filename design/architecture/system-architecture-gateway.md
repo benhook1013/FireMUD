@@ -16,6 +16,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - **Stateless and horizontally scalable** – no sticky sessions required
 - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
+- Gateway restarts are expected to automatically re-establish WebSocket connections to backend services. (TODO: Not yet implemented)
 - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](../system-architecture-security.md#🌐-network-security--boundary-design) for details.
 
 > **Important:**
@@ -30,7 +31,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Kubernetes DNS-based service names configured in the `prod` profile of
   `application.yml` (used in production)
 - Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
-- Initial route targets are fixed, but future versions will allow overrides via environment variables prefixed `FIREMUD_SERVICES_`; see [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery). (TODO: Not yet implemented)
+- Initial route targets are fixed. Future versions will allow per-service overrides using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery). (TODO: Not yet implemented)
 
 ---
 
@@ -76,6 +77,7 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - `application.yml` defines `RequestRateLimiter` and `Retry` filters that apply to every route by default.
+  - The rate limiter stores tokens in Redis; the gateway reads `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT` for this connection.
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
 - TLS termination and mTLS between services are described in [Security Architecture](../system-architecture-security.md).
@@ -88,7 +90,7 @@ add, update, or remove routes using either the REST API (`/routes`) or the
 restarting the service. See the
 [Spring Cloud Gateway microservice documentation](./microservices/spring-cloud-gateway/README.md#rest--grpc-endpoints)
 for example requests and supported fields. The gRPC interface is defined in [`gateway_management_service.proto`](../../protos/spring-cloud-gateway/v1/gateway_management_service.proto) and the REST schema in [`openapi.yaml`](../../services/spring-cloud-gateway/src/main/resources/openapi.yaml).
-Dynamic routes are stored only in memory; persistent storage is planned. (TODO: Not yet implemented)
+Dynamic routes are stored only in memory and are lost on service restart. A PostgreSQL `route_config` table exists for future persistence. (TODO: Not yet implemented)
 
 ## 📈 Observability
 
