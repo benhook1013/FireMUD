@@ -9,7 +9,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Provide web and gRPC tools for editing game assets
 - Version and publish immutable game configurations
 - Track revision history for rollback
-- Notify downstream services when new versions are available
+- Notify downstream services when new versions are available. (TODO: Not yet implemented)
 
 ## Architecture / Design Notes
 
@@ -79,9 +79,9 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ## Dependencies
 
 - **Internal:**
-  - World Management Service for map data.
-  - Automation & Scripting Service for scripts.
-  - Logging & Admin Service records publishing audits.
+  - World Management Service for map data. (TODO: Not yet implemented)
+  - Automation & Scripting Service for scripts. (TODO: Not yet implemented)
+  - Logging & Admin Service records publishing audits. (TODO: Not yet implemented)
 - **External:** PostgreSQL for storing design assets.
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),
@@ -163,6 +163,9 @@ Default ports: REST on `8080`, gRPC on `6565`.
 ```bash
 curl http://localhost:8080/ping
 ```
+
+Detailed request and response schemas are defined in the
+[OpenAPI specification](../../../../services/game-design-service/src/main/resources/openapi.yaml).
 
 #### gRPC
 
