@@ -22,7 +22,7 @@ SERVICES=(
   world-management-service
 )
 
-OUT_DIR="design/erd-diagrams"
+OUT_DIR="design/erd"
 mkdir -p "$OUT_DIR"
 
 POSTGRES_CONTAINER="firemud-erd-postgres"
