@@ -58,7 +58,7 @@ The frontend uses **Vite** for fast development and production builds:
 - `npm run preview` serves the production bundle locally for verification.
 - `npm run test` will run unit tests with Jest and React Testing Library. The script is not yet defined. (TODO: Not yet implemented)
 - `npm run lint` and `npm run format` ensure consistent code style.
-- `npm run accessibility` audits the compiled site with axe-core. (TODO: Not yet implemented)
+- `npm run accessibility` audits the compiled site with axe-core. See [Developer Setup](../../DEVELOPER_SETUP.md#frontend-lint--accessibility) for Chrome requirements.
 
 See `web-client/README.md` for additional setup tips.
 
