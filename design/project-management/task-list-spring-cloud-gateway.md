@@ -7,11 +7,12 @@
   - [x] Collect connection metrics and throttle abusive clients
   - [x] Create gateway route configuration files for all services
   - [x] Add baseline route configuration for Spring Cloud Gateway
-  - [x] Create `GatewayController` endpoints for dynamic route management
-  - [x] Allow creation of custom gateway routes via API
-  - [x] Add gRPC `GatewayManagementService` for remote route configuration
+- [x] Create `GatewayController` endpoints for dynamic route management
+- [x] Allow creation of custom gateway routes via API
+- [x] Add gRPC `GatewayManagementService` for remote route configuration
 
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+
 ## Reusable Microservice Checklist
 
 These tasks apply to every FireMUD service unless noted otherwise. Gateway and
