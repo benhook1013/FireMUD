@@ -32,7 +32,8 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Distributed tick locks in Redis use short TTLs to prevent deadlocks. Failed
   actions are rolled back and retried automatically.
 - Tick regions execute independently so work can be parallelized across
-  threads and servers for better scalability and fault isolation. (TODO: Not yet implemented)
+  threads and servers for better scalability and fault isolation. See
+  [Tick Regions and Parallel Execution](./system-architecture-ticks.md#%F0%9F%8C%8D-tick-regions-and-parallel-execution). (TODO: Not yet implemented)
 - The Automation & Scripting Service evaluates scripts on its own schedule and
   injects resulting commands into tick queues. Per-script quotas are enforced
   via Redis before queuing to avoid runaway automation. See
@@ -43,7 +44,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   visibility into heavy script load.
   - A Redis exporter exposes command latency and memory metrics via the
     [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment so
-    operators can spot hotspots in Grafana dashboards. Lua latency and retry
+    operators can spot hotspots in Grafana dashboards. See
+    [Logging & Monitoring](./system-architecture-logging-monitoring.md) for details. Lua latency and retry
     queue depth are recorded by the Game Session Service metrics.
 - The Game Session Service exposes `tick_retry_queue_depth`,
   `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
@@ -55,10 +57,10 @@ These notes summarize typical optimizations applied across FireMUD services.
   and tick performance.
 - Service methods across all microservices use `@Timed` annotations so
   Prometheus can track request latency and call frequency.
-- Redis runs with **AOF persistence** and synchronous replication via `WAIT`
+- Redis runs with **AOF persistence** and synchronous replication via `WAIT` (see [Backup & Disaster Recovery](./system-architecture-backup-recovery.md))
   so tick state can be recovered quickly after failover. The Game Session
   Service automatically replays staged commands on restart. (TODO: Not yet implemented)
-- Each tick enforces a **soft execution budget** (~100ms). Slow actions are
+- Each tick enforces a **soft execution budget** (~100ms) (see [Timeout and Fairness Policy](./system-architecture-ticks.md#%E2%8F%B0-timeout-and-fairness-policy)). Slow actions are
   deferred to follow-up ticks so long-running commands never block the game
   loop. Conflict metadata collected during retries highlights hotspots for
   operators. (TODO: Not yet implemented)

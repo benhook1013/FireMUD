@@ -33,7 +33,7 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
 
 FireMUD exposes gRPC and REST endpoints for automation. Key APIs include:
 
-- **Automation & Scripting Service** – Schedule actions, react to events, and control NPCs.
+- **Automation & Scripting Service** – Schedule actions, react to events, and control NPCs. (TODO: Not yet implemented)
 - **Game Session Service** – Start sessions, manage connections, and broadcast game events.
 - **Entity Management Service** – CRUD operations for players, NPCs, and items.
 

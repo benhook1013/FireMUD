@@ -6,10 +6,10 @@ This document consolidates the platform's observability architecture.
 
 ## 🔍 Logging Pipeline
 
-- **Fluent Bit** sidecars collect service logs from every microservice.
+- **Fluent Bit** sidecars collect service logs from every microservice. (TODO: Not yet implemented)
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards. (TODO: Not yet implemented)
 - The **Logging & Admin Service** exposes moderation tools and log queries.
-- Logs are emitted in JSON with request tracing fields (e.g., `traceId`).
+- Logs are emitted in JSON with request tracing fields (e.g., `traceId`). (TODO: Not yet implemented)
   Including the active `playerId` in log entries is planned for better
   moderation context. (TODO: Not yet implemented)
 - Kibana dashboards can filter by `traceId` today. Filtering by `playerId`
@@ -19,7 +19,7 @@ This document consolidates the platform's observability architecture.
   [Shared Libraries](./system-architecture-shared-libraries.md).
 - Log retention defaults to **14 days** in development and **90 days** in production,
   after which indices are archived. These values can be tuned via the
-  [Deployment Environments](./infrastructure/deployment-environments.md) settings.
+  [Deployment Environments](./infrastructure/deployment-environments.md) settings. (TODO: Not yet implemented)
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and
   `FLUENT_ELASTICSEARCH_PORT` environment variables
   ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).

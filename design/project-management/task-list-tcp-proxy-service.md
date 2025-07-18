@@ -1,20 +1,27 @@
 # TCP Proxy Service Task List
 
-- [x] **Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway**
-- [x] **Define Telnet bridge gRPC APIs for TCP Proxy Service**
-- [x] **Develop TCP Proxy Service**
-  - [x] Implement Telnet networking and WebSocket bridging
-  - [x] Buffer Telnet input and discard on disconnect to support reconnection
-  - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
-  - [x] Enforce Telnet protocol command whitelist and input sanitization
-  - [x] Implement connection throttling and rate limits
-  - [x] Support TLS termination for secure Telnet clients
-  - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
-  - [ ] Handle Telnet option negotiation and character encoding quirks
-  - [ ] Negotiate the Mud Client Protocol (MCP) when supported
-  - [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery
-  - [ ] Integrate with the Reconnection Strategy to resume sessions transparently
-  - [ ] Support mutual TLS when forwarding WebSocket traffic to the gateway
+## Telnet Bridge
+
+- [x] Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway
+- [x] Define Telnet bridge gRPC APIs for TCP Proxy Service
+- [x] Implement Telnet networking and WebSocket bridging
+- [x] Support TLS termination for secure Telnet clients
+- [ ] Support mutual TLS when forwarding WebSocket traffic to the gateway
+- [ ] Handle Telnet option negotiation and character encoding quirks
+- [ ] Negotiate the Mud Client Protocol (MCP) when supported
+
+## Connection Management
+
+- [x] Buffer Telnet input and discard on disconnect to support reconnection
+- [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
+- [x] Enforce Telnet protocol command whitelist and input sanitization
+- [x] Implement connection throttling and rate limits
+- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery
+- [ ] Integrate with the Reconnection Strategy to resume sessions transparently
+
+## Security
+
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 
