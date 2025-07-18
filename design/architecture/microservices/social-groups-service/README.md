@@ -15,7 +15,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ## Architecture / Design Notes
 
-- Uses WebSocket channels for chat delivery.
+- Uses WebSocket channels for chat delivery. (TODO: Not yet implemented)
 - Stores guild and friend relationships in PostgreSQL.
 - Integrates with the Logging & Admin Service for moderation events.
 - Chat profanity triggers a gRPC call to the Logging & Admin Service to record a
@@ -61,12 +61,12 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - `account_friend_links` table stores account-to-account friendships shared across games.
 - Games can mirror these links in their UI when the feature is enabled.
 - `mail_message` table stores asynchronous player mail.
-- `faction` and `faction_standing` tables maintain player reputation and are managed by the [Automation & Scripting Service](../automation-scripting-service/README.md). This service will reference them for NPC behaviour. (TODO: Not yet implemented)
+- `faction` and `faction_standing` tables are defined in the [Automation & Scripting Service](../automation-scripting-service/README.md) to track player reputation. Integration with this service for NPC behaviour is planned. (TODO: Not yet implemented)
 
 ### Chat Pipeline
 
 - Messages are cached in Redis lists and delivered to WebSocket channels
-  through the Spring Cloud Gateway.
+  through the Spring Cloud Gateway. (TODO: Not yet implemented)
 - Guild and direct messages share a common persistence model for history.
 
 ### Voice Chat Integration
@@ -162,7 +162,14 @@ files change.
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /friends` – create a friend link.
 - `POST /mail` – send an asynchronous in-game mail message.
+- `POST /guilds` – create a guild.
 - `POST /guilds/storage` – add an item to guild storage.
+- `POST /guilds/alliances` – create a guild alliance.
+- `POST /guilds/members` – add a guild member.
+- `POST /guilds/members/role` – update a guild member's role.
+- `POST /guilds/members/remove` – remove a guild member.
+- `POST /chat` – send a chat message filtered for profanity.
+- `POST /voice/token` – issue a temporary WebRTC token for voice chat. (TODO: Not yet implemented)
 
 ```bash
 curl http://localhost:8080/ping
