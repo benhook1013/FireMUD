@@ -127,7 +127,7 @@ All internal gRPC calls use **mutual TLS**. Each service sets the following envi
 | `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Path to the private key |
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle used to verify peers |
 
-The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a [`GrpcServerTlsReloader`](./system-architecture-shared-libraries.md) component that hot reloads certificates when they change.
+The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a `GrpcServerTlsReloader` component to hot reload server certificates, but services do not yet use it. (TODO: Not yet implemented)
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#🤝-cross-service-trust) for mTLS design.
 
