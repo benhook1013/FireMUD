@@ -4,8 +4,8 @@ This document outlines the **planned** administration interface. There is
 currently no dedicated **admin** React application in the repository. The
 `web-client` module provides the main player-facing UI but does not expose the
 tools described here. Moderators and administrators will eventually interact
-with the service through a lightweight React interface. Credentials are
-exchanged with the Account Service, which issues
+with the service through a lightweight React interface. (TODO: Not yet implemented)
+Credentials are exchanged with the Account Service, which issues
 JWTs for backend calls. These tokens remain server-side as described in
 [Authentication & Authorization](../../system-architecture-authentication.md),
 and permissions are enforced using the `globalRoles` and `scopedRoles` claims.
@@ -16,7 +16,7 @@ and permissions are enforced using the `globalRoles` and `scopedRoles` claims.
 - Search and filter logs with Kibana-like syntax. (TODO: Not yet implemented)
 - Review player reports and apply moderation actions. (TODO: Not yet implemented)
 - Toggle runtime feature flags for a specific tenant. (TODO: Not yet implemented)
-- Inspect saga workflows and retry failed steps. (TODO: Not yet implemented)
+- Inspect saga workflows and view step details; ability to retry failed steps is planned. (TODO: Not yet implemented)
 - Reference [Moderation Policies](./moderation-policies.md) when issuing bans or warnings. (TODO: Not yet implemented)
 
 These capabilities map to existing REST endpoints such as `/logs`, `/reports`,
