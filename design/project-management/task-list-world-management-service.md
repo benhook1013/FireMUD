@@ -11,6 +11,10 @@
   - [x] Use saga orchestrator for world creation workflow
   - [x] Provide tools to fine-tune procedural generation rules
   - [x] Support multi-server world shards
+  - [ ] Copy published version data into world schema via Saga
+  - [ ] Publish gRPC notifications when world state changes
+  - [ ] Track character locations and instance occupancy
+  - [ ] Implement world snapshot API for backup and recovery
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
