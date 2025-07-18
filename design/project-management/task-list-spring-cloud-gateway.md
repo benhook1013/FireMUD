@@ -19,6 +19,7 @@
 - [x] Add gRPC `GatewayManagementService` for remote route configuration
 - [ ] Allow route target overrides via FIREMUD_SERVICES_* env vars
 - [ ] Persist dynamic routes in the route_config table
+
 ## Reusable Microservice Checklist
 
 These tasks apply to every FireMUD service unless noted otherwise. Gateway and
