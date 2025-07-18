@@ -21,6 +21,7 @@ root
 ├── docker/
 ├── k8s/
 ├── charts/
+├── AGENTS.md
 ├── .env.sample
 ├── .pre-commit-config.yaml
 ├── gradle/
@@ -33,7 +34,9 @@ root
 ├── package.json
 ├── package-lock.json
 ├── docker-compose.yml
-└── docker-compose.override.yml
+├── docker-compose.override.yml
+├── gradlew
+└── gradlew.bat
 ```
 
 ## Directory summary
@@ -50,6 +53,7 @@ root
 - `charts/` – Umbrella Helm chart for deploying all services together.
 - `.github/` – GitHub Actions workflows and issue templates.
 - `gradle/` – Gradle wrapper binaries.
+- `AGENTS.md` – Contribution guide pointing to project AI rules.
 - `.env.sample` – Example environment variables used by `docker-compose` and tests.
 - `.pre-commit-config.yaml` – Formatting and linting rules run by the git hook.
 - `buf.gen.yaml` and `buf.work.yaml` – Buf configuration for protobuf linting and code generation.
@@ -59,6 +63,7 @@ root
 - `package.json` & `package-lock.json` – Node scripts used for markdown linting and docs.
 - `docker-compose.yml` – Local development environment.
 - `docker-compose.override.yml` – Extra services for local testing.
+- `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
 
 Proto definitions live under `protos/` organized by service and version as described in the
 [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).

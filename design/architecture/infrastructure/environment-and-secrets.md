@@ -17,7 +17,7 @@ This document explains how configuration values and sensitive secrets are suppli
 - Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. JWT keys and TLS certificates are issued by **cert-manager**.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
 - TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords, are stored in standard Kubernetes `Secret` objects and must be rotated manually. Automated database password rotation is planned. (TODO: Not yet implemented)
-- Services reload TLS certificates and JWT secrets at runtime when these Secrets update. gRPC server certificate hot reload will be added in a future release. (TODO: Not yet implemented)
+- Services reload TLS certificates for gRPC client channels and JWT secrets when these Secrets update. gRPC server certificate hot reload will be added in a future release. (TODO: Not yet implemented)
 - This live reload behavior relies on the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the shared library. A `GrpcServerTlsReloader` exists for server certificates but is not currently wired into the services. (TODO: Not yet implemented)
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
@@ -90,7 +90,7 @@ In Kubernetes deployments the certificates are mounted at `/tls`, and the
 environment variables point to that directory (for example,
 `FIREMUD_GRPC_CERT_CHAIN_PATH=/tls/client.crt`). Services watch these files for
 changes so new certificates are loaded without restarts via `TlsCertificateWatcher`. Certificate reload for
-gRPC servers will use `GrpcServerTlsReloader` but is not yet wired into the services. (TODO: Not yet implemented)
+gRPC servers will use `GrpcServerTlsReloader` but this integration is still pending. (TODO: Not yet implemented)
 See [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation)
 for details on the hot reload mechanism.
 

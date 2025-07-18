@@ -31,7 +31,7 @@ web-client/
 
 Application state is handled by **Redux Toolkit**, with **RTK Query** used for data fetching and mutations. RTK Query auto-generates hooks for API access and manages caching, invalidation, and loading/error states declaratively.
 
-- The global store is created in `src/store.ts` and provided via `<Provider>`.
+- The global store is created in `src/store.ts` and injected via React's `<Provider>` in `src/main.tsx`.
 - `setupListeners(store.dispatch)` enables automatic refetching on focus and reconnects.
 - Components dispatch actions and select state using hooks (`useAppDispatch`, `useAppSelector`) from `src/hooks.ts`.
 - RTK Query hooks expose typed endpoints that components call directly.
@@ -47,7 +47,7 @@ RTK Query automatically handles:
 - Error and loading state tracking
 - Background polling and refetching
 
-WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. RTK Query hooks can be invalidated or updated in response to WebSocket messages for live state updates (TODO: Not yet implemented).
+WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. Integration with RTK Query to update cached data in response to socket events is planned. (TODO: Not yet implemented)
 
 ## 🛠️ Build Tooling
 
@@ -55,7 +55,10 @@ The frontend uses **Vite** for fast development and production builds:
 
 - `npm run dev` starts the local development server with hot module replacement.
 - `npm run build` produces an optimized bundle under `dist/`.
+- `npm run preview` serves the production bundle locally for verification.
 - `npm run test` runs unit tests with Jest and React Testing Library. (TODO: Not yet implemented)
+- `npm run lint` and `npm run format` ensure consistent code style.
+- `npm run accessibility` audits the compiled site with axe-core. (TODO: Not yet implemented)
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
 

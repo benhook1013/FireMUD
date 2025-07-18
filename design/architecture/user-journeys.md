@@ -65,7 +65,7 @@ Account Service (user) → Game Design Service (new game)
 
 Creators refine the world and its inhabitants using several services:
 
-- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors (TODO: Not yet implemented), and runtime flag definitions.
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors (TODO: Not yet implemented), and runtime flag definitions (TODO: Not yet implemented).
 - **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data (TODO: Not yet implemented). Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md). (TODO: Not yet implemented)
@@ -147,12 +147,10 @@ The [Game Session Service](./microservices/game-session-service/README.md) handl
 During gameplay, players form groups and communicate via the
 [Social & Groups Service](./microservices/social-groups-service/README.md):
 
-- Chat rooms, guilds, and friend lists are synchronized in real time.
+- Chat rooms, guilds, and friend lists are synchronized in real time (TODO: Not yet implemented).
 - In-game chat commands (say, tell, guild chat, mail) are first validated by the
   [Game Logic Service](./microservices/game-logic-service/README.md) against the [World Management Service](./microservices/world-management-service/README.md) and [Entity Management Service](./microservices/entity-management-service/README.md).
-- The Social & Groups Service performs profanity checks, logs communication, and
-  delivers messages. Account-level friends automatically appear in-game when the
-  feature is enabled.
+- The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled. (TODO: Not yet implemented)
 
 ---
 
@@ -268,7 +266,7 @@ Admin → Runbooks → Kubernetes / Docker → Services Restored
 
 ## 15. Branding and Customization
 
-Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. The web client loads tenant-specific assets as described in [Frontend Architecture](./system-architecture-frontend.md). See [Game Customization Options](./game-customization-options.md) for details.
+Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. The web client loads tenant-specific assets as described in [Frontend Architecture](./system-architecture-frontend.md). See [Game Customization Options](./game-customization-options.md) for details. (TODO: Not yet implemented)
 
 ---
 
