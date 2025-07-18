@@ -42,7 +42,7 @@ TCP Proxy restarts drop Telnet clients.
 
 ### Game Session Service
 
-- Uses Redis to store and recover session state, including command queues, tick participation, cooldowns, and retry info (TODO: Not yet implemented)
+- Uses Redis to store session state such as command queues, tick participation, cooldowns, and retry info. Reconnect logic will restore these details. (TODO: Not yet implemented)
 - On reconnect, rebinds:
   - Socket connection (TODO: Not yet implemented)
   - Tick region context (TODO: Not yet implemented)
