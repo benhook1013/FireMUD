@@ -44,7 +44,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service. Full automation of this step is still being developed (TODO: Not yet implemented).
 - On startup the container executes Flyway against its database schema before the Spring application fully starts.
 - The `dev-tools/generate-erd.sh` script uses Flyway to clean and migrate temporary databases when generating ERD diagrams.
-- Diagrams are written to `design/erd-diagrams/` and the CI job collects this
+- Diagrams are written to `design/erd/` and the CI job collects this
   directory as an artifact.
 
 Migrations are therefore applied consistently in every environment without manual steps.
