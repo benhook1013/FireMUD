@@ -112,7 +112,7 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
   - A **platform fee** applies to all transactions.
   - **External payment methods are not allowed** to ensure security and compliance.
-  - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**.
+  - **High-resource features** (e.g., AI, scripting) may be **premium hosting options**. (TODO: Not yet implemented)
 See [Logging & Admin Service](../architecture/microservices/logging-admin-service/README.md) for moderation features and [Account Service](../architecture/microservices/account-service/README.md) for payment processing.
 
 ---
@@ -136,7 +136,7 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 - **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
 - **API Gateway** manages requests between microservices and handles external integrations.
 - **Gameplay login is handled by the Game Session Service**; any JWT on admin or REST endpoints is validated by the consuming service. The Gateway and Game Session Service do not validate tokens for gameplay.
-- **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
+- **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes. (TODO: Not yet implemented)
 - **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**. (TODO: Not yet implemented)
 - Multi-server support enables **scaling hosted games separately**. (TODO: Not yet implemented)
 See [Gateway Architecture](../architecture/system-architecture-gateway.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for network flow details.
@@ -164,9 +164,9 @@ See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workfl
 - **Game Session Service** orchestrates tick execution and runtime configuration.
 - **Redis** stores volatile session state so players can **reconnect seamlessly** after disruptions.
 - Tick regions operate independently for scalability but rely on Redis for atomic coordination.
-- Redis runs with **AOF persistence** and synchronous replication so tick state can be recovered after failover.
+- Redis runs with **AOF persistence** and synchronous replication so tick state can be recovered after failover. (TODO: Not yet implemented)
 - Lua scripts in Redis ensure atomic tick updates and use `WAIT` for replica acknowledgment.
-- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows transparent service restarts.
+- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows transparent service restarts. (TODO: Not yet implemented)
 See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for implementation details.
 
 ---
