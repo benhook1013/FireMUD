@@ -10,7 +10,8 @@ Each microservice has its own unit and integration tests. Cross‑service scenar
 
 - **Unit tests** live under each service in `src/test/java/unit/`.
 - **Integration tests** for that service live in `src/test/java/integration/` and may start Redis, Postgres, or other dependencies on demand.
-- **Cross-service integration tests** exercise workflows that span multiple services. These tests are present under each service in `src/test/java/crossservice/` and start companion containers with Testcontainers. Gradle tasks to run them directly are planned (TODO: Not yet implemented). For now they can be executed manually with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"` once the service images are built.
+- **Cross-service integration tests** exercise workflows that span multiple services. These tests are present under each service in `src/test/java/crossservice/` and start companion containers with Testcontainers. Docker images for companion services must be available locally or pulled from GHCR. Gradle tasks to run them directly are planned (TODO: Not yet implemented). For now they can be executed manually with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"` once the service images are built.
+- Many of these tests are annotated with `@Testcontainers(disabledWithoutDocker = true)` so they are skipped when Docker is unavailable.
 - **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. These tests are run manually when preparing a major release.
 
 Test data seeding strategies are still under discussion. The script `dev-tools/seed-test-data.sh` can populate a minimal world for local testing, but an automated approach for integration tests is still planned (TODO: Not yet implemented).
@@ -23,7 +24,7 @@ Test data seeding strategies are still under discussion. The script `dev-tools/s
 - **Spring Test** bootstraps service contexts and external resources.
 - **Gatling** drives load testing scenarios.
 
-The repository uses a hierarchical Gradle setup. The root `build.gradle` delegates to per‑service builds. Currently each service exposes the standard `test` task only; additional `integrationTest` and cross‑service tasks will be added in future revisions (TODO: Not yet implemented). Example commands:
+The repository uses a hierarchical Gradle setup. The root `build.gradle.kts` delegates to per‑service builds. Currently each service exposes the standard `test` task only; additional `integrationTest` and cross‑service tasks will be added in future revisions (TODO: Not yet implemented). Example commands:
 
 ```bash
 ./gradlew :service-name:test
@@ -31,7 +32,7 @@ The repository uses a hierarchical Gradle setup. The root `build.gradle` delegat
 ./gradlew crossServiceTest                # planned
 ```
 
-Unit and integration tests run automatically in GitHub Actions through the Gradle `check` task. Cross-service tests can be triggered manually when preparing a release.
+Unit and integration tests run automatically in GitHub Actions through a matrix of `:service-name:check` tasks. Cross-service tests can be triggered manually when preparing a release.
 
 ## 💡 Cross-Service Integration Plan
 
@@ -55,7 +56,7 @@ These tests validate saga orchestration logic. A dedicated `crossServiceTest` ta
 
 ## 🚦 CI/CD Integration
 
-GitHub Actions executes formatting and lint checks, builds the code, and runs all unit and integration tests via `./gradlew check`. Coverage reports are generated and a Trivy security scan is executed. See the [CI/CD Pipeline](./system-architecture-cicd.md) document for the workflow definition.
+GitHub Actions executes formatting and lint checks, builds the code, and runs all unit and integration tests via `:service-name:check` for each module. Coverage reports are generated and a Trivy security scan is executed. See the [CI/CD Pipeline](./system-architecture-cicd.md) document for the workflow definition.
 
 Load testing is executed on demand outside of CI and does not block deployments.
 

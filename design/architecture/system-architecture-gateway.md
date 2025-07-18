@@ -16,6 +16,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - **Stateless and horizontally scalable** – no sticky sessions required
 - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
+- Gateway restarts are expected to automatically re-establish WebSocket connections to backend services. (TODO: Not yet implemented)
 - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](../system-architecture-security.md#🌐-network-security--boundary-design) for details.
 
 > **Important:**
@@ -30,7 +31,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Kubernetes DNS-based service names configured in the `prod` profile of
   `application.yml` (used in production)
 - Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
-- Initial route targets are fixed, but future versions will allow overrides via environment variables prefixed `FIREMUD_SERVICES_`; see [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery). (TODO: Not yet implemented)
+- Initial route targets are fixed. Future versions will allow overrides using environment variables prefixed `FIREMUD_SERVICES_`, consistent with `ServiceEndpointsProperties`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery). (TODO: Not yet implemented)
 
 ---
 

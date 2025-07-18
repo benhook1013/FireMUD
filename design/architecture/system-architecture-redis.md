@@ -134,7 +134,7 @@ Redis **does not support cross-shard operations**. All tick locks, Lua scripts,
 and queued commands execute on a **single shard** aligned to the tick region.
 When an action crosses regional boundaries (for example a player moving between
 rooms on different shards) the Game Session Service decomposes the transition
-into **two sequential ticks**:
+into **two sequential ticks** (TODO: Not yet implemented):
 
 1. **Tick&nbsp;A** on _Shard&nbsp;X_ performs exit logic and clears local state.
 2. **Tick&nbsp;B** on _Shard&nbsp;Y_ applies entry logic and rebinds the
