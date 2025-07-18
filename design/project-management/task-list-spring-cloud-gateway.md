@@ -11,6 +11,7 @@
   - [x] Allow creation of custom gateway routes via API
   - [x] Add gRPC `GatewayManagementService` for remote route configuration
 
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 ## Reusable Microservice Checklist
 
 These tasks apply to every FireMUD service unless noted otherwise. Gateway and

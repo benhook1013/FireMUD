@@ -1,6 +1,6 @@
 # MCP Support for AI-Assisted Game Creation
 
-This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP) to enable richer tooling for AI-assisted game creation. The protocol reference can be found in the [Model Context Protocol repository](https://github.com/modelcontextprotocol).
+This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP) to enable richer tooling for AI-assisted game creation. The protocol reference can be found at <https://www.moo.mud.org/mcp/mcp2.html>.
 
 ## 🎯 Goals
 
@@ -10,7 +10,7 @@ This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP
 
 ## Overview
 
-The TCP Proxy Service will negotiate MCP with connecting clients. (TODO: Not yet implemented)
+The TCP Proxy Service will negotiate MCP with connecting clients and fall back to plain Telnet when unsupported. (TODO: Not yet implemented)
 When MCP is enabled, JSON payloads are exchanged inside MCP packages. (TODO: Not yet implemented)
 The Game Design Service will expose commands for creating and updating content. (TODO: Not yet implemented)
 These commands will be wrapped in MCP messages so external tools, including AI assistants, can drive world creation. (TODO: Not yet implemented)
@@ -30,5 +30,6 @@ Future enhancements will include bulk import and transaction support for batch c
 
 - [Game Design Service](./microservices/game-design-service/README.md)
 - [TCP Proxy Service](./microservices/tcp-proxy-service/README.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [Modding Framework](./microservices/game-design-service/modding-framework.md)
 - [User Journeys – Extensibility & External Tools](./user-journeys.md#21-extensibility--external-tools)

@@ -19,8 +19,9 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 ## 🔧 Utility Packages
 
-- **Logging Utilities** – `LoggingUtil` wraps SLF4J. Saga workflows automatically
-  attach a `correlationId` via `SagaRunner` for cross-service tracing.
+- **Logging Utilities** – `LoggingUtil` is a thin SLF4J wrapper. The
+  `LoggingInterceptor` and `SagaRunner` attach a `correlationId` using MDC so logs
+  from different services can be correlated.
 - **Security Utilities** – `JwtUtil` for verifying tokens (and building them
   within the Account Service only) plus `AuthTokenInterceptor`,
   `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for
@@ -35,7 +36,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. `GrpcServerTlsReloader` is defined but not yet wired into the services (TODO: Not yet implemented). These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` exists but is not yet integrated with the running servers (TODO: Not yet implemented). These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
