@@ -6,7 +6,9 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
 
 ## 🚀 Deployment
 
-1. **CI Pipeline** builds Docker images and pushes them to GHCR. See
+1. **CI Pipeline** builds Docker images and pushes them to GHCR. Kubernetes
+   rollouts are triggered manually using Helm until pipeline automation is
+   complete. (TODO: Not yet implemented) See
    [CI/CD Pipeline](./system-architecture-cicd.md) for workflow details.
 2. **Helm Charts** deploy each microservice. Install the umbrella chart with:
 
@@ -18,7 +20,8 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
 4. Monitor rollout progress in the CI job summary. Planned Grafana dashboards
    will provide additional visibility. (TODO: Not yet implemented)
 
-For local development, use `./gradlew devUp` to start Docker Compose.
+For local development, use `./gradlew devUp` to start Docker Compose and
+`./gradlew devDown` when finished.
 
 ## 📈 Scaling
 

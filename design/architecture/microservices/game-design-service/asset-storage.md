@@ -15,13 +15,14 @@ The `game_assets` table stores the raw binary data. Columns include:
 - `created_at` – upload timestamp
 
 The `data` column uses PostgreSQL `BYTEA` type to store the file contents.
-When returned in JSON, this byte array is Base64 encoded by default.
+When returned by the REST API this byte array is Base64 encoded by default so the JSON response remains text based.
 
 An index named `idx_game_assets_tenant` speeds up queries scoped to a tenant.
+The schema, including this index, lives in `V3__game_assets.sql` under the service's `db/migration` folder.
 
 ## API
 
-Assets are uploaded via `POST /assets` and the saved record, including the binary `data` field, is returned as a `GameAssetDto`.
+Assets are uploaded via `POST /assets` using a `multipart/form-data` request and the saved record, including the binary `data` field, is returned as a `GameAssetDto`.
 See the [OpenAPI specification](../../../../services/game-design-service/src/main/resources/openapi.yaml) for request details.
 Endpoints for downloading or deleting assets are not provided yet. (TODO: Not yet implemented)
 There is also no gRPC endpoint for asset management at this time. (TODO: Not yet implemented)

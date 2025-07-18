@@ -23,6 +23,8 @@
   - [x] Implement event-driven scripting API for game creators
   - [x] Implement in-game modding/plugin framework
   - [x] Implement scripted AI behaviors for NPCs
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Add MCP commands for room and item editing
 
 ## Versioning & Runtime Configuration
 
