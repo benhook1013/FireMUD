@@ -2,6 +2,8 @@
 
 This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features. Runtime invocation is planned but not yet implemented. (TODO: Not yet implemented)
 
+Currently the only implemented generator is `SimpleDungeonGenerator`. The `OverworldMapGenerator` referenced below is planned for a future release. (TODO: Not yet implemented)
+
 Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content, or fully generate open worlds without requiring hand-authored maps.
 
 ---
@@ -96,7 +98,9 @@ The following rules align generators with the core runtime and tooling:
 4. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone. Basic hooks exist but full script-driven population is pending. (TODO: Not yet implemented)
 5. **Validation and Errors** – Generators validate parameters. Room count checks are implemented, while biome compatibility and connectivity validation are pending (TODO: Not yet implemented). Failures return `GenerationErrorDetail` objects and are logged for observability.
 6. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output. (TODO: Not yet implemented)
-7. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service for future scripted or DSL-based generators.
+7. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service. Discovery currently relies on Spring bean scanning and may be extended for scripted or DSL-based generators. (TODO: Not yet implemented)
+
+Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. (TODO: Not yet implemented)
 
 ---
 
