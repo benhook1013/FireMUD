@@ -6,10 +6,10 @@ Centralized logging and administration tools for the platform. Collects log data
 
 ### Responsibilities
 
-- Aggregate logs and metrics from every microservice
-- Offer dashboards and search for operators and moderators
+- Aggregate logs from every microservice
+- Offer dashboards and search for operators and moderators. (TODO: Not yet implemented)
 - Enforce moderation actions such as bans via secured APIs
-- Record audit trails for feature flag changes and account events
+- Record audit trails for feature flag changes and account events. (TODO: Not yet implemented)
 
 ## Architecture / Design Notes
 
@@ -50,7 +50,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ### Moderation Workflow
 
-- Operators review flagged logs through the web UI.
+- Operators review flagged logs through the web UI. (TODO: Not yet implemented)
 - Actions such as bans or warnings are issued via secured API calls.
 - Events are forwarded to the Account Service for enforcement and stored for
   compliance purposes.
