@@ -11,6 +11,10 @@
   - [x] Use saga orchestrator for world creation workflow
   - [x] Provide tools to fine-tune procedural generation rules
   - [x] Support multi-server world shards
+  - [ ] Publish world change events to Game Session and Automation services
+  - [ ] Expose gRPC API for pathfinding queries
+  - [ ] Track character locations in a `character_location` table
+  - [ ] Implement chunk-based world snapshots for backups and recovery
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
