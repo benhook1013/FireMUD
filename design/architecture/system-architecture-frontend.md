@@ -1,6 +1,6 @@
 # 🎨 FireMUD System Architecture: Frontend Architecture
 
-This document describes the structure and tooling for FireMUD's browser-based user interfaces. React and Material-UI are assumed, but this guide explains how the components, state management, and API calls are organized.
+This document describes the structure and tooling for FireMUD's browser-based user interfaces. FireMUD uses React and Material‑UI; this guide explains how the components, state management, and API calls are organized.
 
 ---
 
@@ -23,7 +23,7 @@ web-client/
       ...
 ```
 
-- **Pages** represent top-level routes and compose smaller **UI widgets**.
+- **Pages** represent top-level routes and compose smaller **UI widgets**. (TODO: Not yet implemented)
 - Reusable UI elements live under a shared `components/` directory. (TODO: Not yet implemented)
 - Material-UI provides the base widgets and theme customization.
 
