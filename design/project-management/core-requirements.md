@@ -48,11 +48,11 @@ This document outlines the **core functional and non-functional requirements** f
 - The platform must provide **secure authentication and user management**.
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
-- Sessions should support **persistent logins and reconnection handling**.
+- Sessions should support **persistent logins and reconnection handling**. (TODO: Not yet implemented)
 - **Expanded Account Features**:
   - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
   - Profiles should include **game history, achievements, and social features**. (TODO: Not yet implemented)
-  - Persistent session tracking to **ensure seamless reconnection across devices**.
+  - Persistent session tracking to **ensure seamless reconnection across devices**. (TODO: Not yet implemented)
 See [Account Service](../architecture/microservices/account-service/README.md) for implementation details.
 
 ### 2.4 Game World & Entity Management
@@ -82,9 +82,9 @@ See [Game Logic Service](../architecture/microservices/game-logic-service/README
 ### 2.6 Real-Time Multiplayer & Communication
 
 - **WebSockets/TCP-based real-time networking** for player interactions.
-- In-game **chat system, mail messaging, and guild/group communications**.
+- In-game **chat system, mail messaging, and guild/group communications**. (TODO: Not yet implemented)
 - **PvP & cooperative multiplayer support**. (TODO: Not yet implemented)
-- **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff.
+- **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff. (TODO: Not yet implemented)
 See [Social & Groups Service](../architecture/microservices/social-groups-service/README.md) for chat and guild features.
 
 ### 2.7 Extensibility & Game Customization
@@ -99,14 +99,13 @@ See [Social & Groups Service](../architecture/microservices/social-groups-servic
 - **Item & equipment balancing tools** to allow game creators to tweak in-game balance. (TODO: Not yet implemented)
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for authoring tools.
 
-
 ### 2.8 Moderation, Administration & Monetization
 
 - **Admin dashboard** for monitoring and moderating hosted games. (TODO: Not yet implemented)
 - **In-game reporting & ban system** for handling violations. (TODO: Not yet implemented)
 - **Moderation policy definitions** including profanity filters. (TODO: Not yet implemented)
 - **Central analytics dashboards and logging** for tracking player activity and game performance. (TODO: Not yet implemented)
-- **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for details.
+- **Runtime feature flags** are defined in the **Game Design Service**, stored and managed by the **Game Session Service**, and can be toggled through the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md) for details. (TODO: Not yet implemented)
 - **Monetization & Payment System**:
   - The platform integrates **Stripe or similar services** for in-game purchases.
   - Game creators can offer **subscriptions, one-time purchases, and donations**.
@@ -120,9 +119,9 @@ See [Logging & Admin Service](../architecture/microservices/logging-admin-servic
 ### 2.9 Versioning & Runtime Configuration
 
 - The **Game Design Service** publishes immutable game versions identified by a `version_id`.
-- Domain services copy design data by `version_id` and do not query the design database at runtime.
+- Domain services copy design data by `version_id` and do not query the design database at runtime. (TODO: Not yet implemented)
 - The **Game Session Service** activates the desired `version_id` when starting a game instance.
-- Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
+- Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
 - The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time. (TODO: Not yet implemented)
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.
 
