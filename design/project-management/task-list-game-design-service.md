@@ -26,12 +26,16 @@
   - [x] Implement event-driven scripting API for game creators
   - [x] Implement in-game modding/plugin framework
   - [x] Implement scripted AI behaviors for NPCs
+  - [ ] Notify downstream services when new versions are published
+  - [ ] Add import/export of design assets for sharing between games
+  - [ ] Add `owner_id` association to games and API
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [ ] Add MCP commands for room and item editing
 
 ## Versioning & Runtime Configuration
 
 - [x] Implement cross-service game version publishing workflow
+  - [ ] Create `runtime_flag` table and API for flag definitions
 - [x] Store immutable versions in the Game Design Service
 - [x] Copy published data to domain services using the `version_id`
   - [x] Activate versions and runtime flags via the Game Session Service

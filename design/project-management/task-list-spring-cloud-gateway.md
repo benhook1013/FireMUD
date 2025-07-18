@@ -11,6 +11,10 @@
   - [x] Allow creation of custom gateway routes via API
   - [x] Add gRPC `GatewayManagementService` for remote route configuration
 
+  - [ ] Automatically re-establish WebSocket tunnels on restart
+  - [ ] Allow route target overrides via FIREMUD_SERVICES_* env vars
+  - [ ] Persist dynamic routes in the route_config table
+  - [ ] Trace WebSocket requests and responses for observability
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 ## Reusable Microservice Checklist
 

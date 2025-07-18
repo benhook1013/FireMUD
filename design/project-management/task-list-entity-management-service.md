@@ -9,6 +9,7 @@
   - [x] Implement cross-game account linking (allow single account across multiple hosted games)
   - [x] Implement entity graph caching for fast lookups
   - [x] Support complex crafting recipes
+  - [ ] Copy published version data into entity schema via Saga
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
