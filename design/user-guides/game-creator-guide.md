@@ -27,7 +27,7 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
   [Role-Based Admin UI](../architecture/microservices/logging-admin-service/admin-ui.md)
   documentation.
   (TODO: Not yet implemented)
-- **Multi-Tenancy** – Each game is isolated by a unique identifier so you can manage multiple worlds from one account.
+- **Multi-Tenancy** – Each game is isolated by a unique identifier so you can manage multiple worlds from one account. (TODO: Not yet implemented)
 
 ## Scripting & Integration API
 

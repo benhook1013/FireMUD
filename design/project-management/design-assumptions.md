@@ -45,7 +45,7 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ## Frontend
 
-- **Language**: JavaScript
+- **Language**: TypeScript
 - **Framework**: React
 - **Styling**: Material-UI
 

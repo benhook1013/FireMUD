@@ -35,7 +35,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. `GrpcServerTlsReloader` is defined but not yet wired into the services (TODO: Not yet implemented). These watchers monitor files referenced by `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. `GrpcServerTlsReloader` is defined but not yet wired into the services (TODO: Not yet implemented). These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
@@ -44,7 +44,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 The shared code is built as a **Gradle Java library** and published to **GitHub Packages** so all services can depend on it.
 
-1. Define a Gradle module (e.g., `common-library`) with the `java-library` plugin.
+1. Define a Gradle module (e.g., `common-library`) with the `java-library` plugin. A separate `protos` subproject publishes the `firemud-protos` artifact containing all shared `.proto` files.
 2. Configure publishing to GitHub Packages using `maven-publish`:
 
    ```kotlin

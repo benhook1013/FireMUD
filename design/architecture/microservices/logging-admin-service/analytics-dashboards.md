@@ -2,14 +2,14 @@
 
 This document describes the default Grafana and Kibana dashboards shipped with the
 **Logging & Admin Service**.
-They give operators visibility into game health, player activity, and moderation trends.
+These dashboards provide operators with visibility into game health, player activity, and moderation trends.
 Sample JSON templates live under [`design/observability`](../../observability) for local testing.
 
 > **Status: In Progress** – Many dashboards are placeholders. Additional real-time analytics and export options are planned.
 
 ## Grafana Dashboards
 
-- **Service Overview** – CPU, memory, and request rates for each microservice. See `service-overview.json`.
+- **Service Overview** – CPU, memory, and request rates for each microservice. See `service-overview.json`. (TODO: Not yet implemented)
 - **Game Sessions** – active player counts, tick durations, and command latency. (TODO: Not yet implemented)
 - **Database Health** – PostgreSQL connection statistics and slow query logs. (TODO: Not yet implemented)
 - **Redis Metrics** – cache hit ratios and eviction counts. (TODO: Not yet implemented)
@@ -20,11 +20,9 @@ Operators can adjust queries or add panels to suit their games.
 
 ## Kibana Dashboards
 
-- **Log Volume** – ingest rates, log levels, and error hotspots. See `log-volume.json`.
-- **Player Reports** – breakdown of abuse or bug reports by category.
-  (TODO: Not yet implemented)
-- **Moderation Actions** – bans, warnings, and feature toggles over time.
-  (TODO: Not yet implemented)
+- **Log Volume** – ingest rates, log levels, and error hotspots. See `log-volume.json`. (TODO: Not yet implemented)
+- **Player Reports** – breakdown of abuse or bug reports by category. (TODO: Not yet implemented)
+- **Moderation Actions** – bans, warnings, and feature toggles over time. (TODO: Not yet implemented)
 - **Search by Trace ID** – correlate logs and traces using the `traceId` field. (TODO: Not yet implemented)
 
 These dashboards rely on structured JSON logs shipped via Fluent Bit.
