@@ -67,16 +67,16 @@ Creators refine the world and its inhabitants using several services:
 
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors (TODO: Not yet implemented), and runtime flag definitions (TODO: Not yet implemented).
 - **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data (TODO: Not yet implemented). Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
-- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service.
+- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service. (TODO: Not yet implemented)
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md). (TODO: Not yet implemented)
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation. (TODO: Not yet implemented)
-- [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
+- [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks. (TODO: Not yet implemented)
 - **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing. (TODO: Not yet implemented)
 - **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md). (TODO: Not yet implemented)
 - **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md). (TODO: Not yet implemented)
 - **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing. *Status: In Progress – not yet production ready.* (TODO: Not yet implemented)
-- **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
-- **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
+- **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). (TODO: Not yet implemented)
+- **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects. (TODO: Not yet implemented)
 
 ```plaintext
 Game Design ↔ World Management ↔ Entity Management
@@ -88,7 +88,7 @@ Game Design ↔ World Management ↔ Entity Management
 
 Dynamic behavior is implemented via the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md):
 
-- Script quests and NPC routines.
+- Script quests and NPC routines. (TODO: Not yet implemented)
 - Trigger world events in response to player actions. (TODO: Not yet implemented)
 - See [Scripting & Automation Framework](./system-architecture-scripting.md) for
   details on the component-based DSL and sandboxing model.
@@ -113,9 +113,9 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 Players create or select a character before entering the world:
 
-1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account.
+1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account. (TODO: Not yet implemented)
 2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md). (TODO: Not yet implemented)
-3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service.
+3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service. (TODO: Not yet implemented)
 
 ```plaintext
 Account Service → Game Design Service → Entity Management Service
