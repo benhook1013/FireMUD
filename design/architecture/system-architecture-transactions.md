@@ -45,7 +45,7 @@ Sagas are only used for **non-tick, multi-service workflows** involving persiste
 | **Account Creation**  | Create account → provision default character → initialize world state |
 | **Game Publishing**   | Validate and persist design → push to World Service → toggle publish flags (TODO: Not yet implemented) |
 | **Admin Operations**  | Issue bans, content revocation, or entity cleanup with audit logging (TODO: Not yet implemented) |
-| **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
+| **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety (TODO: Not yet implemented) |
 
 These workflows:
 
@@ -78,7 +78,7 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
-  - All steps are **idempotent**
+  - All steps are **idempotent** (TODO: Not yet enforced)
   - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
   - Retried automatically or flagged for manual review (TODO: Not yet implemented)
