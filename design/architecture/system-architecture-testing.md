@@ -10,9 +10,9 @@ Each microservice has its own unit and integration tests. Cross‑service scenar
 
 - **Unit tests** live under each service in `src/test/java/unit/`.
 - **Integration tests** for that service live in `src/test/java/integration/` and may start Redis, Postgres, or other dependencies on demand.
-- **Cross-service integration tests** exercise workflows that span multiple services. These tests are present under each service in `src/test/java/crossservice/` and start companion containers with Testcontainers. Docker images for companion services must be available locally or pulled from GHCR. Gradle tasks to run them directly are planned (TODO: Not yet implemented). For now they can be executed manually with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"` once the service images are built.
+- **Cross-service integration tests** exercise workflows that span multiple services. These tests are present under each service in `src/test/java/crossservice/` and start companion containers with Testcontainers. Docker images for companion services must be available locally or pulled from GHCR. Gradle tasks to run them directly are planned (TODO: Not yet implemented). For now they can be executed manually with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"` once the images are built (for example via `./gradlew buildDockerImages`).
 - Many of these tests are annotated with `@Testcontainers(disabledWithoutDocker = true)` so they are skipped when Docker is unavailable.
-- **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. These tests are run manually when preparing a major release.
+- **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. These tests are run manually when preparing a major release. Automating them in CI is planned (TODO: Not yet implemented).
 
 Test data seeding strategies are still under discussion. The script `dev-tools/seed-test-data.sh` can populate a minimal world for local testing, but an automated approach for integration tests is still planned (TODO: Not yet implemented).
 
@@ -32,7 +32,7 @@ The repository uses a hierarchical Gradle setup. The root `build.gradle.kts` del
 ./gradlew crossServiceTest                # planned
 ```
 
-Unit and integration tests run automatically in GitHub Actions through a matrix of `:service-name:check` tasks. Cross-service tests can be triggered manually when preparing a release.
+Unit and integration tests run automatically in GitHub Actions through a matrix of `:service-name:check` tasks. Cross-service tests can be triggered manually when preparing a release. A unified `crossServiceTest` Gradle task will run them collectively (TODO: Not yet implemented).
 
 ## 💡 Cross-Service Integration Plan
 
