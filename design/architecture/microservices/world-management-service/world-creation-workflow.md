@@ -3,22 +3,24 @@
 World creation is a long running process that copies design data and prepares the
 initial world state for a new game instance. The workflow uses the shared
 **Saga** utilities from `firemud-common` so each step can be rolled back if
-another step fails. At the time of writing the service only inserts a starter
-region and schedules placeholder events; full data copy from the Game Design
-Service is still planned.
+another step fails. The process is triggered by `WorldCreationService` when a
+tenant launches a new game world. At the time of writing the service only
+inserts a starter region and schedules placeholder events; full data copy from
+the Game Design Service is still planned. (TODO: Not yet implemented)
 
 ## Steps
 
 1. **Copy Design Data & Create Starter Region** – fetches the published version
    from the Game Design Service and inserts an initial region using the local
-   shard configuration. Additional regions will be added once more design data is
-   available. (TODO: Not yet implemented)
-2. **Schedule Initial Events** – inserts world events like weather initialization
-   so the scheduler can apply them after the world starts. (TODO: Not yet
-   implemented)
+   shard configuration (`WORLD_LOCAL_SHARD_ID`).
+   Additional regions will be added once more design data is available.
+   (TODO: Not yet implemented)
+2. **Schedule Initial Events** – inserts world events such as an initial
+   weather state so `WorldEventService` can apply them after the world
+   starts. (TODO: Not yet implemented)
 
 Additional steps may be added for large games
-such as generating terrain chunks or spawning default NPCs.
+such as generating terrain chunks or spawning default NPCs. (TODO: Not yet implemented)
 
 ```java
 new SagaBuilder()
@@ -33,6 +35,8 @@ new SagaBuilder()
 The saga state is stored in the `saga_instance` and `saga_step` tables defined
 in the common library. Operators can inspect progress through the Logging &
 Admin Service's saga dashboard.
+
+See [World Management Service](README.md) for additional service context.
 
 See [Transaction Strategies](../system-architecture-transactions.md) for
 background on how sagas are used across FireMUD.

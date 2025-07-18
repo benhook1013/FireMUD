@@ -23,7 +23,7 @@ All real-time gameplay logic — movement, combat, item use, AI — is executed 
 - Executed using deterministic game logic
 - Staged in Redis with rollback support via Lua
 - Committed only if successful
-- Automatically retried on failure (e.g., lock contention)
+- Automatically retried on failure (e.g., lock contention) (TODO: Not yet implemented)
 
 This model provides:
 
@@ -43,8 +43,8 @@ Sagas are only used for **non-tick, multi-service workflows** involving persiste
 | Use Case              | Description |
 |-----------------------|-------------|
 | **Account Creation**  | Create account → provision default character → initialize world state |
-| **Game Publishing**   | Validate and persist design → push to World Service → toggle publish flags |
-| **Admin Operations**  | Issue bans, content revocation, or entity cleanup with audit logging |
+| **Game Publishing**   | Validate and persist design → push to World Service → toggle publish flags (TODO: Not yet implemented) |
+| **Admin Operations**  | Issue bans, content revocation, or entity cleanup with audit logging (TODO: Not yet implemented) |
 | **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
 
 These workflows:
@@ -136,4 +136,3 @@ Use Redis rollback + tick retries for fast, fair, and consistent gameplay handli
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [Shared Libraries Overview](./system-architecture-shared-libraries.md)
 - [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
-- [Logging & Admin Service README](./microservices/logging-admin-service/README.md)
