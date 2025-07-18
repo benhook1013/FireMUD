@@ -1,9 +1,11 @@
 # Spring Cloud Gateway Task List
 
 ## Design
+
 - [x] Finalize Spring Cloud Gateway design
 
 ## Core Gateway
+
 - [x] Handle API routing and request validation
 - [x] Terminate TLS and forward traffic to internal services using mTLS
 - [x] Collect connection metrics and throttle abusive clients
@@ -13,6 +15,7 @@
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Dynamic Route Management
+
 - [x] Create gateway route configuration files for all services
 - [x] Create `GatewayController` endpoints for dynamic route management
 - [x] Allow creation of custom gateway routes via API

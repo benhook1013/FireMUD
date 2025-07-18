@@ -22,11 +22,9 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
   uses plain WebSocket connections; mutual TLS support is planned. (TODO: Not yet implemented)
   See [Security Architecture](../system-architecture-security.md).
 - Runs in the network DMZ and never contacts internal services directly.
-- Sanitizes incoming Telnet data and enforces a whitelist of
-   **Telnet protocol commands** as described in the
-   [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
- - Applies connection throttling via `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and optional TLS termination controlled by `TCP_PROXY_TLS_ENABLED`.
- - Enforces per-client message rate limits via `TCP_PROXY_MAX_MSGS_PER_SEC`.
+- Sanitizes incoming Telnet data and enforces a whitelist of **Telnet protocol commands** as described in the [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+- Applies connection throttling via `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and optional TLS termination controlled by `TCP_PROXY_TLS_ENABLED`.
+- Enforces per-client message rate limits via `TCP_PROXY_MAX_MSGS_PER_SEC`.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features

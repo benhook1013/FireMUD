@@ -1,6 +1,7 @@
 # Game Design Service Task List
 
 ## Game Templates & Publishing
+
 - [x] Provide game templates and configuration tools
 - [x] Enable publishing of game versions
 - [x] Use saga orchestrator for game publishing workflow
@@ -8,6 +9,7 @@
 - [x] Create design-time database models
 
 ## Design Tools
+
 - [x] Implement world editing & customization tools
 - [x] Implement scripting & event design tools
 - [x] Build a **visual scripting editor** using a **component-based DSL**
@@ -25,6 +27,7 @@
   - [ ] Copy assets to runtime services when publishing versions
 
 ## Scripting & Modding
+
 - [x] Implement event-driven scripting API for game creators
 - [x] Implement in-game modding/plugin framework
 - [x] Implement scripted AI behaviors for NPCs
@@ -33,6 +36,7 @@
 - [ ] Add `owner_id` association to games and API
 
 ## Admin & Security
+
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [ ] Add MCP commands for room and item editing
 
