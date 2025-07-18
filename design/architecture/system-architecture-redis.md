@@ -45,19 +45,19 @@ Redis is a **non-persistent** layer — but FireMUD treats it as **essential** f
 
 ### Cluster Deployment
 
-FireMUD runs Redis in a **clustered, replicated configuration**:
+FireMUD runs Redis in a **clustered, replicated configuration** (TODO: Not yet implemented):
 
 - Multiple **shards and replicas** for tick region and session partitioning (TODO: Not yet implemented)
 - Partitioning aligns with tick region boundaries (typically per-room or per-segment) (TODO: Not yet implemented)
 - Kubernetes-native failover (TODO: Not yet implemented)
 - **Failover behavior is tested under live tick loads** (TODO: Not yet implemented)
-- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff.
+- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff. (TODO: Not yet implemented)
 
 > For operational context on Docker Compose vs Kubernetes, see [Deployment Environments](./infrastructure/deployment-environments.md).
 
 ### Replication and Durability
 
-- Writes are **asynchronously replicated**
+- Writes are **asynchronously replicated** (TODO: Not yet implemented)
 - **AOF (Append-Only File)** enabled for durability and crash recovery
 - AOF files are wiped on each Helm upgrade to start with a clean state
   (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment))
