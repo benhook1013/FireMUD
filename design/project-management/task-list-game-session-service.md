@@ -13,6 +13,10 @@
   - [x] Plan for cross-region sharding and session handoff
   - [x] Implement `game_manifest` table for version coordination
   - [x] Emit gameplay analytics for operators
+  - [ ] Track login attempts per IP and temporarily blacklist repeated failures
+  - [ ] Send notification emails for suspicious login activity
+  - [ ] Detect command spam or abnormal tick patterns using abuse heuristics
+  - [ ] Implement graceful degradation when Redis operations stall to avoid gameplay interruption
 
 ## Reusable Microservice Checklist
 
