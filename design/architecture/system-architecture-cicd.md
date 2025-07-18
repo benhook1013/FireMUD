@@ -60,14 +60,15 @@ jobs:
         run: ./gradlew check
 ```
 
-The example above checks out the repository, sets up Java 21, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel. The workflow also executes nightly at **3 AM UTC** via the `schedule` trigger so dependencies are scanned regularly.
+The example above checks out the repository, sets up Java 21, and runs a Gradle build. Each microservice can be built in a matrix strategy so jobs run in parallel. All CI jobs share a concurrency group so new pushes cancel any running workflow for the same branch. The workflow also executes nightly at **3 AM UTC** via the `schedule` trigger so dependencies are scanned regularly.
 
 Other workflows support additional automation:
 
-- `docs.yml` publishes the contents of the `design/` folder to GitHub Pages.
+- `docs.yml` uses the **lychee** link checker before publishing the `design/` folder to GitHub Pages.
 - `codeql.yml` performs static code analysis on each pull request and push to `main`.
 - `license-scan.yml` checks open source dependencies for license compliance.
 - `release-please.yml` creates release pull requests from the `develop` branch.
+- `manual-backup-restore.yml` verifies recent backups and can run a restore test on demand.
 
 ---
 
