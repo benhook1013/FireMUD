@@ -32,7 +32,7 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Distributed tick locks in Redis use short TTLs to prevent deadlocks. Failed
   actions are rolled back and retried automatically.
 - Tick regions execute independently so work can be parallelized across
-  threads and servers for better scalability and fault isolation.
+  threads and servers for better scalability and fault isolation. (TODO: Not yet implemented)
 - The Automation & Scripting Service evaluates scripts on its own schedule and
   injects resulting commands into tick queues. Per-script quotas are enforced
   via Redis before queuing to avoid runaway automation.
@@ -56,7 +56,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   Prometheus can track request latency and call frequency.
 - Redis runs with **AOF persistence** and synchronous replication via `WAIT`
   so tick state can be recovered quickly after failover. The Game Session
-  Service automatically replays staged commands on restart.
+  Service automatically replays staged commands on restart. (TODO: Not yet implemented)
 - Each tick enforces a **soft execution budget** (~100ms). Slow actions are
   deferred to follow-up ticks so long-running commands never block the game
   loop. Conflict metadata collected during retries highlights hotspots for
