@@ -6,6 +6,8 @@
 - [x] Persist session state in Redis for reconnect recovery
 - [x] Enforce single-session control per character (session takeover on new login)
 - [x] Plan for cross-region sharding and session handoff
+- [ ] Forward TOTP codes to the Account Service during login
+- [ ] Refresh roles in-session when `scopedRoles` are updated
 
 ## Tick Management
 - [x] Implement tick orchestration using Redis for command queues
@@ -18,6 +20,7 @@
 - [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
 - [x] Implement `game_manifest` table for version coordination
 - [x] Emit gameplay analytics for operators
+- [ ] Apply runtime feature flags during tick processing
 
 ## Security
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
