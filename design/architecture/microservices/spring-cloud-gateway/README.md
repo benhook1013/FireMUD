@@ -12,6 +12,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Upgrade WebSocket connections and forward them to backend services
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
+- Expose gRPC management endpoints on port `6565` for dynamic route control
 
 ## Architecture / Design Notes
 
@@ -42,6 +43,7 @@ imported by `application.yml` based on the active profile and reloaded on
 startup. Dynamic routes added via the API are stored only in memory and are
 lost on service restart; persistent storage for these routes is planned.
 (TODO: Not yet implemented)
+A PostgreSQL `route_config` table exists for this purpose but is currently unused. (TODO: Not yet implemented)
 No persistent database is required. The default configuration defines routes
 for the core services so Docker Compose environments work out of the box.
 
