@@ -7,9 +7,10 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
 ## 🚀 Deployment
 
 1. **CI Pipeline** builds Docker images and pushes them to GHCR. Kubernetes
-   rollouts are triggered manually using Helm until pipeline automation is
-   complete. (TODO: Not yet implemented) See
-   [CI/CD Pipeline](./system-architecture-cicd.md) for workflow details.
+   rollouts are triggered manually via the
+   [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml)
+   workflow until pipeline automation is complete. (TODO: Not yet implemented)
+   See [CI/CD Pipeline](./system-architecture-cicd.md) for workflow details.
 2. **Helm Charts** deploy each microservice. Install the umbrella chart with:
 
    ```bash
@@ -69,8 +70,8 @@ For local development, use `./gradlew devUp` to start Docker Compose and
     old `*.sql.gz` files or run `dev-tools/pg-dump-rotate.sh` manually if
     additional cleanup is required.
 2. **Redis Failure**
-   - Redis nodes automatically resync using AOF and replication. Services
-     reconnect on restart. See [Redis Architecture](./system-architecture-redis.md)
+   - Redis nodes automatically resync using AOF and replication. (TODO: Not yet implemented)
+     Services reconnect on restart. See [Redis Architecture](./system-architecture-redis.md)
      for persistence and recovery details.
 3. **Full Cluster Restore**
    - Recreate the cluster using Terraform modules in `k8s/terraform`. See

@@ -82,7 +82,7 @@ specified region.
 ### gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
-- `UpdateWorldState` – persists scheduled changes and notifies listeners.
+- `UpdateWorldState` – applies pending world updates. Notifying other services is planned. (TODO: Not yet implemented)
 
 ## Dependencies
 
@@ -171,7 +171,7 @@ the [Security Architecture](../system-architecture-security.md) for details.
 
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../protos/world-management/v1/world_management_service.proto).
 - `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation.
-- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates.
+- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates. Notifying other services is planned. (TODO: Not yet implemented)
 
 Call the `Ping` method with:
 
@@ -212,4 +212,4 @@ generation engine on the next run.
 
 ## Future Enhancements
 
-- Additional shard balancing strategies.
+- Additional shard balancing strategies. (TODO: Not yet implemented)

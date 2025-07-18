@@ -6,7 +6,7 @@ This document describes the structure and tooling for FireMUD's browser-based us
 
 ## 📐 Component Hierarchy
 
-FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling. The current code base still uses a flatter structure and will transition to this layout. (TODO: Not yet implemented)
+FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling. The current code base still uses a flatter structure under `web-client/src/` and will transition to this layout. (TODO: Not yet implemented)
 
 ```text
 web-client/
@@ -38,7 +38,7 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 
 ## 🔗 API Usage Patterns
 
-All API communication is handled by **RTK Query** services defined in `src/api/`. These services generate typed React hooks (for example, `useLoginMutation` and `useFetchCharacterQuery`) that components call directly. (TODO: Not yet implemented)
+All API communication is handled by **RTK Query** services defined in `src/api/`. Currently only a few example endpoints live in `firemudApi.ts`; additional APIs such as login and character retrieval will follow the same pattern. (TODO: Not yet implemented)
 
 RTK Query automatically handles:
 
@@ -56,9 +56,11 @@ The frontend uses **Vite** for fast development and production builds:
 - `npm run dev` starts the local development server with hot module replacement.
 - `npm run build` produces an optimized bundle under `dist/`.
 - `npm run preview` serves the production bundle locally for verification.
-- `npm run test` runs unit tests with Jest and React Testing Library. (TODO: Not yet implemented)
+- `npm run test` will run unit tests with Jest and React Testing Library. The script is not yet defined. (TODO: Not yet implemented)
 - `npm run lint` and `npm run format` ensure consistent code style.
 - `npm run accessibility` audits the compiled site with axe-core. (TODO: Not yet implemented)
+
+See `web-client/README.md` for additional setup tips.
 
 TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce coding standards consistent with the rest of the project.
 
@@ -67,6 +69,7 @@ RTK Query works out of the box with Redux Toolkit and TypeScript. API code gener
 ## 🎨 Game-Specific Customization (Planned) (TODO: Not yet implemented)
 
 See [Game Customization Options](./game-customization-options.md) for the broader design.
+Game-specific themes rely on the multi-tenant model described in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 
 FireMUD aims to let each hosted game supply its own UI styling and layout tweaks.
 

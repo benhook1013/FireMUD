@@ -1,8 +1,8 @@
 # In-Game Modding and Plugin Framework
 
-This document sketches the planned modding system that allows administrators to extend a published game without republishing a full version.
-
+This document sketches the planned modding system that allows administrators to extend a published game without republishing a full version. (TODO: Not yet implemented)
 > **Status: In Progress** – The modding framework is still under active development and not yet available in production.
+Plugins will share the same component-based DSL and sandbox used by the Automation & Scripting Service so custom logic can be hot reloaded safely. Management APIs for enabling or disabling plugins will live in the Logging & Admin Service. (TODO: Not yet implemented)
 
 ## 🎯 Goals
 
@@ -15,7 +15,7 @@ This document sketches the planned modding system that allows administrators to 
 ## Outline
 
 1. Plugins are packaged as signed bundles uploaded through the Game Design Service. (TODO: Not yet implemented)
-2. The Game Design Service validates each bundle's signature before storing it in the asset repository so versions can be tracked. (TODO: Not yet implemented)
+2. The Game Design Service validates each bundle's signature before storing it in the asset repository so versions can be tracked. See [Asset Storage Setup](asset-storage.md). (TODO: Not yet implemented)
 3. The Automation & Scripting Service executes plugin code with strict quotas similar to regular scripts. (TODO: Not yet implemented)
 4. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service. (TODO: Not yet implemented)
 5. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior. (TODO: Not yet implemented)
