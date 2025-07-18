@@ -12,9 +12,9 @@ FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with de
 - **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues** (TODO: Not yet implemented)
 - At regular **tick intervals** (e.g., 1s):
   - A `TickScheduler` in the Game Session Service triggers `processTick` for each active session
-  - One action (if any) is pulled from each entity’s command queue
+  - One action (if any) is pulled from each entity’s command queue (TODO: Not yet implemented)
   - Actions are resolved in FIFO order; stat-based prioritization is planned (TODO: Not yet implemented)
-  - Only **one action per entity per tick** is executed for fairness
+  - Only **one action per entity per tick** is executed for fairness (TODO: Not yet implemented)
   - State changes are applied in a single coordinated pass
 
 This model ensures:
@@ -40,7 +40,7 @@ If a required lock is unavailable:
 
 - The action **fails immediately**
 - All staged changes are rolled back via Lua script
-- The action is **rescheduled for retry** by the Game Session Service
+- The action is **rescheduled for retry** by the Game Session Service (TODO: Not yet implemented)
 
 Conflict metadata is recorded and reported to the Game Session Service, which **reorders future submissions** intelligently. (TODO: Not yet implemented)
 
@@ -104,7 +104,7 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 Each tick proceeds as follows:
 
 1. **Collect Actions**
-   From the command queues of active entities in the tick region
+   From the command queues of active entities in the tick region (TODO: Not yet implemented)
 
 2. **Resolve Fairly**
    Sort by timestamp, stat priority, or custom policy; only one action per entity is executed per tick (TODO: Not yet implemented)

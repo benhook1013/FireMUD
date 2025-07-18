@@ -21,13 +21,13 @@ This brief document summarizes the ways a hosted game can change its look and fe
 - Game worlds are defined entirely through the Game Design Service. Creators can
   add rooms, items and NPCs using the [world editing tools](./microservices/game-design-service/world-editing-tools.md) or by importing JSON files. (TODO: Not yet implemented)
 - Additional design-time utilities like the [ability & action tools](./microservices/game-design-service/ability-action-tools.md) and [item & equipment balancing](./microservices/game-design-service/item-equipment-balancing.md) help tune gameplay without code changes. (TODO: Not yet implemented)
-- Published versions are stored per tenant so multiple games can coexist on the same infrastructure. Minor fixes can be rolled out as **script-only patch versions** linked to a `baseVersionId` so worlds do not need to restart. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details.
+- Published versions are stored per tenant so multiple games can coexist on the same infrastructure. Minor fixes can be rolled out as **script-only patch versions** linked to a `baseVersionId` so worlds do not need to restart. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details. (TODO: Not yet implemented)
 
 ## Scripting Hooks
 
-- Custom scripts drive dynamic events and NPC behaviour.
+- Custom scripts drive dynamic events and NPC behaviour. (TODO: Not yet implemented)
 - The planned [modding framework](./microservices/game-design-service/modding-framework.md) will allow runtime plugins for additional behavior. (TODO: Not yet implemented)
-- Scripts are versioned alongside other game data and can be hot reloaded by the Automation & Scripting Service. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets.
+- Scripts are versioned alongside other game data and can be hot reloaded by the Automation & Scripting Service. Designers may publish a `scriptPatchVersion` like `v42-script.3` to update automation without republishing all assets. (TODO: Not yet implemented)
 
 ## Runtime Settings
 
