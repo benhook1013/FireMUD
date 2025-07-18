@@ -14,6 +14,12 @@
 - [x] Integrate saga metrics and timeout recovery
 - [x] Use saga orchestrator for multi-service admin operations (bans, content revocation)
 - [x] Build role-based admin UI
+- [ ] Add UI for managing runtime feature flags
+- [ ] Record audit trails for feature flag changes and account events
+- [ ] Persist transaction logs for purchases and subscription events
+- [ ] Provide web interface to review flagged logs
+- [ ] Implement playtesting feedback form and store results for analytics
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 

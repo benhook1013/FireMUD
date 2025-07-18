@@ -81,7 +81,7 @@ See [Game Logic Service](../architecture/microservices/game-logic-service/README
 
 ### 2.6 Real-Time Multiplayer & Communication
 
-- **WebSockets/TCP-based real-time networking** for player interactions.
+- **WebSockets/TCP-based real-time networking** for player interactions. (TODO: Not yet implemented)
 - In-game **chat system, mail messaging, and guild/group communications**. (TODO: Not yet implemented)
 - **PvP & cooperative multiplayer support**. (TODO: Not yet implemented)
 - **One active session per character**; new logins immediately replace the existing connection to allow seamless device handoff. (TODO: Not yet implemented)
@@ -137,8 +137,8 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 - **API Gateway** manages requests between microservices and handles external integrations.
 - **Gameplay login is handled by the Game Session Service**; any JWT on admin or REST endpoints is validated by the consuming service. The Gateway and Game Session Service do not validate tokens for gameplay.
 - **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
-- **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
-- Multi-server support enables **scaling hosted games separately**.
+- **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**. (TODO: Not yet implemented)
+- Multi-server support enables **scaling hosted games separately**. (TODO: Not yet implemented)
 See [Gateway Architecture](../architecture/system-architecture-gateway.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for network flow details.
 
 ### 3.2 Persistence & Caching

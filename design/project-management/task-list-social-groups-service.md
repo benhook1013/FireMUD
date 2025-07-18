@@ -9,6 +9,7 @@
   - [x] Implement shared guild storage and alliance system
   - [x] Provide rich moderation tools for chat
   - [x] Add optional voice chat integration
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
   - [x] Use saga orchestrator for guild creation workflow
 
 ## Reusable Microservice Checklist

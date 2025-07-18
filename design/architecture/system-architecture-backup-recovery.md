@@ -13,9 +13,9 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **3 monthly** dumps
 - The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
   a script (`pg-dump.sh`) that enforces the retention policy. When the
-  environment variable `PG_DUMP_BUCKET` is set, the script also uploads each
+  environment variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` are set, the script also uploads each
   dump to the specified S3/MinIO bucket.
-- Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests. See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
+- Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests (`snapshotVolumes: false`). See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
 
 ```yaml
@@ -64,8 +64,7 @@ Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the `firemud-backu
 ### Redis AOF Reset on Deployment
 
 FireMUD wipes Redis state on every deployment. Redis is treated as a transient coordination layer and must always start fresh to ensure consistency with authoritative PostgreSQL data.
-
-During each Helm install or upgrade, a Kubernetes Job automatically deletes the Redis Append‑Only File (AOF) before the application starts:
+During each Helm install or upgrade, a Kubernetes Job (`k8s/helm/firemud/templates/redis-aof-reset-job.yaml`) automatically deletes the Redis Append‑Only File (AOF) before the application starts:
 
 - AOF wipe is triggered via a Helm hook
 - Ensures no stale gameplay state or tick locks remain

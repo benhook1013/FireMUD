@@ -4,7 +4,7 @@
 
 Centralized logging and administration tools for the platform. Collects log data from all services and provides moderation capabilities for game operators.
 
--### Responsibilities
+### Responsibilities
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs
 - Offer dashboards and search for operators and moderators. (TODO: Not yet implemented)
@@ -33,7 +33,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - [Role-based admin UI](./admin-ui.md) for moderators. (TODO: Not yet implemented)
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../system-architecture-transactions.md).
 - [Moderation policies](./moderation-policies.md) including profanity filters. (TODO: Not yet implemented)
-- UI and APIs for toggling runtime feature flags (UI not yet implemented). See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
+- UI for toggling runtime feature flags. Backend APIs are available. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
 - Audit trail for account actions and world changes. (TODO: Not yet implemented)
 - Transaction logs for purchases and subscription events. (TODO: Not yet implemented)
 - Captures failed login attempts and suspicious activity reported by the Game
