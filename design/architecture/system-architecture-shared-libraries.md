@@ -64,7 +64,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
    ```
 
 3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
-4. Automate tagging and version bumps using `semantic-release`. (TODO: Not yet implemented)
+4. Automate tagging and version bumps using `release-please`. (TODO: Not yet implemented)
 5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD. (TODO: Not yet implemented)
 
 This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
@@ -98,6 +98,7 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
+Flyway migrations packaged with the library create these tables automatically.
 `SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active sagas so the Logging & Admin Service dashboard can display progress.
 
 ## 📚 Related Documentation

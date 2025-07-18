@@ -3,8 +3,10 @@
 Early adopters can try new features in short-lived environments created by the
 [`preview.yml`](../../.github/workflows/preview.yml) workflow. Pull requests
 spin up a Docker Compose stack that mirrors production services on a smaller
-scale and is automatically torn down at the end of the job. A dedicated staging
-cluster for broader playtests is planned; see
+scale. The stack is automatically torn down once the workflow completes, so
+each preview environment is ephemeral. The workflow posts a summary comment on
+the pull request with a link to the preview. A dedicated staging cluster for
+broader playtests is planned; see
 [Deployment Environments](../architecture/infrastructure/deployment-environments.md#🎮-staging-environment-for-playtesting). (TODO: Not yet implemented)
 
 1. **Invite testers** from the community via Discord and email once the staging cluster is available. (TODO: Not yet implemented)
