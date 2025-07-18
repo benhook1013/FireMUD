@@ -12,6 +12,8 @@ This document consolidates the platform's observability architecture.
 - Logs are emitted in JSON with request tracing fields (e.g., `traceId`).
   Including the active `playerId` in log entries is planned for better
   moderation context. (TODO: Not yet implemented)
+- Kibana dashboards can filter by `traceId` today. Filtering by `playerId`
+  will be added once player context is included in each log entry. (TODO: Not yet implemented)
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and
   `correlationId` in every log entry. See
   [Shared Libraries](./system-architecture-shared-libraries.md).
