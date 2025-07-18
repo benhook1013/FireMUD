@@ -42,7 +42,7 @@ Refer to the Automation & Scripting Service README for implementation details.
 
 - Script execution occurs in a **sandbox** with restricted APIs and resource limits. (TODO: Not yet implemented)
 - Components interact with the **Game Logic Service** through validated gRPC calls.
-- The service enforces **per-script quotas** that limit how many events a script may enqueue and the duration of each tick. CPU and memory limits are planned for a future release. (TODO: Not yet implemented)
+- The service enforces **per-script quotas** that limit how many events a script may enqueue and the duration of each tick. **CPU and memory limits** are planned for a future release. (TODO: Not yet implemented)
 
 ## ⚙️ Integration with Game Logic & Tick System
 
@@ -64,7 +64,7 @@ Refer to the Automation & Scripting Service README for implementation details.
 
 ## 🛡️ Fairness & Abuse Prevention
 
-The Automation & Scripting Service now enforces several safeguards to prevent runaway
+The Automation & Scripting Service enforces several safeguards to prevent runaway
 scripts and ensure fair resource usage:
 
 - `ScriptQuotaService` limits how often a script may execute within a configurable
@@ -76,7 +76,7 @@ scripts and ensure fair resource usage:
 - Metrics such as `automation_tick_events_enqueued_total`, `script_quota_allowed_total`, and `script_quota_denied_total` expose script activity for monitoring.
 - Administrators may disable or throttle problematic scripts via the Game Design
   Service, which updates definitions and triggers hot reloads in the Automation &
-  Scripting Service.
+  Scripting Service. (TODO: Not yet implemented)
 
 ### Environment Variables
 
