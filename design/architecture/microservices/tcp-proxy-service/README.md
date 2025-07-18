@@ -52,7 +52,7 @@ events used internally when communicating with other microservices:
     drops so the session may be suspended. (TODO: Not yet implemented)
 - **PushBufferedInput** – forwards any queued commands after a reconnect
     event. (TODO: Not yet implemented)
-These gRPC events are defined but the current implementation does not yet invoke them.
+These gRPC events are defined but the current implementation does not yet invoke them. (TODO: Not yet implemented)
 At present the service only logs when these methods are called; no other microservices are contacted.
 These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
@@ -157,8 +157,8 @@ curl http://localhost:8080/ping
 #### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check.
-- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected.
-- `PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse)` – delivers queued commands after a reconnect.
+- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected. (TODO: Not yet implemented)
+- `PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse)` – delivers queued commands after a reconnect. (TODO: Not yet implemented)
 
 All RPC definitions live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
