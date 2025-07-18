@@ -63,10 +63,12 @@ The **Game Session Service** controls which published version is active for each
 - All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
 
 ## 🔧 Runtime Feature Flags
+
 Runtime feature flags allow limited behavior changes without publishing a new design version.
 They are **defined in the Game Design Service** and copied into the **Game Session Service**.
 (typically in a configuration table keyed by `tenantId`) when a version is published.
 (TODO: Not yet implemented)
+
 - Designers create and maintain the set of flag definitions in the Game Design Service.
   (TODO: Not yet implemented)
 - Administrators toggle flag values through the
