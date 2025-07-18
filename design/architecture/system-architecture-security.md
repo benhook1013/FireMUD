@@ -19,7 +19,7 @@ seamlessly with cert-manager for automatic rotation.
 ### Key and Certificate Rotation
 
 - cert-manager issues both JWT signing keys and mTLS certificates, backed by an internal CA.
-- All services poll their mounted secrets for updates and support **hot reload** via the shared `TlsCertificateWatcher` and `JwtSecretWatcher` utilities. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services. (TODO: Not yet implemented) JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
+- All services poll their mounted secrets for updates and support **hot reload** via the shared `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the `firemud-common` library. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services. (TODO: Not yet implemented) JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
 - During rotation, services reload credentials when files change. Caching of old credentials to allow for seamless transitions is planned. (TODO: Not yet implemented)
 - The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually. Automated JWKS generation is planned. (TODO: Not yet implemented)
@@ -61,6 +61,8 @@ seamlessly with cert-manager for automatic rotation.
   - Repeated failures result in **connection closure** and **temporary IP blacklisting**. (TODO: Not yet implemented)
   - Global login spikes introduce **artificial delay** to slow brute-force attempts. (TODO: Not yet implemented)
   - Suspicious login activity triggers **notification emails** to the account holder. (TODO: Not yet implemented)
+- The **TCP Proxy Service** limits concurrent Telnet connections and message rates using `ConnectionThrottler`, shielding the gateway from floods.
+- The **Spring Cloud Gateway** applies a Redis-backed `RequestRateLimiter` to restrict excessive requests per IP.
 
 - Abuse detection is planned to expand to include **heuristics** around spam commands, hotspot behaviors, or abnormal tick patterns. (TODO: Not yet implemented)
   - These heuristics are **future additions**, intended to detect unusual command frequencies, teleportation loops, or flooding patterns. (TODO: Not yet implemented)
@@ -100,7 +102,7 @@ seamlessly with cert-manager for automatic rotation.
 | TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets                                              |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
-| Brute-Force Defense       | Planned per-IP tracking and throttling (not yet implemented) |
+| Brute-Force Defense       | Gateway rate limiting and Telnet connection throttling in place; per-IP login tracking planned (TODO: Not yet implemented) |
 | Abuse Detection           | Current: login only; Future: command-level heuristics (TODO: Not yet implemented) |
 | Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
 | Admin Role Access         | JWT-only; no special network-level restrictions                          |
