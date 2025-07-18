@@ -7,7 +7,7 @@ This document explains how configuration values and sensitive secrets are suppli
 ## 🧪 Local Development
 
 - Environment variables are loaded from a `.env` file when running `./gradlew devUp`.
-- The sample file `.env.sample` contains default credentials for PostgreSQL and Redis. Copy this file to `.env` and adjust values as needed; `.env` is git‑ignored so real credentials remain local.
+- The sample file `.env.sample` lists the variables described below with default credentials for PostgreSQL and Redis. Copy this file to `.env` and adjust values as needed; `.env` is git‑ignored so real credentials remain local.
 - Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
 - Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
 
@@ -118,6 +118,9 @@ is described in [System Architecture: Security](../system-architecture-security.
 The shared configuration library resolves other services using environment
 variables prefixed with `FIREMUD_SERVICES_`. Each variable holds a `host:port`
 pair for a target service. When undefined, Kubernetes DNS is used instead.
+Spring Cloud Gateway currently loads routes from static YAML files and does not
+read these variables. Gateway support for `FIREMUD_SERVICES_` overrides is
+planned. (TODO: Not yet implemented)
 
 Each variable is suffixed with `_SERVICE` to match the Spring configuration
 keys. Examples:

@@ -211,7 +211,7 @@ FireMUD actively monitors Redis performance and tick health:
   - Basic connection health via the `redis.up` gauge exposed in
     `DatabaseAutoConfiguration`
 - Metrics are scraped via a [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment
-  (applyable via [`k8s/README.md`](../../k8s/README.md))
+  (deployable via the instructions in [`k8s/README.md`](../../k8s/README.md))
 - **Grafana dashboards** visualize tick throughput and hotspots
 - **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls (TODO: Not yet implemented)
@@ -232,6 +232,9 @@ Redis stores transient gameplay session state for each connected player, includi
 - Tick region participation and queued commands
 - Timer and cooldown data (TODO: Not yet implemented)
 - Conflict and retry metadata
+
+Session keys use the prefix `session:{tenantId}:{sessionId}` as described in the
+[Game Session Service README](./microservices/game-session-service/README.md#redis-keys).
 
 Session entries expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as
 configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
