@@ -44,9 +44,10 @@ the multi-tenant requirements in the
   configuration tables keyed by `tenantId`.
   Runtime flag behavior is described in
   [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
-- Creating a new game world triggers a Saga across services. The steps are
-  outlined in
+- Creating a new game world triggers a Saga across services.
+  The planned steps are outlined in
   [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md).
+  (TODO: Not yet implemented)
 - All microservices run as shared deployments; there is
   **no tenant-specific infrastructure** or dedicated clusters.
 - Game Session Service instances scale horizontally based on overall load.

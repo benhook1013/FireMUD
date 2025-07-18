@@ -26,7 +26,8 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
 
   @Override
   @Timed(value = "script.version.notify")
-  public void notifyUpdate(Long tenantId, String scriptPatchVersion, List<String> affectedScripts) {
+  public void notifyUpdate(String tenantId, String scriptPatchVersion, List<String> affectedScripts) {
+    Long tenantKey = Long.parseLong(tenantId);
     logger.info(
         "Applying script patch {} for tenant {} affecting {} scripts",
         scriptPatchVersion,
@@ -36,8 +37,8 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
       logger.info("No scripts provided for patch {}", scriptPatchVersion);
       return;
     }
-    List<ScriptDefinition> defs = repository.findByTenantIdAndNameIn(tenantId, affectedScripts);
-    Map<String, String> map = registry.computeIfAbsent(tenantId, id -> new ConcurrentHashMap<>());
+    List<ScriptDefinition> defs = repository.findByTenantIdAndNameIn(tenantKey, affectedScripts);
+    Map<String, String> map = registry.computeIfAbsent(tenantKey, id -> new ConcurrentHashMap<>());
     for (ScriptDefinition def : defs) {
       map.put(def.getName(), def.getDefinition());
     }

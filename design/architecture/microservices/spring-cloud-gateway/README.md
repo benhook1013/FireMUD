@@ -40,7 +40,8 @@ The gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
 Route configurations live in `routes-dev.yml` and `routes-prod.yml`, which are
 imported by `application.yml` based on the active profile and reloaded on
 startup. Dynamic routes added via the API are stored only in memory and are
-lost on service restart. (TODO: Not yet implemented)
+lost on service restart; persistent storage for these routes is planned.
+(TODO: Not yet implemented)
 No persistent database is required. The default configuration defines routes
 for the core services so Docker Compose environments work out of the box.
 
@@ -89,7 +90,7 @@ The database variables
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
 may be present for consistency. PostgreSQL variables are unused, but Redis
 connection variables are required for the `RequestRateLimiter` filter.
-TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
+TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`. These variables are reserved for future service discovery logic and are not yet consumed by the implementation. (TODO: Not yet implemented)
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
 Important variables include:
@@ -97,6 +98,8 @@ Important variables include:
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `SERVER_PORT` | HTTP port exposed by the service | `8080` |
+
+The gRPC server listens on port `6565` by default as configured in `application.yml`.
 
 ## Proto Files
 
@@ -150,8 +153,8 @@ curl -X DELETE http://localhost:8080/routes/demo
 #### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`gateway_management_service.proto`](../../../../protos/spring-cloud-gateway/v1/gateway_management_service.proto).
-- `UpsertRoute(RouteDefinition) returns (RouteResponse)` – adds or updates a gateway route.
-- `RemoveRoute(RouteRequest) returns (RouteResponse)` – deletes a route.
+- `UpsertRoute(UpsertRouteRequest) returns (UpsertRouteResponse)` – adds or updates a gateway route.
+- `RemoveRoute(RemoveRouteRequest) returns (RemoveRouteResponse)` – deletes a route.
 
 ```bash
 grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementService/Ping
