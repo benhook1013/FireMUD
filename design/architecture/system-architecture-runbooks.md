@@ -32,8 +32,11 @@ For local development, use `./gradlew devUp` to start Docker Compose and
    kubectl scale deploy account-service --replicas=3 -n firemud
    ```
 
-2. Update Horizontal Pod Autoscaler settings if enabled (TODO: Not yet implemented).
-3. Review Prometheus metrics to ensure CPU and memory usage remain healthy (TODO: Not yet implemented).
+2. Update Horizontal Pod Autoscaler settings if enabled. An example
+   manifest lives at `k8s/base/hpa-example.yaml`. (TODO: Not yet implemented)
+3. Review Prometheus metrics to ensure CPU and memory usage remain healthy.
+   Monitoring manifests are provided under `k8s/monitoring/`. Grafana
+   dashboards will visualize these metrics. (TODO: Not yet implemented)
 4. For database or Redis clusters, scale StatefulSets according to their
    respective runbooks. (TODO: Not yet implemented)
 
@@ -71,7 +74,8 @@ For local development, use `./gradlew devUp` to start Docker Compose and
     additional cleanup is required.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication. (TODO: Not yet implemented)
-     Services reconnect on restart. See [Redis Architecture](./system-architecture-redis.md)
+     Services reconnect on restart. (TODO: Not yet implemented) See
+     [Redis Architecture](./system-architecture-redis.md)
      for persistence and recovery details.
 3. **Full Cluster Restore**
    - Recreate the cluster using Terraform modules in `k8s/terraform`. See
