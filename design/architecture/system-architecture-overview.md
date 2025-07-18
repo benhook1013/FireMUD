@@ -79,7 +79,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 - **Persistent data** (accounts, entities, rooms) is stored in PostgreSQL by domain-aligned services
 - **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service
 - **Redis** is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
-- **Tick regions** are shard-aligned in Redis to preserve atomicity
+- **Tick regions** are shard-aligned in Redis to preserve atomicity (TODO: Not yet implemented)
 
 📌 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -90,7 +90,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
 - **One action per entity per tick** (pulled from command queues)
-- **Region-scoped ticks** execute independently for parallelism
+- **Region-scoped ticks** execute independently for parallelism (TODO: Not yet implemented)
 - **Tick state** (locks, queues, timers) is stored and coordinated via Redis
 
 > 🔗 Tick execution, staging/rollback, retry policies, and crash recovery are detailed in [Tick System and Runtime Design](./system-architecture-ticks.md)
