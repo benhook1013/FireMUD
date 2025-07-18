@@ -10,7 +10,7 @@ Each microservice has its own unit and integration tests. Cross‑service scenar
 
 - **Unit tests** live under each service in `src/test/java/unit/`.
 - **Integration tests** for that service live in `src/test/java/integration/` and may start Redis, Postgres, or other dependencies on demand.
-- **Cross-service integration tests** exercise workflows that span multiple services. These tests are present under each service in `src/test/java/crossservice/` and start companion containers with Testcontainers. Docker images for companion services must be available locally or pulled from GHCR. Gradle tasks to run them directly are planned (TODO: Not yet implemented). For now they can be executed manually with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"` once the images are built (for example via `./gradlew buildDockerImages`).
+- **Cross-service integration tests** exercise workflows that span multiple services. They live under `src/test/java/crossservice/` in each service and start companion containers with Testcontainers. Docker images for the cooperating services must be built (for example via `./gradlew buildDockerImages`) or pulled from GHCR. A `crossServiceTest` Gradle task is planned (TODO: Not yet implemented); meanwhile run them with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"`.
 - Many of these tests are annotated with `@Testcontainers(disabledWithoutDocker = true)` so they are skipped when Docker is unavailable.
 - **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. These tests are run manually when preparing a major release. Automating them in CI is planned (TODO: Not yet implemented).
 
@@ -32,7 +32,7 @@ The repository uses a hierarchical Gradle setup. The root `build.gradle.kts` del
 ./gradlew crossServiceTest                # planned
 ```
 
-Unit and integration tests run automatically in GitHub Actions through a matrix of `:service-name:check` tasks. Cross-service tests can be triggered manually when preparing a release. A unified `crossServiceTest` Gradle task will run them collectively (TODO: Not yet implemented).
+Unit and integration tests run automatically in GitHub Actions through a matrix of `:service-name:check` tasks. Cross-service tests are triggered manually when preparing a release. A unified `crossServiceTest` Gradle task is planned to run them collectively (TODO: Not yet implemented).
 
 ## 💡 Cross-Service Integration Plan
 
@@ -50,7 +50,7 @@ val postgres = PostgreSQLContainer<Nothing>("postgres:16").withNetwork(network)
 val accountService = GenericContainer("account-service:latest").withNetwork(network)
 ```
 
-These tests validate saga orchestration logic. A dedicated `crossServiceTest` task will run them once implemented (TODO: Not yet implemented).
+These tests validate saga orchestration logic. A dedicated `crossServiceTest` Gradle task will run them once implemented (TODO: Not yet implemented).
 
 ---
 
@@ -66,7 +66,7 @@ Gatling scenarios simulate thousands of concurrent connections to measure servic
 
 ### Security Testing
 
-OWASP ZAP will crawl the web client and Gateway endpoints during CI to surface common web vulnerabilities (TODO: Not yet implemented). Penetration tests and rate-limiting checks are planned before major releases (TODO: Not yet implemented).
+OWASP ZAP is planned to crawl the web client and Gateway endpoints during CI to surface common web vulnerabilities (TODO: Not yet implemented). Penetration tests and rate-limiting checks are also planned before major releases (TODO: Not yet implemented).
 
 ---
 

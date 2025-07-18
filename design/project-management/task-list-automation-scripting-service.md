@@ -15,6 +15,7 @@
   - [x] Provide web UI for script creation and testing
   - [x] Add advanced AI modules for complex behaviors
   - [x] Enforce fairness quotas and per-script resource limits
+- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist
 
