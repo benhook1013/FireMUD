@@ -2,7 +2,7 @@
 
 ## Overview
 
-Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time.
+Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time. (TODO: Not yet implemented)
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
@@ -85,7 +85,7 @@ are not yet implemented. (TODO: Not yet implemented)
 - `SendMessage` – publishes a chat message to an in-game channel or player.
 - `CreateGuild` – establishes a new guild with an owner account.
 - `AddFriend` – adds a friend relationship at the game or account level.
-- `SendMail` – stores asynchronous player mail for later retrieval.
+- `SendMail` – stores asynchronous player mail for later retrieval. (TODO: Retrieval API not yet implemented)
 
 ## Dependencies
 
@@ -160,7 +160,7 @@ files change.
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /friends` – create a friend link.
-- `POST /mail` – send an asynchronous in-game mail message.
+- `POST /mail` – send an asynchronous in-game mail message. Mail retrieval endpoints are planned. (TODO: Not yet implemented)
 - `POST /guilds` – create a guild.
 - `POST /guilds/storage` – add an item to guild storage.
 - `POST /guilds/alliances` – create a guild alliance.
