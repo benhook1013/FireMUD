@@ -100,9 +100,9 @@ Docker Compose and Kubernetes rely on the following monitoring tools:
 
 - Prometheus scrapes metrics from all services. (TODO: Not yet implemented)
 - Grafana dashboards visualize performance metrics. (TODO: Not yet implemented)
-- Alertmanager notifies on failures or latency spikes.
+- Alertmanager notifies on failures or latency spikes. (TODO: Not yet implemented)
 - OpenTelemetry spans are emitted by services for distributed tracing.
-- Jaeger stores these traces for debugging and analysis.
+- Jaeger stores these traces for debugging and analysis. (TODO: Not yet implemented)
 
 ### 📜 Log Aggregation
 
