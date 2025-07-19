@@ -5,9 +5,7 @@
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
 The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
 
-### Responsibilities
-
-- Accept Telnet connections and perform protocol negotiation (TODO: Not yet implemented)
+- Accept Telnet connections; protocol negotiation is planned (TODO: Not yet implemented)
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames
 - Provide graceful disconnect and reconnection handling (TODO: Not yet implemented)
 
@@ -15,12 +13,11 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 
 - Spring Boot service hosting a lightweight Netty-based Telnet server.
 - Buffers incoming input while the client remains connected and discards it if the TCP
-  session drops. (TODO: Not yet implemented)
+  session drops.
 - Handles Telnet negotiation and character encoding quirks (TODO: Not yet implemented).
 - Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md). (TODO: Not yet implemented)
 - Works with the Reconnection Strategy to resume sessions transparently. (TODO: Not yet implemented)
-- Can optionally terminate Telnet-over-TLS. Forwarding to the gateway currently
-  uses plain WebSocket connections; mutual TLS support is planned. (TODO: Not yet implemented)
+- Can optionally terminate Telnet-over-TLS, forwarding traffic to the gateway via plain WebSocket connections. Mutual TLS for gateway communication is planned. (TODO: Not yet implemented)
   See [Security Architecture](../system-architecture-security.md).
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
