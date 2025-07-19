@@ -1,7 +1,7 @@
 # 🛡️ Moderation Policies
 
 This file outlines recommended moderation rules for hosted FireMUD games.
-Operators can adapt these policies based on community needs while maintaining a safe environment for players. Many automated enforcement capabilities are still under development. Manual bans via the `ApplyModerationAction` API are implemented, but dashboards and automatic detection are not yet available. (TODO: Not yet implemented where noted)
+Operators can adapt these policies based on community needs while maintaining a safe environment for players. Many automated enforcement capabilities are still under development. Manual bans via the `ApplyModerationAction` API are implemented, but dashboards and automatic detection remain under development. (TODO: Not yet implemented for dashboards and automation)
 
 For details on moderation tooling see the [Logging & Admin Service design](./README.md).
 
@@ -17,15 +17,15 @@ For details on moderation tooling see the [Logging & Admin Service design](./REA
 
 The Social & Groups Service integrates a configurable word list. When detected, profanity is replaced with `*` characters before being routed to other players or persisted in logs.
 Operators will be able to customize the word list per tenant, but this option is not yet available. (TODO: Not yet implemented)
-Bypassing the filter with misspellings or Unicode look-alikes is considered a violation.
+Bypassing the filter with misspellings or Unicode look-alikes is considered a violation. (TODO: Not yet implemented)
 
 ## Enforcement Workflow
 
 1. Offending logs or reports are flagged in the Logging & Admin Service dashboards. (TODO: Not yet implemented) These dashboards are described in [Analytics Dashboards](./analytics-dashboards.md).
 2. Moderators review the context and determine the severity. (TODO: Not yet implemented)
-3. Actions are recorded via `ApplyModerationAction` gRPC calls (see `logging_admin_service.proto`). The service
+3. Actions are recorded via `ApplyModerationAction` gRPC calls (see [`logging_admin_service.proto`](../../../protos/logging-admin/v1/logging_admin_service.proto)). The service
    coordinates a saga to delete the account and terminate any active sessions.
-   Temporary suspensions are planned but not yet supported. Records are persisted to the `moderation_actions` table.
+   Temporary suspensions are planned but not yet supported. (TODO: Not yet implemented) Records are persisted to the `moderation_actions` table.
 4. Notifications are sent to affected players with reason and duration (TODO: Not yet implemented; planned via the Account Service `NotificationService`).
 
 ## Appeals
