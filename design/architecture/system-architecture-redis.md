@@ -213,7 +213,7 @@ FireMUD actively monitors Redis performance and tick health:
 - Metrics are scraped via a [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment
   (deployable via the instructions in [`k8s/README.md`](../../k8s/README.md))
 - **Grafana dashboards** visualize tick throughput and hotspots
-- **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
+- **Prometheus Alertmanager** sends alerts if metrics exceed thresholds (TODO: Not yet implemented)
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls (TODO: Not yet implemented)
 - Redis is the **single shared** volatile coordination layer — services do not maintain separate in-memory caches or alternative cache technologies
 - Local debugging tools such as the Redis CLI and RedisInsight are described in
