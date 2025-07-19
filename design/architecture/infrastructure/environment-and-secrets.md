@@ -14,9 +14,9 @@ This document explains how configuration values and sensitive secrets are suppli
 ## ☁️ Production
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
-- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. JWT keys and TLS certificates are issued by **cert-manager**.
+- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. TLS certificates are issued by **cert-manager**, while JWT signing keys are added manually; automated rotation via cert-manager is planned. (TODO: Not yet implemented)
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
-- TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords, are stored in standard Kubernetes `Secret` objects and must be rotated manually. Automated database password rotation is planned. (TODO: Not yet implemented)
+- TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords and JWT keys, are stored in standard Kubernetes `Secret` objects and must be rotated manually. Automated secret rotation is planned. (TODO: Not yet implemented)
 - Services reload TLS certificates for gRPC client channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the shared library. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services, so server-side hot reload is planned. (TODO: Not yet implemented)
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
