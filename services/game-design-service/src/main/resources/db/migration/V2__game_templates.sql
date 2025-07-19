@@ -1,6 +1,6 @@
 CREATE TABLE game_templates (
     id BIGSERIAL PRIMARY KEY,
-    tenant_id BIGINT NOT NULL,
+    tenant_id VARCHAR(36) NOT NULL,
     name VARCHAR(100) NOT NULL,
     description VARCHAR(255),
     config JSONB NOT NULL,

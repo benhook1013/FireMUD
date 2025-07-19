@@ -1,6 +1,6 @@
 CREATE TABLE game_assets (
     id BIGSERIAL PRIMARY KEY,
-    tenant_id BIGINT NOT NULL,
+    tenant_id VARCHAR(36) NOT NULL,
     file_name VARCHAR(255) NOT NULL,
     content_type VARCHAR(100) NOT NULL,
     data BYTEA NOT NULL,

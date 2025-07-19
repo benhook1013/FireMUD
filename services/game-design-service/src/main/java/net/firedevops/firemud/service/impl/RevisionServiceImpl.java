@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
+import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.RevisionDto;
 import net.firedevops.firemud.entity.Game;
@@ -29,8 +30,7 @@ public class RevisionServiceImpl implements RevisionService {
   public RevisionDto saveRevision(RevisionDto dto) {
     logger.info("Saving revision for tenant {}", dto.tenantId());
     Game game =
-        gameRepository
-            .findById(dto.tenantId())
+        Optional.ofNullable(gameRepository.findByTenantId(dto.tenantId()))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
     Revision entity = revisionMapper.toEntity(dto);
     entity.setGame(game);

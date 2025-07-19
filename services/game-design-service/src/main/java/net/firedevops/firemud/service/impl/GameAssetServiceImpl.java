@@ -25,7 +25,7 @@ public class GameAssetServiceImpl implements GameAssetService {
   @Override
   @Transactional
   @Timed(value = "gamedesign.asset.upload")
-  public GameAssetDto uploadAsset(Long tenantId, MultipartFile file) {
+  public GameAssetDto uploadAsset(String tenantId, MultipartFile file) {
     logger.info("Uploading asset {}", file.getOriginalFilename());
     GameAsset entity = new GameAsset();
     entity.setTenantId(tenantId);

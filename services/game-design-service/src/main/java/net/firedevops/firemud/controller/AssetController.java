@@ -21,7 +21,7 @@ public class AssetController {
 
   @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   public ResponseEntity<ApiResponse<GameAssetDto>> upload(
-      @RequestParam Long tenantId, @RequestParam("file") @NotNull MultipartFile file) {
+      @RequestParam String tenantId, @RequestParam("file") @NotNull MultipartFile file) {
     GameAssetDto dto = assetService.uploadAsset(tenantId, file);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
