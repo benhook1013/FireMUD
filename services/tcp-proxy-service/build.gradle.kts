@@ -17,7 +17,7 @@ dependencies {
     implementation("org.mapstruct:mapstruct:1.6.3")
     implementation("org.springframework.boot:spring-boot-starter:3.5.3")
     implementation("org.springframework.boot:spring-boot-starter-actuator:3.5.3")
-    implementation("io.netty:netty-all:4.2.2.Final")
+    implementation("io.netty:netty-all:4.2.3.Final")
     implementation("org.springframework.boot:spring-boot-starter-websocket:3.5.3")
     implementation(project(":common-library"))
     implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
