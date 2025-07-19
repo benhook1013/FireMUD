@@ -38,7 +38,7 @@ Unit and integration tests run automatically in GitHub Actions through a matrix 
 
 ## 💡 Cross-Service Integration Plan
 
-For workflows that span multiple services, such as account creation and world provisioning, we start several containers at once using **Testcontainers**. Each container joins a shared network so gRPC calls function just like in production.
+For workflows that span multiple services, such as account creation and world provisioning, we plan to start several containers at once using **Testcontainers**. Each container will join a shared network so gRPC calls function just like in production. (TODO: Not yet implemented)
 
 ### Example Workflow
 
@@ -51,6 +51,8 @@ val network = Network.newNetwork()
 val postgres = PostgreSQLContainer<Nothing>("postgres:16").withNetwork(network)
 val accountService = GenericContainer("account-service:latest").withNetwork(network)
 ```
+
+This example uses a shared Testcontainers `Network` which will be added once cross-service orchestration is finalized. (TODO: Not yet implemented)
 
 These tests validate saga orchestration logic. A dedicated `crossServiceTest` Gradle task will run them once implemented (TODO: Not yet implemented).
 
