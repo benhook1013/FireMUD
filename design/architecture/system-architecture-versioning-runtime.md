@@ -20,7 +20,7 @@ Published versions are immutable; further changes require publishing a new `vers
 ### Script-Only Patch Versions
 
 Minor fixes to NPC behavior or quest logic often only touch automation scripts.
-To avoid a full world restart, the Game Design Service can publish a **script-only patch version**.
+To avoid a full world restart, the Game Design Service can publish a **script-only patch version** using the `PublishScriptPatchVersion` gRPC call.
 These records include a `baseVersionId` pointing to the immutable data version
 and a `scriptPatchVersion` value such as `v42-script.3`:
 
@@ -40,7 +40,8 @@ When a patch is published the Game Design Service calls the
 [`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate)
 gRPC endpoint in the Automation & Scripting Service so modified scripts are
 reloaded in memory. The Game Session Service records the active
-`script_patch_version` with each running game instance for recovery.
+`script_patch_version` with each running game instance for recovery. See
+[Scripting & Automation](./system-architecture-scripting.md) for more details.
 
 ### Schema Migrations vs Design Data
 
