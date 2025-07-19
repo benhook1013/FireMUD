@@ -10,4 +10,13 @@ public interface TickService {
 
   /** Retrieve the latest persisted state for monitoring. */
   String queryState(Long sessionId);
+
+  /** Request that new ticks stop starting. */
+  void pauseTicks(String reason);
+
+  /** Allow ticks to resume normally. */
+  void resumeTicks(String reason);
+
+  /** Whether ticks are currently paused. */
+  net.firedevops.firemud.gamesession.v1.TickStatus getTickStatus();
 }

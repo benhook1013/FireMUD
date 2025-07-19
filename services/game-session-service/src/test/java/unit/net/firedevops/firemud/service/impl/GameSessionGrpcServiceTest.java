@@ -7,10 +7,17 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.dto.GameInstanceDto;
+import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetTickStatusResponse;
+import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
+import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksRequest;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksResponse;
 import net.firedevops.firemud.gamesession.v1.StartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
+import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.PingService;
@@ -90,5 +97,73 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals("1", ref.get().getSessionId());
+  }
+
+  @Test
+  void pauseAndResumeTicksDelegateToService() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(
+            pingService, gameInstanceService, featureFlagService, tickService, meterRegistry);
+
+    service.pauseTicks(
+        PauseTicksRequest.newBuilder().setReason("backup").build(),
+        new StreamObserver<PauseTicksResponse>() {
+          @Override
+          public void onNext(PauseTicksResponse value) {}
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    Mockito.verify(tickService).pauseTicks("backup");
+
+    Mockito.when(tickService.getTickStatus()).thenReturn(TickStatus.PAUSED);
+
+    AtomicReference<GetTickStatusResponse> statusRef = new AtomicReference<>();
+    service.getTickStatus(
+        GetTickStatusRequest.getDefaultInstance(),
+        new StreamObserver<GetTickStatusResponse>() {
+          @Override
+          public void onNext(GetTickStatusResponse value) {
+            statusRef.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(TickStatus.PAUSED, statusRef.get().getStatus());
+
+    service.resumeTicks(
+        ResumeTicksRequest.newBuilder().setReason("done").build(),
+        new StreamObserver<ResumeTicksResponse>() {
+          @Override
+          public void onNext(ResumeTicksResponse value) {}
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    Mockito.verify(tickService).resumeTicks("done");
   }
 }

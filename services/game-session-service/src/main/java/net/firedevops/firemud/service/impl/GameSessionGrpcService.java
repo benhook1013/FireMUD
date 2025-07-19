@@ -8,15 +8,22 @@ import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
+import net.firedevops.firemud.gamesession.v1.GetTickStatusResponse;
+import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
+import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
 import net.firedevops.firemud.gamesession.v1.QueryStateRequest;
 import net.firedevops.firemud.gamesession.v1.QueryStateResponse;
 import net.firedevops.firemud.gamesession.v1.RestartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.RestartSessionResponse;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksRequest;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksResponse;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.StopSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
+import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import net.firedevops.firemud.service.FeatureFlagService;
@@ -193,5 +200,35 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.pauseTicks")
+  public void pauseTicks(
+      PauseTicksRequest request, StreamObserver<PauseTicksResponse> responseObserver) {
+    tickService.pauseTicks(request.getReason());
+    PauseTicksResponse response = PauseTicksResponse.newBuilder().setSuccess(true).build();
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.resumeTicks")
+  public void resumeTicks(
+      ResumeTicksRequest request, StreamObserver<ResumeTicksResponse> responseObserver) {
+    tickService.resumeTicks(request.getReason());
+    ResumeTicksResponse response = ResumeTicksResponse.newBuilder().setSuccess(true).build();
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.getTickStatus")
+  public void getTickStatus(
+      GetTickStatusRequest request, StreamObserver<GetTickStatusResponse> responseObserver) {
+    TickStatus status = tickService.getTickStatus();
+    GetTickStatusResponse response = GetTickStatusResponse.newBuilder().setStatus(status).build();
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 }

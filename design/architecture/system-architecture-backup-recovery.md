@@ -30,6 +30,17 @@ configuration:
 
 Always leave `defaultVolumesToFsBackup` set to `false` so Velero backs up only Kubernetes manifests and not persistent volume contents.
 
+### Coordinated Tick Pausing
+
+PostgreSQL dumps must capture a consistent view of gameplay state. Before a `pg_dump` begins, the Game Session Service exposes `PauseTicks` and `ResumeTicks` gRPC commands. The backup workflow:
+
+1. Calls `PauseTicks` with a reason string.
+2. Polls `GetTickStatus` until the service reports `PAUSED`, which indicates all in‑flight ticks have completed.
+3. Starts `pg_dump` immediately. Ticks may resume as soon as the dump command starts because PostgreSQL snapshots the data at launch time.
+4. Invokes `ResumeTicks` so queued commands continue processing.
+
+Velero continues backing up Kubernetes manifests only and does **not** pause any services. Tick pausing is required only at the start of `pg_dump`, not for its entire runtime.
+
 For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml` manifest and configure Velero with a local backup location:
 
 ```yaml
