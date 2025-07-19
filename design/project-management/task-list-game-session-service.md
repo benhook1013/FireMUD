@@ -9,6 +9,7 @@
 - [x] Plan for cross-region sharding and session handoff
 - [ ] Forward TOTP codes to the Account Service during login
 - [ ] Refresh roles in-session when `scopedRoles` are updated
+- [ ] Implement `LOGIN`/`LOGON` command handling for interactive and parameterized logins
 
 ## Tick Management
 
@@ -18,11 +19,13 @@
 - [x] Implement tick replay and crash recovery logic
 - [ ] Implement graceful degradation when Redis operations stall to avoid gameplay interruption
 - [ ] Record conflict metadata during retries to highlight hotspots and enable adaptive throttling
+- [ ] Support per-tenant tick intervals to customize pacing across games
 
 ## Analytics & Coordination
 
 - [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
 - [x] Implement `game_manifest` table for version coordination
+- [ ] Restart active sessions when a new game version is published
 - [x] Emit gameplay analytics for operators
 - [ ] Apply runtime feature flags during tick processing
 
