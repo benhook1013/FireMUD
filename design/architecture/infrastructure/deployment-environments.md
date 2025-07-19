@@ -35,7 +35,7 @@ FireMUD uses Docker Compose for local development and testing:
       until manually restarted.
     - `depends_on` waits for initial health checks, but ongoing readiness still
       requires manual monitoring.
-    - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
+    - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose. (TODO: Not yet implemented)
 
 💡 **Tip**: For more reliable startup coordination, use **Gateway retry filters** or utilities like `wait-for-it.sh`.
 The gateway now includes a default *Retry* filter in `application.yml` so failed
@@ -63,7 +63,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   [`k8s/network-policies`](../../../k8s/network-policies) and can be applied after
   deploying the base manifests.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
-- Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
+- Certificates for TLS termination and mTLS are planned to be issued by **cert-manager** and mounted from Kubernetes Secrets. (TODO: Not yet implemented)
 - The cluster is planned to use **IPVS** (or a similar load-balancing mode) to route service traffic efficiently. This configuration is pending implementation. (TODO: Not yet implemented)
 - Redis is planned to run as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence. (TODO: Not yet implemented)
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#🔄-recovery).
@@ -71,7 +71,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 
 A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../../k8s/helm) to deploy services locally.
 
-- All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
+- All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more. (TODO: Not yet implemented)
 
 ### 🩺 Kubernetes Health Monitoring
 
@@ -85,7 +85,7 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - Removes unready pods from Services
   - Restarts failing pods based on probe failures
   - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA). An example manifest is provided in `k8s/base/hpa-example.yaml` but is not installed by default. (TODO: Not yet implemented)
-- Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
+- Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior. (TODO: Not yet implemented)
 
 ---
 
