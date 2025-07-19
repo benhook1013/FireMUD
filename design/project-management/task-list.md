@@ -14,7 +14,6 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [Spring Cloud Gateway](task-list-spring-cloud-gateway.md)
 - [TCP Proxy Service](task-list-tcp-proxy-service.md)
 - [World Management Service](task-list-world-management-service.md)
-- [Backlog](backlog.md)
 
 - Common microservice tasks are included in each service list.
 
@@ -195,6 +194,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - [x] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
 - [x] Verify each service starts via `./gradlew devUp` and shows `Started` logs
+- [ ] Seed development database with sample worlds and characters
 - [x] Create Gradle `devDown` task to stop the Docker Compose stack
 - [x] Create Gradle `buildDockerImages` task to build all service images
 - [x] Provision ephemeral preview environments for pull requests
@@ -238,6 +238,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Enable CodeQL code scanning
 - [x] Provide Insomnia project file for manual API testing
 - [x] Provide Kreya project file for manual API testing
+- [ ] Provide interactive API explorer for manual testing
   - [x] Configure email notifications for failed workflows
 
 ### Observability & Tracing
@@ -247,6 +248,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Deploy OpenTelemetry Collector for distributed tracing
 - [x] Deploy Jaeger or equivalent trace UI for visualizing spans
 - [x] Generate gRPC API documentation with `protoc-gen-doc` and publish to project docs
+- [ ] Generate OpenAPI specs and host Swagger UI in CI for manual exploration
 - [x] Commit default Grafana and Kibana dashboard templates
 - [x] Configure Elasticsearch index retention (14 days dev, 90 days prod)
 
