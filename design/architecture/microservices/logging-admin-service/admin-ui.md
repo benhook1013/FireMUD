@@ -19,9 +19,19 @@ and permissions are enforced using the `globalRoles` and `scopedRoles` claims.
 - Inspect saga workflows and view step details; ability to retry failed steps is planned. (TODO: Not yet implemented)
 - Reference [Moderation Policies](./moderation-policies.md) when issuing bans or warnings. (TODO: Not yet implemented)
 
-These capabilities map to existing REST endpoints such as `/logs`, `/reports`,
-`/moderation/actions`, `/feature-flags/toggle`, and `/sagas`. The backend
-implementations are present, but no admin user interface consumes them yet. (TODO: Not yet implemented)
+These capabilities map to existing REST endpoints exposed by the service.
+Planned routes include:
+
+```
+GET  /logs
+POST /reports
+POST /moderation/actions
+POST /feature-flags/toggle
+GET  /sagas
+GET  /sagas/{id}/steps
+```
+
+The backend implementations are present, but no admin user interface consumes them yet. (TODO: Not yet implemented)
 
 The UI will be packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls will be protected by the existing security interceptors described in the [Logging & Admin Service design](./README.md). (TODO: Not yet implemented)
 
