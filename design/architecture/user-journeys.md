@@ -67,7 +67,7 @@ Creators refine the world and its inhabitants using several services:
 
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors (TODO: Not yet implemented), and runtime flag definitions (TODO: Not yet implemented).
 - **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data (TODO: Not yet implemented). Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
-- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service. (TODO: Not yet implemented)
+- **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md). (TODO: Not yet implemented)
 - **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation. (TODO: Not yet implemented)
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks. (TODO: Not yet implemented)
@@ -115,7 +115,7 @@ Players create or select a character before entering the world:
 
 1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account. (TODO: Not yet implemented)
 2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md). (TODO: Not yet implemented)
-3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service. (TODO: Not yet implemented)
+3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service
 
 ```plaintext
 Account Service → Game Design Service → Entity Management Service

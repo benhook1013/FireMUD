@@ -45,7 +45,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   - Route-based filtering
   - Consistent handling across all clients
 
-Example WebSocket route config:
+Example WebSocket route config (current default path `/api/session/**`; a `/ws/game/**` alias is planned): (TODO: Not yet implemented)
 
 ```yaml
 spring:
@@ -55,7 +55,7 @@ spring:
         - id: game-session
           uri: ws://game-session-service:8080
           predicates:
-            - Path=/ws/game/**
+            - Path=/api/session/**
 ```
 
 ---

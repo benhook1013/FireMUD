@@ -53,8 +53,8 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ## Platform Interfaces
 
-- **Web-based MUD Client**: Browser-based interface for players. (TODO: Not yet implemented)
-- **Web-based MUD Game Editor**: Browser-based editor for designing game content. (TODO: Not yet implemented)
+- **Web-based MUD Client**: Browser-based interface for players. See [web-client README](../../web-client/README.md). (TODO: Not yet implemented)
+- **Web-based MUD Game Editor**: Browser-based editor for designing game content, built on the Game Design Service UI. (TODO: Not yet implemented)
 
 ## Testing
 

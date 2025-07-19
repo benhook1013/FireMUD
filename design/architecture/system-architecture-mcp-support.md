@@ -1,6 +1,7 @@
 # MCP Support for AI-Assisted Game Creation
 
 This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP) to enable richer tooling for AI-assisted game creation. The protocol reference can be found at <https://www.moo.mud.org/mcp/mcp2.html>.
+> **Status: Planned** – MCP negotiation and editing commands are not yet available. (TODO: Not yet implemented)
 
 ## 🎯 Goals
 
@@ -12,7 +13,7 @@ This document outlines how FireMUD will incorporate the Mud Client Protocol (MCP
 
 The TCP Proxy Service will negotiate MCP with connecting clients and fall back to plain Telnet when unsupported. (TODO: Not yet implemented)
 When MCP is enabled, JSON payloads are exchanged inside MCP packages. (TODO: Not yet implemented)
-The Game Design Service will expose commands for creating and updating content. (TODO: Not yet implemented)
+The Game Design Service will expose REST and gRPC commands for creating and updating content. (TODO: Not yet implemented)
 These commands will be wrapped in MCP messages so external tools, including AI assistants, can drive world creation. (TODO: Not yet implemented)
 
 ## Example Workflow

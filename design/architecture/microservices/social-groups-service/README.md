@@ -2,7 +2,7 @@
 
 ## Overview
 
-Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time.
+Provides chat, guild, and social networking features across games. Basic REST and gRPC APIs are implemented for guilds, friends, chat, and mail. Real-time WebSocket delivery is planned. (TODO: Not yet implemented)
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
@@ -11,7 +11,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Deliver real-time chat notifications. (TODO: Not yet implemented)
 - Synchronize guild and friend lists in real time. (TODO: Not yet implemented)
 - Manage guild creation, membership, and roles
-- Maintain friend lists and cross-game social graphs
+- Maintain friend lists and cross-game social graphs (TODO: Not yet implemented)
 - Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
 
 ## Architecture / Design Notes
@@ -85,7 +85,7 @@ are not yet implemented. (TODO: Not yet implemented)
 - `SendMessage` – publishes a chat message to an in-game channel or player.
 - `CreateGuild` – establishes a new guild with an owner account.
 - `AddFriend` – adds a friend relationship at the game or account level.
-- `SendMail` – stores asynchronous player mail for later retrieval.
+- `SendMail` – stores asynchronous player mail for later retrieval. (TODO: Retrieval API not yet implemented)
 
 ## Dependencies
 
@@ -160,7 +160,7 @@ files change.
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /friends` – create a friend link.
-- `POST /mail` – send an asynchronous in-game mail message.
+- `POST /mail` – send an asynchronous in-game mail message. Mail retrieval endpoints are planned. (TODO: Not yet implemented)
 - `POST /guilds` – create a guild.
 - `POST /guilds/storage` – add an item to guild storage.
 - `POST /guilds/alliances` – create a guild alliance.
@@ -187,7 +187,7 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 ```bash
 curl -X POST http://localhost:8080/chat \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
+  -d '{"tenantId":"tenant-abc","senderAccountId":100,"content":"hello"}'
 ```
 
 ### Metrics & Tracing
@@ -203,7 +203,7 @@ The service can optionally integrate with a WebRTC gateway to provide voice chan
 ```bash
 curl -X POST http://localhost:8080/voice/token \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"accountId":100,"channelId":"guild-10"}'
+  -d '{"tenantId":"tenant-abc","accountId":100,"channelId":"guild-10"}'
 ```
 
 - [System Architecture Diagram](../system-architecture-diagram.md)

@@ -21,14 +21,13 @@ default rulesets and admin accounts will be introduced in a future revision.
 (TODO: Not yet implemented)
 
 > **Note**
-> The service currently stores `tenantId` as a numeric value. The
-> [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document
-> specifies that `tenantId` should eventually be a string GUID. Migrating to
-> this format is planned. (TODO: Not yet implemented)
+> `tenantId` is always a string GUID. The database column uses `VARCHAR(36)` and
+> the OpenAPI specification exposes the same format across all endpoints.
 
-Templates are versioned like any other design asset. Publishing a version is intended to copy
-these templates to the domain services using the `version_id` workflow described
-in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
+Templates are **intended** to be versioned like any other design asset. Publishing a
+version will eventually copy these templates to the domain services using the
+`version_id` workflow described in
+[Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
 ## Creating Templates
 
@@ -37,7 +36,7 @@ Creators submit a `GameTemplateDto` via the REST API:
 ```bash
 curl -X POST http://localhost:8080/templates \
      -H 'Content-Type: application/json' \
-     -d '{"tenantId":"1","name":"Default","config":"{}"}'
+     -d '{"tenantId":"tenant-abc","name":"Default","config":"{}"}'
 ```
 
 The service validates the payload and stores it in the `game_templates` table.
@@ -47,7 +46,7 @@ Template names must be unique for each tenant to avoid collisions.
 To list templates:
 
 ```bash
-curl "http://localhost:8080/templates?tenantId=1"
+curl "http://localhost:8080/templates?tenantId=tenant-abc"
 ```
 
 See [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml)
