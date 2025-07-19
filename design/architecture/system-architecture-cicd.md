@@ -10,15 +10,17 @@ This document describes the basic continuous integration and deployment strategy
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes manually** via the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm). Full automation is planned. (TODO: Not yet implemented)
+- **Deploy to Kubernetes manually** via the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Full automation is planned. (TODO: Not yet implemented)
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
 - **Publish documentation** to GitHub Pages after successful builds.
 - **Create release PRs automatically** using the `release-please` workflow.
 - **Generate database ERD diagrams** as build artifacts after each run. The diagrams are stored in `design/erd/` and uploaded as workflow artifacts.
+- **Cancel previous runs for the same branch** using a concurrency group so CI resources are conserved.
 
 The CI job first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by a matrix of Gradle `check` tasks—one per microservice—which compile and test each module while running Spotless, Checkstyle, and SpotBugs. **Hadolint** checks Dockerfiles and **ShellCheck** validates shell scripts. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. Node 20 is also configured so the pipeline can lint OpenAPI definitions, run the React client’s linters, and execute an accessibility audit using headless Chrome. After the scan, the job executes `dev-tools/generate-erd.sh` to build ERD diagrams from the service migrations and uploads them as artifacts. Documentation links are verified in the `docs.yml` workflow before publishing to GitHub Pages. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
+A GitHub Actions step posts a summary comment on pull requests showing whether tests passed and what the overall coverage percentage was.
 
 ---
 
