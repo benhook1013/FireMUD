@@ -25,6 +25,8 @@ Despite their differences, both protocols are normalized into the same internal 
 - Connections are initiated using the WebSocket protocol.
 - Routed through **Spring Cloud Gateway**, which supports WebSocket proxying.
 - Forwarded to `game-session-service`, which maintains the gameplay session.
+- Gateway restarts automatically re-establish backend WebSocket connections
+  (TODO: Not yet implemented).
 
 ### 🌟 WebSocket Flow Benefits
 
@@ -91,6 +93,7 @@ The `game-session-service` is the central component responsible for:
 - Maintaining game session state per client connection.
 - Handling command parsing and game world interaction.
 - Sending and receiving text streams in a line-based protocol format.
+- Persists session state in Redis to enable reconnect recovery (TODO: Not yet implemented).
 - Managing disconnects, reconnections, and session cleanup (TODO: Not yet implemented).
 
 > Whether a client is connected via WebSocket directly or tunneled through the TCP Proxy Service, the backend **treats all sessions the same**.
