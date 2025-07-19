@@ -11,6 +11,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [Game Session Service](task-list-game-session-service.md)
 - [Logging & Admin Service](task-list-logging-admin-service.md)
 - [Social & Groups Service](task-list-social-groups-service.md)
+- [Web Client](task-list-web-client.md)
 - [Spring Cloud Gateway](task-list-spring-cloud-gateway.md)
 - [TCP Proxy Service](task-list-tcp-proxy-service.md)
 - [World Management Service](task-list-world-management-service.md)
