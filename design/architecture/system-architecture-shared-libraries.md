@@ -99,6 +99,7 @@ new SagaBuilder()
 ```
 
 Saga state is stored in the bundled `saga_instance` and `saga_step` tables.
+These tables live in a shared `saga` schema so migrations only run once across services.
 Flyway migrations packaged with the library create these tables automatically.
 `SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active sagas so the Logging & Admin Service dashboard can display progress.
 

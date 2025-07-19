@@ -60,4 +60,18 @@ for service in "${SERVICES[@]}"; do
 
 done
 
+echo "Generating ERD for saga schema"
+docker run --rm \
+  --network host \
+  -v "$(pwd)/$OUT_DIR":/output \
+  schemacrawler/schemacrawler:latest \
+  --server=postgresql \
+  --host=localhost --port=5432 \
+  --user=firemud --password=firemud \
+  --schemas=saga \
+  --command=schema \
+  --info-level=standard \
+  --output-format=svg \
+  --output-file="/output/erd_saga.svg"
+
 echo "ERD diagrams saved to $OUT_DIR"

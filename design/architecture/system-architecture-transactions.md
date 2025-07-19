@@ -64,13 +64,14 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
 - **Orchestration**:
   - Centralized in the **firemud-common** library (saga package) located under
     `services/common-library`
-  - The engine and its Flyway migrations live in `services/common-library/src/main/resources/db/migration`
+  - The engine and its Flyway migrations live in `services/common-library/src/main/resources/db/migration/saga`
   - Hosts define saga flows declaratively using a fluent API
   - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
   - Participating services include **Account**, **Game Design**, **Game Session**, **World Management**, **Automation Scripting**, **Social Groups**, and **Logging & Admin**
   
 - **State Management**:
   - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library
+  - These tables reside in a dedicated `saga` schema shared by all services
   - Tracks in-progress, completed, and failed workflows
   - Supports compensation
   - Flyway migrations bundled with the library create these tables automatically
@@ -102,7 +103,7 @@ sagaBuilder("accountCreation")
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
 The `firemud-common` library provides a `SagaBuilder` class implementing this pattern. See [Shared Libraries Overview](./system-architecture-shared-libraries.md) for additional details.
 Services include the library and the accompanying Flyway migrations located in
-`services/common-library/src/main/resources/db/migration` to persist saga state
+`services/common-library/src/main/resources/db/migration/saga` to persist saga state
 in the `saga_instance` and `saga_step` tables.
 Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
 and in the Logging & Admin Service README.
