@@ -20,5 +20,5 @@ This document describes the planned **visual editing front end** for the Game De
 ## 📚 Related Documentation
 
 - [Game Design Service Architecture](README.md)
-- [Asset Storage Setup](../../../../services/game-design-service/design/asset-storage.md)
+- [Asset Storage Setup](asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)

@@ -1,7 +1,7 @@
 # Asset Storage Setup
 
 Game assets such as icons or sound files are stored directly in the Game Design Service database.
-There is no external storage service today; assets live in PostgreSQL as binary blobs.
+There is no external storage service today; assets live in PostgreSQL as binary blobs. Offloading to object storage is planned for a future release. (TODO: Not yet implemented)
 Each record is tied to a `tenantId` so assets remain isolated between games. This keeps icons, UI images and audio files scoped to a single project.
 
 ## Table Structure
@@ -9,7 +9,7 @@ Each record is tied to a `tenantId` so assets remain isolated between games. Thi
 The `game_assets` table stores the raw binary data. Columns include:
 
 - `id` – primary key
-- `tenant_id` – identifies the owner game as a GUID string (TODO: Not yet implemented)
+- `tenant_id` – identifies the owning game as a GUID string stored in `VARCHAR(36)`
 - `file_name` – original file name
 - `content_type` – MIME type
 - `data` – binary blob

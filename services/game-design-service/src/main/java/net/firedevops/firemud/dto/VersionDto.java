@@ -5,7 +5,7 @@ import java.time.LocalDateTime;
 
 public record VersionDto(
     Long id,
-    @NotNull Long tenantId,
+    @NotNull @Size(max = 36) String tenantId,
     int versionNumber,
     String scriptPatchVersion,
     Long baseVersionId,

@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 
 public record GameTemplateDto(
     Long id,
-    @NotNull Long tenantId,
+    @NotNull @Size(max = 36) String tenantId,
     @NotNull @Size(max = 100) String name,
     String description,
     @NotNull String config,

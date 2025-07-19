@@ -30,7 +30,7 @@ public class GameTemplateController {
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<GameTemplateDto>>> list(
-      @RequestParam Long tenantId, Pageable pageable) {
+      @RequestParam String tenantId, Pageable pageable) {
     Page<GameTemplateDto> templates = templateService.listTemplates(tenantId, pageable);
     return ResponseEntity.ok(ApiResponse.success(templates));
   }
