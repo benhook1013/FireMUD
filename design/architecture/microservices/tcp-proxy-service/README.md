@@ -15,7 +15,7 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 
 - Spring Boot service hosting a lightweight Netty-based Telnet server.
 - Buffers incoming input while the client remains connected and discards it if the TCP
-  session drops. (TODO: Not yet implemented)
+  session drops.
 - Handles Telnet negotiation and character encoding quirks (TODO: Not yet implemented).
 - Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md). (TODO: Not yet implemented)
 - Works with the Reconnection Strategy to resume sessions transparently. (TODO: Not yet implemented)
@@ -193,5 +193,5 @@ information.
 
 ## Future Enhancements
 
-- Additional abuse heuristics and advanced command filtering.
-- Auto-scaling policies for heavy traffic bursts.
+- Additional abuse heuristics and advanced command filtering. (TODO: Not yet implemented)
+- Auto-scaling policies for heavy traffic bursts. (TODO: Not yet implemented)
