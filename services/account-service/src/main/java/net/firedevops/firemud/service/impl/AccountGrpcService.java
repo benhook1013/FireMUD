@@ -52,10 +52,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       net.firedevops.firemud.dto.CreateAccountRequest dto =
           new net.firedevops.firemud.dto.CreateAccountRequest(
-              Long.valueOf(request.getTenantId()),
-              request.getUsername(),
-              request.getEmail(),
-              request.getPassword());
+              request.getUsername(), request.getEmail(), request.getPassword());
       var account = accountService.createAccount(dto);
       CreateAccountResponse response =
           CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();

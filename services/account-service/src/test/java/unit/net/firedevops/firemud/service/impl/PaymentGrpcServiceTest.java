@@ -31,7 +31,7 @@ class PaymentGrpcServiceTest {
             .setAccountId("2")
             .setAmountCents(500)
             .build(),
-        new StreamObserver<>() {
+        new StreamObserver<CreatePaymentIntentResponse>() {
           @Override
           public void onNext(CreatePaymentIntentResponse value) {
             ref.set(value);
@@ -62,7 +62,7 @@ class PaymentGrpcServiceTest {
             .setAccountId("2")
             .setPlanId("plan")
             .build(),
-        new StreamObserver<>() {
+        new StreamObserver<CreateSubscriptionResponse>() {
           @Override
           public void onNext(CreateSubscriptionResponse value) {
             ref.set(value);
@@ -93,7 +93,7 @@ class PaymentGrpcServiceTest {
             .setAccountId("2")
             .setAmountCents(100)
             .build(),
-        new StreamObserver<>() {
+        new StreamObserver<CreateDonationResponse>() {
           @Override
           public void onNext(CreateDonationResponse value) {
             ref.set(value);

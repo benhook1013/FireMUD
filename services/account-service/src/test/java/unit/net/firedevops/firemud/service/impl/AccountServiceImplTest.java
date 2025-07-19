@@ -92,8 +92,7 @@ class AccountServiceImplTest {
 
   @Test
   void createAccountPersistsEntity() throws net.firedevops.firemud.common.saga.SagaException {
-    CreateAccountRequest request =
-        new CreateAccountRequest(1L, "demo", "demo@example.com", "password");
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
     Account saved = new Account();
     saved.setId(1L);
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class))).thenReturn(saved);
