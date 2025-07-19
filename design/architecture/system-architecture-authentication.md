@@ -65,8 +65,9 @@ This enables:
 
 Internal JWTs are issued by the Account Service and used for backend gRPC authorization.
 Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are
-validated by the Logging & Admin Service or other admin consumers. The Gateway and Game Session
-Service simply forward tokens without validation. (TODO: Not yet implemented)
+validated by the Logging & Admin Service or other admin consumers. The Gateway currently forwards
+tokens without validating them, while the Game Session Service will add token forwarding logic in a
+future iteration. (TODO: Not yet implemented)
 
 ### 🧠 Claims
 
@@ -116,8 +117,8 @@ annotation (or similar). Gameplay services never read or propagate these claims.
 If roles change during an active session (e.g., a player is promoted to admin):
 
 1. The Game Session Service detects or requests a role refresh (TODO: Not yet implemented)
-2. It contacts the Account Service to obtain a new JWT
-3. Updated claims are injected into subsequent gRPC calls
+2. It contacts the Account Service to obtain a new JWT (TODO: Not yet implemented)
+3. Updated claims are injected into subsequent gRPC calls (TODO: Not yet implemented)
 
 The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manual refreshes. The
 current implementation simply logs the request and returns `"refreshed"`; full token regeneration
@@ -147,7 +148,7 @@ will be implemented in a future iteration. (TODO: Not yet implemented)
 
 | Topic                 | Description                                                      |
 |-----------------------|------------------------------------------------------------------|
-| Auth Command          | `LOGIN` (or `LOGON`) — supports prompt or argument input         |
+| Auth Command          | `LOGIN` (or `LOGON`) — supports prompt or argument input (TODO: Not yet implemented) |
 | JWT Usage             | Internal-only for backend gRPC auth                             |
 | Claims                | `accountId`, `globalRoles[]`, `scopedRoles{}` (TODO: Not yet implemented) |
 | Session State         | Stored in Redis; bound to socket by Game Session Service (TODO: Not yet implemented) |
