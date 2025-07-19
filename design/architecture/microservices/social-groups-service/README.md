@@ -2,7 +2,7 @@
 
 ## Overview
 
-Provides chat, guild, and social networking features across games. Enables players to form groups and communicate in real time. (TODO: Not yet implemented)
+Provides chat, guild, and social networking features across games. Basic REST and gRPC APIs are implemented for guilds, friends, chat, and mail. Real-time WebSocket delivery is planned. (TODO: Not yet implemented)
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
@@ -11,7 +11,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Deliver real-time chat notifications. (TODO: Not yet implemented)
 - Synchronize guild and friend lists in real time. (TODO: Not yet implemented)
 - Manage guild creation, membership, and roles
-- Maintain friend lists and cross-game social graphs
+- Maintain friend lists and cross-game social graphs (TODO: Not yet implemented)
 - Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
 
 ## Architecture / Design Notes
