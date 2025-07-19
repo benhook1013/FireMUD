@@ -2,7 +2,11 @@
 
 This document outlines the planned modding system that will let administrators extend a published game without republishing a full version. (TODO: Not yet implemented)
 > **Status: In Progress** – The modding framework is still under active development and not available in production. (TODO: Not yet implemented)
-Plugins will use the same component-based DSL and sandbox as the Automation & Scripting Service so custom logic can be hot reloaded safely. (TODO: Not yet implemented) Management APIs for enabling or disabling plugins will reside in the Logging & Admin Service. (TODO: Not yet implemented)
+
+Plugins will use the same **component-based DSL** and sandbox as the Automation & Scripting Service so custom logic can be hot reloaded safely. (TODO: Not yet implemented)
+Management APIs for enabling or disabling plugins will reside in the Logging & Admin Service. (TODO: Not yet implemented)
+
+Plugin bundles will be uploaded through the Game Design Service and stored in the same asset repository used for other design files. (TODO: Not yet implemented)
 
 ## 🎯 Goals
 
@@ -20,6 +24,7 @@ Plugins will use the same component-based DSL and sandbox as the Automation & Sc
 4. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service. (TODO: Not yet implemented)
 5. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior. (TODO: Not yet implemented)
 6. Execution metrics and error logs are forwarded to the Logging & Admin Service for monitoring. (TODO: Not yet implemented)
+7. Plugin bundles are versioned along with other design assets and distributed when a new game version is published. (TODO: Not yet implemented)
 
 ## 📚 Related Documentation
 
@@ -29,3 +34,4 @@ Plugins will use the same component-based DSL and sandbox as the Automation & Sc
 - [System Architecture – Scripting & Automation](../system-architecture-scripting.md)
 - [Asset Storage Setup](asset-storage.md)
 - [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+- [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
