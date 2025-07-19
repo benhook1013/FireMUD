@@ -151,8 +151,8 @@ See [Redis Architecture](../architecture/system-architecture-redis.md) for key c
 ### 3.3 Deployment Model
 
 - The platform is designed for **cloud-native deployment**, using:
-- **Docker & Kubernetes** for containerization and scaling.
-- **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)). (TODO: Not yet implemented)
+  - **Docker & Kubernetes** for containerization and scaling.
+  - **Automated CI/CD pipelines** for service updates and maintenance (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md)). (TODO: Not yet implemented)
 - Infrastructure should allow **horizontal scaling** for high-concurrency use cases.
 - Supports **multi-region deployments** to provide better latency for global users. (TODO: Not yet implemented)
 - **Central logging and metrics** use the stack described in [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md).
