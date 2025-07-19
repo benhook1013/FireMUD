@@ -4,13 +4,13 @@ This document outlines how FireMUD supports procedural generation of both dungeo
 
 Currently the only implemented generator is `SimpleDungeonGenerator`. The `OverworldMapGenerator` referenced below is planned for a future release. (TODO: Not yet implemented)
 
-Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content, or fully generate open worlds without requiring hand-authored maps.
+Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content (TODO: Not yet implemented), or fully generate open worlds (TODO: Not yet implemented) without requiring hand-authored maps.
 
 ---
 
 ## 🎯 Use Cases
 
-- 🏗️ **World Bootstrapping** – Initialize a new world map without manual design.
+- 🏗️ **World Bootstrapping** – Initialize a new world map without manual design. (TODO: Not yet implemented)
 - 🌀 **Dungeon Instances** – Generate instanced interiors on demand (e.g. for quests). (TODO: Not yet implemented)
 - 🧱 **Design Templates** – Offer scaffolds for designers to expand on. (TODO: Not yet implemented)
 - 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions. (TODO: Not yet implemented)

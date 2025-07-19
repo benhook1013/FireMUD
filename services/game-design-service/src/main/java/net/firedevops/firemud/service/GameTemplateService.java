@@ -7,5 +7,5 @@ import org.springframework.data.domain.Pageable;
 public interface GameTemplateService {
   GameTemplateDto createTemplate(GameTemplateDto dto);
 
-  Page<GameTemplateDto> listTemplates(Long tenantId, Pageable pageable);
+  Page<GameTemplateDto> listTemplates(String tenantId, Pageable pageable);
 }

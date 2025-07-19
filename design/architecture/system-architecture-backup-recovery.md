@@ -16,7 +16,7 @@ This document defines the backup schedule and disaster recovery procedures for F
   a script (`pg-dump.sh`) that enforces the retention policy. The environment
   variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set;
   otherwise uploads are skipped. When defined, the script also uploads each
-  dump to the specified S3/MinIO bucket.
+  dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/pg-dump-rotate.sh`.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests (`snapshotVolumes: false`). See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
 
