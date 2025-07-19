@@ -1,6 +1,8 @@
 # Item & Equipment Balancing Tools
 
-Game balance relies heavily on item statistics and equipment progression. This document describes the planned tools for tuning those values. Balancing data will eventually follow the same revision and version publishing workflow used throughout the Game Design Service so that stats remain consistent across releases. See [Version Control for Design Assets](version-control.md) for more detail. (TODO: Not yet implemented)
+Game balance relies heavily on item statistics and equipment progression. This document describes the planned tools for tuning those values. Balancing data will eventually follow the same revision and version publishing workflow used throughout the Game Design Service so that stats remain consistent across releases. Designers will store changes through the `SaveRevision` gRPC endpoint and publish them via `PublishVersion` as part of the cross‑service saga outlined in [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). See [Version Control for Design Assets](version-control.md) for more detail. (TODO: Not yet implemented)
+
+Balancing records are scoped by `tenantId` so multiple games can maintain independent item definitions. (TODO: Not yet implemented)
 
 All capabilities described below are planned features and are not available in the current implementation. (TODO: Not yet implemented)
 
