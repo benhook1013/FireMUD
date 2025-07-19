@@ -23,10 +23,10 @@ class GameTemplateServiceImplTest {
 
     GameTemplate template = new GameTemplate();
     template.setId(1L);
-    template.setTenantId(1L);
+    template.setTenantId("1");
     Page<GameTemplate> page = new PageImpl<>(List.of(template));
-    when(repo.findByTenantId(1L, PageRequest.of(0, 20))).thenReturn(page);
-    Page<GameTemplateDto> result = service.listTemplates(1L, PageRequest.of(0, 20));
+    when(repo.findByTenantId("1", PageRequest.of(0, 20))).thenReturn(page);
+    Page<GameTemplateDto> result = service.listTemplates("1", PageRequest.of(0, 20));
     assertEquals(1, result.getTotalElements());
   }
 }

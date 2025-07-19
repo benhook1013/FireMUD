@@ -98,7 +98,7 @@ paths:
           name: tenantId
           required: true
           schema:
-            type: integer
+            type: string
       responses:
         '200':
           description: Template list
