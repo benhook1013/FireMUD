@@ -13,6 +13,10 @@ buf breaking --against origin/main
 
 to regenerate these docs and verify compatibility.
 
+Refer to the [gRPC API Style Guide](../architecture/system-architecture-grpc.md)
+for conventions on schema evolution and error handling. See each service's
+`README.md` under `services/` for high-level explanations of its endpoints.
+
 <a name="top"></a>
 
 ## Table of Contents
@@ -298,15 +302,14 @@ to regenerate these docs and verify compatibility.
 <a name="account-v1-CreateAccountRequest"></a>
 
 ### CreateAccountRequest
-
+Parameters required to register a new account.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
-| username | [string](#string) |  |  |
-| email | [string](#string) |  |  |
-| password | [string](#string) |  |  |
+| username | [string](#string) |  | Desired username for login and display. |
+| email | [string](#string) |  | Email address used for notifications and password recovery. |
+| password | [string](#string) |  | Raw password that will be hashed before storage. |
 
 
 
@@ -316,13 +319,13 @@ to regenerate these docs and verify compatibility.
 <a name="account-v1-CreateAccountResponse"></a>
 
 ### CreateAccountResponse
-
+Result of a CreateAccount call.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| account_id | [string](#string) |  |  |
-| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| account_id | [string](#string) |  | Unique identifier of the newly created account. |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  | Details about why the creation failed, if applicable. |
 
 
 
@@ -463,7 +466,7 @@ to regenerate these docs and verify compatibility.
 <a name="account-v1-PingRequest"></a>
 
 ### PingRequest
-
+Empty request used to verify that the service is reachable.
 
 
 
@@ -473,13 +476,13 @@ to regenerate these docs and verify compatibility.
 <a name="account-v1-PingResponse"></a>
 
 ### PingResponse
-
+Basic ping response containing a greeting and optional error details.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| message | [string](#string) |  |  |
-| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| message | [string](#string) |  | Message describing the current status of the service. |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  | Populated on application-level failure conditions. |
 
 
 

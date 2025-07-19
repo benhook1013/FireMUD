@@ -36,7 +36,7 @@ class AccountGrpcServiceTest {
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
         PingRequest.getDefaultInstance(),
-        new StreamObserver<>() {
+        new StreamObserver<PingResponse>() {
           @Override
           public void onNext(PingResponse value) {
             ref.set(value);
@@ -64,13 +64,8 @@ class AccountGrpcServiceTest {
 
     AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
     service.authenticate(
-        AuthenticateRequest.newBuilder()
-            .setTenantId("1")
-            .setUsername("demo")
-            .setPassword("bad")
-            .setOtp("")
-            .build(),
-        new StreamObserver<>() {
+        AuthenticateRequest.newBuilder().setUsername("demo").setPassword("bad").setOtp("").build(),
+        new StreamObserver<AuthenticateResponse>() {
           @Override
           public void onNext(AuthenticateResponse value) {
             ref.set(value);
@@ -98,12 +93,11 @@ class AccountGrpcServiceTest {
     AtomicReference<CreateAccountResponse> ref = new AtomicReference<>();
     service.createAccount(
         CreateAccountRequest.newBuilder()
-            .setTenantId("1")
             .setUsername("demo")
             .setEmail("e@example.com")
             .setPassword("pass")
             .build(),
-        new StreamObserver<>() {
+        new StreamObserver<CreateAccountResponse>() {
           @Override
           public void onNext(CreateAccountResponse value) {
             ref.set(value);
@@ -131,7 +125,7 @@ class AccountGrpcServiceTest {
     AtomicReference<GetProfileResponse> ref = new AtomicReference<>();
     service.getProfile(
         GetProfileRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
-        new StreamObserver<>() {
+        new StreamObserver<GetProfileResponse>() {
           @Override
           public void onNext(GetProfileResponse value) {
             ref.set(value);
@@ -168,7 +162,7 @@ class AccountGrpcServiceTest {
             .setAccountId("2")
             .setProfileJson("{\"displayName\":\"demo\",\"bio\":\"bio\"}")
             .build(),
-        new StreamObserver<>() {
+        new StreamObserver<UpdateProfileResponse>() {
           @Override
           public void onNext(UpdateProfileResponse value) {
             ref.set(value);
@@ -196,7 +190,7 @@ class AccountGrpcServiceTest {
     AtomicReference<ExportAccountResponse> ref = new AtomicReference<>();
     service.exportAccount(
         ExportAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
-        new StreamObserver<>() {
+        new StreamObserver<ExportAccountResponse>() {
           @Override
           public void onNext(ExportAccountResponse value) {
             ref.set(value);
@@ -222,7 +216,7 @@ class AccountGrpcServiceTest {
     AtomicReference<DeleteAccountResponse> ref = new AtomicReference<>();
     service.deleteAccount(
         DeleteAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
-        new StreamObserver<>() {
+        new StreamObserver<DeleteAccountResponse>() {
           @Override
           public void onNext(DeleteAccountResponse value) {
             ref.set(value);
@@ -254,7 +248,7 @@ class AccountGrpcServiceTest {
             .setProvider("google")
             .setExternalId("abc")
             .build(),
-        new StreamObserver<>() {
+        new StreamObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse>() {
           @Override
           public void onNext(net.firedevops.firemud.account.v1.LinkExternalAccountResponse value) {
             ref.set(value);

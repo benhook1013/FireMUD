@@ -22,22 +22,32 @@ service AccountService {
   rpc VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse);
 }
 
+// Empty request used to verify that the service is reachable.
 message PingRequest {}
 
+// Basic ping response containing a greeting and optional error details.
 message PingResponse {
+  // Message describing the current status of the service.
   string message = 1;
+  // Populated on application-level failure conditions.
   shared.v1.ErrorDetail error = 2;
 }
 
+// Parameters required to register a new account.
 message CreateAccountRequest {
-  string tenant_id = 1;
-  string username = 2;
-  string email = 3;
-  string password = 4;
+  // Desired username for login and display.
+  string username = 1;
+  // Email address used for notifications and password recovery.
+  string email = 2;
+  // Raw password that will be hashed before storage.
+  string password = 3;
 }
 
+// Result of a CreateAccount call.
 message CreateAccountResponse {
+  // Unique identifier of the newly created account.
   string account_id = 1;
+  // Details about why the creation failed, if applicable.
   shared.v1.ErrorDetail error = 2;
 }
 

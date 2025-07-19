@@ -104,13 +104,14 @@ public class AccountServiceImpl implements AccountService {
   public AccountDto createAccount(CreateAccountRequest request) {
     logger.info("Creating account {}", request.username());
     Account account = new Account();
-    account.setTenantId(request.tenantId());
+    account.setTenantId(0L);
     account.setUsername(request.username());
     account.setEmail(request.email());
     account.setPasswordHash(hashPassword(request.password()));
     account.setRole("player");
     Profile profile = new Profile();
-    profile.setTenantId(request.tenantId());
+    profile.setTenantId(0L);
+    // Accounts are system-wide; tenant membership is assigned later.
 
     SagaBuilder builder = new SagaBuilder("accountCreation");
     builder
@@ -126,9 +127,7 @@ public class AccountServiceImpl implements AccountService {
               profileRepository.delete(profile);
               accountRepository.delete(account);
             })
-        .step(
-            "logCreation",
-            () -> loggingAdminClient.logAccountCreation(account.getTenantId(), account.getId()));
+        .step("logCreation", () -> loggingAdminClient.logAccountCreation(0L, account.getId()));
     var saga = builder.build();
     try {
       sagaRunner.run(saga);

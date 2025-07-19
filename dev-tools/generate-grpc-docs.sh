@@ -31,6 +31,10 @@ buf breaking --against origin/main
 
 to regenerate these docs and verify compatibility.
 
+Refer to the [gRPC API Style Guide](../architecture/system-architecture-grpc.md)
+for conventions on schema evolution and error handling. See each service's
+`README.md` under `services/` for high-level explanations of its endpoints.
+
 EOF
 
 tail -n +2 "$OUT_DIR/$(basename "$TEMP_FILE")" >> "$OUT_DIR/grpc-api.md"

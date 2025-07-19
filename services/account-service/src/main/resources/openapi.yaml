@@ -19,15 +19,13 @@ components:
     CreateAccountRequest:
       type: object
       properties:
-        tenantId:
-          type: string
         username:
           type: string
         email:
           type: string
         password:
           type: string
-      required: [tenantId, username, email, password]
+      required: [username, email, password]
     AccountDto:
       type: object
       properties:
