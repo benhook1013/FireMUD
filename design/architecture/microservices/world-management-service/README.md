@@ -61,6 +61,8 @@ The World Management Service stores and manages game world data such as rooms, r
 - `terrain` and `object_spawn` tables support procedural generation *(planned).* (TODO: Not yet implemented)
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
+- `generation_rule` table stores per-tenant procedural generation parameters used
+  by the [Procedural Generation Rules API](#procedural-generation-rules-api).
 - `character_location` table (planned) records the current room for each character, (TODO: Not yet implemented)
   including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.
