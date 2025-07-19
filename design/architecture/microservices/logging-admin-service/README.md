@@ -27,7 +27,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 
 ## Key Features
 
-- Central log search for entries collected via Fluent Bit sidecars.
+- Central log search for entries collected via Fluent Bit sidecars. (TODO: Not yet implemented)
 - [Analytics dashboards](./analytics-dashboards.md) for operators. (TODO: Not yet implemented)
 - Tools for banning or restricting accounts.
 - [Role-based admin UI](./admin-ui.md) for moderators. (TODO: Not yet implemented)
@@ -91,8 +91,8 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 - **Internal:**
   - Account Service forwards account events and payment notifications. (TODO: Not yet implemented)
   - Game Session Service streams session lifecycle metrics. (TODO: Not yet implemented)
-  - Social & Groups Service delivers chat logs for moderation.
-- **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
+  - Social & Groups Service delivers chat logs for moderation. (TODO: Not yet implemented)
+  - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting. (TODO: Not yet implemented)
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),
 [**Deployment Environments**](../infrastructure/deployment-environments.md),
@@ -167,4 +167,4 @@ Saga usage across FireMUD.
   Alertmanager (see `k8s/monitoring/alertmanager.yaml`).
 - Real-time analytics on game performance. (TODO: Not yet implemented)
 - Optional 2FA support for administrator accounts via TOTP codes. See
-  [Security Architecture](../system-architecture-security.md).
+  [Security Architecture](../system-architecture-security.md). (TODO: Not yet implemented)
