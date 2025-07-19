@@ -316,3 +316,8 @@ The standard microservice checklist is now copied into each service task list.
 - [x] Plan for **end-to-end UI testing** using Cypress or Playwright once the
   web UI is stable
 - [x] Evaluate localization and internationalization support for the React client
+- [ ] Configure **IPVS** or similar load balancing mode in Kubernetes clusters
+- [ ] Add **PostgreSQL exporter** for Prometheus metrics
+- [ ] Automate **database password rotation** using cert-manager or Secret syncing
+- [ ] Support **multi-region deployments** for lower latency
+- [ ] Schedule **nightly resets** of the staging playtest environment
