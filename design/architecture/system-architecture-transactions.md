@@ -73,12 +73,14 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library
   - Tracks in-progress, completed, and failed workflows
   - Supports compensation
+  - Flyway migrations bundled with the library create these tables automatically
   - Automatic retries and alerting (TODO: Not yet implemented)
   - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow using MDC
   - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
+  - Helper `GrpcSagaSteps.callWithRetry` wraps gRPC calls with basic retry logic
   - All steps are **idempotent** (TODO: Not yet enforced)
   - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
@@ -98,7 +100,7 @@ sagaBuilder("accountCreation")
 ```
 
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
-The `firemud-common` library provides a `SagaBuilder` class implementing this pattern.
+The `firemud-common` library provides a `SagaBuilder` class implementing this pattern. See [Shared Libraries Overview](./system-architecture-shared-libraries.md) for additional details.
 Services include the library and the accompanying Flyway migrations located in
 `services/common-library/src/main/resources/db/migration` to persist saga state
 in the `saga_instance` and `saga_step` tables.
