@@ -23,6 +23,10 @@
 
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
+## Scalability
+
+- [ ] Implement auto-scaling policies for heavy traffic bursts
+
 ## Reusable Microservice Checklist
 
 These tasks apply to every FireMUD service unless noted otherwise. Gateway and

@@ -32,6 +32,8 @@
 - [x] Implement event-driven scripting API for game creators
 - [x] Implement in-game modding/plugin framework
 - [x] Implement scripted AI behaviors for NPCs
+- [ ] Forward plugin metrics and error logs to the Logging & Admin Service
+- [ ] Expose plugin enable/disable APIs via the Logging & Admin Service
 - [ ] Notify downstream services when new versions are published
 - [ ] Add import/export of design assets for sharing between games
 - [ ] Add `owner_id` association to games and API
