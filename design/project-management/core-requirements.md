@@ -61,11 +61,11 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 - **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing). (TODO: Not yet implemented)
 - Game creators can configure **instance rules, expiration, and persistence settings**. (TODO: Not yet implemented)
 - **World Persistence & Scheduled Events**:
-- The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
-- **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
-- NPC actions and environmental changes should **continue in a believable way even if no players are online**. (TODO: Not yet implemented)
-- Persistent storage for **player, NPC, and item data**.
-See [World Management Service](../architecture/microservices/world-management-service/README.md) for additional details.
+  - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
+  - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable. (TODO: Not yet implemented)
+  - NPC actions and environmental changes should **continue in a believable way even if no players are online**. (TODO: Not yet implemented)
+  - Persistent storage for **player, NPC, and item data**.
+  See [World Management Service](../architecture/microservices/world-management-service/README.md) for additional details.
 
 ### 2.5 Game Logic & Automation
 
