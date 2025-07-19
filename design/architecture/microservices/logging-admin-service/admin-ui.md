@@ -8,8 +8,8 @@ with the service through a lightweight React interface. (TODO: Not yet implement
 Credentials are exchanged with the Account Service, which issues
 JWTs for backend calls. These tokens remain server-side as described in
 [Authentication & Authorization](../../system-architecture-authentication.md),
-and permissions are enforced using the `globalRoles` and `scopedRoles` claims.
-(TODO: Not yet implemented)
+and permissions are enforced using the `globalRoles` claim.
+The planned `scopedRoles` claim is not yet implemented. (TODO: Not yet implemented)
 
 ## Features
 
@@ -18,6 +18,7 @@ and permissions are enforced using the `globalRoles` and `scopedRoles` claims.
 - Toggle runtime feature flags for a specific tenant. (TODO: Not yet implemented)
 - Inspect saga workflows and view step details; ability to retry failed steps is planned. (TODO: Not yet implemented)
 - Reference [Moderation Policies](./moderation-policies.md) when issuing bans or warnings. (TODO: Not yet implemented)
+- View analytics dashboards built with Grafana and Kibana. (TODO: Not yet implemented)
 
 These capabilities map to existing REST endpoints exposed by the service.
 Planned routes include:
