@@ -6,6 +6,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -56,6 +58,8 @@ public class TickServiceImpl implements TickService {
   private RedisScript<Long> stageScript;
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
+  private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
+  private final AtomicInteger activeTicks = new AtomicInteger();
 
   private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
@@ -130,6 +134,10 @@ public class TickServiceImpl implements TickService {
   @Timed(value = "gamesession.tick.process")
   @Async("tickExecutor")
   public void processTick(Long sessionId) {
+    if (pauseRequested.get()) {
+      logger.debug("Tick processing skipped while paused");
+      return;
+    }
     long start = System.nanoTime();
     Long tenantId = findTenantId(sessionId);
     String lockKey = lockKey(tenantId, sessionId);
@@ -141,6 +149,7 @@ public class TickServiceImpl implements TickService {
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }
+    activeTicks.incrementAndGet();
     String head = null;
     boolean solo = false;
     try {
@@ -198,6 +207,7 @@ public class TickServiceImpl implements TickService {
         logger.debug("Tick budget exceeded: {} ms", elapsed);
       }
       redisTemplate.delete(lockKey);
+      activeTicks.decrementAndGet();
     }
   }
 
@@ -207,6 +217,25 @@ public class TickServiceImpl implements TickService {
     Long tenantId = findTenantId(sessionId);
     Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
     return state != null ? state.toString() : "{}";
+  }
+
+  @Override
+  public void pauseTicks(String reason) {
+    pauseRequested.set(true);
+    logger.info("Tick pause requested: {}", reason);
+  }
+
+  @Override
+  public void resumeTicks(String reason) {
+    pauseRequested.set(false);
+    logger.info("Tick resume requested: {}", reason);
+  }
+
+  @Override
+  public net.firedevops.firemud.gamesession.v1.TickStatus getTickStatus() {
+    return pauseRequested.get() && activeTicks.get() == 0
+        ? net.firedevops.firemud.gamesession.v1.TickStatus.PAUSED
+        : net.firedevops.firemud.gamesession.v1.TickStatus.RUNNING;
   }
 
   private Long findTenantId(Long sessionId) {

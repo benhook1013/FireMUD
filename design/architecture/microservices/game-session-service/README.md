@@ -79,6 +79,9 @@ Orchestrates live game sessions, including tick execution, player input validati
 - `EnqueueCommand` – adds a player action to the next tick's queue.
 - `QueryState` – retrieves condensed session or player state for monitoring.
 - `ToggleFeatureFlag` – updates runtime flags for a tenant.
+- `PauseTicks` – temporarily halt tick execution before a backup.
+- `ResumeTicks` – resume tick processing after the backup begins.
+- `GetTickStatus` – returns `RUNNING` or `PAUSED` for backup orchestration.
 
 ## Dependencies
 

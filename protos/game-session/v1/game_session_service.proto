@@ -15,6 +15,12 @@ service GameSessionService {
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
   rpc QueryState(QueryStateRequest) returns (QueryStateResponse);
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
+  // Pause tick execution so a consistent pg_dump can be taken.
+  rpc PauseTicks(PauseTicksRequest) returns (PauseTicksResponse);
+  // Resume tick execution after a backup.
+  rpc ResumeTicks(ResumeTicksRequest) returns (ResumeTicksResponse);
+  // Report whether ticks are currently paused.
+  rpc GetTickStatus(GetTickStatusRequest) returns (GetTickStatusResponse);
 }
 
 message StartSessionRequest {
@@ -81,5 +87,37 @@ message ToggleFeatureFlagRequest {
 
 message ToggleFeatureFlagResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+// Administrative request to pause tick execution.
+message PauseTicksRequest {
+  string reason = 1;
+}
+
+message PauseTicksResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+// Resume ticks after a backup has started.
+message ResumeTicksRequest {
+  string reason = 1;
+}
+
+message ResumeTicksResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetTickStatusRequest {}
+
+enum TickStatus {
+  RUNNING = 0;
+  PAUSED = 1;
+}
+
+message GetTickStatusResponse {
+  TickStatus status = 1;
   shared.v1.ErrorDetail error = 2;
 }
