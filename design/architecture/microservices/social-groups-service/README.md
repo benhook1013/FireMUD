@@ -174,20 +174,20 @@ files change.
 curl http://localhost:8080/ping
 ```
 
+Example chat request:
+
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
+```
+
 #### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`social_groups_service.proto`](../../../protos/social-groups/v1/social_groups_service.proto).
 
 ```bash
 grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
-```
-
-- `POST /chat` – send a chat message filtered for profanity.
-
-```bash
-curl -X POST http://localhost:8080/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
 ```
 
 ### Metrics & Tracing
@@ -228,3 +228,4 @@ guidance.
 - Optional voice chat integration via a WebRTC gateway. (TODO: Not yet implemented)
 - Presence indicators and notifications when friends come online. (TODO: Not yet implemented)
 - Broadcast and out-of-game email capabilities for game creators. (TODO: Not yet implemented)
+- Retrieval endpoints for chat and mail history. (TODO: Not yet implemented)
