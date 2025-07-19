@@ -22,7 +22,7 @@ cert-manager is planned. (TODO: Not yet implemented)
 ### Key and Certificate Rotation
 
 - cert-manager issues the mTLS certificates used between services. JWT signing keys are stored as Secrets and rotated manually; automated issuance via cert-manager is planned. (TODO: Not yet implemented)
-- All services poll their mounted secrets for updates and support **hot reload** via the shared `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the `firemud-common` library. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services. (TODO: Not yet implemented) JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
+- All services support **hot reload** of mounted secrets using the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the `firemud-common` library. A `GrpcServerTlsReloader` is available for server-side reloads but is not yet integrated. (TODO: Not yet implemented) JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
 - During rotation, services reload credentials when files change. Caching of old credentials to allow for seamless transitions is planned. (TODO: Not yet implemented)
 - The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually. Automated JWKS generation is planned. (TODO: Not yet implemented)
@@ -101,10 +101,10 @@ cert-manager is planned. (TODO: Not yet implemented)
 
 | Topic                     | Strategy                                                                 |
 |---------------------------|--------------------------------------------------------------------------|
-| JWT Secret Storage        | Kubernetes Secrets (manual rotation with hot reload; cert-manager integration planned) (TODO: Not yet implemented) |
-| Key & Cert Rotation       | Hot-reload; caching of old credentials and automated JWKS rotation planned (TODO: Not yet implemented) |
+| JWT Secret Storage        | Kubernetes Secrets with hot reload via `JwtSecretWatcher`; rotation is manual (cert-manager integration planned) (TODO: Not yet implemented) |
+| Key & Cert Rotation       | Hot reload via `TlsCertificateWatcher`; caching of old credentials and automated JWKS rotation planned (TODO: Not yet implemented) |
 | TLS Termination           | Load balancer                                                 |
-| Internal Encryption       | mTLS via Kubernetes Secrets                                              |
+| Internal Encryption       | mTLS via Kubernetes Secrets; server certificate hot reload pending (TODO: Not yet implemented) |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
 | Brute-Force Defense       | Gateway rate limiting and Telnet connection throttling in place; per-IP login tracking planned (TODO: Not yet implemented) |
 | Abuse Detection           | Current: login only; Future: command-level heuristics (TODO: Not yet implemented) |
