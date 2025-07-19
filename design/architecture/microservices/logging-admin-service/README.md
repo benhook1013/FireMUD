@@ -16,13 +16,13 @@ Centralized logging and administration tools for the platform. Collects log data
 Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
 All admin APIs are secured via role-based access control integrated with the Account Service.
 
-- Access to this service is protected by mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
+- gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
 - The security model relies solely on JWT roles; there is no additional
   network-layer isolation for admin endpoints.
 - Moderation data and log indices include a `tenantId` field so administrators
   only see information for the games they manage. Cross-tenant queries are
   rejected per the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-  strategy.
+  strategy. (TODO: Not yet implemented)
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features

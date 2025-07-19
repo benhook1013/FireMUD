@@ -9,13 +9,13 @@
 
 FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with deterministic action resolution:
 
-- **Player inputs arrive in real-time**, rate-limited and queued in per-session **command queues** (TODO: Not yet implemented)
+- **Actions are queued per entity** (players, NPCs, and scripted automation) in individual **command queues** (TODO: Not yet implemented)
 - At regular **tick intervals** (e.g., 1s):
-  - A `TickScheduler` in the Game Session Service triggers `processTick` for each active session
-  - One action (if any) is pulled from each entity’s command queue (TODO: Not yet implemented)
+  - A `TickScheduler` in the Game Session Service triggers `processTick` for each active tick region
+  - One action (if any) is pulled from each entity's command queue (TODO: Not yet implemented)
   - Actions are resolved in FIFO order; stat-based prioritization is planned (TODO: Not yet implemented)
   - Only **one action per entity per tick** is executed for fairness (TODO: Not yet implemented)
-  - State changes are applied in a single coordinated pass
+  - State changes are applied in a single coordinated pass (TODO: Not yet implemented)
 
 This model ensures:
 
@@ -110,7 +110,7 @@ Each tick proceeds as follows:
    Sort by timestamp, stat priority, or custom policy; only one action per entity is executed per tick (TODO: Not yet implemented)
 
 3. **Apply Effects**
-   Mutate entity state (e.g., HP, inventory, buffs, position)
+   Mutate entity state (e.g., HP, inventory, buffs, position) (TODO: Not yet implemented)
 
 4. **Trigger Events**
    Run regeneration, room scripts, NPC behaviors, AI-driven commands — all use the same command queue model (TODO: Not yet implemented)
@@ -125,15 +125,15 @@ The **Game Session Service** manages orchestration, while gameplay rules are res
 
 State changes are first **staged in Redis** under keys like `tick:pending:{tenantId}:{regionId}`:
 
-- Only committed if **all actions succeed**
+- Only committed if **all actions succeed** (TODO: Not yet implemented)
 - Timeout or failed actions are **excluded** and **rescheduled with priority** (TODO: Not yet implemented)
 - Commit and rollback are coordinated by Game Session Service using Lua scripts in Redis
 
 This ensures:
 
-- Atomic per-tick updates
-- Partial failure recovery
-- Conflict-free shared state across retries
+- Atomic per-tick updates (TODO: Not yet implemented)
+- Partial failure recovery (TODO: Not yet implemented)
+- Conflict-free shared state across retries (TODO: Not yet implemented)
 
 ---
 
@@ -257,7 +257,7 @@ may be notified that the chain was halted. (TODO: Not yet implemented)
 | Service                   | Role                                                                 |
 |---------------------------|----------------------------------------------------------------------|
 | **Game Session Service**          | Orchestrates tick regions, lock acquisition, retries, commit flow    |
-| **Game Logic Service**            | Resolves each queued action deterministically                        |
+| **Game Logic Service**            | Resolves each queued action deterministically                         (TODO: Not yet implemented)|
 | **Automation & Scripting**| Injects AI or scripted commands into queues                          |
 | **World Management**      | Defines tick region layout and room segmentation (TODO: Not yet implemented)                     |
 | **Redis**                 | Stores locks, timers, staged changes, retry metadata; executes Lua   |

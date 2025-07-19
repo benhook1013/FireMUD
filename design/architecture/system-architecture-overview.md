@@ -13,11 +13,12 @@ Features or workflows that are still in progress are annotated with **(TODO: Not
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service (TODO: Not yet implemented)
 - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
    > 🛑 **Gameplay login is handled by the Game Session Service** — the Gateway simply forwards any admin tokens. JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
-- **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input**, but **discards it across reconnects** (TODO: Not yet implemented)
+- **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input** but **discards it across reconnects** (TODO: Not yet implemented)
 - **Reconnection logic is handled in layers** to preserve gameplay continuity (TODO: Not yet implemented)
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md) (TODO: Not yet implemented)
 - **Session state is stored in Redis** to keep services stateless. Full reconnect recovery is still in development (TODO: Not yet implemented)
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code** (TODO: Not yet implemented)
+See the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration (TODO: Not yet implemented)
 - **Feature flags are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service** (TODO: Not yet implemented)
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one (TODO: Not yet implemented)
@@ -178,6 +179,13 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 - [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 - [Database Migrations](./system-architecture-database-migrations.md)
 - [Testing Strategy](./system-architecture-testing.md)
+
+### Gameplay & Tools
+
+- [Scripting & Automation Framework](./system-architecture-scripting.md)
+- [Procedural Generation](./system-architecture-procedural-generation.md)
+- [MCP Support](./system-architecture-mcp-support.md)
+- [Frontend Architecture](./system-architecture-frontend.md)
 
 ### Responsibilities
 

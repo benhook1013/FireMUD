@@ -232,7 +232,7 @@ Example response:
 ```json
 {
   "id": 123,
-  "tenantId": 1,
+  "tenantId": "tenant-abc",
   "username": "demo",
   "email": "demo@example.com"
 }
