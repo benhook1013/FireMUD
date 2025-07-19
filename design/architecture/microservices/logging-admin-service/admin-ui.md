@@ -22,7 +22,7 @@ and permissions are enforced using the `globalRoles` and `scopedRoles` claims.
 These capabilities map to existing REST endpoints exposed by the service.
 Planned routes include:
 
-```
+```bash
 GET  /logs
 POST /reports
 POST /moderation/actions
