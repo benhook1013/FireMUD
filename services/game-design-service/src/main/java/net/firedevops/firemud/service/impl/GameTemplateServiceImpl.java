@@ -35,7 +35,7 @@ public class GameTemplateServiceImpl implements GameTemplateService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "gamedesign.template.list")
-  public Page<GameTemplateDto> listTemplates(Long tenantId, Pageable pageable) {
+  public Page<GameTemplateDto> listTemplates(String tenantId, Pageable pageable) {
     return repository.findByTenantId(tenantId, pageable).map(mapper::toDto);
   }
 }

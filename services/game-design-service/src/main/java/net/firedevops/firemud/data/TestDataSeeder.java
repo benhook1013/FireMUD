@@ -41,7 +41,7 @@ public class TestDataSeeder implements ApplicationRunner {
 
     if (templateRepository.count() == 0) {
       GameTemplate template = new GameTemplate();
-      template.setTenantId(game.getTenantId());
+      template.setTenantId(String.valueOf(game.getTenantId()));
       template.setName("Default Template");
       template.setDescription("Demo template");
       template.setConfig("{}");
