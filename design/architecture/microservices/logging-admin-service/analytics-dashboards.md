@@ -3,7 +3,7 @@
 This document describes the default Grafana and Kibana dashboards shipped with the
 **Logging & Admin Service**. These dashboards provide operators with visibility
 into game health, player activity and moderation trends. Sample JSON templates
-live under [`design/observability`](../../observability) for local testing.
+live under [`design/observability`](../../../observability) for local testing. (TODO: Not yet implemented)
 For an overview of the pipeline that feeds these dashboards see
 [Logging & Monitoring](../../system-architecture-logging-monitoring.md).
 
@@ -25,7 +25,7 @@ Operators can adjust queries or add panels to suit their games.
 - **Log Volume** – ingest rates, log levels, and error hotspots. See `log-volume.json`. (TODO: Not yet implemented)
 - **Player Reports** – breakdown of abuse or bug reports by category. (TODO: Not yet implemented)
 - **Moderation Actions** – bans, warnings, and feature toggles over time. (TODO: Not yet implemented)
-- **Search by Trace ID** – correlate logs and traces using the `traceId` field.
+- **Search by Trace ID** – correlate logs and traces using the `traceId` field. (TODO: Not yet implemented)
 
 These dashboards rely on structured JSON logs shipped via Fluent Bit. Saved
 searches make it easy to pivot on `tenantId`. Filtering by `playerId` will be

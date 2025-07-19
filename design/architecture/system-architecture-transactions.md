@@ -62,7 +62,8 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
 ### Characteristics:
 
 - **Orchestration**:
-  - Centralized in the **firemud-common** library (saga package)
+  - Centralized in the **firemud-common** library (saga package) located under
+    `services/common-library`
   - The engine and its Flyway migrations live in `services/common-library/src/main/resources/db/migration`
   - Hosts define saga flows declaratively using a fluent API
   - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
@@ -73,7 +74,7 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Tracks in-progress, completed, and failed workflows
   - Supports compensation
   - Automatic retries and alerting (TODO: Not yet implemented)
-  - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow
+  - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow using MDC
   - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
   
 - **Execution Model**:

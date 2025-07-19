@@ -12,7 +12,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Boilerplate Reduction**: Lombok
 - **DTO Mapping**: MapStruct
 - **Build Integration**: Each service declares Lombok and MapStruct dependencies with annotation processors enabled.
-- **Data-Driven Rules**: Game definitions and rules can be edited via tooling without redeploying code. (TODO: Not yet implemented)
+- **Data-Driven Rules**: Game definitions and rules can be edited via tooling without redeploying code. See [Game Design Service](../architecture/microservices/game-design-service/README.md). (TODO: Not yet implemented)
 
 ### Deployment & Networking
 
@@ -32,7 +32,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Database Access**: Spring Data JPA
 - **Caching**: Redis for transient session and gameplay state
 - **Redis Consistency**: Lua scripts enforce atomic updates with `WAIT` for replica acknowledgment
-- **Game Session Service** orchestrates ticks using Redis and loads runtime feature flags from PostgreSQL (see [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md)) (TODO: Runtime flag application Not yet implemented)
+- **Game Session Service** orchestrates ticks using Redis and loads runtime feature flags from PostgreSQL (see [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md)) (TODO: Not yet implemented)
 - **Feature Flags** are defined in the Game Design Service and toggled at runtime via the Logging & Admin Service. (TODO: Not yet implemented)
 - **Single Session** per character with layered reconnection (Proxy → Gateway → Session) (see [Reconnection Strategy](../architecture/system-architecture-reconnection.md)) (TODO: Not yet implemented)
 - **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service (see [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md)) (TODO: Not yet implemented)
@@ -53,8 +53,8 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ## Platform Interfaces
 
-- **Web-based MUD Client**: Browser-based interface for players. (TODO: Not yet implemented)
-- **Web-based MUD Game Editor**: Browser-based editor for designing game content. (TODO: Not yet implemented)
+- **Web-based MUD Client**: Browser-based interface for players. See [web-client README](../../web-client/README.md). (TODO: Not yet implemented)
+- **Web-based MUD Game Editor**: Browser-based editor for designing game content, built on the Game Design Service UI. (TODO: Not yet implemented)
 
 ## Testing
 

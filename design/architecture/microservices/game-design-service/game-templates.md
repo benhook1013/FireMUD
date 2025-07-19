@@ -21,11 +21,13 @@ default rulesets and admin accounts will be introduced in a future revision.
 (TODO: Not yet implemented)
 
 > **Note**
-> `tenantId` should be a string GUID as defined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md). The service currently stores it as a numeric value, but migration to GUIDs is planned. (TODO: Not yet implemented)
+> `tenantId` is always a string GUID. The database column uses `VARCHAR(36)` and
+> the OpenAPI specification exposes the same format across all endpoints.
 
-Templates are versioned like any other design asset. Publishing a version is intended to copy
-these templates to the domain services using the `version_id` workflow described
-in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
+Templates are **intended** to be versioned like any other design asset. Publishing a
+version will eventually copy these templates to the domain services using the
+`version_id` workflow described in
+[Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
 ## Creating Templates
 

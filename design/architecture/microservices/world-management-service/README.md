@@ -9,8 +9,8 @@ The World Management Service stores and manages game world data such as rooms, r
 ### Responsibilities
 
 - Persist region, zone, and room data with tenant isolation
-- Execute scheduled world events and procedural generation (TODO: Not yet implemented)
-- Provide pathfinding and navmesh information (TODO: Not yet implemented)
+- Execute scheduled world events. Procedural generation support is planned. (TODO: Not yet implemented)
+- Provide pathfinding via `TravelService`; navmesh data and a public API are planned. (TODO: Not yet implemented)
 - Notify Game Session and Automation services when the world changes (TODO: Not yet implemented)
 - Track character locations and instance occupancy (TODO: Not yet implemented)
 
@@ -18,7 +18,7 @@ The World Management Service stores and manages game world data such as rooms, r
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
 - Changes are persisted incrementally to avoid heavy writes.
-- Background tasks trigger scheduled world changes (daily resets or seasonal shifts) and notify relevant services via gRPC. (TODO: Not yet implemented)
+- Background tasks trigger scheduled world changes. gRPC notifications to other services are planned. (TODO: Not yet implemented)
 - Supports procedural generation with options for dynamic world expansion. (TODO: Not yet implemented)
 - Uses a region → zone → room hierarchy for efficient lookups.
 - Publishes world event notifications for NPC scripts and game logic processing. (TODO: Not yet implemented)
@@ -26,7 +26,7 @@ The World Management Service stores and manages game world data such as rooms, r
   data into its schema, ensuring world data matches the active version. (TODO: Not yet implemented) See
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
-- World creation for new games also runs as a Saga, outlined in
+- World creation for new games runs as a Saga, inserting a starter region today; copying full design data is pending. See
   [World Creation Workflow](world-creation-workflow.md). (TODO: Not yet implemented)
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
@@ -61,6 +61,8 @@ The World Management Service stores and manages game world data such as rooms, r
 - `terrain` and `object_spawn` tables support procedural generation *(planned).* (TODO: Not yet implemented)
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
+- `generation_rule` table stores per-tenant procedural generation parameters used
+  by the [Procedural Generation Rules API](#procedural-generation-rules-api).
 - `character_location` table (planned) records the current room for each character, (TODO: Not yet implemented)
   including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.

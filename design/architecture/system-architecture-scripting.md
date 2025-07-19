@@ -41,7 +41,7 @@ Refer to the Automation & Scripting Service README for implementation details.
 ## 🔒 Sandboxing & Security
 
 - Script execution occurs in a **sandbox** with restricted APIs and resource limits. (TODO: Not yet implemented)
-- Components interact with the **Game Logic Service** through validated gRPC calls.
+- Components interact with the **Game Logic Service** through validated gRPC calls. (TODO: Not yet implemented)
 - The service enforces **per-script quotas** that limit how many events a script may enqueue and the duration of each tick. **CPU and memory limits** are planned for a future release. (TODO: Not yet implemented)
 
 ## ⚙️ Integration with Game Logic & Tick System
@@ -55,12 +55,12 @@ Refer to the Automation & Scripting Service README for implementation details.
 
 ## 🔄 Deployment & Versioning
 
-- Script definitions are stored in the **Game Design Service** and versioned alongside other game assets.
+- Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is planned. (TODO: Not yet implemented)
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed. (TODO: Not yet implemented)
 - Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
 - The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to reload updated scripts via `ScriptVersionService` without downtime.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run. (TODO: Not yet implemented)
-- Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
+- Older versions remain in the database for auditing or rollback, but only the pinned version is executed. (TODO: Not yet implemented)
 
 ## 🛡️ Fairness & Abuse Prevention
 

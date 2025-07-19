@@ -1,6 +1,6 @@
 # Ability & Action Design Tools
 
-This document outlines the planned editors for defining abilities, actions and combat mechanics. The tooling is part of the Game Design Service and will push finalized data to the [Game Logic Service](../game-logic-service/README.md) during version publishing. (TODO: Not yet implemented)
+This document outlines the planned editors for defining abilities, actions, and combat mechanics. The tooling is part of the Game Design Service and will push finalized data to the [Game Logic Service](../game-logic-service/README.md) during version publishing. (TODO: Not yet implemented)
 
 The publish workflow is part of the cross‑service saga described in [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
 
@@ -15,9 +15,9 @@ The planned web-based editor described in [Web-Based Visual Design Interface](we
 
 ## Capabilities
 
-- **Ability Editor** – create spell and skill definitions with cooldowns, resource costs and targeting rules. (TODO: Not yet implemented)
+- **Ability Editor** – create spell and skill definitions with cooldowns, resource costs, and targeting rules. (TODO: Not yet implemented)
 - **Action Sequencer** – design combos or chained actions that trigger based on events. (TODO: Not yet implemented)
-- **Balancing Metrics** – display damage, healing and resource impact to help tune gameplay. (TODO: Not yet implemented)
+- **Balancing Metrics** – display damage, healing, and resource impact to help tune gameplay. (TODO: Not yet implemented)
 - **Integration with [Item & Equipment Balancing](item-equipment-balancing.md)** – ability damage values can be compared against item statistics for overall balance. (TODO: Not yet implemented)
 
 ## Workflow

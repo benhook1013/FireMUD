@@ -1,6 +1,7 @@
 # TCP Proxy Service Task List
 
 ## Telnet Bridge
+
 - [x] Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway
 - [x] Define Telnet bridge gRPC APIs for TCP Proxy Service
 - [x] Implement Telnet networking and WebSocket bridging
@@ -10,6 +11,7 @@
 - [ ] Negotiate the Mud Client Protocol (MCP) when supported
 
 ## Connection Management
+
 - [x] Buffer Telnet input and discard on disconnect to support reconnection
 - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
 - [x] Enforce Telnet protocol command whitelist and input sanitization
@@ -18,6 +20,7 @@
 - [ ] Integrate with the Reconnection Strategy to resume sessions transparently
 
 ## Security
+
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist

@@ -7,11 +7,15 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 ## 🚀 Migration Tool
 
 - **Flyway** is used for all schema migrations.
-- Each service's `build.gradle.kts` applies the `org.flywaydb.flyway` plugin and pulls in `flyway-core`.
+- Each service's `build.gradle.kts` applies the `org.flywaydb.flyway` plugin.
+  Most services explicitly depend on `flyway-core`, while others rely on the
+  plugin's default dependency.
 - Versioned SQL files live under each service in `src/main/resources/db/migration/`.
 - Migrations follow the `V<version>__<description>.sql` naming convention.
 - Every module begins with a `V1__init.sql` baseline and numbers sequentially from there.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
+- Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
+  [Environment & Secrets](./infrastructure/environment-and-secrets.md).
 - Java-based callbacks are avoided; migrations remain SQL-only for portability.
 
 ## 📂 Per-Service Organization
@@ -19,7 +23,8 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - Every microservice maintains its own migration folder and changelog.
 - Schemas are isolated: services never modify each other's tables.
 - Tables currently reside in the `public` schema but will move to dedicated
-  schemas for each service for better isolation. See
+  schemas for each service for better isolation. Dedicated schema names will
+  match the owning service (for example `account_service`). See
   [Multi-Tenancy](./system-architecture-multi-tenancy.md). (TODO: Not yet implemented)
 - Common tables shared by multiple services reside in the `common-library` module with its own migrations.
 - It contains saga table migrations described in [System Architecture – Transactions](./system-architecture-transactions.md).

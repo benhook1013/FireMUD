@@ -92,6 +92,7 @@ restarting the service. See the
 [Spring Cloud Gateway microservice documentation](./microservices/spring-cloud-gateway/README.md#rest--grpc-endpoints)
 for example requests and supported fields. The gRPC interface is defined in [`gateway_management_service.proto`](../../protos/spring-cloud-gateway/v1/gateway_management_service.proto) and the REST schema in [`openapi.yaml`](../../services/spring-cloud-gateway/src/main/resources/openapi.yaml).
 Dynamic routes are stored only in memory and are lost on service restart. A PostgreSQL `route_config` table exists but is not yet used for persistence. (TODO: Not yet implemented)
+The gRPC management API listens on port `6565` as configured in `application.yml`.
 
 ## 📈 Observability
 

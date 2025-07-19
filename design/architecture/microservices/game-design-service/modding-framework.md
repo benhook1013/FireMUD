@@ -1,8 +1,8 @@
 # In-Game Modding and Plugin Framework
 
-This document sketches the planned modding system that allows administrators to extend a published game without republishing a full version. (TODO: Not yet implemented)
-> **Status: In Progress** – The modding framework is still under active development and not yet available in production. (TODO: Not yet implemented)
-Plugins will share the same component-based DSL and sandbox used by the Automation & Scripting Service so custom logic can be hot reloaded safely. (TODO: Not yet implemented) Management APIs for enabling or disabling plugins will live in the Logging & Admin Service. (TODO: Not yet implemented)
+This document outlines the planned modding system that will let administrators extend a published game without republishing a full version. (TODO: Not yet implemented)
+> **Status: In Progress** – The modding framework is still under active development and not available in production. (TODO: Not yet implemented)
+Plugins will use the same component-based DSL and sandbox as the Automation & Scripting Service so custom logic can be hot reloaded safely. (TODO: Not yet implemented) Management APIs for enabling or disabling plugins will reside in the Logging & Admin Service. (TODO: Not yet implemented)
 
 ## 🎯 Goals
 
