@@ -1,10 +1,10 @@
 # World Creation Workflow
 
 World creation is a long running process that will eventually copy design data
-and prepare the initial world state for a new game instance. The workflow uses
-the shared **Saga** utilities from `firemud-common` so each step can be rolled
+and prepare the initial world state for a new game instance. (TODO: Not yet implemented)
+The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled
 back if another step fails. `WorldCreationService` is invoked when a tenant
-launches a new game world, typically from the Game Session Service.
+launches a new game world, typically from the Game Session Service. (TODO: Not yet implemented)
 
 Currently the implementation only inserts a starter region. The method that
 would schedule placeholder events is a stub and does not yet create records.
@@ -30,13 +30,14 @@ Additional steps may be added for large games
 such as generating terrain chunks or spawning default NPCs. (TODO: Not yet implemented)
 
 ```java
-new SagaBuilder()
+SagaBuilder builder = new SagaBuilder("createWorld");
+builder
     .step(
         "copyDesign",
         () -> copyDesignData(tenantId, versionId),
         () -> rollbackDesignCopy(tenantId))
-    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId))
-    .run();
+    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId));
+sagaRunner.run(builder.build());
 ```
 
 The saga state is stored in the `saga_instance` and `saga_step` tables defined
