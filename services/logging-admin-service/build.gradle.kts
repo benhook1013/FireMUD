@@ -20,7 +20,7 @@ dependencies {
     implementation("io.github.lognet:grpc-spring-boot-starter:5.2.0")
     implementation(project(":common-library"))
     implementation("org.springframework.boot:spring-boot-starter-aop:3.5.3")
-    implementation("io.micrometer:micrometer-registry-prometheus:1.15.1")
+    implementation("io.micrometer:micrometer-registry-prometheus:1.15.2")
     implementation("io.opentelemetry:opentelemetry-sdk:1.52.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.52.0")
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9")
