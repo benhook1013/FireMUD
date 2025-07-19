@@ -13,8 +13,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - In-flight command queues
 - Tick locks and staged results
 - Cooldowns and timer expirations (stored in milliseconds) (TODO: Not yet implemented)
-- Gameplay session state and real-time coordination data
-  _(e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))_
+- Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding); timers pending) (TODO: Not yet implemented)
 - Retry metadata and inter-tick conflict tracking
 - TTL-based service caches such as hot room lookups and recent chat history
   _(see [Performance Optimization Guidelines](./performance-optimization.md))_
