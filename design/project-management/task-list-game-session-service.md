@@ -1,25 +1,36 @@
 # Game Session Service Task List
 
 ## Session Lifecycle
+
 - [x] Implement game instance lifecycle (start, stop, restart)
 - [x] Support multi-tenancy for hosted games
 - [x] Persist session state in Redis for reconnect recovery
 - [x] Enforce single-session control per character (session takeover on new login)
 - [x] Plan for cross-region sharding and session handoff
+- [ ] Forward TOTP codes to the Account Service during login
+- [ ] Refresh roles in-session when `scopedRoles` are updated
+- [ ] Implement `LOGIN`/`LOGON` command handling for interactive and parameterized logins
 
 ## Tick Management
+
 - [x] Implement tick orchestration using Redis for command queues
 - [x] Implement Lua-based staging, commit, and rollback scripts for tick transactions
 - [x] Implement distributed lock acquisition in Redis for tick updates
 - [x] Implement tick replay and crash recovery logic
 - [ ] Implement graceful degradation when Redis operations stall to avoid gameplay interruption
+- [ ] Record conflict metadata during retries to highlight hotspots and enable adaptive throttling
+- [ ] Support per-tenant tick intervals to customize pacing across games
 
 ## Analytics & Coordination
+
 - [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
 - [x] Implement `game_manifest` table for version coordination
+- [ ] Restart active sessions when a new game version is published
 - [x] Emit gameplay analytics for operators
+- [ ] Apply runtime feature flags during tick processing
 
 ## Security
+
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [ ] Track login attempts per IP and temporarily blacklist repeated failures
 - [ ] Send notification emails for suspicious login activity

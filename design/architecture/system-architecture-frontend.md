@@ -1,6 +1,8 @@
 # 🎨 FireMUD System Architecture: Frontend Architecture
 
-This document describes the structure and tooling for FireMUD's browser-based user interfaces. FireMUD uses React and Material‑UI; this guide explains how the components, state management, and API calls are organized.
+This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. Compiled assets will ultimately be served by the Spring Cloud Gateway so all frontends share a common entry point. Additional React modules for the admin tools and Game Design interface are planned. (TODO: Not yet implemented)
+
+Other planned UIs include a role-based admin interface and a game design editor. See [Role-Based Admin UI](./microservices/logging-admin-service/admin-ui.md) and [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md). (TODO: Not yet implemented)
 
 ---
 
@@ -58,7 +60,8 @@ The frontend uses **Vite** for fast development and production builds:
 - `npm run preview` serves the production bundle locally for verification.
 - `npm run test` will run unit tests with Jest and React Testing Library. The script is not yet defined. (TODO: Not yet implemented)
 - `npm run lint` and `npm run format` ensure consistent code style.
-- `npm run accessibility` audits the compiled site with axe-core. (TODO: Not yet implemented)
+- `npm run format:fix` writes formatting changes back to disk.
+- `npm run accessibility` audits the compiled site with axe-core. See [Developer Setup](../../DEVELOPER_SETUP.md#frontend-lint--accessibility) for Chrome requirements.
 
 See `web-client/README.md` for additional setup tips.
 

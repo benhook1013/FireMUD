@@ -9,13 +9,13 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 
 - Accept Telnet connections and perform protocol negotiation (TODO: Not yet implemented)
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames
+  (queue is cleared on disconnect; resend on reconnect is planned) (TODO: Not yet implemented)
 - Provide graceful disconnect and reconnection handling (TODO: Not yet implemented)
 
 ## Architecture / Design Notes
 
 - Spring Boot service hosting a lightweight Netty-based Telnet server.
-- Buffers incoming input while the client remains connected and discards it if the TCP
-  session drops. (TODO: Not yet implemented)
+- Buffers incoming input while the client remains connected and discards it if the TCP session drops. Resending buffered commands after reconnect is not yet supported (TODO: Not yet implemented).
 - Handles Telnet negotiation and character encoding quirks (TODO: Not yet implemented).
 - Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md). (TODO: Not yet implemented)
 - Works with the Reconnection Strategy to resume sessions transparently. (TODO: Not yet implemented)
@@ -24,8 +24,8 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
   See [Security Architecture](../system-architecture-security.md).
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
-  **Telnet protocol commands** as described in the
-  [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+   **Telnet protocol commands** as described in the
+   [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
 - Applies connection throttling via `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and optional TLS termination controlled by `TCP_PROXY_TLS_ENABLED`.
 - Enforces per-client message rate limits via `TCP_PROXY_MAX_MSGS_PER_SEC`.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
@@ -54,8 +54,7 @@ events used internally when communicating with other microservices:
     drops so the session may be suspended. (TODO: Not yet implemented)
 - **PushBufferedInput** – forwards any queued commands after a reconnect
     event. (TODO: Not yet implemented)
-These gRPC events are defined but the current implementation does not yet invoke them. (TODO: Not yet implemented)
-At present the service only logs when these methods are called; no other microservices are contacted. (TODO: Not yet implemented)
+These gRPC events are defined but currently only logged; no other microservices are contacted (TODO: Not yet implemented)
 These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Command Handling
@@ -193,5 +192,5 @@ information.
 
 ## Future Enhancements
 
-- Additional abuse heuristics and advanced command filtering.
-- Auto-scaling policies for heavy traffic bursts.
+- Additional abuse heuristics and advanced command filtering. (TODO: Not yet implemented)
+- Auto-scaling policies for heavy traffic bursts. (TODO: Not yet implemented)

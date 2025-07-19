@@ -4,13 +4,13 @@ This document outlines how FireMUD supports procedural generation of both dungeo
 
 Currently the only implemented generator is `SimpleDungeonGenerator`. The `OverworldMapGenerator` referenced below is planned for a future release. (TODO: Not yet implemented)
 
-Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content, or fully generate open worlds without requiring hand-authored maps.
+Procedural generation allows games to quickly bootstrap playable areas, spawn instanced content (TODO: Not yet implemented), or fully generate open worlds (TODO: Not yet implemented) without requiring hand-authored maps.
 
 ---
 
 ## 🎯 Use Cases
 
-- 🏗️ **World Bootstrapping** – Initialize a new world map without manual design.
+- 🏗️ **World Bootstrapping** – Initialize a new world map without manual design. (TODO: Not yet implemented)
 - 🌀 **Dungeon Instances** – Generate instanced interiors on demand (e.g. for quests). (TODO: Not yet implemented)
 - 🧱 **Design Templates** – Offer scaffolds for designers to expand on. (TODO: Not yet implemented)
 - 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions. (TODO: Not yet implemented)
@@ -97,13 +97,13 @@ The following rules align generators with the core runtime and tooling:
 
 1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended 500&nbsp;ms budget. (TODO: Not yet implemented)
 2. **Seed Metadata** – All requests specify a seed. During world creation these values are persisted by the World Management Service, while storing them for runtime generation is still pending. (TODO: Not yet implemented)
-3. **Sparse Traversal Rules** – Sparse rooms exist on the map. A `spacingMultiplier` value on each region influences movement cost and travel time between them. (TODO: Not yet implemented)
+3. **Sparse Traversal Rules** – Sparse rooms exist on the map. A `spacingMultiplier` value on each region influences movement cost and travel time between them.
 4. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone. Basic hooks exist but full script-driven population is pending. (TODO: Not yet implemented)
 5. **Validation and Errors** – Generators validate parameters. Room count checks are implemented, while biome compatibility and connectivity validation are pending (TODO: Not yet implemented). Failures return `GenerationErrorDetail` objects and are logged for observability.
 6. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output. (TODO: Not yet implemented)
 7. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service. Discovery currently relies on Spring bean scanning. Support for scripted or DSL-based generators is planned. (TODO: Not yet implemented)
 
-Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. (TODO: Not yet implemented)
+Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service.
 
 ---
 

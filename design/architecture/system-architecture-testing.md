@@ -8,13 +8,13 @@ FireMUD employs a layered testing approach to keep services reliable while avoid
 
 ## 📝 Testing Scope
 
-Each microservice has its own unit and integration tests. Cross‑service scenarios are also covered in a dedicated suite. Load tests run independently using Gatling in a separate `load-testing` module.
+Each microservice has its own unit and integration tests. Cross‑service scenarios are also covered in a dedicated suite. Load tests run independently using Gatling in a separate `load-testing` module. The cross‑service directories currently contain only a few example tests; expanding this suite is still planned. (TODO: Not yet implemented)
 
 - **Unit tests** live under each service in `src/test/java/unit/`.
 - **Integration tests** for that service live in `src/test/java/integration/` and may start Redis, Postgres, or other dependencies on demand.
-- **Cross-service integration tests** exercise workflows that span multiple services. They live under `src/test/java/crossservice/` in each service and start companion containers with Testcontainers. Docker images for the cooperating services must be built (for example via `./gradlew buildDockerImages`) or pulled from GHCR. A `crossServiceTest` Gradle task is planned (TODO: Not yet implemented); meanwhile run them with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"`.
+- **Cross-service integration tests** exercise workflows that span multiple services. They live under `src/test/java/crossservice/` in each service and start companion containers with Testcontainers. Docker images for the cooperating services must be built (for example via `./gradlew buildDockerImages`) or pulled from GHCR. A unified `crossServiceTest` Gradle task is planned (TODO: Not yet implemented); meanwhile run them with `./gradlew :service-name:test --tests "*CrossServiceIntegrationTest"`.
 - Many of these tests are annotated with `@Testcontainers(disabledWithoutDocker = true)` so they are skipped when Docker is unavailable.
-- **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. These tests are run manually when preparing a major release. Automating them in CI is planned (TODO: Not yet implemented).
+- **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. Run them with `./gradlew :load-testing:gatlingRun`. These tests are executed manually when preparing a major release. Automating them in CI is planned. (TODO: Not yet implemented)
 
 Test data seeding strategies are still under discussion. The script `dev-tools/seed-test-data.sh` can populate a minimal world for local testing, but an automated approach for integration tests is still planned (TODO: Not yet implemented).
 
@@ -38,7 +38,7 @@ Unit and integration tests run automatically in GitHub Actions through a matrix 
 
 ## 💡 Cross-Service Integration Plan
 
-For workflows that span multiple services, such as account creation and world provisioning, we start several containers at once using **Testcontainers**. Each container joins a shared network so gRPC calls function just like in production.
+For workflows that span multiple services, such as account creation and world provisioning, we plan to start several containers at once using **Testcontainers**. Each container will join a shared network so gRPC calls function just like in production. (TODO: Not yet implemented)
 
 ### Example Workflow
 
@@ -51,6 +51,8 @@ val network = Network.newNetwork()
 val postgres = PostgreSQLContainer<Nothing>("postgres:16").withNetwork(network)
 val accountService = GenericContainer("account-service:latest").withNetwork(network)
 ```
+
+This example uses a shared Testcontainers `Network` which will be added once cross-service orchestration is finalized. (TODO: Not yet implemented)
 
 These tests validate saga orchestration logic. A dedicated `crossServiceTest` Gradle task will run them once implemented (TODO: Not yet implemented).
 
@@ -68,7 +70,7 @@ Gatling scenarios simulate thousands of concurrent connections to measure servic
 
 ### Security Testing
 
-OWASP ZAP is planned to crawl the web client and Gateway endpoints during CI to surface common web vulnerabilities (TODO: Not yet implemented). Penetration tests and rate-limiting checks are also planned before major releases (TODO: Not yet implemented).
+OWASP ZAP is planned to crawl the web client and Gateway endpoints during CI to surface common web vulnerabilities. No automated scan is configured yet. (TODO: Not yet implemented) Penetration tests and rate-limiting checks are also planned before major releases. (TODO: Not yet implemented)
 
 ---
 

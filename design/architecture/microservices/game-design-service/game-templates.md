@@ -22,9 +22,10 @@ default rulesets and admin accounts will be introduced in a future revision.
 
 > **Note**
 
-Templates are versioned like any other design asset. Publishing a version is intended to copy
-these templates to the domain services using the `version_id` workflow described
-in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
+Templates are **intended** to be versioned like any other design asset. Publishing a
+version will eventually copy these templates to the domain services using the
+`version_id` workflow described in
+[Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
 ## Creating Templates
 

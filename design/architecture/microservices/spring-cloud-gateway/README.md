@@ -12,7 +12,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Upgrade WebSocket connections and forward them to backend services
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
-- Expose gRPC management endpoints on port `6565` for dynamic route control
+- Expose gRPC management endpoints on port `6565` for dynamic route control. Connections use mutual TLS for authentication.
 
 ## Architecture / Design Notes
 
@@ -40,10 +40,10 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 The gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
 Route configurations live in `routes-dev.yml` and `routes-prod.yml`, which are
 imported by `application.yml` based on the active profile and reloaded on
-startup. Dynamic routes added via the API are stored only in memory and are
-lost on service restart; persistent storage for these routes is planned.
-(TODO: Not yet implemented)
-A PostgreSQL `route_config` table exists for this purpose but is currently unused. (TODO: Not yet implemented)
+startup. A `route_config` table exists in PostgreSQL for future persistence.
+Dynamic routes are currently stored only in memory and are lost on service restart
+(TODO: Not yet implemented). The table is defined but not yet used at runtime. (TODO: Not yet implemented)
+When implemented, routes will be loaded from this table on startup. (TODO: Not yet implemented)
 No persistent database is required. The default configuration defines routes
 for the core services so Docker Compose environments work out of the box.
 
@@ -95,6 +95,8 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 may be present for consistency. PostgreSQL variables are unused, but Redis
 connection variables are required for the `RequestRateLimiter` filter.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`. These variables are reserved for future service discovery logic and are not yet consumed by the implementation. (TODO: Not yet implemented)
+Certificate hot reload for the gRPC server will use `GrpcServerTlsReloader` once integrated. (TODO: Not yet implemented)
+JWT secrets are automatically reloaded when `FIREMUD_AUTH_JWT_SECRET_PATH` is provided using the `JwtSecretWatcher` utility.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
 Important variables include:

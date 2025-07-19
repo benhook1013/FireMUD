@@ -1,6 +1,7 @@
 # Automation & Scripting Service Task List
 
 ## Scripting Framework
+
 - [x] Create sandboxed script runtime *(see [Scripting & Automation Framework](../architecture/system-architecture-scripting.md))*
 - [x] Support hot reloading of scripts published by the Game Design Service *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
 - [x] Provide web UI for script creation and testing
@@ -12,6 +13,7 @@
 - [ ] Trigger script-driven population after generation
 
 ## NPC & AI Behavior
+
 - [x] Implement state-driven & event-driven NPC behaviors *(see [System Architecture: Scripting](../architecture/system-architecture-scripting.md))*
 - [x] Implement AI memory & dynamic NPC behaviors (NPCs remember past player interactions) *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
 - [x] Implement player vs. environment (PvE) mechanics (random encounters, environmental hazards)
@@ -22,10 +24,12 @@
 - [x] Implement scripted events for game mechanics and NPC interactions *(see [Automation & Scripting Service Design](../architecture/microservices/automation-scripting-service/README.md))*
 
 ## World Generation
+
 - [x] Implement procedural world generation
 - [ ] Implement OverworldMapGenerator for biome-based terrain
 
 ## Security & Operations
+
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist

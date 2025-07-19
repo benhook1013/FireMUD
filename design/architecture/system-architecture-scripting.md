@@ -41,26 +41,26 @@ Refer to the Automation & Scripting Service README for implementation details.
 ## 🔒 Sandboxing & Security
 
 - Script execution occurs in a **sandbox** with restricted APIs and resource limits. (TODO: Not yet implemented)
-- Components interact with the **Game Logic Service** through validated gRPC calls.
-- The service enforces **per-script quotas** that limit how many events a script may enqueue and the duration of each tick. **CPU and memory limits** are planned for a future release. (TODO: Not yet implemented)
+- Components interact with the **Game Logic Service** through validated gRPC calls. (TODO: Not yet implemented)
+- The service enforces **per-script quotas** via `ScriptQuotaService`. **CPU and memory limits** are planned for a future release. (TODO: Not yet implemented)
 
 ## ⚙️ Integration with Game Logic & Tick System
 
 - **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and enqueues the resulting commands into each entity's command queue.
 - These queued commands run during the **next tick cycle** via the normal Game Session and Game Logic flow, ensuring deterministic, replayable behavior that follows the tick system's fairness and retry rules.
 - Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
-- Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
+- Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic. (TODO: Not yet implemented)
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 - **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:lock:{tenantId}:{scriptId}` to ensure only one script tick runs at a time. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
 
 ## 🔄 Deployment & Versioning
 
-- Script definitions are stored in the **Game Design Service** and versioned alongside other game assets.
+- Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is planned. (TODO: Not yet implemented)
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed. (TODO: Not yet implemented)
 - Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
 - The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to reload updated scripts via `ScriptVersionService` without downtime.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run. (TODO: Not yet implemented)
-- Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
+- Older versions remain in the database for auditing or rollback, but only the pinned version is executed. (TODO: Not yet implemented)
 
 ## 🛡️ Fairness & Abuse Prevention
 
