@@ -17,8 +17,7 @@ This document explains how configuration values and sensitive secrets are suppli
 - Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. JWT keys and TLS certificates are issued by **cert-manager**.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
 - TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords, are stored in standard Kubernetes `Secret` objects and must be rotated manually. Automated database password rotation is planned. (TODO: Not yet implemented)
-- Services reload TLS certificates for gRPC client channels and JWT secrets when these Secrets update. gRPC server certificate hot reload will be added in a future release. (TODO: Not yet implemented)
-- This live reload behavior relies on the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the shared library. A `GrpcServerTlsReloader` exists for server certificates but is not currently wired into the services. (TODO: Not yet implemented)
+- Services reload TLS certificates for gRPC client channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the shared library. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services, so server-side hot reload is planned. (TODO: Not yet implemented)
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
   stage.
@@ -118,9 +117,10 @@ is described in [System Architecture: Security](../system-architecture-security.
 The shared configuration library resolves other services using environment
 variables prefixed with `FIREMUD_SERVICES_`. Each variable holds a `host:port`
 pair for a target service. When undefined, Kubernetes DNS is used instead.
-Spring Cloud Gateway currently loads routes from static YAML files and does not
-read these variables. Gateway support for `FIREMUD_SERVICES_` overrides is
-planned. (TODO: Not yet implemented)
+These overrides are consumed by the `ServiceEndpointsProperties` class so gRPC
+clients can dynamically point to different hosts. Spring Cloud Gateway currently
+loads routes from static YAML files and does not read these variables. Gateway
+support for `FIREMUD_SERVICES_` overrides is planned. (TODO: Not yet implemented)
 
 Each variable is suffixed with `_SERVICE` to match the Spring configuration
 keys. Examples:
