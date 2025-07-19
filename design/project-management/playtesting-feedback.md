@@ -5,9 +5,9 @@ Early adopters can try new features in short-lived environments created by the
 spin up the same Docker Compose stack used for local development so the service
 layout mirrors production on a smaller scale. The stack is automatically torn
 down once the workflow completes, making each preview environment ephemeral. The
-workflow posts a summary comment on
-the pull request with a link to the preview. A dedicated staging cluster for
-broader playtests is planned; see
+workflow posts a summary comment on the pull request with a link to the preview.
+See [CI/CD Pipeline](../architecture/system-architecture-cicd.md#pr-preview-environments)
+for details. A dedicated staging cluster for broader playtests is planned; see
 [Deployment Environments](../architecture/infrastructure/deployment-environments.md#🎮-staging-environment-for-playtesting). (TODO: Not yet implemented)
 
 1. **Invite testers** from the community via Discord and email once the staging cluster is available. (TODO: Not yet implemented)
