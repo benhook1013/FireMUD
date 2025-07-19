@@ -10,7 +10,7 @@ The MUD Game Platform is a **multi-tenant system** that enables users to **creat
 
 This document outlines the **core functional and non-functional requirements** for the MUD Game Platform, focusing on:
 
-- Multi-tenancy support for **multiple hosted games**.
+- Multi-tenancy support for **multiple hosted games**. (TODO: Not yet implemented)
 - A **microservices architecture** for modularity and scalability.
 - A **customizable game framework** allowing different rulesets.
 - **Real-time networking** and multiplayer interactions.
@@ -30,10 +30,10 @@ This document outlines the **core functional and non-functional requirements** f
 
 ### 2.1 Multi-Tenancy & Game Hosting
 
-- The platform supports **multiple hosted games**, each **isolated at the game level**. See [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md).
+- The platform supports **multiple hosted games**, each **isolated at the game level**. (TODO: Not yet implemented) See [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md).
 - Each hosted game has **separate world data, player characters, and configurations**.
 - Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
-- Game creators can **host multiple games** with independent settings.
+- Game creators can **host multiple games** with independent settings. (TODO: Not yet implemented)
 
 ### 2.2 Game Design & Customization
 
@@ -48,11 +48,11 @@ This document outlines the **core functional and non-functional requirements** f
 - The platform must provide **secure authentication and user management**.
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
-- Sessions should support **persistent logins and reconnection handling**. (TODO: Not yet implemented)
+- Sessions should support **persistent logins and reconnection handling**.
 - **Expanded Account Features**:
   - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
   - Profiles should include **game history, achievements, and social features**. (TODO: Not yet implemented)
-  - Persistent session tracking to **ensure seamless reconnection across devices**. (TODO: Not yet implemented)
+  - Persistent session tracking to **ensure seamless reconnection across devices**.
 See [Account Service](../architecture/microservices/account-service/README.md) for implementation details.
 
 ### 2.4 Game World & Entity Management
