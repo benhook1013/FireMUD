@@ -6,10 +6,10 @@ This document consolidates the platform's observability architecture.
 
 ## 🔍 Logging Pipeline
 
-- **Fluent Bit** sidecars collect service logs from every microservice.
+- **Fluent Bit** sidecars collect service logs from every microservice. (TODO: Not yet implemented)
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards. (TODO: Not yet implemented)
-- The **Logging & Admin Service** exposes moderation tools and log queries.
-- Logs are emitted in JSON with request tracing fields (e.g., `traceId`).
+- The **Logging & Admin Service** exposes moderation tools and log queries. (TODO: Not yet implemented)
+- Logs are emitted in JSON with request tracing fields (e.g., `traceId`). (TODO: Not yet implemented)
   Including the active `playerId` in log entries is planned for better
   moderation context. (TODO: Not yet implemented)
 - Kibana dashboards can filter by `traceId` today. Filtering by `playerId`
@@ -19,12 +19,12 @@ This document consolidates the platform's observability architecture.
   [Shared Libraries](./system-architecture-shared-libraries.md).
 - Log retention defaults to **14 days** in development and **90 days** in production,
   after which indices are archived. These values can be tuned via the
-  [Deployment Environments](./infrastructure/deployment-environments.md) settings.
+  [Deployment Environments](./infrastructure/deployment-environments.md) settings. (TODO: Not yet implemented)
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and
   `FLUENT_ELASTICSEARCH_PORT` environment variables
-  ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
+  ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)). (TODO: Not yet implemented)
 - The local Docker Compose stack outputs logs to the console and does not yet
-  include Fluent Bit, Prometheus, or Grafana. (TODO: Not yet implemented)
+  include Fluent Bit, Prometheus, Grafana, or Jaeger. (TODO: Not yet implemented)
 - Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). (TODO: Not yet implemented)
   The Logging & Admin Service will provide a dedicated UI for moderation
   and audit trails. (TODO: Not yet implemented)
@@ -47,7 +47,7 @@ This document consolidates the platform's observability architecture.
 - Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment. A PostgreSQL exporter can also be added for database metrics. (TODO: Not yet implemented)
 - Distributed traces are exported via OTLP and correlated with logs using the same
   `traceId` value.
-- Metrics use the same `traceId` label via the `MetricsInterceptor`, making it easy
+- Metrics will use the same `traceId` label via the `MetricsInterceptor`, making it easy
   to correlate latency spikes with specific traces and log entries. (TODO: Not yet implemented)
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT` environment variable
   ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).

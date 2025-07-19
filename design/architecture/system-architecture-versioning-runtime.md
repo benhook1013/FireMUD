@@ -20,7 +20,7 @@ Published versions are immutable; further changes require publishing a new `vers
 ### Script-Only Patch Versions
 
 Minor fixes to NPC behavior or quest logic often only touch automation scripts.
-To avoid a full world restart, the Game Design Service can publish a **script-only patch version**.
+To avoid a full world restart, the Game Design Service can publish a **script-only patch version** using the `PublishScriptPatchVersion` gRPC call.
 These records include a `baseVersionId` pointing to the immutable data version
 and a `scriptPatchVersion` value such as `v42-script.3`:
 
@@ -35,12 +35,13 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 Script-only versions appear in version history and audit logs but do not trigger
 a data copy or world restart.
 Runtime services reload the affected scripts in
-memory and continue using the underlying `baseVersionId` for all other assets.
+memory and continue using the underlying `baseVersionId` for all other assets. (TODO: Not yet implemented)
 When a patch is published the Game Design Service calls the
 [`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate)
 gRPC endpoint in the Automation & Scripting Service so modified scripts are
 reloaded in memory. The Game Session Service records the active
-`script_patch_version` with each running game instance for recovery.
+`script_patch_version` with each running game instance for recovery. See
+[Scripting & Automation](./system-architecture-scripting.md) for more details.
 
 ### Schema Migrations vs Design Data
 
@@ -76,7 +77,7 @@ implemented. (TODO: Not yet implemented)
 - The Logging & Admin Service forwards each change to the Game Session Service,
   calling `ToggleFeatureFlag` via gRPC so running instances update immediately. (TODO: Not yet implemented)
 - The Game Session Service persists active flag values in its `feature_flag` table.
-  Sessions use consistent configuration even after reconnects.
+  Sessions use consistent configuration even after reconnects. (TODO: Not yet implemented)
   The Logging & Admin Service may store audit entries. (TODO: Not yet implemented)
   It is not the source of truth for runtime behavior.
 - During each tick cycle the active flags are applied before executing game logic.

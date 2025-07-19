@@ -16,18 +16,18 @@ Centralized logging and administration tools for the platform. Collects log data
 Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
 All admin APIs are secured via role-based access control integrated with the Account Service.
 
-- Access to this service is protected by mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
+- gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
 - The security model relies solely on JWT roles; there is no additional
   network-layer isolation for admin endpoints.
 - Moderation data and log indices include a `tenantId` field so administrators
   only see information for the games they manage. Cross-tenant queries are
   rejected per the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-  strategy.
+  strategy. (TODO: Not yet implemented)
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
-- Central log search for entries collected via Fluent Bit sidecars.
+- Central log search for entries collected via Fluent Bit sidecars. (TODO: Not yet implemented)
 - [Analytics dashboards](./analytics-dashboards.md) for operators. (TODO: Not yet implemented)
 - Tools for banning or restricting accounts.
 - [Role-based admin UI](./admin-ui.md) for moderators. (TODO: Not yet implemented)
@@ -91,8 +91,8 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 - **Internal:**
   - Account Service forwards account events and payment notifications. (TODO: Not yet implemented)
   - Game Session Service streams session lifecycle metrics. (TODO: Not yet implemented)
-  - Social & Groups Service delivers chat logs for moderation.
-- **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
+  - Social & Groups Service delivers chat logs for moderation. (TODO: Not yet implemented)
+  - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting. (TODO: Not yet implemented)
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),
 [**Deployment Environments**](../infrastructure/deployment-environments.md),
@@ -167,4 +167,4 @@ Saga usage across FireMUD.
   Alertmanager (see `k8s/monitoring/alertmanager.yaml`).
 - Real-time analytics on game performance. (TODO: Not yet implemented)
 - Optional 2FA support for administrator accounts via TOTP codes. See
-  [Security Architecture](../system-architecture-security.md).
+  [Security Architecture](../system-architecture-security.md). (TODO: Not yet implemented)

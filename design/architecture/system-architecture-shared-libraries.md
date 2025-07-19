@@ -29,8 +29,9 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   [Authentication Design](./system-architecture-authentication.md).
 - **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present.
+- **Tracing Configuration** – `TracingConfig` exports spans to the collector using the `otel.endpoint` property and sets the `service.name` from `spring.application.name`.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
-- `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`. It reads variables prefixed with `FIREMUD_SERVICES_` (see [Environment & Secrets](./infrastructure/environment-and-secrets.md#service-discovery)) to build endpoint URLs.
+- `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`. It reads variables prefixed with `FIREMUD_SERVICES_` (see [Environment & Secrets](./infrastructure/environment-and-secrets.md#service-discovery)) to build endpoint URLs. The Spring Cloud Gateway still relies on static routes and does not yet use these variables. Gateway integration is planned. (TODO: Not yet implemented)
 - **Spring Boot Starter** – Provides `DatabaseAutoConfiguration` for
   PostgreSQL/Redis and `CommonAutoConfiguration` for shared service properties.
   Logging and JWT helpers are available but are configured manually.
@@ -64,7 +65,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
    ```
 
 3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
-4. Automate tagging and version bumps using `release-please`. (TODO: Not yet implemented)
+4. Automate tagging and version bumps using `release-please`.
 5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD. (TODO: Not yet implemented)
 
 This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.

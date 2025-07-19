@@ -84,7 +84,7 @@ public class GameDesignClient implements AutoCloseable {
   /** Returns published versions for the given tenant. */
   public ListVersionsResponse listVersions(long tenantId) {
     ListVersionsRequest request =
-        ListVersionsRequest.newBuilder().setTenantId(Long.toString(tenantId)).build();
+        ListVersionsRequest.newBuilder().setTenantId(String.valueOf(tenantId)).build();
     return stub.listVersions(request);
   }
 

@@ -9,8 +9,9 @@ The World Management Service stores and manages game world data such as rooms, r
 ### Responsibilities
 
 - Persist region, zone, and room data with tenant isolation
-- Execute scheduled world events. Procedural generation support is planned. (TODO: Not yet implemented)
-- Provide pathfinding via `TravelService`; navmesh data and a public API are planned. (TODO: Not yet implemented)
+- Execute scheduled world events.
+- Provide procedural generation support. (TODO: Not yet implemented)
+- Provide pathfinding via `TravelService`. A gRPC API and navmesh support are planned. (TODO: Not yet implemented)
 - Notify Game Session and Automation services when the world changes (TODO: Not yet implemented)
 - Track character locations and instance occupancy (TODO: Not yet implemented)
 
@@ -61,6 +62,8 @@ The World Management Service stores and manages game world data such as rooms, r
 - `terrain` and `object_spawn` tables support procedural generation *(planned).* (TODO: Not yet implemented)
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
+- `generation_rule` table stores per-tenant procedural generation parameters used
+  by the [Procedural Generation Rules API](#procedural-generation-rules-api).
 - `character_location` table (planned) records the current room for each character, (TODO: Not yet implemented)
   including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.
@@ -88,8 +91,8 @@ specified region.
 
 - **Internal:**
   - Game Design Service supplies generation rules and versioned world data.
-  - Game Session Service queries rooms and receives world event updates.
-  - Automation & Scripting Service reacts to scheduled world changes.
+  - Game Session Service queries rooms and receives world event updates. (TODO: Not yet implemented)
+  - Automation & Scripting Service reacts to scheduled world changes. (TODO: Not yet implemented)
 - **External:** PostgreSQL for world data, Redis for transient active state.
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),

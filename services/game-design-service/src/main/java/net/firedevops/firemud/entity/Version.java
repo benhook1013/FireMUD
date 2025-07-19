@@ -12,8 +12,8 @@ public class Version {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Column(nullable = false)
-  private Long tenantId;
+  @Column(nullable = false, length = 36)
+  private String tenantId;
 
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "tenant_id", nullable = false)

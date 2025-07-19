@@ -8,15 +8,15 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 | Layer              | Responsibility                                                               |
 |-------------------|-------------------------------------------------------------------------------|
-| **TCP Proxy Service**      | Parses Telnet input, clears buffer, gRPC hooks (TODO: Not yet implemented) |
+| **TCP Proxy Service**      | Parses Telnet input and clears buffered commands; exposes gRPC hooks for session recovery (TODO: Not yet implemented) |
 | **Spring Cloud Gateway** | Stateless WebSocket passthrough; reconnects backend automatically (TODO: Not yet implemented) |
 | **Game Session Service**   | Restores session from Redis; rebinds socket, region, and timers (TODO: Not yet implemented) |
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.** (TODO: Not yet implemented)
-Game Session Service restarts are **transparent** if the client remains connected. (TODO: Not yet implemented)
-The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. (TODO: Not yet implemented)
-TCP Proxy restarts drop Telnet clients.
+Game Session Service restarts are **intended to be transparent** if the client remains connected. (TODO: Not yet implemented)
+The Gateway is intended to automatically re-establish WebSocket sessions after a restart while Telnet clients stay bridged through the proxy. See [Protocol Bridging](./system-architecture-protocol-bridging.md) for how TCP and WebSocket clients share the same backend. (TODO: Not yet implemented)
+TCP Proxy restarts drop Telnet clients, who must reconnect manually. (TODO: Not yet implemented)
 
 ---
 
@@ -97,7 +97,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 - Redis stores:
   - Socket bindings and session metadata
   - Queued commands and tick state
-  - Timers, cooldowns, and retry info
+  - Timers, cooldowns, and retry info (TODO: Not yet implemented)
 - Game Session Service governs all reconnection, deduplication, and rebinding (TODO: Not yet implemented)
 - Clients are **fully stateless**
 - Transparent failover is supported across infrastructure layers (TODO: Not yet implemented)

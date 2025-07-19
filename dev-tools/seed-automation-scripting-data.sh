@@ -6,11 +6,11 @@ set -e
 
 psql -h localhost -U postgres -d firemud <<'SQL'
 INSERT INTO factions (id, tenant_id, name, description) VALUES
-  (1, 1, 'Guardians', 'Default faction for testing')
+  (1, '11111111-1111-1111-1111-111111111111', 'Guardians', 'Default faction for testing')
   ON CONFLICT DO NOTHING;
 
 INSERT INTO scripts (id, tenant_id, name, version, definition) VALUES
-  (1, 1, 'hello_world', 'v1', '{"steps":[]}')
+  (1, '11111111-1111-1111-1111-111111111111', 'hello_world', 'v1', '{"steps":[]}')
   ON CONFLICT DO NOTHING;
 SQL
 

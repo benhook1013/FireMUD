@@ -4,6 +4,8 @@ This repository uses a hierarchical Gradle layout. All microservices and the sha
 `common-library` live under a top-level `services/` folder to keep the root tidy. The
 React UI resides in `web-client/` and various infrastructure manifests sit under
 `k8s/`. Additional build tooling and documentation live at the root.
+Hidden configuration files used by the CI pipeline are omitted from the tree for
+brevity.
 
 ```text
 root
@@ -68,6 +70,10 @@ root
 - `README.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `DEVELOPER_SETUP.md`, `LICENSE.md`, `NOTICE.md`, `FAQ.md`, `SECURITY.md` and other root Markdown files – Project documentation and guidelines.
 - `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
 - `services/init-gradle-wrappers.ps1` – Utility script to generate Gradle wrappers for each service on Windows.
+- `.hadolint.yaml`, `.lycheeignore`, `.markdownlint-cli2.jsonc`, `.trivy.yaml` – Linting and security scan settings.
+- `.release-please-config.json` & `.release-please-manifest.json` – Release automation metadata.
+- `.windsurfrules` – Compatibility link to the local AI rules.
+- `.vscode/` – Recommended workspace settings for VS Code.
 
 Proto definitions live under `protos/` organized by service and version as described in the
 [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).

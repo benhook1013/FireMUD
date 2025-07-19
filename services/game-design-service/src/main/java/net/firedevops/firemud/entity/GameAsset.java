@@ -12,8 +12,8 @@ public class GameAsset {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Column(nullable = false)
-  private Long tenantId;
+  @Column(nullable = false, length = 36)
+  private String tenantId;
 
   @Column(nullable = false, length = 255)
   private String fileName;

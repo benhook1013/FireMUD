@@ -1,13 +1,16 @@
 # Logging & Admin Service Task List
 
 ## Logging & Monitoring
+
 - [x] Collect logs from all services and provide search dashboards
 - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
 - [x] Integrate Alertmanager for automated alerts
 - [x] Provide analytics dashboards for operators
+- [ ] Implement real-time analytics on game performance
 - [x] Evaluate adopting a zero-trust network model for internal traffic
 
 ## Moderation Tools
+
 - [x] Allow players to report others for abuse/violations
 - [x] Store logs for admin moderation and auditing
 - [x] Define moderation policies including profanity filters
@@ -16,17 +19,20 @@
 - [ ] Implement playtesting feedback form and store results for analytics
 
 ## Feature Flags & Configuration
+
 - [x] Expose runtime feature flag toggles ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
 - [ ] Add UI for managing runtime feature flags
 - [ ] Record audit trails for feature flag changes and account events
 - [ ] Persist transaction logs for purchases and subscription events
 
 ## Saga Operations
+
 - [x] Create **Saga Dashboard** to inspect workflow states and failures
 - [x] Integrate saga metrics and timeout recovery
 - [x] Use saga orchestrator for multi-service admin operations (bans, content revocation)
 
 ## Security
+
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 
 ## Reusable Microservice Checklist

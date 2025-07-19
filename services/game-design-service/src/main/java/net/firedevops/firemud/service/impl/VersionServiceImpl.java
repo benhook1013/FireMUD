@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.client.AutomationScriptingClient;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -33,11 +34,10 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional
   @Timed(value = "gamedesign.version.publish")
-  public VersionDto publishVersion(Long tenantId, String notes) throws SagaException {
+  public VersionDto publishVersion(String tenantId, String notes) throws SagaException {
     logger.info("Publishing version for tenant {}", tenantId);
     Game game =
-        gameRepository
-            .findById(tenantId)
+        Optional.ofNullable(gameRepository.findByTenantId(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
@@ -62,7 +62,7 @@ public class VersionServiceImpl implements VersionService {
   @Transactional
   @Timed(value = "gamedesign.version.publishScriptPatch")
   public VersionDto publishScriptPatchVersion(
-      Long tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
+      String tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
       throws SagaException {
     logger.info(
         "Publishing script patch {} for tenant {} base {}",
@@ -70,8 +70,7 @@ public class VersionServiceImpl implements VersionService {
         tenantId,
         baseVersionId);
     Game game =
-        gameRepository
-            .findById(tenantId)
+        Optional.ofNullable(gameRepository.findByTenantId(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
@@ -99,10 +98,9 @@ public class VersionServiceImpl implements VersionService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "gamedesign.version.list")
-  public List<VersionDto> listVersions(Long tenantId) {
+  public List<VersionDto> listVersions(String tenantId) {
     Game game =
-        gameRepository
-            .findById(tenantId)
+        Optional.ofNullable(gameRepository.findByTenantId(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
     return versionRepository.findAll().stream()
         .filter(v -> v.getGame().equals(game))
@@ -110,7 +108,7 @@ public class VersionServiceImpl implements VersionService {
         .toList();
   }
 
-  private int calculateNextNumber(Long tenantId) {
+  private int calculateNextNumber(String tenantId) {
     return (int)
             versionRepository.findAll().stream()
                 .filter(v -> v.getGame().getId().equals(tenantId))

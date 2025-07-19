@@ -2,11 +2,11 @@
 
 ## Overview
 
-Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules and administrators.
+Offers tools for building worlds, items, actions, and events that make up each game. (TODO: Not yet implemented) Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules. Default administrator setup is planned. (TODO: Not yet implemented)
 
 ### Responsibilities
 
-- Provide web and gRPC tools for editing game assets
+- Provide gRPC tools for editing game assets. A web UI is planned. (TODO: Not yet implemented)
 - Version and publish immutable game configurations
 - Track revision history for rollback
 - Notify downstream services when new versions are available. (TODO: Not yet implemented)
@@ -39,8 +39,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - Scripting and event workflow creation. (TODO: Not yet implemented)
 - Visual editor for building scripts in the same component-based DSL used by the
   Automation & Scripting Service. (TODO: Not yet implemented)
-- [Game templates](game-templates.md) with predefined rulesets and administrators. (TODO: Not yet implemented)
-- Version and patch note management for published games. (TODO: Not yet implemented)
+- [Game templates](game-templates.md) with predefined rulesets. Admin account configuration is planned. (TODO: Not yet implemented)
+- Patch note management for published games. (TODO: Not yet implemented)
 - Supports script-only patch versions that reference a `baseVersionId` and
   generate a new `scriptPatchVersion` without requiring a full publish.
 - Does not track individual script definitions at runtime; only the patch
@@ -71,7 +71,7 @@ Offers tools for building worlds, items, actions, and events that make up each g
 ### gRPC APIs
 
 - `SaveRevision` – persists a new or updated design asset.
-- `PublishVersion` – freezes a set of revisions and notifies downstream services. (TODO: Not yet implemented)
+- `PublishVersion` – freezes a set of revisions. Notifications to downstream services are not yet implemented. (TODO: Not yet implemented)
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.

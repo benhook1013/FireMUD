@@ -8,5 +8,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface GameTemplateRepository extends JpaRepository<GameTemplate, Long> {
-  Page<GameTemplate> findByTenantId(Long tenantId, Pageable pageable);
+  Page<GameTemplate> findByTenantId(String tenantId, Pageable pageable);
 }

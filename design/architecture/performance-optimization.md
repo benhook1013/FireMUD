@@ -43,27 +43,28 @@ These notes summarize typical optimizations applied across FireMUD services.
   (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide
   visibility into heavy script load.
   - A Redis exporter exposes command latency and memory metrics via the
-    [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment so
-    operators can spot hotspots in Grafana dashboards. See
-    [Logging & Monitoring](./system-architecture-logging-monitoring.md) for details. Lua latency and retry
-    queue depth are recorded by the Game Session Service metrics.
+    [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment.
+    See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for
+    details. The Game Session Service records Lua latency and retry queue depth
+    metrics for visibility into Redis performance.
 - The Game Session Service exposes `tick_retry_queue_depth`,
   `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
   per-region visibility into retries and backoff behavior.
 - Graceful degradation logic in the Game Session Service retries failed
   Redis operations so stalled ticks do not block gameplay. (TODO: Not yet implemented)
-- The Game Session Service records `game_session_commands_enqueued_total` and
-  `game_session_tick_duration_ms` metrics so operators can monitor throughput
-  and tick performance.
+- The Game Session Service records the
+  `game_session_commands_enqueued_total` and `game_session_tick_duration_ms`
+  metrics so operators can monitor throughput and tick performance.
 - Service methods across all microservices use `@Timed` annotations so
   Prometheus can track request latency and call frequency.
 - Redis runs with **AOF persistence** and synchronous replication via `WAIT` (see [Backup & Disaster Recovery](./system-architecture-backup-recovery.md))
   so tick state can be recovered quickly after failover. The Game Session
   Service automatically replays staged commands on restart. (TODO: Not yet implemented)
-- Each tick enforces a **soft execution budget** (~100ms) (see [Timeout and Fairness Policy](./system-architecture-ticks.md#%E2%8F%B0-timeout-and-fairness-policy)). Slow actions are
-  deferred to follow-up ticks so long-running commands never block the game
-  loop. Conflict metadata collected during retries highlights hotspots for
-  operators. (TODO: Not yet implemented)
+- Each tick enforces a **soft execution budget** (~100ms) (see the
+  [Timeout and Fairness Policy](./system-architecture-ticks.md#%E2%8F%B0-timeout-and-fairness-policy)).
+  Slow actions are deferred to follow-up ticks so long-running commands never
+  block the game loop. Conflict metadata collected during retries highlights
+  hotspots for operators. (TODO: Not yet implemented)
 - Lua staging scripts move only a limited number of commands or events per tick
   (configurable via `game.tick-max-commands` and `automation.tick-max-events`).
   This prevents runaway loops and keeps work evenly distributed across ticks.
