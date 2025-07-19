@@ -25,6 +25,11 @@
 - [ ] Record audit trails for feature flag changes and account events
 - [ ] Persist transaction logs for purchases and subscription events
 
+## Plugin Management
+
+- [ ] Provide APIs to enable or disable game plugins
+- [ ] Store plugin metrics and error logs for auditing
+
 ## Saga Operations
 
 - [x] Create **Saga Dashboard** to inspect workflow states and failures
