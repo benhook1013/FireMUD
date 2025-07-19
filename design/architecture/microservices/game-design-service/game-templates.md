@@ -28,7 +28,6 @@ Templates are **intended** to be versioned like any other design asset. Publishi
 version will eventually copy these templates to the domain services using the
 `version_id` workflow described in
 [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
-(TODO: Not yet implemented)
 
 ## Creating Templates
 
@@ -37,7 +36,7 @@ Creators submit a `GameTemplateDto` via the REST API:
 ```bash
 curl -X POST http://localhost:8080/templates \
      -H 'Content-Type: application/json' \
-     -d '{"tenantId":"1","name":"Default","config":"{}"}'
+     -d '{"tenantId":"tenant-abc","name":"Default","config":"{}"}'
 ```
 
 The service validates the payload and stores it in the `game_templates` table.
@@ -47,7 +46,7 @@ Template names must be unique for each tenant to avoid collisions.
 To list templates:
 
 ```bash
-curl "http://localhost:8080/templates?tenantId=1"
+curl "http://localhost:8080/templates?tenantId=tenant-abc"
 ```
 
 See [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml)
