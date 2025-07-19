@@ -187,7 +187,7 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 ```bash
 curl -X POST http://localhost:8080/chat \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"senderAccountId":100,"content":"hello"}'
+  -d '{"tenantId":"tenant-abc","senderAccountId":100,"content":"hello"}'
 ```
 
 ### Metrics & Tracing
@@ -203,7 +203,7 @@ The service can optionally integrate with a WebRTC gateway to provide voice chan
 ```bash
 curl -X POST http://localhost:8080/voice/token \
   -H 'Content-Type: application/json' \
-  -d '{"tenantId":1,"accountId":100,"channelId":"guild-10"}'
+  -d '{"tenantId":"tenant-abc","accountId":100,"channelId":"guild-10"}'
 ```
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
