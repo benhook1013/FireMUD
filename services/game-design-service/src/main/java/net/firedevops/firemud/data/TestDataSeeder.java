@@ -33,7 +33,7 @@ public class TestDataSeeder implements ApplicationRunner {
             .orElseGet(
                 () -> {
                   Game g = new Game();
-                  g.setTenantId(1L);
+                  g.setTenantId("1");
                   g.setName("Demo Game");
                   g.setDescription("Seed game");
                   return gameRepository.save(g);
