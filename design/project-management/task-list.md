@@ -294,6 +294,8 @@ The standard microservice checklist is now copied into each service task list.
   - [x] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
 - [x] **Deploy Staging Environments for Playtesting**
   - [x] Perform multi-user playtests and gather feedback
+  - [ ] Set up dedicated staging Kubernetes cluster for community playtests
+  - [ ] Invite community testers via Discord and email
 - [x] **Monitor Logs & Fix Issues in Production**
   - [x] Track errors, crashes, and performance issues
   - [x] Implement hotfixes for immediate problems

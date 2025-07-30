@@ -12,7 +12,7 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Boilerplate Reduction**: Lombok
 - **DTO Mapping**: MapStruct
 - **Build Integration**: Each service declares Lombok and MapStruct dependencies with annotation processors enabled.
-- **Data-Driven Rules**: Game definitions and rules can be edited via tooling without redeploying code. See [Game Design Service](../architecture/microservices/game-design-service/README.md). (TODO: Not yet implemented)
+- **Data-Driven Rules**: Game definitions and rules can be edited via tooling without redeploying code. See [Game Design Service](../architecture/microservices/game-design-service/README.md).
 
 ### Deployment & Networking
 
@@ -32,16 +32,16 @@ This document outlines high-level design and technology assumptions for the Fire
 - **Database Access**: Spring Data JPA
 - **Caching**: Redis for transient session and gameplay state
 - **Redis Consistency**: Lua scripts enforce atomic updates with `WAIT` for replica acknowledgment
-- **Game Session Service** orchestrates ticks using Redis and loads runtime feature flags from PostgreSQL (see [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md)) (TODO: Not yet implemented)
-- **Feature Flags** are defined in the Game Design Service and toggled at runtime via the Logging & Admin Service. (TODO: Not yet implemented)
-- **Single Session** per character with layered reconnection (Proxy → Gateway → Session) (see [Reconnection Strategy](../architecture/system-architecture-reconnection.md)) (TODO: Not yet implemented)
-- **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service (see [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md)) (TODO: Not yet implemented)
+- **Game Session Service** orchestrates ticks using Redis and loads runtime feature flags from PostgreSQL (see [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
+- **Feature Flags** are defined in the Game Design Service and toggled at runtime via the Logging & Admin Service.
+- **Single Session** per character with layered reconnection (Proxy → Gateway → Session) (see [Reconnection Strategy](../architecture/system-architecture-reconnection.md))
+- **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service (see [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md))
 
 ### Operations & Support
 
 - **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager with Micrometer instrumentation (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
 - **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
-- **Certificate Management**: cert-manager issues TLS and mTLS certificates stored as Kubernetes Secrets with hot reload via shared watchers (see [Security Architecture](../architecture/system-architecture-security.md)) (TODO: Not yet implemented)
+- **Certificate Management**: cert-manager issues TLS and mTLS certificates stored as Kubernetes Secrets with hot reload via shared watchers (see [Security Architecture](../architecture/system-architecture-security.md))
 - **Cluster Backups**: **Velero** backs up Kubernetes manifests only. PostgreSQL volumes are dumped via a CronJob. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the backup schedule.
 - **Payment Gateway**: Stripe (with custom subscription integration)
 
@@ -53,8 +53,8 @@ This document outlines high-level design and technology assumptions for the Fire
 
 ## Platform Interfaces
 
-- **Web-based MUD Client**: Browser-based interface for players. See [web-client README](../../web-client/README.md). (TODO: Not yet implemented)
-- **Web-based MUD Game Editor**: Browser-based editor for designing game content, built on the Game Design Service UI. (TODO: Not yet implemented)
+- **Web-based MUD Client**: Browser-based interface for players. See [web-client README](../../web-client/README.md).
+- **Web-based MUD Game Editor**: Browser-based editor for designing game content, built on the Game Design Service UI.
 
 ## Testing
 

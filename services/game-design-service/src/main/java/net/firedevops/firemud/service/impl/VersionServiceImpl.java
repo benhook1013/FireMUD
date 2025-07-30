@@ -111,7 +111,7 @@ public class VersionServiceImpl implements VersionService {
   private int calculateNextNumber(String tenantId) {
     return (int)
             versionRepository.findAll().stream()
-                .filter(v -> v.getGame().getId().equals(tenantId))
+                .filter(v -> v.getTenantId().equals(tenantId))
                 .mapToInt(Version::getVersionNumber)
                 .max()
                 .orElse(0)

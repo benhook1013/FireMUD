@@ -27,6 +27,8 @@
 
 - [x] Implement procedural world generation
 - [ ] Implement OverworldMapGenerator for biome-based terrain
+- [ ] Provide pluggable GeneratorRegistry with scriptable or DSL-based generators
+- [ ] Validate biome compatibility and connectivity when generating maps
 
 ## Security & Operations
 
