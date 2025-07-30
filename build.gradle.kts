@@ -7,7 +7,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("com.fasterxml.jackson.core:jackson-databind:2.19.1")
+        classpath("com.fasterxml.jackson.core:jackson-databind:2.19.2")
     }
 }
 
