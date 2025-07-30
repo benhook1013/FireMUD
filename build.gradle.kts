@@ -14,7 +14,9 @@ buildscript {
 plugins {
     java
     id("com.github.node-gradle.node") version "7.1.0"
-    id("com.google.protobuf") version "0.9.5" apply false
+    alias(libs.plugins.protobuf) apply false
+    alias(libs.plugins.spring.boot) apply false
+    alias(libs.plugins.flyway) apply false
     id("com.diffplug.spotless") version "7.1.0"
     id("checkstyle")
     id("com.github.spotbugs") version "6.2.2"
@@ -42,13 +44,24 @@ subprojects {
     group = "net.firedevops.firemud"
     version = project.property("version") as String
 
+    java {
+        toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+    }
+
+    if (projectDir.parentFile.name == "services" && name != "common-library") {
+        apply(plugin = "org.springframework.boot")
+        apply(plugin = "org.flywaydb.flyway")
+    }
+
+    val libs = rootProject.extensions.getByType<VersionCatalogsExtension>().named("libs")
+
     dependencies {
-        implementation("com.google.protobuf:protobuf-java:4.31.1")
-        implementation("io.grpc:grpc-netty-shaded:1.73.0")
-        implementation("io.grpc:grpc-protobuf:1.73.0")
-        implementation("io.grpc:grpc-stub:1.73.0")
+        implementation(libs.findLibrary("protobuf-java").get())
+        implementation(libs.findLibrary("grpc-netty-shaded").get())
+        implementation(libs.findLibrary("grpc-protobuf").get())
+        implementation(libs.findLibrary("grpc-stub").get())
         implementation("javax.annotation:javax.annotation-api:1.3.2")
-        testImplementation("org.springframework.boot:spring-boot-starter-test:3.5.3")
+        testImplementation(libs.findLibrary("spring-boot-starter-test").get())
         testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.3")
     }
 
