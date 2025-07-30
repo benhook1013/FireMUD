@@ -35,7 +35,7 @@ class TestDataSeederTest {
   void runSeedsDataWhenRepositoriesEmpty() throws Exception {
     Game game = new Game();
     game.setId(1L);
-    game.setTenantId(1L);
+    game.setTenantId("1");
     when(gameRepository.findAll()).thenReturn(java.util.List.of());
     when(gameRepository.save(any(Game.class))).thenReturn(game);
     when(templateRepository.count()).thenReturn(0L);

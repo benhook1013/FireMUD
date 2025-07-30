@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-import java.util.Optional;
 import net.firedevops.firemud.dto.RevisionDto;
 import net.firedevops.firemud.entity.Game;
 import net.firedevops.firemud.entity.Revision;
@@ -34,14 +33,14 @@ class RevisionServiceImplTest {
   void saveRevisionPersistsEntity() {
     Game game = new Game();
     game.setId(1L);
-    game.setTenantId(2L);
-    when(gameRepository.findById(1L)).thenReturn(Optional.of(game));
+    game.setTenantId("1");
+    when(gameRepository.findByTenantId("1")).thenReturn(game);
     Revision saved = new Revision();
     saved.setId(10L);
     saved.setGame(game);
     when(revisionRepository.save(any(Revision.class))).thenReturn(saved);
 
-    RevisionDto dto = new RevisionDto(null, 1L, 3L, "{}", null);
+    RevisionDto dto = new RevisionDto(null, "1", 3L, "{}", null);
     RevisionDto result = service.saveRevision(dto);
 
     assertEquals(10L, result.id());
