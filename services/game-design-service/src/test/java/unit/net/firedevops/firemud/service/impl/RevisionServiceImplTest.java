@@ -33,7 +33,7 @@ class RevisionServiceImplTest {
   void saveRevisionPersistsEntity() {
     Game game = new Game();
     game.setId(1L);
-    game.setTenantId("2");
+    game.setTenantId("1");
     when(gameRepository.findByTenantId("1")).thenReturn(game);
     Revision saved = new Revision();
     saved.setId(10L);
