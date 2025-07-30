@@ -14,7 +14,7 @@ dependencies {
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:3.5.3")
     compileOnly("org.projectlombok:lombok:1.18.38")
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
-    implementation("io.micrometer:micrometer-core:1.15.1")
+    implementation("io.micrometer:micrometer-core:1.15.2")
     implementation("io.opentelemetry:opentelemetry-api:1.52.0")
     implementation("io.opentelemetry:opentelemetry-sdk:1.52.0")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.52.0")
