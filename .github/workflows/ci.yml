@@ -152,7 +152,7 @@ jobs:
           wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 
       - name: Install Chrome
-        run: sudo apt install -y ./google-chrome-stable_current_amd64.deb
+        run: sudo apt install -y --allow-downgrades ./google-chrome-stable_current_amd64.deb
 
       - name: ♿ Run Accessibility Audit
         run: |

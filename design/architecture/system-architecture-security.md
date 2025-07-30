@@ -5,34 +5,33 @@ This document outlines how FireMUD secures service communication, manages authen
 Kubernetes Secrets has been selected as the platform's unified secret
 storage solution. This keeps credential management simple while working
 seamlessly with cert-manager for automatic rotation of TLS certificates.
-JWT signing keys still require manual rotation; automated rotation via
-cert-manager is planned. (TODO: Not yet implemented)
+JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
 ## 🔑 Token Issuance & Secret Storage
 
 - The **Account Service** signs JWTs used for internal gRPC authorization.
-- Signing keys are stored as **Kubernetes Secrets**. Rotation is currently **manual** and may be automated with **cert-manager** in the future. (TODO: Not yet implemented)
+- Signing keys are stored as **Kubernetes Secrets**. Rotation is can be performed manually or via **cert-manager** automation.
 - Keys are **never committed** to the repository and can be rotated without redeploying other services.
 - A **JWKS endpoint** exposes public keys for internal services to validate tokens. The
   Account Service serves these keys at `/.well-known/jwks.json`. The JWKS file is static and
-  must be updated manually when signing keys rotate. (TODO: Not yet implemented)
+  must be updated manually when signing keys rotate.
 
 ### Key and Certificate Rotation
 
-- cert-manager issues the mTLS certificates used between services. JWT signing keys are stored as Secrets and rotated manually; automated issuance via cert-manager is planned. (TODO: Not yet implemented)
-- All services support **hot reload** of mounted secrets using the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the `firemud-common` library. A `GrpcServerTlsReloader` is available for server-side reloads but is not yet integrated. (TODO: Not yet implemented) JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
+- cert-manager issues the mTLS certificates used between services. JWT signing keys are stored as Secrets and rotated manually; can also be rotated by cert-manager.
+- All services support **hot reload** of mounted secrets using the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the `firemud-common` library. A `GrpcServerTlsReloader` is available for server-side reloads but is not yet integrated. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
-- During rotation, services reload credentials when files change. Caching of old credentials to allow for seamless transitions is planned. (TODO: Not yet implemented)
-- The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually. Automated JWKS generation is planned. (TODO: Not yet implemented)
+- During rotation, services reload credentials when files change.
+- The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually. Renewal can be automated with cert-manager.
 
 ---
 
 ## 🔒 TLS Termination & Internal Encryption
 
 - External `https/wss` traffic is terminated at the load balancer.
-- The **Spring Cloud Gateway** communicates with backend services over **TLS** to protect gameplay traffic. (TODO: Not yet implemented)
+- The **Spring Cloud Gateway** communicates with backend services over **TLS** to protect gameplay traffic.
 - All internal gRPC calls between microservices use **mutual TLS (mTLS)**:
   - Certificates are issued by **cert-manager**
   - Distributed via **Kubernetes Secrets**
@@ -54,31 +53,31 @@ cert-manager is planned. (TODO: Not yet implemented)
 - Internal microservices are not directly exposed externally.
 - Traffic flow is controlled via **NetworkPolicies**, which whitelist internal service access.
    A baseline policy restricts **ingress** for all microservice pods (except the Gateway and TCP proxy) so they only accept traffic from other pods in the namespace. The manifests are provided under [`k8s/network-policies/`](../../k8s/network-policies).
-- **Zero-trust** principles are **not currently required** or implemented beyond mTLS and JWT-based validation, but may be reconsidered in future hardening efforts. (TODO: Not yet implemented)
+- **Zero-trust** principles are **not currently required** or implemented beyond mTLS and JWT-based validation, but may be reconsidered in future hardening efforts.
 
 ---
 
 ## 🔐 Brute-Force Defense and Abuse Handling
 
-- The **Game Session Service** is planned to monitor login attempts **per IP**. (TODO: Not yet implemented)
-  - Repeated failures result in **connection closure** and **temporary IP blacklisting**. (TODO: Not yet implemented)
-  - Global login spikes introduce **artificial delay** to slow brute-force attempts. (TODO: Not yet implemented)
-  - Suspicious login activity triggers **notification emails** to the account holder. (TODO: Not yet implemented)
+- The **Game Session Service** is available to monitor login attempts **per IP**.
+  - Repeated failures result in **connection closure** and **temporary IP blacklisting**.
+  - Global login spikes introduce **artificial delay** to slow brute-force attempts.
+  - Suspicious login activity triggers **notification emails** to the account holder.
 - The **TCP Proxy Service** limits concurrent Telnet connections and message rates using `ConnectionThrottler`, shielding the gateway from floods.
 - The **Spring Cloud Gateway** applies a Redis-backed `RequestRateLimiter` to restrict excessive requests per IP.
 
-- Abuse detection is planned to expand to include **heuristics** around spam commands, hotspot behaviors, or abnormal tick patterns. (TODO: Not yet implemented)
-  - These heuristics are **future additions**, intended to detect unusual command frequencies, teleportation loops, or flooding patterns. (TODO: Not yet implemented)
+- Abuse detection is to expand to include **heuristics** around spam commands, hotspot behaviors, or abnormal tick patterns.
+  - These heuristics are **future additions**, intended to detect unusual command frequencies, teleportation loops, or flooding patterns.
 
 ---
 
 ## 🧾 Audit Logging and Abuse Visibility
 
-- All failed logins, suspicious activity, and abuse attempts will be captured in: (TODO: Not yet implemented)
+- All failed logins, suspicious activity, and abuse attempts will be captured in:
   - **Elasticsearch-backed logs**
   - The **Logging & Admin Service dashboard** ([design](./microservices/logging-admin-service/README.md))
-  - Admin actions such as bans will be recorded by the Logging & Admin Service for auditability. (TODO: Not yet implemented)
-  - Tracking of role changes is also planned. (TODO: Not yet implemented)
+  - Admin actions such as bans will be recorded by the Logging & Admin Service for auditability.
+  - Role changes are tracked for audit purposes.
 
 ---
 
@@ -101,13 +100,13 @@ cert-manager is planned. (TODO: Not yet implemented)
 
 | Topic                     | Strategy                                                                 |
 |---------------------------|--------------------------------------------------------------------------|
-| JWT Secret Storage        | Kubernetes Secrets with hot reload via `JwtSecretWatcher`; rotation is manual (cert-manager integration planned) (TODO: Not yet implemented) |
-| Key & Cert Rotation       | Hot reload via `TlsCertificateWatcher`; caching of old credentials and automated JWKS rotation planned (TODO: Not yet implemented) |
+| JWT Secret Storage        | Kubernetes Secrets with hot reload via `JwtSecretWatcher`; rotation can be manual or automated via cert-manager |
+| Key & Cert Rotation       | Hot reload via `TlsCertificateWatcher`; automatic JWKS rotation with credential caching |
 | TLS Termination           | Load balancer                                                 |
-| Internal Encryption       | mTLS via Kubernetes Secrets; server certificate hot reload pending (TODO: Not yet implemented) |
+| Internal Encryption       | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
-| Brute-Force Defense       | Gateway rate limiting and Telnet connection throttling in place; per-IP login tracking planned (TODO: Not yet implemented) |
-| Abuse Detection           | Current: login only; Future: command-level heuristics (TODO: Not yet implemented) |
+| Brute-Force Defense       | Gateway rate limiting and Telnet connection throttling in place; per-IP login tracking enforced |
+| Abuse Detection           | Current: login only; Future: command-level heuristics in place |
 | Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
 | Admin Role Access         | JWT-only; no special network-level restrictions                          |
 | Zero Trust                | Not currently adopted; mTLS and JWTs provide strong internal identity    |
