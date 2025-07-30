@@ -34,10 +34,12 @@ Always leave `defaultVolumesToFsBackup` set to `false` so Velero backs up only K
 
 PostgreSQL dumps must capture a consistent view of gameplay state. Before a `pg_dump` begins, the Game Session Service exposes `PauseTicks` and `ResumeTicks` gRPC commands. The backup workflow:
 
-1. Calls `PauseTicks` with a reason string.
-2. Polls `GetTickStatus` until the service reports `PAUSED`, which indicates all in‑flight ticks have completed.
+1. Calls `PauseTicks` with a reason string. This sets a `pause_requested` flag so the tick scheduler stops launching new ticks while allowing any in‑flight ticks to finish normally.
+2. Polls `GetTickStatus` until the service reports `PAUSED`, which indicates all in‑flight ticks have completed. Command queues continue accepting actions during this pause, but they execute only after ticks resume.
 3. Starts `pg_dump` immediately. Ticks may resume as soon as the dump command starts because PostgreSQL snapshots the data at launch time.
 4. Invokes `ResumeTicks` so queued commands continue processing.
+
+For convenience, `dev-tools/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
 
 Velero continues backing up Kubernetes manifests only and does **not** pause any services. Tick pausing is required only at the start of `pg_dump`, not for its entire runtime.
 
