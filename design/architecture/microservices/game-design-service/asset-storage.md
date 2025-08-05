@@ -2,7 +2,7 @@
 
 Game assets such as icons or sound files are stored directly in the Game Design Service database.
 There is no external storage service today; assets live in PostgreSQL as binary blobs. Offloading to object storage is planned for a future release. (TODO: Not yet implemented)
-Each record is tied to a `tenantId` so assets remain isolated between games. This keeps icons, UI images and audio files scoped to a single project.
+Each record is tied to a `tenantId` so assets remain isolated between games. This keeps icons, UI images, and audio files scoped to a single tenant (game).
 
 ## Table Structure
 
@@ -19,8 +19,6 @@ The `data` column uses PostgreSQL `BYTEA` type to store the file contents.
 When returned by the REST API this byte array is Base64 encoded by default so the JSON response remains text based.
 
 An index named `idx_game_assets_tenant` speeds up queries scoped to a tenant.
-The schema, including this index, lives in
-`services/game-design-service/src/main/resources/db/migration/V3__game_assets.sql`.
 
 ## API
 
