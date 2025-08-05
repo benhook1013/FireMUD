@@ -90,6 +90,12 @@ subprojects {
         sourceDirs.setFrom(sourceDirs.files.filterNot { it.path.contains(generatedDir) })
     }
 
+    // SpotBugs analyzes the compiled classes, so ensure it runs after Java
+    // compilation to avoid implicit dependency issues reported by Gradle.
+    tasks.named("spotbugsMain") {
+        dependsOn("compileJava")
+    }
+
     tasks.test {
         useJUnitPlatform()
         finalizedBy("jacocoTestReport")
