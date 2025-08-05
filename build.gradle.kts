@@ -62,7 +62,7 @@ subprojects {
         implementation(libs.findLibrary("grpc-stub").get())
         implementation("javax.annotation:javax.annotation-api:1.3.2")
         testImplementation(libs.findLibrary("spring-boot-starter-test").get())
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.3")
+        testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
     }
 
     spotless {
