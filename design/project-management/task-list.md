@@ -327,6 +327,8 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Configure **IPVS** or similar load balancing mode in Kubernetes clusters
 - [ ] Add **PostgreSQL exporter** for Prometheus metrics
 - [ ] Automate **database password rotation** using cert-manager or Secret syncing
+- [ ] Automate JWT signing key rotation via cert-manager
+- [ ] Integrate `GrpcServerTlsReloader` across services for server certificate hot reload
 - [ ] Support **multi-region deployments** for lower latency
 - [ ] Schedule **nightly resets** of the staging playtest environment
 - [ ] Implement layered reconnection across Proxy, Gateway, and Game Session services using Redis-backed session state
@@ -334,3 +336,6 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Enforce `tenantId` filtering on every service query
 - [ ] Load tenant-specific themes and branding in the React frontend
 - [ ] Apply per-game resource quotas to prevent cluster capacity exhaustion
+- [ ] Expose OpenTelemetry Collector metrics and scrape them with Prometheus
+- [ ] Add OpenTelemetry Collector and Jaeger to the local Docker Compose stack
+- [ ] Configure environment-specific Jaeger retention policies

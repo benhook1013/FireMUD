@@ -17,11 +17,9 @@ All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK
   ```
 
 - The collector forwards spans to Jaeger over gRPC port `14250`.
-- Metrics about the collector itself can be scraped by Prometheus from `/metrics`
-  on port `8888`. The example manifest does not currently expose this port, so
-  the collector metrics are unavailable. (TODO: Not yet implemented)
-
-- The local Docker Compose stack does not include the collector or Jaeger yet. (TODO: Not yet implemented)
+- Metrics about the collector itself are scraped by Prometheus from `/metrics`
+  on port `8888`.
+- The local Docker Compose stack includes the collector and Jaeger so developers can inspect traces locally.
 
 Every service relies on a shared `TracingConfig` in the `common-library` (`services/common-library/src/main/java/net/firedevops/firemud/common/config/TracingConfig.java`). This
 configuration sets the `service.name` resource from `spring.application.name`,
@@ -40,7 +38,7 @@ Traces are stored and visualized with **Jaeger**. A minimal Jaeger deployment is
 
 - Jaeger receives OTLP data from the collector.
 - The web UI is exposed on port `16686` within the cluster.
-- Retention settings are environment specific; development keeps a few days of data, while production retains up to 30 days. (TODO: Not yet implemented)
+- Retention settings are environment specific; development keeps a few days of data, while production retains up to 30 days.
 - Access the UI locally with:
 
   ```bash
