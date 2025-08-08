@@ -31,8 +31,9 @@ Example `manifest.json`:
 }
 ```
 
-- Optional layout tweaks can be enabled via **runtime feature flags** defined in
-  the Game Design Service and toggled through the
+Optional layout tweaks can be enabled via
+[runtime feature flags](./microservices/game-design-service/feature-flags.md) 
+defined in the Game Design Service and toggled through the
   [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
 - Tenants can provide locale files that are loaded at runtime using
   `react-i18next`; otherwise, the default language is used. (TODO: Not yet
@@ -72,8 +73,9 @@ Example `manifest.json`:
   stored in per-tenant configuration tables (see
   [Multi-Tenancy](./system-architecture-multi-tenancy.md)). Per-tenant tick
   intervals are planned. (TODO: Not yet implemented)
-- Flags are defined in the Game Design Service but toggled through the
-  [Logging & Admin Service](./microservices/logging-admin-service/README.md).
+- Flags are defined in the Game Design Service (see
+  [Feature Flags](./microservices/game-design-service/feature-flags.md)) but
+  toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md).
   (TODO: Not yet implemented)
 - The [Game Session Service](./microservices/game-session-service/README.md)
   loads these settings at runtime when customization is provided so changes can
