@@ -285,7 +285,7 @@ The standard microservice checklist is now copied into each service task list.
 - [x] **Onboard Game Creators & Improve UX**
   - [x] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
   - [x] Gather feedback from early users & iterate on UI/UX
-  - [x] Add MCP support for AI assisted game creation
+  - [ ] Add MCP support for AI assisted game creation
 
 ### ⚙️ Load Testing, Operations & Scaling
 

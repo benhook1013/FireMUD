@@ -11,16 +11,17 @@
 
 ## Design Tools
 
-- [x] Implement world editing & customization tools
+- [ ] Implement world editing & customization tools
 - [x] Implement scripting & event design tools
 - [x] Build a **visual scripting editor** using a **component-based DSL**
 - [x] Sandbox script execution with quotas via the Automation & Scripting Service
-- [x] Implement ability & action design tools
-- [x] Implement item & equipment balancing tools
+- [ ] Implement ability & action design tools
+- [ ] Implement item & equipment balancing tools
 - [x] Track version history and patch notes for published games
 - [x] Build a web-based visual design interface
 - [x] Integrate version control for design assets
 - [ ] Implement data-driven rule configuration so games can adjust mechanics without redeploying
+- [ ] Support JSON import for rooms, items, and NPCs
 - [x] Configure database storage for game assets
   - [x] Provide asset upload API in Game Design Service
   - [x] Document asset storage setup and configuration
@@ -31,7 +32,7 @@
 ## Scripting & Modding
 
 - [x] Implement event-driven scripting API for game creators
-- [x] Implement in-game modding/plugin framework
+- [ ] Implement in-game modding/plugin framework
 - [x] Implement scripted AI behaviors for NPCs
 - [ ] Forward plugin metrics and error logs to the Logging & Admin Service
 - [ ] Expose plugin enable/disable APIs via the Logging & Admin Service
@@ -39,10 +40,11 @@
 - [ ] Add import/export of design assets for sharing between games
 - [ ] Add `owner_id` association to games and API
 
-## Admin & Security
+## Admin, Security & MCP
 
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [ ] Add MCP commands for room and item editing
+- [ ] Support bulk import and transactional MCP content creation
 
 ## Versioning & Runtime Configuration
 
