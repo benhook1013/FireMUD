@@ -28,7 +28,7 @@ repos:
         pass_filenames: false
       - id: hadolint
         name: Dockerfile Lint
-        entry: hadolint -c .hadolint.yaml
+        entry: hadolint -c config/hadolint/hadolint.yaml
         language: system
         files: (?i)^Dockerfile$|\.Dockerfile$
       - id: frontend-lint

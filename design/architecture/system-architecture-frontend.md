@@ -76,9 +76,17 @@ Game-specific themes rely on the multi-tenant model described in [Multi-Tenancy]
 
 FireMUD aims to let each hosted game supply its own UI styling and layout tweaks.
 
-- The React app will load theme files and configuration based on the game's `tenantId`.
-- Creators can override Material-UI themes, logos, and optionally define extra routes.
-- Core components remain shared so feature updates reach all games without forks.
+- When a game version is published, branding assets and a `manifest.json` are
+  uploaded to tenant- and version-scoped object storage (e.g., S3, MinIO, or a
+  CDN).
+- Published version metadata stores the manifest URL. At runtime the React app
+  fetches this manifest to load logos, favicons, theme JSON, and optional route
+  definitions, then applies Material-UI overrides.
+- Assets are loaded directly from the CDN; the Game Design Service is never
+  queried during gameplay.
+- If the manifest omits an asset, the default platform styling is used.
+- Core components remain shared so feature updates reach all games without
+  forks. (TODO: Not yet implemented)
 
 ## 🌍 Internationalization Strategy
 

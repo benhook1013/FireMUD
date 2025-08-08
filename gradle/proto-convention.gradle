@@ -1,0 +1,43 @@
+apply plugin: 'com.google.protobuf'
+
+def libs = project.extensions.getByName('libs')
+
+// Define proto source directory before configuring the protobuf plugin so that
+// the plugin wires the generate tasks and compile dependencies correctly.
+sourceSets {
+    main {
+        proto.srcDir rootProject.file('protos')
+    }
+}
+
+// Include the generated Protobuf sources in the main Java source set. The
+// protobuf Gradle plugin outputs files under `generated/sources`, not
+// `generated/source`, so point to the correct directories so that the
+// compiler can locate both message classes and gRPC stubs.
+sourceSets.main.java.srcDirs += [
+    'build/generated/sources/proto/main/java',
+    'build/generated/sources/proto/main/grpc'
+]
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.get()}"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.get()}"
+        }
+    }
+    generateProtoTasks {
+        ofSourceSet('main').each { task ->
+            task.plugins {
+                grpc {}
+            }
+        }
+    }
+}
+
+// Ensure that the Java compilation runs after Protobuf code generation.
+tasks.named('compileJava') {
+    dependsOn('generateProto')
+}

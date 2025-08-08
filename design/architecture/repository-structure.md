@@ -47,7 +47,7 @@ root
 - `protos/` – Versioned gRPC definitions for every service.
 - `web-client/` – React web application.
 - `design/` – Architecture, operations, and user guide documentation.
-- `config/` – Checkstyle, git hooks, and SpotBugs configs.
+- `config/` – Checkstyle, git hooks, SpotBugs, Markdownlint, Hadolint, and Trivy configs.
 - `dev-tools/` – Shell utilities for database backups, ERD generation, API client configs, and a Gatling load-testing module.
 - `docker/` – Base Dockerfiles used by the build process.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs,
@@ -70,7 +70,7 @@ root
 - `README.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `DEVELOPER_SETUP.md`, `LICENSE.md`, `NOTICE.md`, `FAQ.md`, `SECURITY.md` and other root Markdown files – Project documentation and guidelines.
 - `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
 - `services/init-gradle-wrappers.ps1` – Utility script to generate Gradle wrappers for each service on Windows.
-- `.hadolint.yaml`, `.lycheeignore`, `.markdownlint-cli2.jsonc`, `.trivy.yaml` – Linting and security scan settings.
+- `.lycheeignore` – URL exclusions for link checking.
 - `.release-please-config.json` & `.release-please-manifest.json` – Release automation metadata.
 - `.windsurfrules` – Compatibility link to the local AI rules.
 - `.vscode/` – Recommended workspace settings for VS Code.

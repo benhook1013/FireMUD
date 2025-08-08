@@ -266,7 +266,14 @@ Admin → Runbooks → Kubernetes / Docker → Services Restored
 
 ## 15. Branding and Customization
 
-Creators can change the look and feel of their games without altering the code base. Themes, logos, and layout tweaks are configured through the Game Design Service. The web client loads tenant-specific assets as described in [Frontend Architecture](./system-architecture-frontend.md). See [Game Customization Options](./game-customization-options.md) for details. (TODO: Not yet implemented)
+Creators adjust the look and feel of their games through the Game Design Service
+at design time. When a version is published, branding assets are uploaded to
+tenant- and version-scoped object storage and a `manifest.json` is generated.
+Runtime clients fetch this manifest—not the Game Design Service—to load logos,
+favicons, and theme overrides before applying them in the UI. See
+[Frontend Architecture](./system-architecture-frontend.md) and
+[Game Customization Options](./game-customization-options.md) for details.
+(TODO: Not yet implemented)
 
 ---
 
