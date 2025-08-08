@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Objects;
 import javax.sql.DataSource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -34,6 +35,7 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnClass(name = "org.postgresql.Driver")
   public DataSource dataSource() {
     String url =
         String.format(
