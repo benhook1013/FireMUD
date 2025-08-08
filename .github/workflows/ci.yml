@@ -58,6 +58,7 @@ jobs:
         with:
           dockerfile: Dockerfile
           recursive: true
+          config: config/hadolint/hadolint.yaml
 
   shellcheck:
     name: ShellCheck
@@ -287,7 +288,7 @@ jobs:
         continue-on-error: false
         run: |
           echo "::group::Run Trivy"
-          trivy fs --config .trivy.yaml . | tee trivy-report.txt
+          trivy fs --config config/security/trivy.yaml . | tee trivy-report.txt
           echo "::endgroup::"
 
       - name: 📤 Upload Trivy Report

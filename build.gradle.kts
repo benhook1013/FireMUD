@@ -19,7 +19,7 @@ plugins {
     alias(libs.plugins.flyway) apply false
     id("com.diffplug.spotless") version "7.2.1"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.2.2"
+    id("com.github.spotbugs") version "6.2.3"
     jacoco
 }
 
@@ -62,7 +62,7 @@ subprojects {
         implementation(libs.findLibrary("grpc-stub").get())
         implementation("javax.annotation:javax.annotation-api:1.3.2")
         testImplementation(libs.findLibrary("spring-boot-starter-test").get())
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.3")
+        testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.13.4")
     }
 
     spotless {
@@ -115,6 +115,7 @@ tasks.register<NpxTask>("lintMarkdown") {
     dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
+        "--config", "config/markdownlint/markdownlint-cli2.jsonc",
         "**/*.md",
         "!**/node_modules/**",
         "!**/build/**",
@@ -127,6 +128,7 @@ tasks.register<NpxTask>("lintMarkdownFix") {
     dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
+        "--config", "config/markdownlint/markdownlint-cli2.jsonc",
         "--fix",
         "**/*.md",
         "!**/node_modules/**",

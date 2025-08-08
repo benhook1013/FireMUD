@@ -6,18 +6,34 @@ default settings, so none of these customizations are required.
 
 ## Theme and Branding
 
-- Tenants may provide a Material‑UI theme file that overrides default colors and
-  fonts; otherwise, the default theme is used. (TODO: Not yet implemented)
-- Tenants can supply custom logos and favicon assets, which are loaded at
-  runtime based on the `tenantId` and stored through the Game Design Service's
-  [asset storage system](./microservices/game-design-service/asset-storage.md).
-  (TODO: Not yet implemented)
-- When provided, the React client loads theme and asset files per tenant at
-  runtime; see [Frontend Architecture](./system-architecture-frontend.md).
-  (TODO: Not yet implemented)
-- Optional layout tweaks can be enabled via
-  [runtime feature flags](./microservices/game-design-service/feature-flags.md)
-  defined in the Game Design Service and toggled through the
+- Designers upload logos, favicons, and theme JSON through the Game Design
+  Service at design time. Assets are packaged when a version is published.
+- At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a
+  CDN) under a `tenantId`/`version` path. A `manifest.json` mapping asset keys to
+  public URLs is stored alongside them.
+- Runtime clients fetch this manifest using the URL recorded in the published
+  version metadata and load assets directly from the CDN. The Game Design Service
+  is never queried during gameplay.
+- A `manifest.json` is generated for every published version, even when no
+  assets are supplied, so version metadata remains consistent.
+- If the manifest is empty or missing fields, the default platform branding is
+  applied.
+- The manifest can be extended with optional assets such as tutorial images, UI
+  overlays, or CSS snippets.
+
+Example `manifest.json`:
+
+```json
+{
+  "logo": "https://cdn.example.com/tenant123/v1/logo.png",
+  "favicon": "https://cdn.example.com/tenant123/v1/favicon.ico",
+  "theme": "https://cdn.example.com/tenant123/v1/theme.json"
+}
+```
+
+Optional layout tweaks can be enabled via
+[runtime feature flags](./microservices/game-design-service/feature-flags.md) 
+defined in the Game Design Service and toggled through the
   [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
 - Tenants can provide locale files that are loaded at runtime using
   `react-i18next`; otherwise, the default language is used. (TODO: Not yet

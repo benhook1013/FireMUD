@@ -51,7 +51,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add Dockerfiles for each microservice
   - [x] Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)
   - [x] Configure Gradle Node plugin and markdownlint tasks
-    - [x] Add `.markdownlint-cli2.jsonc` with repository rules
+    - [x] Add `config/markdownlint/markdownlint-cli2.jsonc` with repository rules
     - [x] Provide `.pre-commit-config.yaml` and git hook script
     - [x] Add `package.json` with `markdownlint-cli2` for lint tasks
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` configuration files
@@ -61,7 +61,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Apply `org.springframework.boot` plugin across services for building and container image packaging (`bootBuildImage`)
   - [x] Add JUnit 5 and Mockito dependencies for unit tests
   - [x] Add `.windsurfrules` with AI coding guidelines
-  - [x] Add `.trivy.yaml` for Trivy security scans
+  - [x] Add `config/security/trivy.yaml` for Trivy security scans
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` for static analysis configuration
   - [x] Provide `.vscode` workspace settings
   - [x] Add `.editorconfig` for consistent indentation and whitespace rules
@@ -190,7 +190,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Add accessibility checks (Axe or Lighthouse) to CI
 - [x] Convert React frontend to TypeScript for type safety
 - [x] Run ESLint and Prettier checks in GitHub Actions
-- [ ] Implement per-tenant Material-UI themes and asset loading
+- [ ] Implement per-tenant Material-UI themes and asset loading via published
+      `manifest.json` files
 - [ ] Load localization files per tenant at runtime
 
 ### CI/CD & Developer Automation
