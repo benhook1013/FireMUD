@@ -4,12 +4,19 @@
 
 Offers tools for building worlds, items, actions, and events that make up each game. (TODO: Not yet implemented) Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules. Default administrator setup is planned. (TODO: Not yet implemented)
 
+This service is used only at design time. Runtime clients never request logos,
+favicons, or themes from it; published assets are served from object storage via
+manifest files.
+
 ### Responsibilities
 
 - Provide gRPC tools for editing game assets. A web UI is planned. (TODO: Not yet implemented)
 - Version and publish immutable game configurations
 - Track revision history for rollback
 - Notify downstream services when new versions are available. (TODO: Not yet implemented)
+- Upload branding assets to version-scoped object storage and generate a
+  `manifest.json` so runtime clients can load themes and logos without calling
+  this service.
 
 ## Architecture / Design Notes
 

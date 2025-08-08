@@ -34,7 +34,9 @@ the multi-tenant requirements in the
 - Redis keys prefix the `tenantId` as described in the
   [Redis Architecture](./system-architecture-redis.md#key-format-examples) so
   cached session state and runtime data remain isolated.
-- The React frontend will load per-tenant themes and branding files. (TODO: Not yet implemented)
+- The React frontend loads per-tenant, version-scoped assets from a published
+  `manifest.json` in object storage; the Game Design Service is not queried at
+  runtime. (TODO: Not yet implemented)
 - See [Game Customization Options](./game-customization-options.md) and the
   [Frontend Architecture](./system-architecture-frontend.md) for planned details.
 

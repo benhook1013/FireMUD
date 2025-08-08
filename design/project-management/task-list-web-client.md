@@ -13,7 +13,7 @@
 
 ## Customization & Internationalization
 
-- [ ] Load theme files per `tenantId` to support game-specific branding
+- [ ] Load theme files via `manifest.json` per `tenantId` to support game-specific branding
 - [ ] Allow Material-UI theme overrides and optional extra routes
 - [ ] Keep core components shared so updates reach all games
 - [ ] Add i18n support with `react-i18next`
