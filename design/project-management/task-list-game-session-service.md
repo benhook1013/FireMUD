@@ -11,6 +11,7 @@
 - [ ] Forward TOTP codes to the Account Service during login
 - [ ] Refresh roles in-session when `scopedRoles` are updated
 - [ ] Implement `LOGIN`/`LOGON` command handling for interactive and parameterized logins
+- [ ] Forward JWTs to backend services on behalf of clients
 
 ## Tick Management
 

@@ -330,6 +330,7 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Add **PostgreSQL exporter** for Prometheus metrics
 - [ ] Automate **database password rotation** using cert-manager or Secret syncing
 - [ ] Automate JWT signing key rotation via cert-manager
+- [ ] Issue TLS and mTLS certificates via cert-manager and mount them in Kubernetes Secrets
 - [ ] Integrate `GrpcServerTlsReloader` across services for server certificate hot reload
 - [ ] Support **multi-region deployments** for lower latency
 - [ ] Schedule **nightly resets** of the staging playtest environment
@@ -342,3 +343,4 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Add OpenTelemetry Collector and Jaeger to the local Docker Compose stack
 - [ ] Add Fluent Bit, Prometheus, and Grafana to the local Docker Compose stack
 - [ ] Configure environment-specific Jaeger retention policies
+- [ ] Deploy Redis as a clustered StatefulSet with automatic failover in production

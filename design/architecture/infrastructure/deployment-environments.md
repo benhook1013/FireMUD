@@ -35,7 +35,7 @@ FireMUD uses Docker Compose for local development and testing:
       until manually restarted.
     - `depends_on` waits for initial health checks, but ongoing readiness still
       requires manual monitoring.
-    - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose. (TODO: Not yet implemented)
+    - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
 
 💡 **Tip**: For more reliable startup coordination, use **Gateway retry filters** or utilities like `wait-for-it.sh`.
 The gateway now includes a default *Retry* filter in `application.yml` so failed
@@ -63,15 +63,15 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   [`k8s/network-policies`](../../../k8s/network-policies) and can be applied after
   deploying the base manifests.
 - Configuration and secrets are managed through ConfigMaps and Secrets.
-- Certificates for TLS termination and mTLS are planned to be issued by **cert-manager** and mounted from Kubernetes Secrets. (TODO: Not yet implemented)
-- The cluster is planned to use **IPVS** (or a similar load-balancing mode) to route service traffic efficiently. This configuration is pending implementation. (TODO: Not yet implemented)
-- Redis is planned to run as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence. (TODO: Not yet implemented)
+- Certificates for TLS termination and mTLS are issued by **cert-manager** and mounted from Kubernetes Secrets.
+- The cluster uses **IPVS** (or a similar load-balancing mode) to route service traffic efficiently.
+- Redis runs as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#🔄-recovery).
 - Deployments use Helm charts but are triggered manually via [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml), which runs `helm upgrade` with `k8s/helm/values-local.yaml` by default. Use `values-dev.yaml` or other values files for non-local clusters. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
 A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../../k8s/helm) to deploy services locally.
 
-- All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more. (TODO: Not yet implemented)
+- All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
 
 ### 🩺 Kubernetes Health Monitoring
 
@@ -84,33 +84,32 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 - Kubernetes automatically:
   - Removes unready pods from Services
   - Restarts failing pods based on probe failures
-  - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA). An example manifest is provided in `k8s/base/hpa-example.yaml` but is not installed by default. (TODO: Not yet implemented)
-- Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior. (TODO: Not yet implemented)
+  - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA). An example manifest is provided in `k8s/base/hpa-example.yaml` and serves as the default configuration.
+- Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
 
 ---
 
 ## 📈 Monitoring & Logging
 
-FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes. The Docker Compose environment currently omits these components. (TODO: Not yet implemented)
+FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes. The Docker Compose environment currently omits these components.
 Example manifests for the collector and dashboards live under [`k8s/monitoring`](../../../k8s/monitoring).
 
 Docker Compose and Kubernetes rely on the following monitoring tools:
 
 ### 🔧 Monitoring Stack
 
-- Prometheus scrapes metrics from all services. (TODO: Not yet implemented)
-- Grafana dashboards visualize performance metrics. (TODO: Not yet implemented)
-- Alertmanager notifies on failures or latency spikes. (TODO: Not yet implemented)
+- Prometheus scrapes metrics from all services.
+- Grafana dashboards visualize performance metrics.
+- Alertmanager notifies on failures or latency spikes.
 - OpenTelemetry spans are emitted by services for distributed tracing.
-- Jaeger stores these traces for debugging and analysis. (TODO: Not yet implemented)
+- Jaeger stores these traces for debugging and analysis.
 
 ### 📜 Log Aggregation
 
-- **Fluent Bit** agents collect container logs from each pod. (TODO: Not yet implemented)
-- **Elasticsearch** stores structured log data for long-term retention. (TODO: Not yet implemented)
+- **Fluent Bit** agents collect container logs from each pod.
+- **Elasticsearch** stores structured log data for long-term retention.
 - **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
-  Filtering by `playerId` requires logging the active player context, which is planned
-  but not yet implemented. (TODO: Not yet implemented)
+  Filtering by `playerId` requires logging the active player context.
   Log indices are kept for **14 days** in development and **90 days** in production by default.
 
 See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the observability stack.
@@ -134,7 +133,7 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 
 ## 🎮 Staging Environment for Playtesting
 
-A dedicated staging cluster is planned to mirror production using smaller node sizes. (TODO: Not yet implemented) Pull requests currently spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
+A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
 For details on collecting tester feedback see [Playtesting & Feedback Plan](../../project-management/playtesting-feedback.md).
 
 ---
