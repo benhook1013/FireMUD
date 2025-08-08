@@ -13,6 +13,7 @@
 - [x] Implement self-service account recovery
 - [x] Add optional 2FA for admin and moderator roles
 - [ ] Implement account ban and suspension workflows with audit logging
+- [ ] Provide web form and endpoints for players to submit ban appeals
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [ ] Automate JWKS key rotation using cert-manager and update services to poll for changes
 
