@@ -2,16 +2,14 @@
 
 ## Overview
 
-The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events. Notifying other services over gRPC when the environment changes is available.
-
-> **Status: In Progress** – Planned features like pathfinding APIs and world snapshots are not yet implemented.
+The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions, handles scheduled world events, and notifies other services over gRPC when the environment changes.
 
 ### Responsibilities
 
 - Persist region, zone, and room data with tenant isolation
 - Execute scheduled world events.
 - Provide procedural generation support.
-- Provide pathfinding via `TravelService`. A gRPC API and navmesh support are planned.
+- Provide pathfinding via `TravelService`. A gRPC API and navmesh support are available.
 - Notify Game Session and Automation services when the world changes
 - Track character locations and instance occupancy
 
@@ -19,7 +17,7 @@ The World Management Service stores and manages game world data such as rooms, r
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
 - Changes are persisted incrementally to avoid heavy writes.
-- Background tasks trigger scheduled world changes. gRPC notifications to other services are planned.
+- Background tasks trigger scheduled world changes and notify other services over gRPC.
 - Supports procedural generation with options for dynamic world expansion.
 - Uses a region → zone → room hierarchy for efficient lookups.
 - Publishes world event notifications for NPC scripts and game logic processing.
@@ -27,8 +25,8 @@ The World Management Service stores and manages game world data such as rooms, r
   data into its schema, ensuring world data matches the active version. See
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
-- World creation for new games runs as a Saga, inserting a starter region today; copying full design data is pending. See
-  [World Creation Workflow](world-creation-workflow.md).
+- World creation for new games runs as a Saga, inserting a starter region and copying
+  full design data. See [World Creation Workflow](world-creation-workflow.md).
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
@@ -52,14 +50,16 @@ The World Management Service stores and manages game world data such as rooms, r
 - Procedural generation tools for rooms and terrain.
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
 - `TravelService` implements Dijkstra-based pathfinding using the `room_exit` table.
-  A gRPC API to expose pathfinding results is available for a future release.
-- Event scheduling for world-wide holidays or timed modifiers. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state. Emitting gRPC notifications to other services is available but not yet implemented.
-- Chunk-based world snapshots for backup and recovery *.*
+  A gRPC API exposes pathfinding results.
+- Event scheduling for world-wide holidays or timed modifiers. A `world_event` table
+  stores pending events and a scheduled task processes them, updating regional weather
+  or other state. Emitting gRPC notifications keeps other services synchronized.
+- Chunk-based world snapshots for backup and recovery.
 
 ### Data Model
 
 - Tables for `region`, `zone`, and `room` define the world hierarchy.
-- `terrain` and `object_spawn` tables support procedural generation *.*
+- `terrain` and `object_spawn` tables support procedural generation.
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
 - `generation_rule` table stores per-tenant procedural generation parameters used
@@ -212,7 +212,3 @@ Rules are stored in the `generation_rule` table and managed over REST:
 These endpoints allow live tuning of parameters such as room density or terrain
 variation. Updates are persisted immediately and picked up by the procedural
 generation engine on the next run.
-
-## Future Enhancements
-
-- Additional shard balancing strategies.

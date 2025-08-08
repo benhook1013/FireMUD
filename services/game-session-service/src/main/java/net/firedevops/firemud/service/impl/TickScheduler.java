@@ -19,7 +19,8 @@ public class TickScheduler {
   @Scheduled(fixedDelayString = "${game.tick-duration-ms:1000}")
   @Timed(value = "game_session.tick_scheduler")
   public void runTicks() {
-    if (tickService.getTickStatus() == net.firedevops.firemud.gamesession.v1.TickStatus.PAUSED) {
+    if (tickService.getTickStatus()
+        == net.firedevops.firemud.gamesession.v1.TickStatus.TICK_STATUS_PAUSED) {
       return;
     }
     List<GameInstance> running = repository.findByStatus("RUNNING");

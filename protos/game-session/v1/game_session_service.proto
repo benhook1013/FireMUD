@@ -113,8 +113,9 @@ message ResumeTicksResponse {
 message GetTickStatusRequest {}
 
 enum TickStatus {
-  RUNNING = 0;
-  PAUSED = 1;
+  TICK_STATUS_UNSPECIFIED = 0;
+  TICK_STATUS_RUNNING = 1;
+  TICK_STATUS_PAUSED = 2;
 }
 
 message GetTickStatusResponse {
