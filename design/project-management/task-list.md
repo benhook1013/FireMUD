@@ -190,7 +190,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Add accessibility checks (Axe or Lighthouse) to CI
 - [x] Convert React frontend to TypeScript for type safety
 - [x] Run ESLint and Prettier checks in GitHub Actions
-- [ ] Implement per-tenant Material-UI themes and asset loading
+- [ ] Implement per-tenant Material-UI themes and asset loading via published
+      `manifest.json` files
 - [ ] Load localization files per tenant at runtime
 
 ### CI/CD & Developer Automation

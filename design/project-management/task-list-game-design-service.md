@@ -25,7 +25,8 @@
   - [x] Document asset storage setup and configuration
   - [ ] Provide asset download and delete APIs
   - [ ] Add gRPC endpoints for asset management
-  - [ ] Copy assets to runtime services when publishing versions
+  - [ ] Upload published assets and a `manifest.json` to version-scoped object
+        storage so runtime clients can load them from a CDN
 
 ## Scripting & Modding
 

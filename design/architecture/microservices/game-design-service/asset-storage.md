@@ -1,8 +1,15 @@
 # Asset Storage Setup
 
-Game assets such as icons or sound files are stored directly in the Game Design Service database.
-There is no external storage service today; assets live in PostgreSQL as binary blobs. Offloading to object storage is planned for a future release. (TODO: Not yet implemented)
-Each record is tied to a `tenantId` so assets remain isolated between games. This keeps icons, UI images, and audio files scoped to a single tenant (game).
+Game assets such as icons or sound files are uploaded through the Game Design
+Service at design time. They are stored in the service database while being
+edited. When a version is published, the service uploads these assets to
+tenant- and version-scoped object storage (e.g., S3, MinIO, or a CDN) and
+generates a `manifest.json` that maps asset keys to public URLs. A manifest is
+produced for every published version, even if no assets are present. The manifest is
+stored alongside the assets and its URL is recorded in the published version
+metadata so runtime clients can retrieve it. The Game Design Service is not
+queried during gameplay. Each record remains tied to a `tenantId` so icons, UI
+images, and audio files are isolated per game.
 
 ## Table Structure
 
@@ -28,8 +35,11 @@ Endpoints for downloading or deleting assets are not provided yet. (TODO: Not ye
 There is also no gRPC endpoint for asset management at this time. (TODO: Not yet implemented)
 Listing assets for a tenant is also planned but not available. (TODO: Not yet implemented)
 
-A basic repository (`GameAssetRepository`) and service implementation (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
+A basic repository (`GameAssetRepository`) and service implementation
+(`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
 
-When a design version is published these asset records will be copied to runtime services along with other game data. (TODO: Not yet implemented)
-
-See [Game Design Service Architecture](README.md) for how these assets fit into published versions.
+At publish time, assets are exported from the database to object storage and
+referenced in the generated `manifest.json`. Runtime clients load branding and
+theme resources directly from the CDN using this manifest; the Game Design
+Service is not involved. See [Game Design Service Architecture](README.md) for
+how these assets fit into published versions.
