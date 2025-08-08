@@ -32,9 +32,10 @@ Example `manifest.json`:
 ```
 
 Optional layout tweaks can be enabled via
-[runtime feature flags](./microservices/game-design-service/feature-flags.md) 
+[runtime feature flags](./microservices/game-design-service/feature-flags.md)
 defined in the Game Design Service and toggled through the
   [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
+
 - Tenants can provide locale files that are loaded at runtime using
   `react-i18next`; otherwise, the default language is used. (TODO: Not yet
   implemented)

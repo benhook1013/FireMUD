@@ -51,7 +51,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add Dockerfiles for each microservice
   - [x] Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)
   - [x] Configure Gradle Node plugin and markdownlint tasks
-    - [x] Add `config/markdownlint/markdownlint-cli2.jsonc` with repository rules
+    - [x] Add `config/markdownlint/.markdownlint-cli2.jsonc` with repository rules
     - [x] Provide `.pre-commit-config.yaml` and git hook script
     - [x] Add `package.json` with `markdownlint-cli2` for lint tasks
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` configuration files
