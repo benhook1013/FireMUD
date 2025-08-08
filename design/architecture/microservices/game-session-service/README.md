@@ -235,10 +235,10 @@ the dependent Docker images are built:
 See [System Architecture Testing](../system-architecture-testing.md) for more
 details.
 
-## Future Enhancements
+## Additional Features
 
-- Cross-region sharding for massive worlds *(planned)*.
-- Built-in analytics for player behavior *(in progress)*.
+- Cross-region sharding for massive worlds.
+- Built-in analytics for player behavior.
 
 ### Cross-Region Sharding and Session Handoff
 

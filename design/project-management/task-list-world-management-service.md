@@ -6,6 +6,7 @@
 - [x] Implement instance-based game spaces (e.g., dungeons, player housing)
 - [x] Define instance rules, expiration, and persistence
 - [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
+- [ ] Expose pathfinding results via `TravelService` gRPC API with navmesh support
 
 ## World Events & Effects
 
