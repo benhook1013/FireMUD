@@ -16,6 +16,7 @@
 - [x] Define moderation policies including profanity filters
 - [ ] Provide web interface to review flagged logs
 - [x] Build role-based admin UI
+- [ ] Link moderation decisions to related log entries for context
 - [ ] Implement playtesting feedback form and store results for analytics
 
 ## Feature Flags & Configuration

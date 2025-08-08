@@ -255,6 +255,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Generate OpenAPI specs and host Swagger UI in CI for manual exploration
 - [x] Commit default Grafana and Kibana dashboard templates
 - [x] Configure Elasticsearch index retention (14 days dev, 90 days prod)
+- [ ] Propagate `traceId` labels to Prometheus metrics via `MetricsInterceptor`
+- [ ] Capture `playerId` in structured JSON logs across all services
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
@@ -338,4 +340,5 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Apply per-game resource quotas to prevent cluster capacity exhaustion
 - [ ] Expose OpenTelemetry Collector metrics and scrape them with Prometheus
 - [ ] Add OpenTelemetry Collector and Jaeger to the local Docker Compose stack
+- [ ] Add Fluent Bit, Prometheus, and Grafana to the local Docker Compose stack
 - [ ] Configure environment-specific Jaeger retention policies
