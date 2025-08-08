@@ -20,7 +20,7 @@ Features or workflows that are still in progress are annotated with **(TODO: Not
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code** (TODO: Not yet implemented)
 See the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration (TODO: Not yet implemented)
-- **Feature flags are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service** (TODO: Not yet implemented)
+- [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service. (TODO: Not yet implemented)
 - 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one (TODO: Not yet implemented)
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas are planned to prevent one tenant from exhausting cluster capacity.** (TODO: Not yet implemented)
 

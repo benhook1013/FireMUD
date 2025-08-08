@@ -65,23 +65,16 @@ The **Game Session Service** controls which published version is active for each
 
 ## 🔧 Runtime Feature Flags
 
-Runtime feature flags allow limited behavior changes without publishing a new design version.
-They are **defined in the Game Design Service** and copied into the **Game Session Service**
-when a version is published. The definitions table and copy steps are planned but not yet
-implemented. (TODO: Not yet implemented)
+Runtime feature flags allow limited behaviour changes without publishing a new design version.
+Definitions live in the Game Design Service and are copied into the Game Session Service
+when a version is published. Administrators toggle values through the
+[Logging & Admin Service](./microservices/logging-admin-service/README.md), which forwards
+changes to running sessions.
 
-- Designers create and maintain the set of flag definitions in the Game Design Service UI. (TODO: Not yet implemented)
-  Definitions will be stored in a `runtime_flag` table for each tenant. (TODO: Not yet implemented)
-- Administrators toggle flag values through the
-  [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface. (TODO: Not yet implemented)
-- The Logging & Admin Service forwards each change to the Game Session Service,
-  calling `ToggleFeatureFlag` via gRPC so running instances update immediately. (TODO: Not yet implemented)
-- The Game Session Service persists active flag values in its `feature_flag` table.
-  Sessions use consistent configuration even after reconnects. (TODO: Not yet implemented)
-  The Logging & Admin Service may store audit entries. (TODO: Not yet implemented)
-  It is not the source of truth for runtime behavior.
-- During each tick cycle the active flags are applied before executing game logic.
-  See [Tick System](./system-architecture-ticks.md) for details. (TODO: Not yet implemented)
+See [Game Design Service – Feature Flags](./microservices/game-design-service/feature-flags.md)
+for design-time schema and propagation details. During each tick cycle the active flags are
+applied before executing game logic. See [Tick System](./system-architecture-ticks.md) for
+how flags influence pacing. (TODO: Not yet implemented)
 
 ## 🗺️ Flow Summary
 

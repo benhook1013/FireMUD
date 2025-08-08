@@ -55,8 +55,8 @@ Offers tools for building worlds, items, actions, and events that make up each g
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing. It includes `version_number`, `base_version_id`, `script_patch_version`, `is_script_only` and `notes` columns.
 - `game_templates` table stores predefined configuration templates for new games.
-- `runtime_flag` table reserved for future feature flag management. No API currently
-  exposes these records. (TODO: Not yet implemented)
+- [`runtime_flag` table](feature-flags.md) reserved for future feature flag management.
+  No API currently exposes these records. (TODO: Not yet implemented)
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
 
 ### Design Workflow
