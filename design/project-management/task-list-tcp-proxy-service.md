@@ -22,6 +22,7 @@
 ## Security
 
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Add advanced Telnet abuse detection heuristics and command filtering
 
 ## Scalability
 

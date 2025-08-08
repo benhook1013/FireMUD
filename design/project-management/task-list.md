@@ -203,6 +203,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Provision ephemeral preview environments for pull requests
 - [x] Automate Docker image builds and registry pushes
 - [x] Publish Docker images to GitHub Container Registry (GHCR)
+- [ ] Automate Helm-based Kubernetes rollouts in CI/CD
 - [x] Cache Gradle and Node dependencies in CI for faster builds
   - [x] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
 - [x] Add CI steps for:
@@ -328,3 +329,8 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Automate **database password rotation** using cert-manager or Secret syncing
 - [ ] Support **multi-region deployments** for lower latency
 - [ ] Schedule **nightly resets** of the staging playtest environment
+- [ ] Implement layered reconnection across Proxy, Gateway, and Game Session services using Redis-backed session state
+- [ ] Migrate all services to GUID-based `tenantId` values and dedicated database schemas
+- [ ] Enforce `tenantId` filtering on every service query
+- [ ] Load tenant-specific themes and branding in the React frontend
+- [ ] Apply per-game resource quotas to prevent cluster capacity exhaustion

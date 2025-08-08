@@ -3,6 +3,7 @@
 ## Game Templates & Publishing
 
 - [x] Provide game templates and configuration tools
+- [ ] Configure default administrator accounts when creating a new game template
 - [x] Enable publishing of game versions
 - [x] Use saga orchestrator for game publishing workflow
 - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime

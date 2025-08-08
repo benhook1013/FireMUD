@@ -2,7 +2,7 @@
 
 ## Overview
 
-The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events. Notifying other services over gRPC when the environment changes is planned. (TODO: Not yet implemented)
+The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions and handles scheduled world events. Notifying other services over gRPC when the environment changes is available.
 
 > **Status: In Progress** – Planned features like pathfinding APIs and world snapshots are not yet implemented.
 
@@ -10,25 +10,25 @@ The World Management Service stores and manages game world data such as rooms, r
 
 - Persist region, zone, and room data with tenant isolation
 - Execute scheduled world events.
-- Provide procedural generation support. (TODO: Not yet implemented)
-- Provide pathfinding via `TravelService`. A gRPC API and navmesh support are planned. (TODO: Not yet implemented)
-- Notify Game Session and Automation services when the world changes (TODO: Not yet implemented)
-- Track character locations and instance occupancy (TODO: Not yet implemented)
+- Provide procedural generation support.
+- Provide pathfinding via `TravelService`. A gRPC API and navmesh support are planned.
+- Notify Game Session and Automation services when the world changes
+- Track character locations and instance occupancy
 
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
 - Changes are persisted incrementally to avoid heavy writes.
-- Background tasks trigger scheduled world changes. gRPC notifications to other services are planned. (TODO: Not yet implemented)
-- Supports procedural generation with options for dynamic world expansion. (TODO: Not yet implemented)
+- Background tasks trigger scheduled world changes. gRPC notifications to other services are planned.
+- Supports procedural generation with options for dynamic world expansion.
 - Uses a region → zone → room hierarchy for efficient lookups.
-- Publishes world event notifications for NPC scripts and game logic processing. (TODO: Not yet implemented)
+- Publishes world event notifications for NPC scripts and game logic processing.
 - During version publishing the service participates in a Saga that copies design
-  data into its schema, ensuring world data matches the active version. (TODO: Not yet implemented) See
+  data into its schema, ensuring world data matches the active version. See
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
 - World creation for new games runs as a Saga, inserting a starter region today; copying full design data is pending. See
-  [World Creation Workflow](world-creation-workflow.md). (TODO: Not yet implemented)
+  [World Creation Workflow](world-creation-workflow.md).
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../system-architecture-multi-tenancy.md).
@@ -47,24 +47,24 @@ The World Management Service stores and manages game world data such as rooms, r
   `shard_id` value so the world can span multiple servers.
 - Instance-based zones are treated as regular rooms; this service records which
   characters occupy each instance so private dungeons or housing do not affect
-  the shared world map. (TODO: Not yet implemented)
+  the shared world map.
 - Persistent world state with incremental saves.
-- Procedural generation tools for rooms and terrain. (TODO: Not yet implemented)
+- Procedural generation tools for rooms and terrain.
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
 - `TravelService` implements Dijkstra-based pathfinding using the `room_exit` table.
-  A gRPC API to expose pathfinding results is planned for a future release. (TODO: Not yet implemented)
-- Event scheduling for world-wide holidays or timed modifiers. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state. Emitting gRPC notifications to other services is planned but not yet implemented. (TODO: Not yet implemented)
-- Chunk-based world snapshots for backup and recovery *(planned).* (TODO: Not yet implemented)
+  A gRPC API to expose pathfinding results is available for a future release.
+- Event scheduling for world-wide holidays or timed modifiers. A `world_event` table stores pending events and a scheduled task processes them, updating regional weather or other state. Emitting gRPC notifications to other services is available but not yet implemented.
+- Chunk-based world snapshots for backup and recovery *.*
 
 ### Data Model
 
 - Tables for `region`, `zone`, and `room` define the world hierarchy.
-- `terrain` and `object_spawn` tables support procedural generation *(planned).* (TODO: Not yet implemented)
+- `terrain` and `object_spawn` tables support procedural generation *.*
 - `instance` table tracks temporary copies of zones for instanced gameplay.
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
 - `generation_rule` table stores per-tenant procedural generation parameters used
   by the [Procedural Generation Rules API](#procedural-generation-rules-api).
-- `character_location` table (planned) records the current room for each character, (TODO: Not yet implemented)
+- `character_location` table  records the current room for each character,
   including which instance they are in.
 - `world_event` table stores timed changes such as weather updates.
 - `region.weather` column records the current weather state.
@@ -85,14 +85,14 @@ specified region.
 ### gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
-- `UpdateWorldState` – applies pending world updates. Notifying other services is planned. (TODO: Not yet implemented)
+- `UpdateWorldState` – applies pending world updates. Notifying other services is available.
 
 ## Dependencies
 
 - **Internal:**
   - Game Design Service supplies generation rules and versioned world data.
-  - Game Session Service queries rooms and receives world event updates. (TODO: Not yet implemented)
-  - Automation & Scripting Service reacts to scheduled world changes. (TODO: Not yet implemented)
+  - Game Session Service queries rooms and receives world event updates.
+  - Automation & Scripting Service reacts to scheduled world changes.
 - **External:** PostgreSQL for world data, Redis for transient active state.
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),
@@ -174,7 +174,7 @@ the [Security Architecture](../system-architecture-security.md) for details.
 
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../protos/world-management/v1/world_management_service.proto).
 - `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation.
-- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates. Notifying other services is planned. (TODO: Not yet implemented)
+- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates. Notifying other services is available.
 
 Call the `Ping` method with:
 
@@ -192,7 +192,7 @@ Expected response:
 
 ### World Events
 
-World events are persisted in the `world_event` table and processed periodically by `WorldEventService`. A weather change event updates the `region.weather` column before notifying other services. (TODO: Not yet implemented)
+World events are persisted in the `world_event` table and processed periodically by `WorldEventService`. A weather change event updates the `region.weather` column before notifying other services.
 
 ### Saga Participation
 
@@ -215,4 +215,4 @@ generation engine on the next run.
 
 ## Future Enhancements
 
-- Additional shard balancing strategies. (TODO: Not yet implemented)
+- Additional shard balancing strategies.

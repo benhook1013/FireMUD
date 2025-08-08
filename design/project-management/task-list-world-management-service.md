@@ -18,6 +18,9 @@
 - [x] Use saga orchestrator for world creation workflow
 - [x] Provide tools to fine-tune procedural generation rules
 - [x] Support multi-server world shards
+- [ ] Generate terrain chunks during world creation
+- [ ] Spawn default NPCs as part of initial world setup
+- [ ] Schedule initial world events during world creation
 
 ## Data Sync & Notifications
 

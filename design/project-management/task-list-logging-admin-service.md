@@ -39,6 +39,7 @@
 ## Security
 
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Add optional 2FA for administrator accounts via TOTP codes
 
 ## Reusable Microservice Checklist
 
