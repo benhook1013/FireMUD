@@ -11,7 +11,7 @@ Runtime feature flags let FireMUD enable or disable optional behaviour without p
 ## Runtime Toggling and Persistence
 
 - Administrators toggle flag values through the [Logging & Admin Service](../logging-admin-service/README.md), which forwards changes via gRPC to the Game Session Service.
-- The Game Session Service persists active flag values in its `feature_flag` table and applies them before each tick cycle to ensure consistent behaviour even after reconnects.
+- The Game Session Service persists active flag values in its `feature_flag` table and reapplies them before each tick cycle to keep world behaviour consistent across ticks.
 - Flag changes take effect immediately for active sessions, allowing safe experimentation with mechanics, layout tweaks or pacing options.
 
 ## Customization Examples

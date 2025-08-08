@@ -72,9 +72,7 @@ when a version is published. Administrators toggle values through the
 changes to running sessions.
 
 See [Game Design Service – Feature Flags](./microservices/game-design-service/feature-flags.md)
-for design-time schema and propagation details. During each tick cycle the active flags are
-applied before executing game logic. See [Tick System](./system-architecture-ticks.md) for
-how flags influence pacing. (TODO: Not yet implemented)
+for design-time schema and propagation details. During each tick cycle the active flags are applied before executing game logic.
 
 ## 🗺️ Flow Summary
 
