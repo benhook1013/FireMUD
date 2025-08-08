@@ -110,7 +110,7 @@ This checklist covers optional manual steps to verify that development tooling a
 
 ## 🔒 Security & Scanning
 
-- [ ] `trivy fs --config .trivy.yaml .` to scan dependencies and Dockerfiles
+- [ ] `trivy fs --config config/security/trivy.yaml .` to scan dependencies and Dockerfiles
 
 ## ☸ Kubernetes & Helm
 

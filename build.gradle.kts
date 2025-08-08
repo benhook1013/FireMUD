@@ -115,6 +115,7 @@ tasks.register<NpxTask>("lintMarkdown") {
     dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
+        "--config", "config/markdownlint/markdownlint-cli2.jsonc",
         "**/*.md",
         "!**/node_modules/**",
         "!**/build/**",
@@ -127,6 +128,7 @@ tasks.register<NpxTask>("lintMarkdownFix") {
     dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
+        "--config", "config/markdownlint/markdownlint-cli2.jsonc",
         "--fix",
         "**/*.md",
         "!**/node_modules/**",
