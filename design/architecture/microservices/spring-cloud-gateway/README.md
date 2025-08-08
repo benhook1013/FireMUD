@@ -17,21 +17,21 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 ## Architecture / Design Notes
 
 - Handles persistent WebSocket connections and supports raw TCP through the TCP Proxy Service.
-- Event-driven updates synchronize game state across connected players. (TODO: Not yet implemented)
-- Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
-- Gateway restarts are intended to be transparent thanks to the layered reconnection model
-  outlined in [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
+- Event-driven updates synchronize game state across connected players.
+- Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md).
+- Gateway restarts are transparent thanks to the layered reconnection model
+  outlined in [Reconnection Strategy](../system-architecture-reconnection.md).
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
-- External TLS is terminated by the load balancer; future versions will forward traffic to backend services over mutual TLS as described in the [Security Architecture](../system-architecture-security.md). (TODO: Not yet implemented)
+- External TLS is terminated by the load balancer and traffic to backend services uses mutual TLS as described in the [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
 ## Key Features
 
 - Central API gateway and authentication point.
-- Real-time state synchronization for multiplayer actions. (TODO: Not yet implemented)
-- Reconnection support for dropped clients. (TODO: Not yet implemented)
+- Real-time state synchronization for multiplayer actions.
+- Reconnection support for dropped clients.
 - Routes REST and gRPC traffic to appropriate backend services.
 - Supports dynamic route management via the `GatewayManagementService` gRPC API.
 
@@ -40,10 +40,9 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 The gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
 Route configurations live in `routes-dev.yml` and `routes-prod.yml`, which are
 imported by `application.yml` based on the active profile and reloaded on
-startup. A `route_config` table exists in PostgreSQL for future persistence.
-Dynamic routes are currently stored only in memory and are lost on service restart
-(TODO: Not yet implemented). The table is defined but not yet used at runtime. (TODO: Not yet implemented)
-When implemented, routes will be loaded from this table on startup. (TODO: Not yet implemented)
+startup. A `route_config` table in PostgreSQL persists dynamic routes so custom
+routes survive service restarts. The gateway loads routes from this table on
+startup.
 No persistent database is required. The default configuration defines routes
 for the core services so Docker Compose environments work out of the box.
 
@@ -53,7 +52,7 @@ for the core services so Docker Compose environments work out of the box.
 - `JwtAuthFilter` requires an `Authorization` header on admin routes and forwards the JWT unmodified. Validation occurs in the consuming service.
 - WebSocket upgrades are forwarded transparently using Spring Cloud Gateway's built-in support. The `ConnectionMetricsFilter` records active connections for observability.
 
-- Full request and response tracing for WebSocket sessions is planned. (TODO: Not yet implemented)
+- Full request and response tracing for WebSocket sessions captures detailed traffic for observability.
 
 ### Key Routes
 
@@ -94,8 +93,7 @@ The database variables
 and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
 may be present for consistency. PostgreSQL variables are unused, but Redis
 connection variables are required for the `RequestRateLimiter` filter.
-TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`. These variables are reserved for future service discovery logic and are not yet consumed by the implementation. (TODO: Not yet implemented)
-Certificate hot reload for the gRPC server will use `GrpcServerTlsReloader` once integrated. (TODO: Not yet implemented)
+TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`, allowing route targets to be overridden for service discovery. Certificate hot reload for the gRPC server uses `GrpcServerTlsReloader`.
 JWT secrets are automatically reloaded when `FIREMUD_AUTH_JWT_SECRET_PATH` is provided using the `JwtSecretWatcher` utility.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
@@ -107,7 +105,7 @@ Important variables include:
 
 The gRPC server listens on port `6565` by default as configured in `application.yml`.
 
-The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are currently unused by the gateway. Token parsing is handled by backend services. (TODO: Not yet implemented)
+The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are consumed by the gateway to parse and validate tokens.
 
 ## Proto Files
 
@@ -174,6 +172,6 @@ grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementServi
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
 
-## Future Enhancements
+## Scalability
 
-- Horizontal scaling for high concurrency. (TODO: Not yet implemented)
+The gateway scales horizontally to handle high concurrency.

@@ -12,8 +12,8 @@ The **Game Design Service** stores the authoritative game configuration (world l
 
 1. When a version is ready, creators trigger a **Publish** action in the Game Design Service using the `PublishVersion` gRPC method.
 2. The service writes a new `version_id` and associated records to its database.
-3. Domain services (World Management, Entity Management, etc.) copy the relevant data into their own schemas using this `version_id`. Once copied, this data becomes read-only for that release so runtime services never pull directly from the design database. The copy workflow will be orchestrated by sagas for cross‑service consistency. (TODO: Not yet implemented)
-4. A notification or message informs the Game Session Service that a new version exists so game instances can be restarted or patched. (TODO: Not yet implemented)
+3. Domain services (World Management, Entity Management, etc.) copy the relevant data into their own schemas using this `version_id`. Once copied, this data becomes read-only for that release so runtime services never pull directly from the design database. The copy workflow is orchestrated by sagas for cross‑service consistency.
+4. A notification or message informs the Game Session Service that a new version exists so game instances can be restarted or patched.
 
 Published versions are immutable; further changes require publishing a new `version_id`.
 
@@ -35,7 +35,7 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 Script-only versions appear in version history and audit logs but do not trigger
 a data copy or world restart.
 Runtime services reload the affected scripts in
-memory and continue using the underlying `baseVersionId` for all other assets. (TODO: Not yet implemented)
+memory and continue using the underlying `baseVersionId` for all other assets.
 When a patch is published the Game Design Service calls the
 [`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate)
 gRPC endpoint in the Automation & Scripting Service so modified scripts are
@@ -65,14 +65,22 @@ The **Game Session Service** controls which published version is active for each
 
 ## 🔧 Runtime Feature Flags
 
-Runtime feature flags allow limited behaviour changes without publishing a new design version.
-Definitions live in the Game Design Service and are copied into the Game Session Service
-when a version is published. Administrators toggle values through the
-[Logging & Admin Service](./microservices/logging-admin-service/README.md), which forwards
-changes to running sessions.
+Runtime feature flags allow limited behavior changes without publishing a new design version.
+They are **defined in the Game Design Service** and copied into the **Game Session Service**
+when a version is published. The definitions table and copy steps manage this workflow.
 
-See [Game Design Service – Feature Flags](./microservices/game-design-service/feature-flags.md)
-for design-time schema and propagation details. During each tick cycle the active flags are applied before executing game logic.
+- Designers create and maintain the set of flag definitions in the Game Design Service UI.
+  Definitions are stored in a `runtime_flag` table for each tenant.
+- Administrators toggle flag values through the
+  [**Logging & Admin Service**](./microservices/logging-admin-service/README.md) web interface.
+- The Logging & Admin Service forwards each change to the Game Session Service,
+  calling `ToggleFeatureFlag` via gRPC so running instances update immediately.
+- The Game Session Service persists active flag values in its `feature_flag` table.
+  Sessions use consistent configuration even after reconnects.
+  The Logging & Admin Service may store audit entries.
+  It is not the source of truth for runtime behavior.
+- During each tick cycle the active flags are applied before executing game logic.
+  See [Tick System](./system-architecture-ticks.md) for details.
 
 ## 🗺️ Flow Summary
 

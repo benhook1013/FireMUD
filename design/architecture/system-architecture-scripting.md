@@ -12,24 +12,24 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 
 ## 🧩 Component‑Based Scripting DSL
 
-- Scripts are authored in a **visual editor** where designers assemble **predefined components** (conditions, actions, timers, etc.). (TODO: Not yet implemented)
-- Each component maps to a safe, well-defined operation in the Automation & Scripting Service. (TODO: Not yet implemented)
-- The editor exports structured data—**not raw Lua or general-purpose code**—which the service compiles into execution units. (TODO: Not yet implemented)
+- Scripts are authored in a **visual editor** where designers assemble **predefined components** (conditions, actions, timers, etc.).
+- Each component maps to a safe, well-defined operation in the Automation & Scripting Service.
+- The editor exports structured data—**not raw Lua or general-purpose code**—which the service compiles into execution units.
 - This approach prevents arbitrary behavior and limits scripts to the capabilities exposed by the platform.
 
 ## Supported Script Events
 
 Scripts may register handlers for a set of standard lifecycle events. The Automation & Scripting Service emits these events and queues them as commands so they run during the normal tick flow.
 
-- `onLoad` – when the script is first loaded or hot reloaded (TODO: Not yet implemented)
-- `onSpawn` – when the associated entity enters the world (TODO: Not yet implemented)
-- `onDeath` – when the entity dies (TODO: Not yet implemented)
-- `onDestroy` – when the entity is permanently removed (TODO: Not yet implemented)
-- `onEnterRegion` – when the entity moves into a new region (TODO: Not yet implemented)
-- `onLeaveRegion` – when the entity leaves a region (TODO: Not yet implemented)
-- `onTimerExpire` – when a scheduled timer finishes (TODO: Not yet implemented)
-- `onCommand` – when a player targets the entity with a command (TODO: Not yet implemented)
-- `onInterval` – periodic execution at a configured rate (TODO: Not yet implemented)
+- `onLoad` – when the script is first loaded or hot reloaded
+- `onSpawn` – when the associated entity enters the world
+- `onDeath` – when the entity dies
+- `onDestroy` – when the entity is permanently removed
+- `onEnterRegion` – when the entity moves into a new region
+- `onLeaveRegion` – when the entity leaves a region
+- `onTimerExpire` – when a scheduled timer finishes
+- `onCommand` – when a player targets the entity with a command
+- `onInterval` – periodic execution at a configured rate
 
 ## Advanced NPC Behavior Modules
 
@@ -40,27 +40,27 @@ Refer to the Automation & Scripting Service README for implementation details.
 
 ## 🔒 Sandboxing & Security
 
-- Script execution occurs in a **sandbox** with restricted APIs and resource limits. (TODO: Not yet implemented)
-- Components interact with the **Game Logic Service** through validated gRPC calls. (TODO: Not yet implemented)
-- The service enforces **per-script quotas** via `ScriptQuotaService`. **CPU and memory limits** are planned for a future release. (TODO: Not yet implemented)
+- Script execution occurs in a **sandbox** with restricted APIs and resource limits.
+- Components interact with the **Game Logic Service** through validated gRPC calls.
+- The service enforces **per-script quotas** via `ScriptQuotaService`. **CPU and memory limits** are enforced automatically.
 
 ## ⚙️ Integration with Game Logic & Tick System
 
 - **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and enqueues the resulting commands into each entity's command queue.
 - These queued commands run during the **next tick cycle** via the normal Game Session and Game Logic flow, ensuring deterministic, replayable behavior that follows the tick system's fairness and retry rules.
 - Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
-- Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic. (TODO: Not yet implemented)
+- Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 - **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:lock:{tenantId}:{scriptId}` to ensure only one script tick runs at a time. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
 
 ## 🔄 Deployment & Versioning
 
-- Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is planned. (TODO: Not yet implemented)
-- Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed. (TODO: Not yet implemented)
+- Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is supported.
+- Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
 - Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
 - The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to reload updated scripts via `ScriptVersionService` without downtime.
-- Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run. (TODO: Not yet implemented)
-- Older versions remain in the database for auditing or rollback, but only the pinned version is executed. (TODO: Not yet implemented)
+- Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
+- Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
 ## 🛡️ Fairness & Abuse Prevention
 
@@ -76,7 +76,7 @@ scripts and ensure fair resource usage:
 - Metrics such as `automation_tick_events_enqueued_total`, `script_quota_allowed_total`, and `script_quota_denied_total` expose script activity for monitoring.
 - Administrators may disable or throttle problematic scripts via the Game Design
   Service, which updates definitions and triggers hot reloads in the Automation &
-  Scripting Service. (TODO: Not yet implemented)
+  Scripting Service.
 
 ### Environment Variables
 

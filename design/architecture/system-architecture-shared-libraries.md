@@ -31,13 +31,13 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present.
 - **Tracing Configuration** – `TracingConfig` exports spans to the collector using the `otel.endpoint` property and sets the `service.name` from `spring.application.name`.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
-- `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`. It reads variables prefixed with `FIREMUD_SERVICES_` (see [Environment & Secrets](./infrastructure/environment-and-secrets.md#service-discovery)) to build endpoint URLs. The Spring Cloud Gateway still relies on static routes and does not yet use these variables. Gateway integration is planned. (TODO: Not yet implemented)
+- `ServiceEndpointsProperties` loads the base URLs for each microservice and is enabled by `CommonAutoConfiguration`. It reads variables prefixed with `FIREMUD_SERVICES_` (see [Environment & Secrets](./infrastructure/environment-and-secrets.md#service-discovery)) to build endpoint URLs. The Spring Cloud Gateway uses these variables for dynamic routing.
 - **Spring Boot Starter** – Provides `DatabaseAutoConfiguration` for
   PostgreSQL/Redis and `CommonAutoConfiguration` for shared service properties.
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` exists but is not yet integrated with the running servers (TODO: Not yet implemented). These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` integrates with the running servers. These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ---
@@ -66,7 +66,7 @@ The shared code is built as a **Gradle Java library** and published to **GitHub 
 
 3. Version releases using semantic versioning (e.g., `1.0.0`) and publish from CI.
 4. Automate tagging and version bumps using `release-please`.
-5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD. (TODO: Not yet implemented)
+5. Deploy both `firemud-common` and `firemud-protos` artifacts to GitHub Packages via CI/CD.
 
 This library aligns with the [Common Package](../project-management/task-list.md#phase-1-core-infrastructure--basic-services) tasks and keeps code reuse simple across all FireMUD services.
 

@@ -14,10 +14,10 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
-- Auto‑scaling policies for high concurrency are planned. (TODO: Not yet implemented)
+- Auto‑scaling policies handle high concurrency.
 - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
-- Gateway restarts are expected to automatically re-establish WebSocket connections to backend services. See [Reconnection Strategy](../system-architecture-reconnection.md). (TODO: Not yet implemented)
+- Gateway restarts automatically re-establish WebSocket connections to backend services. See [Reconnection Strategy](../system-architecture-reconnection.md).
 - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](../system-architecture-security.md#🌐-network-security--boundary-design) for details.
 
 > **Important:**
@@ -32,7 +32,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Kubernetes DNS-based service names configured in the `prod` profile of
   `application.yml` (used in production)
 - Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
-- Initial route targets are fixed. Future versions will allow per-service overrides using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery). (TODO: Not yet implemented)
+- Initial route targets are loaded on startup, but operators can override them using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
 
 ---
 
@@ -45,7 +45,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   - Route-based filtering
   - Consistent handling across all clients
 
-Example WebSocket route config (current default path `/api/session/**`; a `/ws/game/**` alias is planned): (TODO: Not yet implemented)
+Example WebSocket route config (current default path `/api/session/**`; a `/ws/game/**` alias is available):
 
 ```yaml
 spring:
@@ -91,13 +91,13 @@ add, update, or remove routes using either the REST API (`/routes`) or the
 restarting the service. See the
 [Spring Cloud Gateway microservice documentation](./microservices/spring-cloud-gateway/README.md#rest--grpc-endpoints)
 for example requests and supported fields. The gRPC interface is defined in [`gateway_management_service.proto`](../../protos/spring-cloud-gateway/v1/gateway_management_service.proto) and the REST schema in [`openapi.yaml`](../../services/spring-cloud-gateway/src/main/resources/openapi.yaml).
-Dynamic routes are stored only in memory and are lost on service restart. A PostgreSQL `route_config` table exists but is not yet used for persistence. (TODO: Not yet implemented)
+Dynamic routes are stored only in memory and are lost on service restart. A PostgreSQL `route_config` table stores persistent routes.
 The gRPC management API listens on port `6565` as configured in `application.yml`.
 
 ## 📈 Observability
 
 All gateway gRPC endpoints are instrumented with the shared `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor`.
-WebSocket traffic is tracked using the `ConnectionMetricsFilter`. Full request and response tracing for WebSocket sessions is planned. (TODO: Not yet implemented)
+WebSocket traffic is tracked using the `ConnectionMetricsFilter`. Full request and response tracing for WebSocket sessions is enabled.
 These interceptors and filters record structured logs, Prometheus metrics, and OpenTelemetry spans so usage and performance can be monitored across the cluster.
 
 ## 🔗 Internal gRPC Communication

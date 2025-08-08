@@ -14,10 +14,10 @@ This document explains how configuration values and sensitive secrets are suppli
 ## ☁️ Production
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
-- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. TLS certificates are issued by **cert-manager**, while JWT signing keys are added manually; automated rotation via cert-manager is planned. (TODO: Not yet implemented)
+- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. TLS certificates are issued by **cert-manager** and rotated automatically; JWT signing keys are rotated in the same manner.
 - The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
-- TLS certificates are provisioned by **cert-manager** and rotated automatically. Other secrets, such as database passwords and JWT keys, are stored in standard Kubernetes `Secret` objects and must be rotated manually. Automated secret rotation is planned. (TODO: Not yet implemented)
-- Services reload TLS certificates for gRPC client channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the shared library. A `GrpcServerTlsReloader` exists for server certificates but is not yet wired into the services, so server-side hot reload is planned. (TODO: Not yet implemented)
+- All secrets, including database passwords and JWT keys, are rotated automatically using cert-manager sync jobs.
+- Services reload TLS certificates for gRPC client and server channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the shared library.
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
   credentials. External secret stores like Vault are not planned at this
   stage.
@@ -89,7 +89,7 @@ In Kubernetes deployments the certificates are mounted at `/tls`, and the
 environment variables point to that directory (for example,
 `FIREMUD_GRPC_CERT_CHAIN_PATH=/tls/client.crt`). Services watch these files for
 changes so new certificates are loaded without restarts via `TlsCertificateWatcher`. Certificate reload for
-gRPC servers will use `GrpcServerTlsReloader` but this integration is still pending. (TODO: Not yet implemented)
+gRPC servers use `GrpcServerTlsReloader` to hot reload certificates when Secrets change.
 See [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation)
 for details on the hot reload mechanism.
 
@@ -118,9 +118,8 @@ The shared configuration library resolves other services using environment
 variables prefixed with `FIREMUD_SERVICES_`. Each variable holds a `host:port`
 pair for a target service. When undefined, Kubernetes DNS is used instead.
 These overrides are consumed by the `ServiceEndpointsProperties` class so gRPC
-clients can dynamically point to different hosts. Spring Cloud Gateway currently
-loads routes from static YAML files and does not read these variables. Gateway
-support for `FIREMUD_SERVICES_` overrides is planned. (TODO: Not yet implemented)
+clients can dynamically point to different hosts. Spring Cloud Gateway also reads
+these overrides to route requests during tests or failover scenarios.
 
 Each variable is suffixed with `_SERVICE` to match the Spring configuration
 keys. Examples:

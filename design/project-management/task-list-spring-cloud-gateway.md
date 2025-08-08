@@ -7,12 +7,15 @@
 ## Core Gateway
 
 - [x] Handle API routing and request validation
-- [x] Terminate TLS and forward traffic to internal services using mTLS
+- [ ] Terminate TLS and forward traffic to internal services using mTLS
 - [x] Collect connection metrics and throttle abusive clients
 - [x] Add baseline route configuration for Spring Cloud Gateway
 - [ ] Automatically re-establish WebSocket tunnels on restart
 - [ ] Trace WebSocket requests and responses for observability
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Relay event-driven game state updates to connected clients
+- [ ] Use `firemud.auth` properties for token parsing
+- [ ] Support horizontal scaling across gateway instances
 
 ## Dynamic Route Management
 
