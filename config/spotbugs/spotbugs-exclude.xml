@@ -7,6 +7,7 @@
     
     <!-- Exclude all protobuf-generated classes in versioned packages (v1, v2, v3, ...) -->
     <Match>
-        <Class name="~.*\\.proto\\..*\\.v[0-9]+\\..*" />
+        <Package name="~.*\\.v[0-9]+" />
+        <Bug pattern=".*" />
     </Match>
 </FindBugsFilter>

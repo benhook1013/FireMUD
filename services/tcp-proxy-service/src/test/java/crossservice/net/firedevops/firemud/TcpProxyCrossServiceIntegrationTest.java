@@ -2,6 +2,8 @@ package net.firedevops.firemud;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
@@ -17,8 +19,11 @@ import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.DockerClientFactory;
@@ -34,6 +39,7 @@ import org.testcontainers.utility.DockerImageName;
     properties = {"TCP_PROXY_PORT=2323"})
 @EnableAutoConfiguration(
     exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+@Import(TcpProxyCrossServiceIntegrationTest.TestConfig.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
   static GenericContainer<?> gateway =
@@ -94,5 +100,13 @@ class TcpProxyCrossServiceIntegrationTest {
 
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
     assertThat(body).contains("pong");
+  }
+
+  @TestConfiguration
+  static class TestConfig {
+    @Bean
+    MeterRegistry meterRegistry() {
+      return new SimpleMeterRegistry();
+    }
   }
 }
