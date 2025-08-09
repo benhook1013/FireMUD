@@ -17,8 +17,8 @@
 - Prefer explicit over implicit behavior
 - Include boilerplate unless minimal examples are requested
 - Keep code clean, modular, and well organized
-- Aim for ~100-character lines for readability. Avoid tool-enforced widths that make wrapped
-  links too short.
+- Avoid manual line wrapping; let lines flow naturally so content displays correctly in editors and
+  on GitHub.
 - Refactor files over 300 lines
 
 ## 3. Validation and Error Handling
