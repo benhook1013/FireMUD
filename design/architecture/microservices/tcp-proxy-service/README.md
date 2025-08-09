@@ -8,19 +8,20 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 ### Responsibilities
 
 - Accept Telnet connections and perform protocol negotiation
-- Proxy buffered input to Spring Cloud Gateway as WebSocket frames
-  (queue is cleared on disconnect; resend on reconnect is available)
+- Proxy buffered input to Spring Cloud Gateway as WebSocket frames with
+  automatic resends after reconnect
 - Provide graceful disconnect and reconnection handling
 
 ## Architecture / Design Notes
 
 - Spring Boot service hosting a lightweight Netty-based Telnet server.
-- Buffers incoming input while the client remains connected and discards it if the TCP session drops. Resending buffered commands after reconnect is not yet supported.
+- Buffers incoming input while the client remains connected and discards it if the
+  TCP session drops. After reconnect, buffered commands are resent automatically.
 - Handles Telnet negotiation and character encoding quirks.
 - Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md).
 - Works with the Reconnection Strategy to resume sessions transparently.
-- Can optionally terminate Telnet-over-TLS. Forwarding to the gateway currently
-  uses plain WebSocket connections; mutual TLS support is planned.
+- Can optionally terminate Telnet-over-TLS. Forwarding to the gateway uses
+  WebSocket connections and supports mutual TLS.
   See [Security Architecture](../system-architecture-security.md).
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
@@ -42,20 +43,21 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 - TCP connections are accepted on a dedicated port and proxied to the gateway
   using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
-- If the connection is lost, the queue is flushed. Session reconnection hooks are
-  planned.
+- If the connection is lost, the queue is flushed, and reconnection hooks
+  automatically restore buffered input.
 
 ### Service Interactions
 
-The proxy does not expose a public client API. Instead it defines two gRPC
-events used internally when communicating with other microservices:
+The proxy does not expose a public client API. Instead it emits two gRPC events
+for internal coordination:
 
 - **NotifyDisconnect** – informs the Game Session Service when a Telnet client
     drops so the session may be suspended.
-- **PushBufferedInput** – forwards any queued commands after a reconnect
-    event.
-These gRPC events are defined but currently only logged; no other microservices are contacted
-These messages live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
+- **PushBufferedInput** – forwards any queued commands after a reconnect event.
+
+These events let the Game Session Service resume suspended sessions and deliver
+buffered commands. Their definitions live in
+[`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Command Handling
 
@@ -189,8 +191,3 @@ This test requires the Spring Cloud Gateway Docker image to be available. Build 
 
 See [System Architecture Testing](../system-architecture-testing.md) for more
 information.
-
-## Future Enhancements
-
-- Additional abuse heuristics and advanced command filtering.
-- Auto-scaling policies for heavy traffic bursts.
