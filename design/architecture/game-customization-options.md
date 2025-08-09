@@ -29,7 +29,7 @@ Example `manifest.json`:
 
 - The React client loads theme and asset files per tenant at runtime; see  
   [Frontend Architecture](./system-architecture-frontend.md).
-- Optional layout tweaks can be enabled via **runtime feature flags** defined in the Game Design Service  
+- Optional layout tweaks can be enabled via [runtime feature flags](./microservices/game-design-service/feature-flags.md) defined in the Game Design Service  
   and toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
 - Tenants can provide locale files that are loaded at runtime using `react-i18next`; otherwise, the default language is used. (TODO: Not yet implemented)
 
