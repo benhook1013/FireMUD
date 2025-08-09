@@ -16,6 +16,7 @@
 - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
 - [x] Enforce Telnet protocol command whitelist and input sanitization
 - [x] Implement connection throttling and rate limits
+- [ ] Resend buffered commands after reconnect via `PushBufferedInput`
 - [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery
 - [ ] Integrate with the Reconnection Strategy to resume sessions transparently
 
