@@ -1,7 +1,6 @@
 # 🏗️ FireMUD System Architecture: Overview
 
 This document provides a high-level view of FireMUD’s system architecture, showing how major services, protocols, and data flows interact across the platform.
-Features or workflows that are still in progress are annotated with ****.
 
 ---
 
@@ -16,13 +15,13 @@ Features or workflows that are still in progress are annotated with ****.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input** but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md)
-- **Session state is stored in Redis** to keep services stateless. Full reconnect recovery is still in development
+- **Session state is stored in Redis** to keep services stateless and enable full reconnect recovery
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**
 See the [Game Design Service documentation](./microservices/game-design-service/README.md).
-- **Game Session Service orchestrates live game instances**, including tick execution and runtime configuration (TODO: Not yet implemented)
-- [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service. (TODO: Not yet implemented)
-- 🔁 **One session per character is allowed** — logging in from another client forcibly transfers control to the new session and terminates the old one (TODO: Not yet implemented)
-- **Multi-tenant architecture shares infrastructure across games; per-game resource quotas are planned to prevent one tenant from exhausting cluster capacity.** (TODO: Not yet implemented)
+- **Game Session Service orchestrates live game instances**, handling tick execution and runtime configuration
+- [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service
+- 🔁 **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
+- **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 
 🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
 
