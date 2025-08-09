@@ -11,7 +11,7 @@ default settings, so none of these customizations are required.
 - At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a CDN) under a  
   `tenantId`/`version` path. A `manifest.json` mapping asset keys to public URLs is stored alongside them.
 - Runtime clients fetch this manifest using the URL recorded in the published version metadata  
-  and load assets directly from the CDN. **The Game Design Service is never queried during gameplay.**
+  and load assets directly from the CDN. The Game Design Service is never queried during gameplay.
 - A `manifest.json` is generated for every published version, even when no assets are supplied,  
   so version metadata remains consistent.
 - If the manifest is empty or missing fields, the default platform branding is applied.
