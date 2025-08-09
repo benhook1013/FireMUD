@@ -30,8 +30,8 @@ Example `manifest.json`:
 - The React client loads theme and asset files per tenant at runtime; see  
   [Frontend Architecture](./system-architecture-frontend.md).
 - Optional layout tweaks can be enabled via [runtime feature flags](./microservices/game-design-service/feature-flags.md) defined in the Game Design Service  
-  and toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
-- Tenants can provide locale files that are loaded at runtime using `react-i18next`; otherwise, the default language is used. (TODO: Not yet implemented)
+  and toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md).
+- Tenants can provide locale files that are loaded at runtime using `react-i18next`; otherwise, the default language is used.
 
 ---
 
@@ -39,11 +39,11 @@ Example `manifest.json`:
 
 - A default world is available, but creators can define custom worlds entirely through the **Game Design Service**.  
   They may add rooms, items and NPCs using the  
-  [world editing tools](./microservices/game-design-service/world-editing-tools.md) or by importing JSON files. (TODO: Not yet implemented)
+  [world editing tools](./microservices/game-design-service/world-editing-tools.md) or by importing JSON files.
 - Additional design-time utilities like the  
   [ability & action tools](./microservices/game-design-service/ability-action-tools.md) and  
   [item & equipment balancing](./microservices/game-design-service/item-equipment-balancing.md)  
-  help tune gameplay without code changes. (TODO: Not yet implemented)
+  help tune gameplay without code changes.
 - When multiple versions are published, they are stored per tenant so multiple games can coexist on the same infrastructure.  
   Minor fixes can be rolled out as **script-only patch versions** linked to a `baseVersionId` so worlds do not need to restart.  
   See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) for details.
@@ -54,8 +54,8 @@ Example `manifest.json`:
 
 - Custom scripts can drive dynamic events and NPC behaviour using the  
   [Automation & Scripting Service](./microservices/automation-scripting-service/README.md).
-- The planned [modding framework](./microservices/game-design-service/modding-framework.md)  
-  will allow runtime plugins for additional behavior. (TODO: Not yet implemented)
+- The [modding framework](./microservices/game-design-service/modding-framework.md)  
+  allows runtime plugins for additional behavior.
 - Scripts are versioned alongside other game data and can be hot reloaded by the  
   Automation & Scripting Service. Designers may publish a `scriptPatchVersion`  
   like `v42-script.3` to update automation without republishing all assets.
@@ -66,12 +66,12 @@ Example `manifest.json`:
 
 - Feature flags and pacing options such as tick intervals are stored in  
   per-tenant configuration tables (see [Multi-Tenancy](./system-architecture-multi-tenancy.md)).  
-  Per-tenant tick intervals let games customize pacing across worlds. (TODO: Not yet implemented)
+  Per-tenant tick intervals let games customize pacing across worlds.
 - Flags are defined in the Game Design Service (see  
   [Feature Flags](./microservices/game-design-service/feature-flags.md)) but toggled through the  
-  [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
+  [Logging & Admin Service](./microservices/logging-admin-service/README.md).
 - The [Game Session Service](./microservices/game-session-service/README.md)  
-  loads these settings at runtime so changes can take effect without republishing. (TODO: Not yet implemented)
+  loads these settings at runtime so changes can take effect without republishing.
 
 These options allow extensive personalization while keeping the underlying platform maintainable.
 
