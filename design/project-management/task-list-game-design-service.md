@@ -51,6 +51,7 @@
 
 - [x] Implement cross-service game version publishing workflow
   - [ ] Create `runtime_flag` table and API for flag definitions
+- [ ] Support script-only patch publishing (`scriptPatchVersion`) for hotfixes
 - [x] Store immutable versions in the Game Design Service
 - [x] Copy published data to domain services using the `version_id`
   - [x] Activate versions and runtime flags via the Game Session Service

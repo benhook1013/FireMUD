@@ -333,6 +333,7 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Automate JWT signing key rotation via cert-manager
 - [ ] Issue TLS and mTLS certificates via cert-manager and mount them in Kubernetes Secrets
 - [ ] Integrate `GrpcServerTlsReloader` across services for server certificate hot reload
+- [ ] Implement server-side streaming gRPC event APIs for real-time notifications
 - [ ] Support **multi-region deployments** for lower latency
 - [ ] Schedule **nightly resets** of the staging playtest environment
 - [ ] Implement layered reconnection across Proxy, Gateway, and Game Session services using Redis-backed session state
