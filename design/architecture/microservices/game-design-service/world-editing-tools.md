@@ -14,7 +14,7 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 
 1. Use the web UI to modify rooms, items or NPC definitions.
 2. Each change is stored as a **revision** linked to the author's account.
-3. Revisions are grouped into a **version** and published via the saga workflow described in [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
+3. Revisions are grouped into a **version** and published via the saga workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 4. Downstream services load the data strictly by `version_id` so the design database is never queried at runtime.
 
 ## 📚 Related Documentation
