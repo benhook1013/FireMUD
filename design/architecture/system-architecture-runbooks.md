@@ -91,6 +91,26 @@ For local development, use `./gradlew devUp` to start Docker Compose and
 
 See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for backup schedules and retention policies.
 
+## 📦 Asset Store
+
+1. A self-hosted MinIO cluster stores published game assets when an external CDN
+   is unavailable. Deploy the manifests under `k8s/minio/` and create a
+   `minio-credentials` Secret with `accessKey` and `secretKey` keys.
+2. Create the `firemud-assets` bucket with the MinIO client:
+
+   ```bash
+   kubectl run mc --rm -it --image=minio/mc --command -- \
+     sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && mc mb local/firemud-assets"
+   ```
+
+3. Services access the bucket using the `ASSET_STORE_*` environment variables.
+4. To remove a published tenant version, delete the corresponding prefix:
+
+   ```bash
+   kubectl run mc --rm -it --image=minio/mc --command -- \
+     sh -c "mc rm -r --force local/firemud-assets/<tenant>/<version>/"
+   ```
+
 ## 🩹 Hotfix Procedure
 
 1. Identify the offending service via logs or alerts.

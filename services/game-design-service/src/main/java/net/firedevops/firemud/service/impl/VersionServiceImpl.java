@@ -15,6 +15,7 @@ import net.firedevops.firemud.entity.Version;
 import net.firedevops.firemud.mapper.VersionMapper;
 import net.firedevops.firemud.repository.GameRepository;
 import net.firedevops.firemud.repository.VersionRepository;
+import net.firedevops.firemud.service.AssetExportService;
 import net.firedevops.firemud.service.VersionService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ public class VersionServiceImpl implements VersionService {
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
   private final SagaRunner sagaRunner;
+  private final AssetExportService assetExportService;
 
   @Override
   @Transactional
@@ -53,7 +55,10 @@ public class VersionServiceImpl implements VersionService {
           versionRepository.save(version);
         },
         () -> versionRepository.delete(version));
-    // Steps to copy data to other services would go here
+    builder.step(
+        "exportAssets",
+        () -> assetExportService.exportAssets(tenantId, version.getVersionNumber()),
+        () -> assetExportService.deleteExportedAssets(tenantId, version.getVersionNumber()));
     sagaRunner.run(builder.build());
     return versionMapper.toDto(version);
   }
