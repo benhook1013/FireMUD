@@ -10,6 +10,7 @@
 - [ ] Terminate TLS and forward traffic to internal services using mTLS
 - [x] Collect connection metrics and throttle abusive clients
 - [x] Add baseline route configuration for Spring Cloud Gateway
+- [ ] Serve compiled frontend assets for the web client and admin interfaces
 - [ ] Automatically re-establish WebSocket tunnels on restart
 - [ ] Trace WebSocket requests and responses for observability
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
