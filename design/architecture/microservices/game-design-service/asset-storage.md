@@ -43,3 +43,8 @@ referenced in the generated `manifest.json`. Runtime clients load branding and
 theme resources directly from the CDN using this manifest; the Game Design
 Service is not involved. See [Game Design Service Architecture](README.md) for
 how these assets fit into published versions.
+
+The export location is configured with `ASSET_STORE_ENDPOINT`,
+`ASSET_STORE_BUCKET`, `ASSET_STORE_REGION`, `ASSET_STORE_ACCESS_KEY`, and
+`ASSET_STORE_SECRET_KEY`. For development, the Docker Compose stack runs a
+`minio` container that satisfies these variables.

@@ -27,7 +27,15 @@ Example `manifest.json`:
 }
 ```
 
-- The React client loads theme and asset files per tenant at runtime; see  
+- **Self-hosted S3**: For local development or private deployments, run an
+  S3-compatible service such as MinIO. Docker Compose provides a `minio` service
+  preconfigured with the `firemud-assets` bucket. In Kubernetes, apply the
+  manifests under `k8s/minio/` and expose the service with an Ingress or
+  port-forward. Point `ASSET_STORE_ENDPOINT` to this instance and set the bucket
+  and credentials via `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`,
+  `ASSET_STORE_SECRET_KEY`, and `ASSET_STORE_REGION`.
+
+- The React client loads theme and asset files per tenant at runtime; see
   [Frontend Architecture](./system-architecture-frontend.md).
 - Optional layout tweaks can be enabled via [runtime feature flags](./microservices/game-design-service/feature-flags.md) defined in the Game Design Service  
   and toggled through the [Logging & Admin Service](./microservices/logging-admin-service/README.md). (TODO: Not yet implemented)
