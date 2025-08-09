@@ -4,8 +4,8 @@ Runtime feature flags let FireMUD enable or disable optional behaviour without p
 
 ## Design-Time Definitions
 
-- Designers create flag definitions in the Game Design Service UI. *(TODO: Not yet implemented)*
-- Definitions are stored per tenant in a `runtime_flag` table with metadata such as key, description and default state. *(TODO: Not yet implemented)*
+- Designers create flag definitions in the Game Design Service UI.
+- Definitions are stored per tenant in a `runtime_flag` table with metadata such as key, description and default state.
 - When a version is published, the defined flags are copied into the Game Session Service so running games know which flags exist.
 
 ## Runtime Toggling and Persistence
