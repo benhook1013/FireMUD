@@ -1,6 +1,6 @@
 #!/bin/bash
 # Seeds minimal data for local testing of the Automation Scripting Service.
-# Requires PostgreSQL to be running from docker-compose.
+# Requires PostgreSQL to be running via the docker/docker-compose.yml stack.
 
 set -e
 

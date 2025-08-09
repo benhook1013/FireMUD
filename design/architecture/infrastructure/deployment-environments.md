@@ -28,7 +28,7 @@ FireMUD uses Docker Compose for local development and testing:
 ### 🩺 Docker Health Checks
 
 - Services expose Spring Boot’s `/actuator/health` for basic health status.
-- Docker Compose can monitor health using `healthcheck` blocks in `docker-compose.yml`.
+- Docker Compose can monitor health using `healthcheck` blocks in `docker/docker-compose.yml`.
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
   - Docker does **not** automatically restart containers that become `unhealthy`.
       Even with `restart: unless-stopped` configured, services remain running

@@ -26,6 +26,9 @@ x-service-resources: &service-resources
   cpus: "0.5"
   mem_limit: 512m
 
+x-service-env-file: &service-env-file
+  - ../.env
+
 services:
   account-service:
     build: ./services/account-service
@@ -34,8 +37,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -52,8 +54,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -70,8 +71,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -88,8 +88,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -106,8 +105,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -124,8 +122,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -142,8 +139,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -160,8 +156,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -178,8 +173,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -196,8 +190,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -214,8 +207,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -229,8 +221,7 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: *service-env-file
     environment:
       POSTGRES_USER: ${FIREMUD_POSTGRES_USER:-firemud}
       POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD:-firemud}
@@ -248,11 +239,10 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: *service-env-file
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
-      - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis-data:/data
     ports:
       - "6379:6379"
@@ -268,8 +258,7 @@ services:
       dockerfile: docker/pg-dump-cron.Dockerfile
     cpus: "0.5"
     mem_limit: 256m
-    env_file:
-      - .env
+    env_file: *service-env-file
     environment:
       <<: *service-env
       PG_DUMP_BUCKET: ${PG_DUMP_BUCKET:-}
