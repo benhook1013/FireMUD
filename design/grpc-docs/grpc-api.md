@@ -5,8 +5,8 @@ This reference is generated from the protobuf files under `protos/` using
 After editing any `.proto` definitions, run the following commands:
 
 ```bash
-buf lint
-buf breaking --against origin/main
+BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint
+BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main
 ./gradlew generateProto
 ./dev-tools/generate-grpc-docs.sh
 ```

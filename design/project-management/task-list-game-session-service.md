@@ -29,6 +29,7 @@
 - [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
 - [x] Implement `game_manifest` table for version coordination
 - [ ] Restart active sessions when a new game version is published
+- [ ] Apply script-only patches without restarting sessions
 - [x] Emit gameplay analytics for operators
 - [ ] Apply runtime feature flags during tick processing
 

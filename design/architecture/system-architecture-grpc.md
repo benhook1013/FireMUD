@@ -49,7 +49,7 @@ Each service folder typically includes:
 
 - `*_service.proto` — defines the gRPC service and its RPC methods
 - `*_types.proto` — defines request/response messages and shared types
-- Optional `*_events.proto` — server-side streaming RPCs for event notifications (no separate message bus) *(TODO: Not yet implemented)*
+- Optional `*_events.proto` — server-side streaming RPCs for event notifications (no separate message bus)
 
 Shared message types (for example `EntitySummary` or `ErrorDetail`) live under `protos/shared/v1/` so they version alongside all other APIs.
 
@@ -59,7 +59,7 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 ## 🛠️ Tooling
 
-- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../buf.work.yaml) and [buf.gen.yaml](../../buf.gen.yaml) specify modules and plugins for generation.
+- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../config/protobuf/buf.work.yaml) and [buf.gen.yaml](../../config/protobuf/buf.gen.yaml) specify modules and plugins for generation.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
 - **`protoc-gen-doc`** — Produces Markdown API documentation. Run
   `./dev-tools/generate-grpc-docs.sh` after updating proto files to regenerate
@@ -127,7 +127,7 @@ All internal gRPC calls use **mutual TLS**. Each service sets the following envi
 | `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Path to the private key |
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle used to verify peers |
 
-The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a `GrpcServerTlsReloader` component to hot reload server certificates, but services do not yet use it. (TODO: Not yet implemented)
+The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a `GrpcServerTlsReloader` component to hot reload server certificates, and services use it to reload credentials automatically.
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#🤝-cross-service-trust) for mTLS design.
 

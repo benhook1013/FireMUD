@@ -34,9 +34,9 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `terraform version`
 - [ ] Set up git hooks
   - [ ] `pip install pre-commit`
-  - [ ] `pre-commit install`
+  - [ ] `pre-commit install -c config/pre-commit/.pre-commit-config.yaml`
   - [ ] `git config core.hooksPath config/git-hooks`
-  - [ ] `pre-commit run --all-files`
+  - [ ] `pre-commit run --all-files -c config/pre-commit/.pre-commit-config.yaml`
   - [ ] Copy `.env.sample` to `.env` and adjust values as needed
 
 ## ✅ Build & Test Commands
@@ -66,8 +66,8 @@ This checklist covers optional manual steps to verify that development tooling a
 
 ## 📜 Protobuf & Documentation Scripts
 
-- [ ] `buf lint` for proto consistency
-- [ ] `buf breaking --against origin/main` to check for API changes
+- [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint` for proto consistency
+- [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main` to check for API changes
 - [ ] `./gradlew generateProto` to regenerate Java stubs
 - [ ] `./dev-tools/generate-grpc-docs.sh` to update gRPC docs
 - [ ] `./dev-tools/generate-erd.sh` to produce ERD diagrams

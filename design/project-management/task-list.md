@@ -39,7 +39,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add `LICENSE.md` and `NOTICE.md` with licensing information
   - [x] Add `.gitattributes` for consistent line endings across platforms
   - [x] Add `gradle.properties` enabling build caching and parallelism
-  - [x] Provide baseline `config/redis.conf` for Docker Compose
+  - [x] Provide baseline `config/redis/redis.conf` for Docker Compose
   - [x] Provide script to generate Gradle wrappers for all services (`init-gradle-wrappers.ps1`)
   - [x] Implement CI/CD pipeline for automated builds, testing, and deployment (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
     - [x] Ensure CI/CD includes the common package build process
@@ -52,7 +52,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)
   - [x] Configure Gradle Node plugin and markdownlint tasks
     - [x] Add `config/markdownlint/.markdownlint-cli2.jsonc` with repository rules
-    - [x] Provide `.pre-commit-config.yaml` and git hook script
+    - [x] Provide `config/pre-commit/.pre-commit-config.yaml` and git hook script
     - [x] Add `package.json` with `markdownlint-cli2` for lint tasks
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` configuration files
   - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation
@@ -138,14 +138,14 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ### Infrastructure Setup
 
-- [x] Add `postgres` and `redis` services to `docker-compose.yml` with default credentials and persistent volumes
-- [x] Provide `config/redis.conf` with AOF settings for local development
+- [x] Add `postgres` and `redis` services to `docker/docker-compose.yml` with default credentials and persistent volumes
+- [x] Provide `config/redis/redis.conf` with AOF settings for local development
 - [x] Provide `.env.sample` and document connection details in `DEVELOPER_SETUP.md`
-- [x] Include `redis.conf` for local Redis with AOF persistence
+- [x] Include `config/redis/redis.conf` for local Redis with AOF persistence
 - [x] Standardize `FIREMUD_` environment variable prefix across all services
   - [x] Configure Docker Compose health checks for PostgreSQL, Redis, and all services
-  - [x] Expand `docker-compose.yml` to include all services
-- [x] Include RedisInsight container in `docker-compose.override.yml` for debugging
+  - [x] Expand `docker/docker-compose.yml` to include all services
+  - [x] Include RedisInsight container in `docker/docker-compose.override.yml` for debugging
   - [x] Create sample Terraform module to provision a local Kubernetes environment (e.g., using Kind or Minikube)
   - [x] Write sample Terraform code to:
     - [x] Define `firemud` namespace and basic RBAC
@@ -206,10 +206,10 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Publish Docker images to GitHub Container Registry (GHCR)
 - [ ] Automate Helm-based Kubernetes rollouts in CI/CD
 - [x] Cache Gradle and Node dependencies in CI for faster builds
-  - [x] Add root `buf.yaml` and `buf.gen.yaml` for protobuf linting and generation
+  - [x] Add root `buf.yaml` and `config/protobuf/buf.gen.yaml` for protobuf linting and generation
 - [x] Add CI steps for:
   - [x] Protobuf generation and schema checking
-  - [x] Lint `.proto` files with `buf` (handled via pre-commit hooks)
+  - [x] Lint `.proto` files with `buf`
   - [x] Include `buf breaking` tests in CI for backward compatibility
   - [x] Generate gRPC stubs for each service via Gradle plugin
   - [x] Integrate proto generation and schema validation into CI workflow
@@ -333,6 +333,7 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Automate JWT signing key rotation via cert-manager
 - [ ] Issue TLS and mTLS certificates via cert-manager and mount them in Kubernetes Secrets
 - [ ] Integrate `GrpcServerTlsReloader` across services for server certificate hot reload
+- [ ] Implement server-side streaming gRPC event APIs for real-time notifications
 - [ ] Support **multi-region deployments** for lower latency
 - [ ] Schedule **nightly resets** of the staging playtest environment
 - [ ] Implement layered reconnection across Proxy, Gateway, and Game Session services using Redis-backed session state

@@ -66,7 +66,7 @@ The example above checks out the repository, sets up Java 21, and runs a Gradle 
 
 Other workflows support additional automation:
 
-- `docs.yml` uses the **lychee** link checker before publishing the `design/` folder to GitHub Pages.
+- `docs.yml` uses the **lychee** link checker (configured via `config/lychee/.lycheeignore`) before publishing the `design/` folder to GitHub Pages.
 - `codeql.yml` performs static code analysis on each pull request and push to `main`.
 - `license-scan.yml` checks open source dependencies for license compliance.
 - `release-please.yml` creates release pull requests from the `develop` branch.

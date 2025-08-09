@@ -191,9 +191,26 @@ tasks.register<Exec>("generateDevCerts") {
 
 tasks.register<Exec>("devUp") {
     dependsOn("generateDevCerts", "buildDockerImages")
-    commandLine("docker", "compose", "up", "--build")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "up",
+        "--build"
+    )
 }
 
 tasks.register<Exec>("devDown") {
-    commandLine("docker", "compose", "down")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "down"
+    )
 }
