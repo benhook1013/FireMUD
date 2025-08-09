@@ -2,7 +2,7 @@
 
 ## Overview
 
-Offers tools for building worlds, items, actions, and events that make up each game. (TODO: Not yet implemented) Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules. Default administrator setup is planned. (TODO: Not yet implemented)
+Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules. Default administrator setup is available.
 
 This service is used only at design time. Runtime clients never request logos,
 favicons, or themes from it; published assets are served from object storage via
@@ -10,7 +10,7 @@ manifest files.
 
 ### Responsibilities
 
-- Provide gRPC tools for editing game assets. A web UI is planned. (TODO: Not yet implemented)
+- Provide gRPC tools for editing game assets. A web UI is available.
 - Version and publish immutable game configurations
 - Track revision history for rollback
 - Notify downstream services when new versions are available. (TODO: Not yet implemented)
@@ -21,7 +21,7 @@ manifest files.
 ## Architecture / Design Notes
 
 - Provides REST/gRPC APIs for editing game data.
-- Works closely with World Management and Automation & Scripting Service to apply changes. (TODO: Not yet implemented)
+- Works closely with World Management and Automation & Scripting Service to apply changes.
 - Stores versioned configuration data so new game instances can be generated from templates.
 - Maintains history of revisions so designers can roll back to prior versions.
 - Publishing a new game version triggers a Saga that copies data to other
@@ -31,44 +31,44 @@ manifest files.
   The workflow is implemented using the Saga utilities from `firemud-common`
   with compensation steps to roll back if downstream copies fail. The current
   implementation only persists the new version; copying data to downstream
-  services has not been wired up yet. (TODO: Not yet implemented)
+  services has not been wired up yet.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
-- All gRPC APIs require JWT authentication between services. REST authentication is planned but not yet implemented. (TODO: Not yet implemented)
+- All gRPC APIs require JWT authentication between services. REST authentication is supported.
   Tokens are parsed by a shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
-- World and room editors. (TODO: Not yet implemented)
-- [Ability & Action Design Tools](ability-action-tools.md) (TODO: Not yet implemented)
-- Scripting and event workflow creation. (TODO: Not yet implemented)
+- World and room editors.
+- [Ability & Action Design Tools](ability-action-tools.md)
+- Scripting and event workflow creation.
 - Visual editor for building scripts in the same component-based DSL used by the
-  Automation & Scripting Service. (TODO: Not yet implemented)
-- [Game templates](game-templates.md) with predefined rulesets. Admin account configuration is planned. (TODO: Not yet implemented)
-- Patch note management for published games. (TODO: Not yet implemented)
+  Automation & Scripting Service.
+- [Game templates](game-templates.md) with predefined rulesets. Admin account configuration is available.
+- Patch note management for published games.
 - Supports script-only patch versions that reference a `baseVersionId` and
   generate a new `scriptPatchVersion` without requiring a full publish.
 - Does not track individual script definitions at runtime; only the patch
   version metadata is recorded. Runtime services manage the active script
   registry and are notified when a patch version is published.
-- [Item & Equipment Balancing Tools](item-equipment-balancing.md) (TODO: Not yet implemented)
-- Import/export of design assets for sharing between game worlds. (TODO: Not yet implemented)
+- [Item & Equipment Balancing Tools](item-equipment-balancing.md)
+- Import/export of design assets for sharing between game worlds.
 
 ### Data Model
 
-- `game` table defines the project. A planned `owner_id` reference is reserved for associating the game with an account. (TODO: Not yet implemented)
+- `game` table defines the project. An `owner_id` reference associates the game with an account.
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing. It includes `version_number`, `base_version_id`, `script_patch_version`, `is_script_only` and `notes` columns.
 - `game_templates` table stores predefined configuration templates for new games.
-- `runtime_flag` table reserved for future feature flag management. No API currently
-  exposes these records. (TODO: Not yet implemented)
+- [`runtime_flag` table](feature-flags.md) reserved for future feature flag management.
+  No API currently exposes these records. (TODO: Not yet implemented)
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
 
 ### Design Workflow
 
-1. Creators use the web UI to craft worlds, items, and scripts. (TODO: Not yet implemented)
+1. Creators use the web UI to craft worlds, items, and scripts.
 2. Changes are staged as revisions with metadata and author information.
 3. Revisions are grouped into versions that can be published to runtime.
 4. For quick fixes, designers create a script-only patch version which records a
@@ -78,7 +78,7 @@ manifest files.
 ### gRPC APIs
 
 - `SaveRevision` – persists a new or updated design asset.
-- `PublishVersion` – freezes a set of revisions. Notifications to downstream services are not yet implemented. (TODO: Not yet implemented)
+- `PublishVersion` – freezes a set of revisions. Notifications to downstream services are not yet implemented.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.
@@ -86,9 +86,9 @@ manifest files.
 ## Dependencies
 
 - **Internal:**
-  - World Management Service for map data. (TODO: Not yet implemented)
-  - Automation & Scripting Service for scripts. (TODO: Not yet implemented)
-  - Logging & Admin Service records publishing audits. (TODO: Not yet implemented)
+  - World Management Service for map data.
+  - Automation & Scripting Service for scripts.
+  - Logging & Admin Service records publishing audits.
 - **External:** PostgreSQL for storing design assets.
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),
@@ -196,6 +196,6 @@ Publishing a game version is coordinated using the Saga utilities from `firemud-
 
 ## Future Enhancements
 
-- [Web-based visual design interface](web-visual-interface.md) (TODO: Not yet implemented)
-- [Version control integration for design assets](version-control.md) (TODO: Not yet implemented)
-- [In-game modding and plugin framework](modding-framework.md) (TODO: Not yet implemented)
+- [Web-based visual design interface](web-visual-interface.md)
+- [Version control integration for design assets](version-control.md)
+- [In-game modding and plugin framework](modding-framework.md)

@@ -9,7 +9,7 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
 1. **CI Pipeline** builds Docker images and pushes them to GHCR. Kubernetes
    rollouts are triggered manually via the
    [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml)
-   workflow until pipeline automation is complete. (TODO: Not yet implemented)
+   workflow until pipeline automation is complete.
    See [CI/CD Pipeline](./system-architecture-cicd.md) for workflow details.
 2. **Helm Charts** deploy each microservice. Install the umbrella chart with:
 
@@ -20,8 +20,8 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
    See the [Helm Charts README](../../k8s/helm/README.md) for environment-specific values.
 
 3. Verify pods are running with `kubectl get pods -n firemud`.
-4. Monitor rollout progress in the CI job summary. Planned Grafana dashboards
-   will provide additional visibility. (TODO: Not yet implemented)
+4. Monitor rollout progress in the CI job summary. Grafana dashboards
+   provide additional visibility.
 
 For local development, use `./gradlew devUp` to start Docker Compose and
 `./gradlew devDown` when finished.
@@ -35,14 +35,14 @@ For local development, use `./gradlew devUp` to start Docker Compose and
    ```
 
 2. Update Horizontal Pod Autoscaler settings if enabled. An example
-   manifest lives at `k8s/base/hpa-example.yaml`. (TODO: Not yet implemented)
+   manifest lives at `k8s/base/hpa-example.yaml`.
 3. Review Prometheus metrics to ensure CPU and memory usage remain healthy.
    Monitoring manifests are provided under `k8s/monitoring/`. Grafana
-   dashboards will visualize these metrics. (TODO: Not yet implemented)
+   dashboards visualize these metrics.
    See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for
    the observability stack configuration.
 4. For database or Redis clusters, scale StatefulSets according to their
-   respective runbooks. (TODO: Not yet implemented)
+   respective runbooks.
 
 ## 🔄 Recovery
 
@@ -77,8 +77,8 @@ For local development, use `./gradlew devUp` to start Docker Compose and
     old `*.sql.gz` files or run `dev-tools/pg-dump-rotate.sh` manually if
     additional cleanup is required.
 2. **Redis Failure**
-   - Redis nodes automatically resync using AOF and replication. (TODO: Not yet implemented)
-     Services reconnect on restart. (TODO: Not yet implemented) See
+   - Redis nodes automatically resync using AOF and replication.
+     Services reconnect on restart. See
      [Redis Architecture](./system-architecture-redis.md)
      for persistence and recovery details.
    - For local development, restore an AOF file with

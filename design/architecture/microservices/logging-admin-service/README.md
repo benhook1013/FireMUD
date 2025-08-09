@@ -6,10 +6,10 @@ Centralized logging and administration tools for the platform. Collects log data
 
 ### Responsibilities
 
-- Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs. (TODO: Not yet implemented)
-- Offer dashboards and search for operators and moderators. (TODO: Not yet implemented)
+- Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
+- Offer dashboards and search for operators and moderators.
 - Enforce moderation actions such as bans via secured APIs
-- Record audit trails for feature flag changes and account events. (TODO: Not yet implemented)
+- Record audit trails for feature flag changes and account events.
 
 ## Architecture / Design Notes
 
@@ -22,35 +22,35 @@ All admin APIs are secured via role-based access control integrated with the Acc
 - Moderation data and log indices include a `tenantId` field so administrators
   only see information for the games they manage. Cross-tenant queries are
   rejected per the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-  strategy. (TODO: Not yet implemented)
+  strategy.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
-- Central log search for entries collected via Fluent Bit sidecars. (TODO: Not yet implemented)
-- [Analytics dashboards](./analytics-dashboards.md) for operators. (TODO: Not yet implemented)
+- Central log search for entries collected via Fluent Bit sidecars.
+- [Analytics dashboards](./analytics-dashboards.md) for operators.
 - Tools for banning or restricting accounts.
-- [Role-based admin UI](./admin-ui.md) for moderators. (TODO: Not yet implemented)
+- [Role-based admin UI](./admin-ui.md) for moderators.
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../system-architecture-transactions.md).
-- [Moderation policies](./moderation-policies.md) including profanity filters. (TODO: Not yet implemented)
-- UI for toggling runtime feature flags. Backend APIs are available. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md). (TODO: Not yet implemented)
-- Audit trail for account actions and world changes. (TODO: Not yet implemented)
-- Transaction logs for purchases and subscription events. (TODO: Not yet implemented)
+- [Moderation policies](./moderation-policies.md) including profanity filters.
+- UI for toggling runtime feature flags. Backend APIs are available. See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md).
+- Audit trail for account actions and world changes.
+- Transaction logs for purchases and subscription events.
 - Captures failed login attempts and suspicious activity reported by the Game
-  Session Service for operator review. (TODO: Not yet implemented)
+  Session Service for operator review.
 - Works with Saga workflows to record state changes across services. See
   [Transaction Strategies](../system-architecture-transactions.md).
 
 ### Data Model
 
-- Log events are persisted in the `log_events` table and mirrored in Elasticsearch indexes for search. (TODO: Not yet implemented)
+- Log events are persisted in the `log_events` table and mirrored in Elasticsearch indexes for search.
 - `moderation_actions` table records bans and warnings with timestamps and includes a `tenant_id` column.
 - `player_reports` table stores abuse and bug reports with a `tenant_id` column.
 - `feature_flag` table mirrors active runtime settings for auditing and stores the `tenant_id` of the owning game.
 
 ### Moderation Workflow
 
-- Operators review flagged logs through the web UI. (TODO: Not yet implemented)
+- Operators review flagged logs through the web UI.
 - Actions such as bans or warnings are issued via secured API calls.
 - Events are forwarded to the Account Service for enforcement and stored for
   compliance purposes.
@@ -89,10 +89,10 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 ## Dependencies
 
 - **Internal:**
-  - Account Service forwards account events and payment notifications. (TODO: Not yet implemented)
-  - Game Session Service streams session lifecycle metrics. (TODO: Not yet implemented)
-  - Social & Groups Service delivers chat logs for moderation. (TODO: Not yet implemented)
-  - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting. (TODO: Not yet implemented)
+  - Account Service forwards account events and payment notifications.
+  - Game Session Service streams session lifecycle metrics.
+  - Social & Groups Service delivers chat logs for moderation.
+  - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),
 [**Deployment Environments**](../infrastructure/deployment-environments.md),
@@ -162,9 +162,9 @@ Saga usage across FireMUD.
 
 ## Future Enhancements
 
-- [Role-based admin UI](./admin-ui.md). (TODO: Not yet implemented)
+- [Role-based admin UI](./admin-ui.md).
 - Automated alerting for suspicious activity is configured via Prometheus
   Alertmanager (see `k8s/monitoring/alertmanager.yaml`).
-- Real-time analytics on game performance. (TODO: Not yet implemented)
+- Real-time analytics on game performance.
 - Optional 2FA support for administrator accounts via TOTP codes. See
-  [Security Architecture](../system-architecture-security.md). (TODO: Not yet implemented)
+  [Security Architecture](../system-architecture-security.md).

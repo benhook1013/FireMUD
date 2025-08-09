@@ -95,6 +95,9 @@ subprojects {
     tasks.named("spotbugsMain") {
         dependsOn("compileJava")
     }
+    tasks.named("spotbugsTest") {
+        dependsOn("compileTestJava")
+    }
 
     tasks.test {
         useJUnitPlatform()

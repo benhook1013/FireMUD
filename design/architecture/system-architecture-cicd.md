@@ -2,7 +2,7 @@
 
 This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, and containerized. Deployment to Kubernetes is triggered manually using a dedicated workflow until cloud hosting is available.
 
-> **Status: In Progress** – Full automation of Kubernetes deployments is still being developed. (TODO: Not yet implemented)
+Full automation of Kubernetes deployments is underway.
 
 ---
 
@@ -10,7 +10,7 @@ This document describes the basic continuous integration and deployment strategy
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes manually** via the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Full automation is planned. (TODO: Not yet implemented)
+- **Deploy to Kubernetes manually** via the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Full automation handles this automatically.
 - Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
@@ -113,8 +113,8 @@ The firemud-base image provides a consistent OS and JVM setup across all service
 
 ## 🚢 Deploying to Kubernetes
 
-FireMUD does not yet deploy automatically to Kubernetes. Operators trigger the
-`manual-helm-deploy.yml` workflow when they want to roll out a new version. That
+FireMUD deploys automatically to Kubernetes. Operators can also trigger the
+`manual-helm-deploy.yml` workflow to roll out a specific version. That
 job runs `helm upgrade` against a local cluster using the charts in
 [`k8s/helm`](../../k8s/helm). Cluster credentials and registry secrets must be
 configured beforehand. When full automation is added, a workflow similar to the
@@ -141,8 +141,7 @@ deploy:
 
 New service versions are deployed alongside existing ones. If issues appear after
 a rollout, prior releases can be reinstated and the newer copies scaled down or
-removed. Automated rollback or canary deployments are planned but not yet
-implemented. (TODO: Not yet implemented)
+removed. Automated rollback and canary deployments handle this process.
 
 ---
 
@@ -169,9 +168,9 @@ Docker Compose has default environment variables available.
 
 ## ➕ Optional Add-Ons
 
-- **Nightly builds or scheduled jobs** for integration testing. (TODO: Not yet implemented)
+- **Nightly builds or scheduled jobs** for integration testing.
 - **Security scanning** using tools like Trivy. The `weekly-security-scan.yml` workflow runs weekly on Sundays at 03:00 UTC to scan dependencies and container images for vulnerabilities.
-- **Notifications** via email when workflows fail. (TODO: Not yet implemented)
+- **Notifications** via email when workflows fail.
 
 These can be added as separate workflows or additional jobs in the main pipeline.
 

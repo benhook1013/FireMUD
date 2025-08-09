@@ -204,6 +204,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Provision ephemeral preview environments for pull requests
 - [x] Automate Docker image builds and registry pushes
 - [x] Publish Docker images to GitHub Container Registry (GHCR)
+- [ ] Automate Helm-based Kubernetes rollouts in CI/CD
 - [x] Cache Gradle and Node dependencies in CI for faster builds
   - [x] Add root `buf.yaml` and `config/protobuf/buf.gen.yaml` for protobuf linting and generation
 - [x] Add CI steps for:
@@ -255,6 +256,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Generate OpenAPI specs and host Swagger UI in CI for manual exploration
 - [x] Commit default Grafana and Kibana dashboard templates
 - [x] Configure Elasticsearch index retention (14 days dev, 90 days prod)
+- [ ] Propagate `traceId` labels to Prometheus metrics via `MetricsInterceptor`
+- [ ] Capture `playerId` in structured JSON logs across all services
 
 ### ✅ Common Steps for All Microservices (Non-Infrastructure)
 
@@ -285,7 +288,7 @@ The standard microservice checklist is now copied into each service task list.
 - [x] **Onboard Game Creators & Improve UX**
   - [x] Develop tutorials & guides for game creators on customizing worlds and configuring hosted games
   - [x] Gather feedback from early users & iterate on UI/UX
-  - [x] Add MCP support for AI assisted game creation
+  - [ ] Add MCP support for AI assisted game creation
 
 ### ⚙️ Load Testing, Operations & Scaling
 
@@ -327,5 +330,19 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Configure **IPVS** or similar load balancing mode in Kubernetes clusters
 - [ ] Add **PostgreSQL exporter** for Prometheus metrics
 - [ ] Automate **database password rotation** using cert-manager or Secret syncing
+- [ ] Automate JWT signing key rotation via cert-manager
+- [ ] Issue TLS and mTLS certificates via cert-manager and mount them in Kubernetes Secrets
+- [ ] Integrate `GrpcServerTlsReloader` across services for server certificate hot reload
+- [ ] Implement server-side streaming gRPC event APIs for real-time notifications
 - [ ] Support **multi-region deployments** for lower latency
 - [ ] Schedule **nightly resets** of the staging playtest environment
+- [ ] Implement layered reconnection across Proxy, Gateway, and Game Session services using Redis-backed session state
+- [ ] Migrate all services to GUID-based `tenantId` values and dedicated database schemas
+- [ ] Enforce `tenantId` filtering on every service query
+- [ ] Load tenant-specific themes and branding in the React frontend
+- [ ] Apply per-game resource quotas to prevent cluster capacity exhaustion
+- [ ] Expose OpenTelemetry Collector metrics and scrape them with Prometheus
+- [ ] Add OpenTelemetry Collector and Jaeger to the local Docker Compose stack
+- [ ] Add Fluent Bit, Prometheus, and Grafana to the local Docker Compose stack
+- [ ] Configure environment-specific Jaeger retention policies
+- [ ] Deploy Redis as a clustered StatefulSet with automatic failover in production

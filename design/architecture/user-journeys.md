@@ -65,18 +65,18 @@ Account Service (user) → Game Design Service (new game)
 
 Creators refine the world and its inhabitants using several services:
 
-- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors (TODO: Not yet implemented), and runtime flag definitions (TODO: Not yet implemented).
-- **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data (TODO: Not yet implemented). Scheduled world events notify other services when the environment changes. (TODO: Not yet implemented)
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides versioned templates, ability editors, and runtime flag definitions.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data. Scheduled world events notify other services when the environment changes.
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service
-- **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md). (TODO: Not yet implemented)
-- **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation. (TODO: Not yet implemented)
-- [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks. (TODO: Not yet implemented)
-- **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing. (TODO: Not yet implemented)
-- **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md). (TODO: Not yet implemented)
-- **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md). (TODO: Not yet implemented)
-- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing. *Status: In Progress – not yet production ready.* (TODO: Not yet implemented)
-- **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). (TODO: Not yet implemented)
-- **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects. (TODO: Not yet implemented)
+- **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
+- **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
+- [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
+- **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
+- **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
+- **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
+- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing.
+- **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
+- **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
 
 ```plaintext
 Game Design ↔ World Management ↔ Entity Management
@@ -88,11 +88,11 @@ Game Design ↔ World Management ↔ Entity Management
 
 Dynamic behavior is implemented via the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md):
 
-- Script quests and NPC routines. (TODO: Not yet implemented)
-- Trigger world events in response to player actions. (TODO: Not yet implemented)
+- Script quests and NPC routines.
+- Trigger world events in response to player actions.
 - See [Scripting & Automation Framework](./system-architecture-scripting.md) for
   details on the component-based DSL and sandboxing model.
-- [Modding Framework](./microservices/game-design-service/modding-framework.md) enables runtime plugins using the same scripting sandbox. *Status: In Progress – still under development.* (TODO: Not yet implemented)
+- [Modding Framework](./microservices/game-design-service/modding-framework.md) enables runtime plugins using the same scripting sandbox.
 
 ---
 
@@ -101,7 +101,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 Once the world is ready:
 
 1. **Publish a Version** – Creators publish the current design in the Game Design Service.
-2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. (TODO: Not yet implemented) For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (start instance)
@@ -113,8 +113,8 @@ Game Design Service (publish) → Game Session Service (start instance)
 
 Players create or select a character before entering the world:
 
-1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account. (TODO: Not yet implemented)
-2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md). (TODO: Not yet implemented)
+1. **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account.
+2. **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md).
 3. **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service
 
 ```plaintext
@@ -127,7 +127,7 @@ Account Service → Game Design Service → Entity Management Service
 
 Players connect through the networking layer:
 
-1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. (TODO: Not yet implemented)
+1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details.
 2. **Session Management** – The [Game Session Service](./microservices/game-session-service/README.md) retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
 3. **Authentication** – Credentials are verified by the [Account Service](./microservices/account-service/README.md), which issues a short-lived session token. The [Game Session Service](./microservices/game-session-service/README.md) stores this token in Redis and rebinds the session when players reconnect.
    See [Authentication & Authorization](./system-architecture-authentication.md)
@@ -138,7 +138,7 @@ Players connect through the networking layer:
 Client → Proxy/Gateway → Game Session Service → Game Logic Service / Entity & World services
 ```
 
-The [Game Session Service](./microservices/game-session-service/README.md) handles login, session recovery, and active gameplay. Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md). (TODO: Not yet implemented)
+The [Game Session Service](./microservices/game-session-service/README.md) handles login, session recovery, and active gameplay. Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
 
 ---
 
@@ -147,10 +147,10 @@ The [Game Session Service](./microservices/game-session-service/README.md) handl
 During gameplay, players form groups and communicate via the
 [Social & Groups Service](./microservices/social-groups-service/README.md):
 
-- Chat rooms, guilds, and friend lists are synchronized in real time (TODO: Not yet implemented).
+- Chat rooms, guilds, and friend lists are synchronized in real time.
 - In-game chat commands (say, tell, guild chat, mail) are first validated by the
   [Game Logic Service](./microservices/game-logic-service/README.md) against the [World Management Service](./microservices/world-management-service/README.md) and [Entity Management Service](./microservices/entity-management-service/README.md).
-- The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled. (TODO: Not yet implemented)
+- The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled.
 
 ---
 
@@ -162,10 +162,10 @@ Logs, metrics, and traces flow into **Elasticsearch**, **Prometheus**, and **Jae
 [Logging & Monitoring](./system-architecture-logging-monitoring.md) and
 [Tracing](./system-architecture-tracing.md).
 For usage examples see the
-[Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). (TODO: Not yet implemented)
+[Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 The service also exposes moderation tools such as bans and runtime feature toggles.
 Administrators review logs and configure these options through the
-[Admin UI](./microservices/logging-admin-service/admin-ui.md). (TODO: Not yet implemented)
+[Admin UI](./microservices/logging-admin-service/admin-ui.md).
 Policies are summarized in the
 [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md)
 document. Complex moderation workflows are coordinated using saga patterns as described in
@@ -180,11 +180,11 @@ Review these guides alongside the
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
 3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a
-   `scriptPatchVersion` like `v42-script.3` linked to the current version. (TODO: Not yet implemented)
+   `scriptPatchVersion` like `v42-script.3` linked to the current version.
 4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md)
    to load the new `version_id` when a full update is required. Script-only
    patches are applied live without restarting.
-5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. (TODO: Not yet implemented) See [Transaction Strategies](./system-architecture-transactions.md).
+5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
 
 6. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
@@ -273,13 +273,12 @@ Runtime clients fetch this manifest—not the Game Design Service—to load logo
 favicons, and theme overrides before applying them in the UI. See
 [Frontend Architecture](./system-architecture-frontend.md) and
 [Game Customization Options](./game-customization-options.md) for details.
-(TODO: Not yet implemented)
 
 ---
 
 ## 16. Playtesting & Analytics
 
-Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) (TODO: Not yet implemented).
+Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 
 ---
 
@@ -287,7 +286,7 @@ Before launch or after major updates, creators invite testers to staged environm
 
 1. **Pre‑Commit Hooks** – Developers run `pre-commit run --all-files -c config/pre-commit/.pre-commit-config.yaml` or `./gradlew check` to format code and execute tests before pushing.
 2. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
-3. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation. *Full automation of Kubernetes deployments is still a work in progress. (TODO: Not yet implemented)*
+3. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation.
 4. **Database Migrations** – Schemas are migrated with Flyway on startup; see [Database Migrations](./system-architecture-database-migrations.md).
 
 ```plaintext
@@ -342,7 +341,7 @@ observability stack:
 4. **Kibana Dashboards** – Pre-built views like the
    [Log Volume dashboard](../observability/kibana/log-volume.json) help monitor
    logging rates.
-5. **Operator Dashboards** – Additional Grafana and Kibana views are described in the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) document. (TODO: Not yet implemented)
+5. **Operator Dashboards** – Additional Grafana and Kibana views are described in the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) document.
 
 ```plaintext
 Service Logs → Elasticsearch → Kibana
@@ -358,8 +357,8 @@ Common troubleshooting steps are documented in the [Operational Runbooks](./syst
 
 Creators extend gameplay using external editors and runtime plugins:
 
-1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so tools can create rooms, items, and NPCs programmatically. See [MCP Support](./system-architecture-mcp-support.md). (TODO: Not yet implemented)
-2. **Modding Framework** – Plugins packaged through the [Game Design Service](./microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) executes them in a sandbox. (TODO: Not yet implemented)
+1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so tools can create rooms, items, and NPCs programmatically. See [MCP Support](./system-architecture-mcp-support.md).
+2. **Modding Framework** – Plugins packaged through the [Game Design Service](./microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) executes them in a sandbox.
 
 ```plaintext
 Editor/Tool → TCP Proxy Service → Game Design Service → Automation & Scripting Service

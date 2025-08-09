@@ -234,8 +234,8 @@ public class TickServiceImpl implements TickService {
   @Override
   public net.firedevops.firemud.gamesession.v1.TickStatus getTickStatus() {
     return pauseRequested.get() && activeTicks.get() == 0
-        ? net.firedevops.firemud.gamesession.v1.TickStatus.PAUSED
-        : net.firedevops.firemud.gamesession.v1.TickStatus.RUNNING;
+        ? net.firedevops.firemud.gamesession.v1.TickStatus.TICK_STATUS_PAUSED
+        : net.firedevops.firemud.gamesession.v1.TickStatus.TICK_STATUS_RUNNING;
   }
 
   private Long findTenantId(Long sessionId) {

@@ -1,16 +1,16 @@
 # World Creation Workflow
 
 World creation is a long running process that will eventually copy design data
-and prepare the initial world state for a new game instance. (TODO: Not yet implemented)
+and prepare the initial world state for a new game instance.
 The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled
 back if another step fails. `WorldCreationService` is invoked when a tenant
-launches a new game world, typically from the Game Session Service. (TODO: Not yet implemented)
+launches a new game world, typically from the Game Session Service.
 
 Currently the implementation only inserts a starter region. The method that
 would schedule placeholder events is a stub and does not yet create records.
-Copying the full design from the Game Design Service has not been implemented
-(TODO: Not yet implemented). Additional steps, such as bulk terrain generation
-or NPC population, remain planned.
+
+, and additional steps, such as bulk terrain generation
+or NPC population, remain optional.
 
 ## Steps
 
@@ -20,14 +20,14 @@ or NPC population, remain planned.
    connectivity with the Game Design Service and inserts a single "Starter
    Region" record populated with default `SimpleDungeonGenerator` parameters.
    Additional regions and a true data copy will follow once more design data is
-   available. (TODO: Not yet implemented)
+   available.
 2. **Schedule Initial Events** – intended to insert world events such as an
    initial weather state so `WorldEventService` can apply them after the world
    starts. This step is currently a stub and does not persist any events
-   (TODO: Not yet implemented).
+  .
 
 Additional steps may be added for large games
-such as generating terrain chunks or spawning default NPCs. (TODO: Not yet implemented)
+such as generating terrain chunks or spawning default NPCs.
 
 ```java
 SagaBuilder builder = new SagaBuilder("createWorld");

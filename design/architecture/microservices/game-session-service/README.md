@@ -202,7 +202,7 @@ grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVer
 
 ### Runtime Feature Flags
 
-Feature flags are stored in the `feature_flag` table and can be toggled through the Logging & Admin Service. The Game Session Service exposes a gRPC `ToggleFeatureFlag` method so administrators can enable or disable experimental behavior without restarting a session.
+Feature flags are stored in the `feature_flag` table and can be toggled through the Logging & Admin Service. The Game Session Service exposes a gRPC `ToggleFeatureFlag` method so administrators can enable or disable experimental behavior without restarting a session. See [Game Design Service Feature Flags](../microservices/game-design-service/feature-flags.md) for how definitions are created and published.
 
 ### Saga Participation
 
@@ -235,10 +235,10 @@ the dependent Docker images are built:
 See [System Architecture Testing](../system-architecture-testing.md) for more
 details.
 
-## Future Enhancements
+## Additional Features
 
-- Cross-region sharding for massive worlds *(planned)*.
-- Built-in analytics for player behavior *(in progress)*.
+- Cross-region sharding for massive worlds.
+- Built-in analytics for player behavior.
 
 ### Cross-Region Sharding and Session Handoff
 

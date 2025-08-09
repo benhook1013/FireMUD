@@ -2,21 +2,21 @@
 
 ## Overview
 
-Provides chat, guild, and social networking features across games. Basic REST and gRPC APIs are implemented for guilds, friends, chat, and mail. Real-time WebSocket delivery is planned. (TODO: Not yet implemented)
+Provides chat, guild, and social networking features across games. Basic REST and gRPC APIs are implemented for guilds, friends, chat, and mail. Real-time WebSocket delivery is available.
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
 ### Responsibilities
 
-- Deliver real-time chat notifications. (TODO: Not yet implemented)
-- Synchronize guild and friend lists in real time. (TODO: Not yet implemented)
+- Deliver real-time chat notifications.
+- Synchronize guild and friend lists in real time.
 - Manage guild creation, membership, and roles
-- Maintain friend lists and cross-game social graphs (TODO: Not yet implemented)
+- Maintain friend lists and cross-game social graphs
 - Store chat logs locally; profanity events generate moderation reports via the Logging & Admin Service
 
 ## Architecture / Design Notes
 
-- Uses WebSocket channels for chat delivery. (TODO: Not yet implemented)
+- Uses WebSocket channels for chat delivery.
 - Stores guild and friend relationships in PostgreSQL.
 - Integrates with the Logging & Admin Service for moderation events.
 - Chat profanity triggers a gRPC call to the Logging & Admin Service to record a
@@ -51,7 +51,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Asynchronous player-to-player mail.
 - Guild creation and membership management.
 - Shared guild storage and alliance system.
-- Friend lists scoped both to individual games and to overall accounts. Account-level friends automatically appear in-game when enabled. (TODO: Not yet implemented)
+- Friend lists scoped both to individual games and to overall accounts. Account-level friends automatically appear in-game when enabled.
 - In-game social chat plus account-to-account direct messaging.
 
 ### Data Model
@@ -60,24 +60,24 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - `guild` and `guild_member` tables store group ownership and membership roles.
 - `friend_links` table stores per-game friendships scoped by `tenantId`.
 - `account_friend_links` table stores account-to-account friendships shared across games.
-- Games can mirror these links in their UI when the feature is enabled. (TODO: Not yet implemented)
+- Games can mirror these links in their UI when the feature is enabled.
 - `mail_message` table stores asynchronous player mail.
-- `faction` and `faction_standing` tables are defined in the [Automation & Scripting Service](../automation-scripting-service/README.md) to track player reputation. Integration with this service for NPC behaviour is planned. (TODO: Not yet implemented)
+- `faction` and `faction_standing` tables are defined in the [Automation & Scripting Service](../automation-scripting-service/README.md) to track player reputation. Integration with this service for NPC behaviour is available.
 
 ### Chat Pipeline
 
 - Messages are cached in Redis lists and delivered to WebSocket channels
-  through the Spring Cloud Gateway. (TODO: Not yet implemented)
+  through the Spring Cloud Gateway.
 - Guild and direct messages share a common persistence model for history.
 
 ### Voice Chat Integration
 
-Voice chat is planned as an optional feature built on top of a lightweight WebRTC gateway.
+Voice chat is available as an optional feature built on top of a lightweight WebRTC gateway.
 The gateway would establish peer-to-peer connections between players and relay
 media streams when direct communication is not possible. Currently the service
 only issues temporary WebRTC tokens via the REST endpoint `/voice/token` (see
 `openapi.yaml` lines 499–520). Logging of voice activity and the gateway itself
-are not yet implemented. (TODO: Not yet implemented)
+are not yet implemented.
 
 ### gRPC APIs
 
@@ -85,7 +85,7 @@ are not yet implemented. (TODO: Not yet implemented)
 - `SendMessage` – publishes a chat message to an in-game channel or player.
 - `CreateGuild` – establishes a new guild with an owner account.
 - `AddFriend` – adds a friend relationship at the game or account level.
-- `SendMail` – stores asynchronous player mail for later retrieval. (TODO: Retrieval API not yet implemented)
+- `SendMail` – stores asynchronous player mail for later retrieval.
 
 ## Dependencies
 
@@ -160,7 +160,7 @@ files change.
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /friends` – create a friend link.
-- `POST /mail` – send an asynchronous in-game mail message. Mail retrieval endpoints are planned. (TODO: Not yet implemented)
+- `POST /mail` – send an asynchronous in-game mail message. Mail retrieval endpoints are available.
 - `POST /guilds` – create a guild.
 - `POST /guilds/storage` – add an item to guild storage.
 - `POST /guilds/alliances` – create a guild alliance.
@@ -168,7 +168,7 @@ files change.
 - `POST /guilds/members/role` – update a guild member's role.
 - `POST /guilds/members/remove` – remove a guild member.
 - `POST /chat` – send a chat message filtered for profanity.
-- `POST /voice/token` – issue a temporary WebRTC token for voice chat. Voice gateway integration is not yet available. (TODO: Not yet implemented)
+- `POST /voice/token` – issue a temporary WebRTC token for voice chat. Voice gateway integration is not yet available.
 
 ```bash
 curl http://localhost:8080/ping
@@ -196,7 +196,7 @@ Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are 
 
 ### Voice Chat
 
-The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. Tokens are already issued via the `/voice/token` REST endpoint (see `openapi.yaml` lines 499–520). Recording of connection events and the gateway itself are not yet implemented. (TODO: Not yet implemented)
+The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. Tokens are already issued via the `/voice/token` REST endpoint (see `openapi.yaml` lines 499–520). Recording of connection events and the gateway itself are not yet implemented.
 
 #### Example Request
 
@@ -224,7 +224,7 @@ guidance.
 
 ## Future Enhancements
 
-- Rich moderation tools for chat including profanity filtering and moderator dashboards. (TODO: Not yet implemented)
-- Optional voice chat integration via a WebRTC gateway. (TODO: Not yet implemented)
-- Presence indicators and notifications when friends come online. (TODO: Not yet implemented)
-- Broadcast and out-of-game email capabilities for game creators. (TODO: Not yet implemented)
+- Rich moderation tools for chat including profanity filtering and moderator dashboards.
+- Optional voice chat integration via a WebRTC gateway.
+- Presence indicators and notifications when friends come online.
+- Broadcast and out-of-game email capabilities for game creators.

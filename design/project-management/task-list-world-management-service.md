@@ -6,6 +6,7 @@
 - [x] Implement instance-based game spaces (e.g., dungeons, player housing)
 - [x] Define instance rules, expiration, and persistence
 - [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
+- [ ] Expose pathfinding results via `TravelService` gRPC API with navmesh support
 
 ## World Events & Effects
 
@@ -18,6 +19,9 @@
 - [x] Use saga orchestrator for world creation workflow
 - [x] Provide tools to fine-tune procedural generation rules
 - [x] Support multi-server world shards
+- [ ] Generate terrain chunks during world creation
+- [ ] Spawn default NPCs as part of initial world setup
+- [ ] Schedule initial world events during world creation
 
 ## Data Sync & Notifications
 

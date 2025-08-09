@@ -16,6 +16,11 @@
 - [x] Define moderation policies including profanity filters
 - [ ] Provide web interface to review flagged logs
 - [x] Build role-based admin UI
+- [ ] Link moderation decisions to related log entries for context
+- [ ] Implement automated detection and enforcement for hate speech, harassment, spam, and cheating
+- [ ] Allow per-tenant customization of profanity word lists and detect bypass attempts
+- [ ] Support temporary suspensions with configurable durations and notify players via the Account Service
+- [ ] Handle ban appeal submissions from the Account Service web form
 - [ ] Implement playtesting feedback form and store results for analytics
 
 ## Feature Flags & Configuration
@@ -39,6 +44,7 @@
 ## Security
 
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Add optional 2FA for administrator accounts via TOTP codes
 
 ## Reusable Microservice Checklist
 
