@@ -71,7 +71,7 @@ To manually fix correctable issues, run:
 ./gradlew lintMarkdownFix
 ```
 
-Linting rules are defined in `config/markdownlint/markdownlint-cli2.jsonc`. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
+Linting rules are defined in `config/markdownlint/.markdownlint-cli2.jsonc`. Auto-fixing is not part of the `check` phase so that CI runs remain non-destructive.
 
 ### Frontend Lint & Accessibility
 
@@ -130,7 +130,7 @@ Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so 
 
 ## Running with Docker Compose
 
-The `docker-compose.yml` file orchestrates all services, including PostgreSQL and Redis, for local development. Launch the stack with:
+The `docker/docker-compose.yml` file orchestrates all services, including PostgreSQL and Redis, for local development. Launch the stack with:
 
 > **Note**: The `deploy.resources` block in the compose file only applies to
 > Docker Swarm. Docker Compose ignores these limits, so CPU and memory
@@ -255,8 +255,8 @@ SCAN 0 MATCH timer:player-123:*
 ```
 
 For a graphical view, a RedisInsight container runs in development via
-`docker-compose.override.yml`. Bring up the stack with `docker compose -f
-docker-compose.yml -f docker-compose.override.yml up -d`. RedisInsight is then
+`docker/docker-compose.override.yml`. Bring up the stack with `docker compose -f
+docker/docker-compose.yml -f docker/docker-compose.override.yml up --build -d`. RedisInsight is then
 available at <http://localhost:8001> and connects to the default Redis instance
 on `localhost:6379`. Typical key patterns are `session:*`, `tick:*`, and
 `timer:*`.

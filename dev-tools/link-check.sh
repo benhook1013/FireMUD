@@ -16,5 +16,5 @@ fi
 FILES=$(find design -name '*.md' -type f -print; find . -maxdepth 1 -name '*.md' -type f)
 FILES=$(echo "$FILES" | grep -v '/node_modules/' | grep -v '/build/' | grep -v '/\.gradle/')
 
-OPTIONS=(--scheme https --scheme http)
+OPTIONS=(--scheme https --scheme http --exclude-file config/lychee/.lycheeignore)
 "$BIN" --no-progress --verbose "${OPTIONS[@]}" "$FILES"

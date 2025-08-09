@@ -115,7 +115,7 @@ tasks.register<NpxTask>("lintMarkdown") {
     dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
-        "--config", "config/markdownlint/markdownlint-cli2.jsonc",
+        "--config", "config/markdownlint/.markdownlint-cli2.jsonc",
         "**/*.md",
         "!**/node_modules/**",
         "!**/build/**",
@@ -128,7 +128,7 @@ tasks.register<NpxTask>("lintMarkdownFix") {
     dependsOn(tasks.npmInstall)
     command.set("markdownlint-cli2")
     args.set(listOf(
-        "--config", "config/markdownlint/markdownlint-cli2.jsonc",
+        "--config", "config/markdownlint/.markdownlint-cli2.jsonc",
         "--fix",
         "**/*.md",
         "!**/node_modules/**",
@@ -188,9 +188,26 @@ tasks.register<Exec>("generateDevCerts") {
 
 tasks.register<Exec>("devUp") {
     dependsOn("generateDevCerts", "buildDockerImages")
-    commandLine("docker", "compose", "up", "--build")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "up",
+        "--build"
+    )
 }
 
 tasks.register<Exec>("devDown") {
-    commandLine("docker", "compose", "down")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "down"
+    )
 }

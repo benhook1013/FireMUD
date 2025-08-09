@@ -59,7 +59,7 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
 
 ## 🛠️ Tooling
 
-- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../buf.work.yaml) and [buf.gen.yaml](../../buf.gen.yaml) specify modules and plugins for generation.
+- **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../config/protobuf/buf.work.yaml) and [buf.gen.yaml](../../config/protobuf/buf.gen.yaml) specify modules and plugins for generation.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
 - **`protoc-gen-doc`** — Produces Markdown API documentation. Run
   `./dev-tools/generate-grpc-docs.sh` after updating proto files to regenerate

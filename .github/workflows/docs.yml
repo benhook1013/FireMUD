@@ -22,7 +22,7 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2.4.1
         with:
-          args: --no-progress --verbose './**/*.md' --exclude './**/node_modules/**' --exclude './**/build/**' --exclude './**/.gradle/**'
+          args: --no-progress --verbose --exclude-file config/lychee/.lycheeignore './**/*.md' --exclude './**/node_modules/**' --exclude './**/build/**' --exclude './**/.gradle/**'
           fail: true
           jobSummary: true
       - uses: actions/configure-pages@v3

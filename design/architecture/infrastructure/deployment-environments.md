@@ -28,7 +28,7 @@ FireMUD uses Docker Compose for local development and testing:
 ### 🩺 Docker Health Checks
 
 - Services expose Spring Boot’s `/actuator/health` for basic health status.
-- Docker Compose can monitor health using `healthcheck` blocks in `docker-compose.yml`.
+- Docker Compose can monitor health using `healthcheck` blocks in `docker/docker-compose.yml`.
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
   - Docker does **not** automatically restart containers that become `unhealthy`.
       Even with `restart: unless-stopped` configured, services remain running
@@ -65,7 +65,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Configuration and secrets are managed through ConfigMaps and Secrets.
 - Certificates for TLS termination and mTLS are planned to be issued by **cert-manager** and mounted from Kubernetes Secrets. (TODO: Not yet implemented)
 - The cluster is planned to use **IPVS** (or a similar load-balancing mode) to route service traffic efficiently. This configuration is pending implementation. (TODO: Not yet implemented)
-- Redis is planned to run as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence. (TODO: Not yet implemented)
+- Redis is planned to run as a clustered StatefulSet with automatic failover in production (see [Redis Architecture](../system-architecture-redis.md)). Local development instead runs a single Redis container configured via `config/redis/redis.conf`, which disables RDB snapshots and relies on AOF. Both setups enable **AOF** persistence. (TODO: Not yet implemented)
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#📦-data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#🔄-recovery).
 - Deployments use Helm charts but are triggered manually via [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml), which runs `helm upgrade` with `k8s/helm/values-local.yaml` by default. Use `values-dev.yaml` or other values files for non-local clusters. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
 
