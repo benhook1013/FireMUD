@@ -40,7 +40,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add `.gitattributes` for consistent line endings across platforms
   - [x] Add `gradle.properties` enabling build caching and parallelism
   - [x] Provide baseline `config/redis/redis.conf` for Docker Compose
-  - [x] Provide script to generate Gradle wrappers for all services (`init-gradle-wrappers.ps1`)
+    - [x] Provide script to generate Gradle wrappers for all services (`dev-tools/init-gradle-wrappers.ps1`)
   - [x] Implement CI/CD pipeline for automated builds, testing, and deployment (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
     - [x] Ensure CI/CD includes the common package build process
   - [x] Define API contracts & inter-service communication (REST, gRPC, WebSockets)
@@ -52,7 +52,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Set up centralized logging & monitoring (Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager)
   - [x] Configure Gradle Node plugin and markdownlint tasks
     - [x] Add `config/markdownlint/.markdownlint-cli2.jsonc` with repository rules
-    - [x] Provide `config/pre-commit/.pre-commit-config.yaml` and git hook script
+      - [x] Provide `.pre-commit-config.yaml` and git hook script
     - [x] Add `package.json` with `markdownlint-cli2` for lint tasks
   - [x] Add `checkstyle.xml` and `spotbugs-exclude.xml` configuration files
   - [x] Apply `com.google.protobuf` plugin across services for gRPC stub generation

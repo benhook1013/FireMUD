@@ -284,7 +284,7 @@ Before launch or after major updates, creators invite testers to staged environm
 
 ## 17. Testing & Continuous Delivery
 
-1. **Pre‑Commit Hooks** – Developers run `pre-commit run --all-files -c config/pre-commit/.pre-commit-config.yaml` or `./gradlew check` to format code and execute tests before pushing.
+1. **Pre‑Commit Hooks** – Developers run `pre-commit run --all-files` or `./gradlew check` to format code and execute tests before pushing.
 2. **Run Tests** – Each microservice executes unit and integration tests. See [Testing Strategy](./system-architecture-testing.md).
 3. **CI/CD Pipeline** – Changes are built and deployed via GitHub Actions as described in [CI/CD Pipeline](./system-architecture-cicd.md). Workflows run unit tests, CodeQL security scans, open source license checks, and generate ERD diagrams before publishing Docker images and documentation.
 4. **Database Migrations** – Schemas are migrated with Flyway on startup; see [Database Migrations](./system-architecture-database-migrations.md).

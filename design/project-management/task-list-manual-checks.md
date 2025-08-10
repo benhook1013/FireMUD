@@ -17,7 +17,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `velero` CLI for backup validation
 - [ ] `aws` CLI if uploading backups to object storage
 - [ ] Verify Gradle wrapper with `./gradlew --version`
-- [ ] Generate wrappers if missing with `gradle wrapper --gradle-version 8.14.3 --distribution-type bin` (or run `services/init-gradle-wrappers.ps1` on Windows)
+  - [ ] Generate wrappers if missing with `gradle wrapper --gradle-version 8.14.3 --distribution-type bin` (or run `dev-tools/init-gradle-wrappers.ps1` on Windows)
 - [ ] Verify tool versions
   - [ ] `java --version`
   - [ ] `node --version`
@@ -34,9 +34,9 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `terraform version`
 - [ ] Set up git hooks
   - [ ] `pip install pre-commit`
-  - [ ] `pre-commit install -c config/pre-commit/.pre-commit-config.yaml`
+  - [ ] `pre-commit install`
   - [ ] `git config core.hooksPath config/git-hooks`
-  - [ ] `pre-commit run --all-files -c config/pre-commit/.pre-commit-config.yaml`
+  - [ ] `pre-commit run --all-files`
   - [ ] Copy `.env.sample` to `.env` and adjust values as needed
 
 ## ✅ Build & Test Commands

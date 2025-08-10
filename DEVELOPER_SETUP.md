@@ -25,11 +25,10 @@ required `gradle-wrapper.jar` into `gradle/wrapper/`.
 
 This creates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`. You only need to run it once after cloning.
 
-If you're on Windows, a PowerShell script is available in the `services` directory to generate wrappers for every service:
+If you're on Windows, a PowerShell script is available to generate wrappers for every service:
 
 ```powershell
-cd services
-./init-gradle-wrappers.ps1
+./dev-tools/init-gradle-wrappers.ps1
 ```
 
 Run this script after cloning if the wrapper files are missing from the individual service folders.
