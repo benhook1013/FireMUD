@@ -133,5 +133,5 @@ Monetization:
 - Instrument new services with Micrometer metrics and OpenTelemetry tracing using existing interceptors and configuration.
 - Ensure new endpoints record metrics and create spans for business operations.
 - gRPC endpoints must return `ErrorDetail` objects for application errors. Wrap response observers to log warnings, increment `grpc.app_error` with the error code, and tag spans. Only call `onError()` for transport or infrastructure failures.
-- Run `pre-commit run --all-files -c config/pre-commit/.pre-commit-config.yaml` or `./gradlew check` before committing to verify formatting, tests, and coverage.
+- Run `pre-commit run --all-files` or `./gradlew check` before committing to verify formatting, tests, and coverage.
 - Avoid returning nulls; use transactions for DB consistency.
