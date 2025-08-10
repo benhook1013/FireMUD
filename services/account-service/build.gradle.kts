@@ -21,7 +21,7 @@ dependencies {
     implementation(libs.opentelemetry.api)
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.3")
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.4")
     implementation(libs.stripe.java)
     implementation(libs.otp.java)
     implementation(libs.jjwt.api)
