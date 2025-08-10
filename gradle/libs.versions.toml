@@ -9,7 +9,7 @@ protobuf = "4.31.1"
 opentelemetry = "1.52.0"
 micrometer = "1.15.2"
 jjwt = "0.12.6"
-aws-sdk = "2.25.45"
+aws-sdk = "2.32.19"
 
 [libraries]
 # Spring Boot Starters
