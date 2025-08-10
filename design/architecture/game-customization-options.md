@@ -29,7 +29,7 @@ Example `manifest.json`:
   and credentials via `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`,
   `ASSET_STORE_SECRET_KEY`, and `ASSET_STORE_REGION`.
 
-- The React client loads theme and asset files per tenant at runtime; see
+- The React client loads theme and asset files per tenant at runtime; see [Frontend Architecture](./system-architecture-frontend.md) for details.
 
 ---
 
