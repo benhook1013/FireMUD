@@ -76,7 +76,7 @@ Linting rules are defined in `config/markdownlint/.markdownlint-cli2.jsonc`. Aut
 
 The React client in `web-client` provides npm scripts for linting, formatting,
 and running an accessibility audit. After installing dependencies with
-`npm ci`, you can run these checks:
+`npm --prefix config/openapi ci`. you can run these checks:
 
 ```bash
 cd web-client
@@ -105,11 +105,11 @@ OpenAPI descriptions for each service live under
 `services/**/src/main/resources/openapi.yaml`. Lint these files with
 
 ```bash
-npm run openapi:lint
+npm --prefix config/openapi run openapi:lint
 ```
 
 Run this command from the project root after installing dependencies with
-`npm ci`.
+`npm --prefix config/openapi ci`.
 
 ## Lombok and MapStruct
 

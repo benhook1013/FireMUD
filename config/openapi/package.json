@@ -6,6 +6,6 @@
     "markdownlint-cli2": "^0.18.1"
   },
   "scripts": {
-    "openapi:lint": "npx -y @redocly/cli lint \"services/**/src/main/resources/openapi.yaml\""
+    "openapi:lint": "npx -y @redocly/cli lint \"../../services/**/src/main/resources/openapi.yaml\""
   }
 }

@@ -116,7 +116,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: 📑 Lint OpenAPI Specs
-        run: npm run openapi:lint
+        run: npm --prefix config/openapi run openapi:lint
 
       - name: 💾 Cache Node Modules
         uses: actions/cache@v3
@@ -124,6 +124,7 @@ jobs:
           path: |
             ~/.npm
             node_modules
+            config/openapi/node_modules
           key: node-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
           restore-keys: node-${{ runner.os }}-
 
