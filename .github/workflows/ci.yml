@@ -32,6 +32,13 @@ jobs:
           version: '1.30.0'
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 💾 Cache Buf modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/buf
+          key: buf-mod-${{ runner.os }}-${{ hashFiles('protos/buf.yaml', 'protos/**/*.proto') }}
+          restore-keys: buf-mod-${{ runner.os }}-
+
       - name: 🛠️ Fetch Base Commit for Buf Breaking
         if: github.event_name == 'pull_request'
         run: |
@@ -67,15 +74,9 @@ jobs:
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v3
-
-      - name: 📦 Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-
-      - name: 🐚 Run ShellCheck
-        run: |
-          echo "::group::ShellCheck"
-          find dev-tools -name '*.sh' -print0 | xargs -0 shellcheck
-          echo "::endgroup::"
+      - uses: ludeeus/action-shellcheck@2
+        with:
+          scandir: dev-tools
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
@@ -105,38 +106,36 @@ jobs:
         uses: actions/checkout@v3
 
       - name: ⚙️ Set Up Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ matrix.java-version }}
+          cache: gradle
 
       - name: ⚙️ Set Up Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web-client/package-lock.json
+
+      - name: 📦 Install Root Dependencies
+        run: npm ci
 
       - name: 📑 Lint OpenAPI Specs
         run: npm run openapi:lint
 
-      - name: 💾 Cache Node Modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.npm
-            node_modules
-          key: node-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: node-${{ runner.os }}-
-
       - name: 📦 Install Frontend Dependencies
-        run: |
-          cd web-client
-          npm ci
-        
+        run: npm ci
+        working-directory: web-client
+
       - name: 🛠 Run Frontend Lint
         run: |
-          cd web-client
           npm run lint
           npm run format -- -c
+        working-directory: web-client
 
       - name: Cache Chrome .deb
         id: cache-chrome
@@ -159,9 +158,6 @@ jobs:
         run: |
           cd web-client
           npm run accessibility
-
-      - name: ♻️ Clean Gradle Cache Directory
-        run: rm -rf ~/.gradle
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -352,10 +348,15 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v3
 
-      - name: ⚙️ Set Up Node
-        uses: actions/setup-node@v3
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v4
         with:
-          node-version: 20
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: 🖼️ Generate ERD diagrams
         run: ./dev-tools/generate-erd.sh

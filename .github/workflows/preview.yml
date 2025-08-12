@@ -18,13 +18,49 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable BuildKit
+        run: echo "DOCKER_BUILDKIT=1" >> $GITHUB_ENV
 
       - name: Prepare environment file
         run: cp .env.sample .env
 
-      - name: Build and Start Stack
-        run: ./gradlew --no-daemon devUp
+      - name: Generate Dev Certificates
+        run: ./dev-tools/generate-dev-certs.sh
+
+      - name: Build service images with cache
+        run: |
+          services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
+          for service in $services; do
+            docker buildx build \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              --load \
+              -t firemud-$service \
+              ./services/$service
+          done
+
+      - name: Start preview
+        run: |
+          COMPOSE_PROJECT_NAME=firemud docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml up -d
 
       - name: Check Gateway Health
         run: |
@@ -64,4 +100,4 @@ jobs:
 
       - name: Tear Down Stack
         if: always()
-        run: ./gradlew --no-daemon devDown
+        run: COMPOSE_PROJECT_NAME=firemud docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml down

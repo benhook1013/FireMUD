@@ -25,6 +25,16 @@ jobs:
       - name: ⬇️ Checkout repository
         uses: actions/checkout@v3
 
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       - name: 🔍 Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
