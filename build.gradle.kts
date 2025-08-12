@@ -214,3 +214,11 @@ tasks.register<Exec>("devDown") {
         "down"
     )
 }
+
+tasks.register<Exec>("erd") {
+    commandLine("bash", "dev-tools/docs/generate-erd.sh")
+}
+
+tasks.register<Exec>("seed") {
+    commandLine("bash", "dev-tools/seed/seed.sh")
+}
