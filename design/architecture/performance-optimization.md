@@ -18,7 +18,7 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Database writes during gameplay are **deferred and batched**. The Game Session
   Service coordinates commits at the end of each tick so the Entity Management
   Service only persists changes once per tick. This reduces write frequency and
-  lock contention. (TODO: Not yet implemented)
+  lock contention.
 - The Entity Management Service uses optimistic locking with `@Version` columns
   on all entity tables to prevent lost updates.
 
@@ -33,7 +33,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   actions are rolled back and retried automatically.
 - Tick regions execute independently so work can be parallelized across
   threads and servers for better scalability and fault isolation. See
-  [Tick Regions and Parallel Execution](./system-architecture-ticks.md#%F0%9F%8C%8D-tick-regions-and-parallel-execution). (TODO: Not yet implemented)
+  [Tick Regions and Parallel Execution](./system-architecture-ticks.md#%F0%9F%8C%8D-tick-regions-and-parallel-execution).
 - The Automation & Scripting Service evaluates scripts on its own schedule and
   injects resulting commands into tick queues. Per-script quotas are enforced
   via Redis before queuing to avoid runaway automation. See
@@ -51,7 +51,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
   per-region visibility into retries and backoff behavior.
 - Graceful degradation logic in the Game Session Service retries failed
-  Redis operations so stalled ticks do not block gameplay. (TODO: Not yet implemented)
+  Redis operations so stalled ticks do not block gameplay.
 - The Game Session Service records the
   `game_session_commands_enqueued_total` and `game_session_tick_duration_ms`
   metrics so operators can monitor throughput and tick performance.
@@ -59,18 +59,16 @@ These notes summarize typical optimizations applied across FireMUD services.
   Prometheus can track request latency and call frequency.
 - Redis runs with **AOF persistence** and synchronous replication via `WAIT` (see [Backup & Disaster Recovery](./system-architecture-backup-recovery.md))
   so tick state can be recovered quickly after failover. The Game Session
-  Service automatically replays staged commands on restart. (TODO: Not yet implemented)
+  Service automatically replays staged commands on restart.
 - Each tick enforces a **soft execution budget** (~100ms) (see the
   [Timeout and Fairness Policy](./system-architecture-ticks.md#%E2%8F%B0-timeout-and-fairness-policy)).
   Slow actions are deferred to follow-up ticks so long-running commands never
   block the game loop. Conflict metadata collected during retries highlights
-  hotspots for operators. (TODO: Not yet implemented)
+  hotspots for operators.
 - Lua staging scripts move only a limited number of commands or events per tick
   (configurable via `game.tick-max-commands` and `automation.tick-max-events`).
   This prevents runaway loops and keeps work evenly distributed across ticks.
-- The TCP Proxy Service limits connections per IP and throttles messages per
-  client using `ConnectionThrottler` and a per-session rate limiter to shield
-  the gateway from abuse.
+- The Game Session Service centrally enforces per-IP connection limits and per-session message rate limiting via Redis-backed throttlers. Edge services like the TCP Proxy and Gateway forward client IP headers and may perform lightweight checks but defer to the Game Session Service for authoritative enforcement.
 
 ## Network Traffic
 
@@ -97,6 +95,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   - **Tells:** 48 hours or 50 messages per player
   - **Guild/City:** 48 hours or 50 messages per guild or city
   - **Account messages:** 48 hours or 50 messages
+  
   Older messages are persisted in PostgreSQL for long-term retrieval.
 - High concurrency load tests with Gatling, located under `dev-tools/load-testing`, help determine scaling limits and guide database indexing improvements.
 

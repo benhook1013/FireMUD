@@ -23,6 +23,15 @@
 - [ ] Implement graceful degradation when Redis operations stall to avoid gameplay interruption
 - [ ] Record conflict metadata during retries to highlight hotspots and enable adaptive throttling
 - [ ] Support per-tenant tick intervals to customize pacing across games
+- [ ] Implement stat-based prioritization for action execution
+- [ ] Schedule entity updates for cooldowns, patrols, and regeneration
+- [ ] Add backoff windows and retry caps for failed actions
+- [ ] Add graph-based conflict resolution for repeated contention
+- [ ] Batch database writes at the end of each tick
+- [ ] Implement timer scanning and dynamic time scaling
+- [ ] Implement session rebinding and deduplication using Redis keys
+- [ ] Fan out global events across tick regions
+- [ ] Implement cross-region command relay using `remote:{tenantId}:{entityId}` keys
 
 ## Analytics & Coordination
 

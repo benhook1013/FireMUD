@@ -309,7 +309,7 @@ Parameters required to register a new account.
 | ----- | ---- | ----- | ----------- |
 | username | [string](#string) |  | Desired username for login and display. |
 | email | [string](#string) |  | Email address used for notifications and password recovery. |
-| password | [string](#string) |  | Raw password that will be hashed before storage. |
+| password | [string](#string) |  | Raw password that is hashed before storage. |
 
 
 
@@ -1893,6 +1893,7 @@ Basic ping response containing a greeting and optional error details.
 | tenant_id | [string](#string) |  |  |
 | runtime_version | [string](#string) |  |  |
 | script_patch_version | [string](#string) |  |  |
+| client_ip | [string](#string) |  |  |
 
 
 

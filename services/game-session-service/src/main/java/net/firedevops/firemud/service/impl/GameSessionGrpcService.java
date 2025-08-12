@@ -28,7 +28,9 @@ import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
+import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.SessionRateLimiter;
 import net.firedevops.firemud.service.TickService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
@@ -41,18 +43,24 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   private final FeatureFlagService featureFlagService;
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
+  private final IpConnectionLimiter ipConnectionLimiter;
+  private final SessionRateLimiter sessionRateLimiter;
 
   public GameSessionGrpcService(
       PingService pingService,
       GameInstanceService gameInstanceService,
       FeatureFlagService featureFlagService,
       TickService tickService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      IpConnectionLimiter ipConnectionLimiter,
+      SessionRateLimiter sessionRateLimiter) {
     this.pingService = pingService;
     this.gameInstanceService = gameInstanceService;
     this.featureFlagService = featureFlagService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
+    this.ipConnectionLimiter = ipConnectionLimiter;
+    this.sessionRateLimiter = sessionRateLimiter;
   }
 
   private ErrorDetail error(String code, String message) {
@@ -75,6 +83,16 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
       net.firedevops.firemud.gamesession.v1.StartSessionRequest request,
       StreamObserver<StartSessionResponse> responseObserver) {
     try {
+      String clientIp = request.getClientIp();
+      if (clientIp != null && !clientIp.isBlank() && !ipConnectionLimiter.canAccept(clientIp)) {
+        StartSessionResponse response =
+            StartSessionResponse.newBuilder()
+                .setError(error("CONNECTION_LIMIT", "Too many connections from IP"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       StartSessionRequest dto =
           new StartSessionRequest(
               Long.valueOf(request.getTenantId()),
@@ -82,6 +100,9 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
               request.getScriptPatchVersion(),
               0L);
       GameInstanceDto instance = gameInstanceService.startSession(dto);
+      if (clientIp != null && !clientIp.isBlank()) {
+        ipConnectionLimiter.register(clientIp, instance.id());
+      }
       StartSessionResponse response =
           StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();
       responseObserver.onNext(response);
@@ -101,7 +122,9 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   public void stopSession(
       StopSessionRequest request, StreamObserver<StopSessionResponse> responseObserver) {
     try {
-      gameInstanceService.stopSession(Long.parseLong(request.getSessionId()));
+      long sessionId = Long.parseLong(request.getSessionId());
+      gameInstanceService.stopSession(sessionId);
+      ipConnectionLimiter.release(sessionId);
       StopSessionResponse response = StopSessionResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -142,10 +165,18 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
     try {
-      tickService.enqueueCommand(
-          Long.valueOf(request.getSessionId()),
-          request.getCommand(),
-          request.getRequiresSoloTick());
+      long sessionId = Long.valueOf(request.getSessionId());
+      if (!sessionRateLimiter.allow(sessionId)) {
+        EnqueueCommandResponse response =
+            EnqueueCommandResponse.newBuilder()
+                .setAccepted(false)
+                .setError(error("RATE_LIMIT", "Command rate limit exceeded"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
+      tickService.enqueueCommand(sessionId, request.getCommand(), request.getRequiresSoloTick());
       EnqueueCommandResponse response =
           EnqueueCommandResponse.newBuilder().setAccepted(true).build();
       responseObserver.onNext(response);

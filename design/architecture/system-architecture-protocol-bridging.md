@@ -48,7 +48,7 @@ Despite their differences, both protocols are normalized into the same internal 
   - Performs basic Telnet option negotiation for compatibility.
   - Sanitizes incoming data and allows only a safe subset of
     **Telnet protocol commands** as outlined in
-    [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-future-controls).
+    [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
   - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly.
     See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
   - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
@@ -57,8 +57,8 @@ Despite their differences, both protocols are normalized into the same internal 
     provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
   - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
     Forwarding uses mutual TLS for this hop.
-  - Applies per-IP connection and message rate limits using
-    `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and `TCP_PROXY_MAX_MSGS_PER_SEC`.
+  - Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce
+    connection limits and rate limiting centrally.
   - Proxies I/O between the TCP client and Spring Cloud Gateway.
   - Buffers active input while the client remains connected and discards it if
     the TCP connection drops.

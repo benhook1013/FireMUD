@@ -25,10 +25,20 @@ published game assets.
 4. Create the bucket used by FireMUD:
 
    ```bash
-   kubectl run mc --rm -it --image=minio/mc --command -- \
-     sh -c "mc alias set local http://minio:9000 MINIOADMIN MINIOADMIN && mc mb local/firemud-assets"
-   ```
+    kubectl run mc --rm -it --image=minio/mc --command -- \
+      sh -c "mc alias set local http://minio:9000 MINIOADMIN MINIOADMIN && mc mb local/firemud-assets"
+    ```
 
-Expose the service with an Ingress or Port-forward as needed. Configure
-application services using the `ASSET_STORE_*` environment variables to point to
-this endpoint.
+5. Allow public reads and CORS from the gateway domain:
+
+    ```bash
+    kubectl run mc --rm -it --image=minio/mc --command -- \
+      sh -c "mc alias set local http://minio:9000 MINIOADMIN MINIOADMIN && \
+             mc anonymous set download local/firemud-assets && \
+             printf '[{\"AllowedMethods\":[\"GET\"],\"AllowedOrigins\":[\"https://your-gateway-domain\"],\"AllowedHeaders\":[\"*\"]}]' > /tmp/cors.json && \
+             mc cors set local/firemud-assets /tmp/cors.json"
+    ```
+
+ Expose the service with an Ingress or Port-forward as needed. Configure
+ application services using the `ASSET_STORE_*` environment variables to point to
+ this endpoint.

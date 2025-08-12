@@ -1,0 +1,35 @@
+package net.firedevops.firemud.service.impl;
+
+import java.time.Duration;
+import net.firedevops.firemud.service.SessionRateLimiter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+
+/** Redis-backed implementation of {@link SessionRateLimiter}. */
+@Service
+public class SessionRateLimiterImpl implements SessionRateLimiter {
+  private final StringRedisTemplate redisTemplate;
+  private final int maxMessagesPerSecond;
+
+  public SessionRateLimiterImpl(
+      StringRedisTemplate redisTemplate,
+      @Value("${GAME_SESSION_MAX_MSGS_PER_SEC:20}") int maxMessagesPerSecond) {
+    this.redisTemplate = redisTemplate;
+    this.maxMessagesPerSecond = maxMessagesPerSecond;
+  }
+
+  @Override
+  public boolean allow(long sessionId) {
+    String key = key(sessionId);
+    Long count = redisTemplate.opsForValue().increment(key);
+    if (count != null && count == 1L) {
+      redisTemplate.expire(key, Duration.ofSeconds(1));
+    }
+    return count != null && count <= maxMessagesPerSecond;
+  }
+
+  private String key(long sessionId) {
+    return "ratelimit:" + sessionId;
+  }
+}

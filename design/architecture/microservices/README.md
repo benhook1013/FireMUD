@@ -33,7 +33,7 @@ Each microservice document follows a consistent structure, covering:
 - **Architecture and Key Responsibilities**
 - **Key Features, Data Models, and APIs**
 - **External and Internal Dependencies**
-- **Future Enhancements and Roadmap**
+- **Operational Notes and Task Tracking**
 
 For cross-service systems (e.g., networking, infrastructure), refer to:
 

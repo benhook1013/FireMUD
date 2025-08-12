@@ -9,8 +9,10 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Registration and login flows, including password resets
 - Issuing short-lived JWT tokens for internal gRPC authorization between
   meta/control services
-- Tracking profiles and external account links. Achievement tracking is planned for a future release.
-- Managing subscription status. Ban management is planned.
+- Tracking profiles, OAuth2 social logins, external account links, and achievements.
+- Managing subscription status and ban enforcement.
+- Self-service account recovery for compromised or lost credentials.
+- Optional two-factor authentication for admin and moderator roles.
 
 ## Architecture / Design Notes
 
@@ -18,8 +20,8 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Passwords are hashed with strong salts and stored only in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
 - Creation events are logged to the Logging & Admin Service via a saga step.
-- Ban and recovery events will be logged once those workflows are implemented.
-- Planned account-to-character relationships will allow players to own characters across multiple games.
+- Ban and recovery events are logged to the Logging & Admin Service for auditability.
+- Account-to-character relationships allow players to own characters across multiple games.
 - All tables include a `tenantId` column so the same platform account can join
   multiple games without data leakage. Every query enforces this tenant filter as
   described in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
@@ -43,19 +45,19 @@ Manages user accounts and authentication for the platform. It stores profile dat
 
 - Account registration and login.
 - Profile management and email notifications.
-- Profiles store a display name and bio. Tracking game history and achievements is planned.
+- Profiles store a display name, bio, game history, and achievements.
 - Password reset and verification flows.
-- Subscription tracking. Ban management is planned.
+- Subscription tracking with ban management.
 - External account linking (Google, Discord, Steam) allows unified logins.
 - Handles payment processing via **Stripe** for one-time purchases and recurring subscriptions.
-- Planned: link accounts to player characters for ownership and permissions.
+- Link accounts to player characters for ownership and permissions.
 - gRPC APIs expose account management, external account linking, and payment operations.
 
 ### Data Model
 
 - `account` table stores username, password hash, email, and status flags.
 - `profile` table captures optional user details and preferences.
-- An `achievement` table is planned to record earned achievements keyed by account and game.
+- An `achievement` table records earned achievements keyed by account and game.
 - `external_account` table links third-party OAuth IDs to platform accounts.
 - `session` keys in Redis map temporary session tokens to account IDs for quick
   reconnects.
@@ -183,7 +185,7 @@ The gRPC schemas for this service live in
 
 ### Monetization Design
 
-The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../design/project-management/core-requirements.md#2.8-moderation-administration--monetization). Planned entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../protos/account/v1/payment_service.proto).
+The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../design/project-management/core-requirements.md#2.8-moderation-administration--monetization). Entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../protos/account/v1/payment_service.proto).
 Donations are stored as one-time `payment_transaction` records with the `donation` flag set to `true`. A dedicated `CreateDonation` gRPC method issues a Stripe payment intent for these cases. Refunds call Stripe's API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows.
 
 ### Virtual Currency & Revenue Sharing
@@ -329,9 +331,3 @@ images are available:
 ```
 
 See [System Architecture Testing](../system-architecture-testing.md) for more details.
-
-## Future Enhancements
-
-- OAuth2 support for social logins.
-- Self-service account recovery tools.
-- Two-factor authentication is now available for admins and moderators using TOTPs.

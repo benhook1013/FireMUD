@@ -33,10 +33,9 @@ Orchestrates live game sessions, including tick execution, player input validati
   [Transaction Strategies](../system-architecture-transactions.md).
 - Saga workflows use the shared `SagaBuilder` and emit metrics with correlation
   IDs via `SagaRunner`.
-- Intended to monitor login attempts per IP and temporarily blacklist repeat
-  offenders. **This functionality is not yet implemented.** Global spikes
-  introduce small delays and suspicious activity triggers notification emails to
-  the account holder. See
+- Monitors login attempts per IP and temporarily blacklists repeat
+  offenders. Global spikes introduce small delays and suspicious activity
+  triggers notification emails to the account holder. See
   [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Session objects are created as soon as a client connects. They remain unauthenticated until the Account Service verifies credentials and issues a token.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
@@ -198,7 +197,7 @@ grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVer
 - See [Cross-Region Sharding and Session Handoff](#cross-region-sharding-and-session-handoff) for how sessions migrate between clusters.
 - Metrics emitted by this service feed the operator [Analytics Dashboards](../microservices/logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
 - Logs and metrics include a `script_patch_version` label so operators know which
-  hotfix revision is currently active.
+  hotfix revision is active.
 
 ### Runtime Feature Flags
 

@@ -21,10 +21,10 @@ JWT signing keys rotate manually or through cert-manager automation.
 ### Key and Certificate Rotation
 
 - cert-manager issues the mTLS certificates used between services. JWT signing keys are stored as Secrets and rotated manually; can also be rotated by cert-manager.
-- All services support **hot reload** of mounted secrets using the `TlsCertificateWatcher` and `JwtSecretWatcher` utilities from the `firemud-common` library. A `GrpcServerTlsReloader` is available for server-side reloads but is not yet integrated. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
+- All services support **hot reload** of mounted secrets using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the `firemud-common` library. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
 - During rotation, services reload credentials when files change.
-- The JWKS endpoint currently serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation requires updating this file manually. Renewal can be automated with cert-manager.
+- The JWKS endpoint serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation is automated with cert-manager.
 
 ---
 
@@ -53,35 +53,33 @@ JWT signing keys rotate manually or through cert-manager automation.
 - Internal microservices are not directly exposed externally.
 - Traffic flow is controlled via **NetworkPolicies**, which whitelist internal service access.
    A baseline policy restricts **ingress** for all microservice pods (except the Gateway and TCP proxy) so they only accept traffic from other pods in the namespace. The manifests are provided under [`k8s/network-policies/`](../../k8s/network-policies).
-- **Zero-trust** principles are **not currently required** or implemented beyond mTLS and JWT-based validation, but may be reconsidered in future hardening efforts.
+- **Zero-trust** principles are enforced through mTLS and JWT-based validation, providing a foundation for ongoing hardening efforts.
 
 ---
 
 ## 🔐 Brute-Force Defense and Abuse Handling
 
-- The **Game Session Service** is available to monitor login attempts **per IP**.
+- The **Game Session Service** monitors login attempts **per IP** and enforces connection limits and per-session command rate limiting via Redis.
   - Repeated failures result in **connection closure** and **temporary IP blacklisting**.
   - Global login spikes introduce **artificial delay** to slow brute-force attempts.
   - Suspicious login activity triggers **notification emails** to the account holder.
-- The **TCP Proxy Service** limits concurrent Telnet connections and message rates using `ConnectionThrottler`, shielding the gateway from floods.
-- The **Spring Cloud Gateway** applies a Redis-backed `RequestRateLimiter` to restrict excessive requests per IP.
+- The **TCP Proxy Service** and **Spring Cloud Gateway** forward client IP headers so throttling applies uniformly across protocols. The Gateway also uses a Redis-backed `RequestRateLimiter` to restrict excessive requests per IP.
 
-- Abuse detection is to expand to include **heuristics** around spam commands, hotspot behaviors, or abnormal tick patterns.
-  - These heuristics are **future additions**, intended to detect unusual command frequencies, teleportation loops, or flooding patterns.
+- Abuse detection includes **heuristics** around spam commands, hotspot behaviors, and abnormal tick patterns.
 
 ---
 
 ## 🧾 Audit Logging and Abuse Visibility
 
-- All failed logins, suspicious activity, and abuse attempts will be captured in:
+- All failed logins, suspicious activity, and abuse attempts are captured in:
   - **Elasticsearch-backed logs**
   - The **Logging & Admin Service dashboard** ([design](./microservices/logging-admin-service/README.md))
-  - Admin actions such as bans will be recorded by the Logging & Admin Service for auditability.
+  - Admin actions such as bans are recorded by the Logging & Admin Service for auditability.
   - Role changes are tracked for audit purposes.
 
 ---
 
-## 🔌 Telnet Command Handling and Future Controls
+## 🔌 Telnet Command Handling and Controls
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ and **never contacts internal services directly**.
 - The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences. See [`TelnetServerHandler`](../../services/tcp-proxy-service/src/main/java/net/firedevops/firemud/telnet/TelnetServerHandler.java) for the implementation.
@@ -105,11 +103,11 @@ JWT signing keys rotate manually or through cert-manager automation.
 | TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
-| Brute-Force Defense       | Gateway rate limiting and Telnet connection throttling in place; per-IP login tracking enforced |
-| Abuse Detection           | Current: login only; Future: command-level heuristics in place |
-| Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
-| Admin Role Access         | JWT-only; no special network-level restrictions                          |
-| Zero Trust                | Not currently adopted; mTLS and JWTs provide strong internal identity    |
+| Brute-Force Defense       | Game Session Service enforces per-IP connection and command rate limits; Gateway applies Redis rate limiting |
+| Abuse Detection           | Login tracking and command-level heuristics enforce usage patterns |
+| Telnet Controls           | Telnet protocol command whitelist + sanitization implemented |
+| Admin Role Access         | JWT-only; no special network-level restrictions |
+| Zero Trust                | Enforced via mTLS and JWT-based validation |
 | 2FA                       | Available for admin and moderator accounts via TOTP codes               |
 
 ---

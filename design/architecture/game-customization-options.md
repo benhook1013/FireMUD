@@ -6,7 +6,7 @@ This brief document summarizes optional ways a hosted game can change its look a
 
 - Designers upload logos, favicons, and theme JSON through the **Game Design Service** at design time. Assets are packaged when a version is published.
 - At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a CDN) under a `tenantId`/`version` path. A `manifest.json` mapping asset keys to public URLs is stored alongside them.
-- Runtime clients fetch this manifest using the URL recorded in the published version metadata and load assets directly from the CDN. The Game Design Service is never queried during gameplay.
+- Runtime clients fetch this manifest using the URL recorded in the published version metadata and load assets directly from the CDN or through the gateway's `/assets/**` route when a local MinIO instance is used. The Game Design Service is never queried during gameplay.
 - A `manifest.json` is generated for every published version, even when no assets are supplied, so version metadata remains consistent.
 - If the manifest is empty or missing fields, the default platform branding is applied.
 - The manifest can be extended with optional assets such as tutorial images, UI overlays, or CSS snippets.
@@ -24,12 +24,13 @@ Example `manifest.json`:
 - **Self-hosted S3**: For local development or private deployments, run an
   S3-compatible service such as MinIO. Docker Compose provides a `minio` service
   preconfigured with the `firemud-assets` bucket. In Kubernetes, apply the
-  manifests under `k8s/minio/` and expose the service with an Ingress or
-  port-forward. Point `ASSET_STORE_ENDPOINT` to this instance and set the bucket
-  and credentials via `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`,
-  `ASSET_STORE_SECRET_KEY`, and `ASSET_STORE_REGION`.
+  manifests under `k8s/minio/` and proxy `/assets/**` through the gateway
+  instead of exposing MinIO directly. Set `ASSET_STORE_ENDPOINT` to
+  `https://<gateway-domain>/assets` and supply the bucket and credentials via
+  `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`, `ASSET_STORE_SECRET_KEY`, and
+  `ASSET_STORE_REGION`.
 
-- The React client loads theme and asset files per tenant at runtime; see
+- The React client loads theme and asset files per tenant at runtime; see [Frontend Architecture](./system-architecture-frontend.md) for details.
 
 ---
 

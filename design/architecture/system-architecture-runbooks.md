@@ -103,8 +103,20 @@ See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for b
      sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && mc mb local/firemud-assets"
    ```
 
-3. Services access the bucket using the `ASSET_STORE_*` environment variables.
-4. To remove a published tenant version, delete the corresponding prefix:
+3. Allow public reads and CORS from the gateway domain:
+
+   ```bash
+   kubectl run mc --rm -it --image=minio/mc --command -- \
+     sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && \
+            mc anonymous set download local/firemud-assets && \
+            printf '[{\"AllowedMethods\":[\"GET\"],\"AllowedOrigins\":[\"https://your-gateway-domain\"],\"AllowedHeaders\":[\"*\"]}]' > /tmp/cors.json && \
+            mc cors set local/firemud-assets /tmp/cors.json"
+   ```
+
+4. Services access the bucket using the `ASSET_STORE_*` environment variables. When the
+   gateway proxies `/assets/**` to MinIO, set `ASSET_STORE_ENDPOINT` to
+   `https://<gateway-domain>/assets` so published manifests generate public URLs.
+5. To remove a published tenant version, delete the corresponding prefix:
 
    ```bash
    kubectl run mc --rm -it --image=minio/mc --command -- \

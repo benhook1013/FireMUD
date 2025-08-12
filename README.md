@@ -189,6 +189,16 @@ Stop the stack with:
 
 ---
 
+## Tooling
+
+Use explicit paths for helper scripts:
+
+- `npm --prefix config/openapi run openapi:lint`
+- `./gradlew erd`
+- `./gradlew seed`
+
+The `.pre-commit-config.yaml` and `.editorconfig` files stay at the repository root for automatic discovery.
+
 ## Support Us
 
 Your support can make a significant difference in the development and success of the FireMUD Game Platform. If you're interested in supporting the project, here are some ways you can help:

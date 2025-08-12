@@ -53,11 +53,11 @@ This checklist covers optional manual steps to verify that development tooling a
 ## 📦 Node & OpenAPI Tasks
 
 - [ ] `npm ci` inside `web-client`
-- [ ] `npm ci` in the repository root to install doc tools
+- [ ] `npm --prefix config/openapi ci` to install doc tools
 - [ ] `npm run lint`
 - [ ] `npm run format -- -c`
 - [ ] `npm run format:fix`
-- [ ] `npm run openapi:lint`
+- [ ] `npm --prefix config/openapi run openapi:lint`
 - [ ] `npm run accessibility` (requires Google Chrome)
 - [ ] `npm run build` to generate the production bundle
 - [ ] `npm run preview` to verify the production bundle
