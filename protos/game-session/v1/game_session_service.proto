@@ -27,6 +27,7 @@ message StartSessionRequest {
   string tenant_id = 1;
   string runtime_version = 2;
   string script_patch_version = 3;
+  string client_ip = 4;
 }
 
 message StartSessionResponse {

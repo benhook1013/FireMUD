@@ -27,8 +27,8 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 - Sanitizes incoming Telnet data and enforces a whitelist of
    **Telnet protocol commands** as described in the
    [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
-- Applies connection throttling via `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and optional TLS termination controlled by `TCP_PROXY_TLS_ENABLED`.
-- Enforces per-client message rate limits via `TCP_PROXY_MAX_MSGS_PER_SEC`.
+- Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
+- Performs basic sanitization but defers connection and rate limits to downstream services.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
@@ -115,8 +115,6 @@ Additional variables control the proxy runtime behaviour:
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the TLS private key | *(empty)* |
-| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent connections per client IP | `5` |
-| `TCP_PROXY_MAX_MSGS_PER_SEC` | Allowed messages per second per client | `5` |
 
 The gRPC server listens on port `6565` by default as configured in `src/main/resources/application.yml`.
 
