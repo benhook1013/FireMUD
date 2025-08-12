@@ -8,8 +8,6 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletionStage;
@@ -22,23 +20,16 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
 
   private final String gatewayWsUrl;
-  private final ConnectionThrottler connectionThrottler;
-  private final int maxMessagesPerSecond;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections;
   private final io.micrometer.core.instrument.Counter connectionCounter;
   private WebSocket webSocket;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
-  private final Deque<Long> messageTimes = new ArrayDeque<>();
 
   public TelnetServerHandler(
       String gatewayWsUrl,
-      ConnectionThrottler connectionThrottler,
-      int maxMessagesPerSecond,
       java.util.concurrent.atomic.AtomicInteger activeConnections,
       io.micrometer.core.instrument.Counter connectionCounter) {
     this.gatewayWsUrl = gatewayWsUrl;
-    this.connectionThrottler = connectionThrottler;
-    this.maxMessagesPerSecond = maxMessagesPerSecond;
     this.activeConnections = activeConnections;
     this.connectionCounter = connectionCounter;
   }
@@ -65,50 +56,39 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @Override
   public void channelActive(ChannelHandlerContext ctx) {
     var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
-    if (!connectionThrottler.tryAcquire(remote)) {
-      logger.warn("Connection limit exceeded for {}", remote);
-      ctx.close();
-      return;
+    String ip = null;
+    if (remote instanceof java.net.InetSocketAddress address) {
+      ip = address.getAddress().getHostAddress();
     }
     connectionCounter.increment();
     activeConnections.incrementAndGet();
     HttpClient client = HttpClient.newHttpClient();
-    client
-        .newWebSocketBuilder()
-        .buildAsync(
-            URI.create(gatewayWsUrl),
-            new Listener() {
-              @Override
-              public void onOpen(WebSocket webSocket) {
-                setWebSocket(webSocket);
-                webSocket.request(1);
-                logger.info("WebSocket connected to {}", gatewayWsUrl);
-              }
+    var builder = client.newWebSocketBuilder();
+    if (ip != null) {
+      builder.header("X-Client-IP", ip);
+    }
+    builder.buildAsync(
+        URI.create(gatewayWsUrl),
+        new Listener() {
+          @Override
+          public void onOpen(WebSocket webSocket) {
+            setWebSocket(webSocket);
+            webSocket.request(1);
+            logger.info("WebSocket connected to {}", gatewayWsUrl);
+          }
 
-              @Override
-              public CompletionStage<?> onText(
-                  WebSocket webSocket, CharSequence data, boolean last) {
-                ctx.writeAndFlush(data.toString() + "\n");
-                webSocket.request(1);
-                return null;
-              }
-            });
+          @Override
+          public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            ctx.writeAndFlush(data.toString() + "\n");
+            webSocket.request(1);
+            return null;
+          }
+        });
   }
 
   @Override
   @Timed(value = "tcpproxy.command")
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
-    long now = System.currentTimeMillis();
-    messageTimes.addLast(now);
-    while (!messageTimes.isEmpty() && now - messageTimes.peekFirst() > 1000) {
-      messageTimes.removeFirst();
-    }
-    var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
-    if (messageTimes.size() > maxMessagesPerSecond) {
-      logger.warn("Rate limit exceeded from {}", remote);
-      return;
-    }
-
     String sanitized = sanitize(msg);
     if (sanitized == null) {
       return;
@@ -127,10 +107,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
       webSocket = null;
     }
-    var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
-    connectionThrottler.release(remote);
     activeConnections.decrementAndGet();
-    messageTimes.clear();
     buffer.clear();
   }
 

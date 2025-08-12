@@ -1893,6 +1893,7 @@ Basic ping response containing a greeting and optional error details.
 | tenant_id | [string](#string) |  |  |
 | runtime_version | [string](#string) |  |  |
 | script_patch_version | [string](#string) |  |  |
+| client_ip | [string](#string) |  |  |
 
 
 

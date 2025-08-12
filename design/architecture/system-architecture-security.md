@@ -59,12 +59,11 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ## 🔐 Brute-Force Defense and Abuse Handling
 
-- The **Game Session Service** is available to monitor login attempts **per IP**.
+- The **Game Session Service** monitors login attempts **per IP** and enforces connection limits and per-session command rate limiting via Redis.
   - Repeated failures result in **connection closure** and **temporary IP blacklisting**.
   - Global login spikes introduce **artificial delay** to slow brute-force attempts.
   - Suspicious login activity triggers **notification emails** to the account holder.
-- The **TCP Proxy Service** limits concurrent Telnet connections and message rates using `ConnectionThrottler`, shielding the gateway from floods.
-- The **Spring Cloud Gateway** applies a Redis-backed `RequestRateLimiter` to restrict excessive requests per IP.
+- The **TCP Proxy Service** and **Spring Cloud Gateway** forward client IP headers so throttling applies uniformly across protocols. The Gateway also uses a Redis-backed `RequestRateLimiter` to restrict excessive requests per IP.
 
 - Abuse detection is to expand to include **heuristics** around spam commands, hotspot behaviors, or abnormal tick patterns.
   - These heuristics are **future additions**, intended to detect unusual command frequencies, teleportation loops, or flooding patterns.
@@ -105,7 +104,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 | TLS Termination           | Load balancer                                                 |
 | Internal Encryption       | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
 | Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
-| Brute-Force Defense       | Gateway rate limiting and Telnet connection throttling in place; per-IP login tracking enforced |
+| Brute-Force Defense       | Game Session Service enforces per-IP connection and command rate limits; Gateway applies Redis rate limiting |
 | Abuse Detection           | Current: login only; Future: command-level heuristics in place |
 | Telnet Controls           | Telnet protocol command whitelist + sanitization implemented                                     |
 | Admin Role Access         | JWT-only; no special network-level restrictions                          |

@@ -22,8 +22,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new ConnectionThrottler(1),
-            5,
             new java.util.concurrent.atomic.AtomicInteger(),
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
@@ -51,8 +49,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new ConnectionThrottler(1),
-            5,
             new java.util.concurrent.atomic.AtomicInteger(),
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
@@ -68,36 +64,10 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void rateLimitDropsExcessMessages() {
-    TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            new ConnectionThrottler(1),
-            1,
-            new java.util.concurrent.atomic.AtomicInteger(),
-            new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
-    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
-    Channel channel = mock(Channel.class);
-    when(ctx.channel()).thenReturn(channel);
-    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
-    WebSocket ws = mock(WebSocket.class);
-    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
-    org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
-
-    handler.channelRead0(ctx, "look");
-    handler.channelRead0(ctx, "look again");
-
-    verify(ws, times(1)).sendText(anyString(), eq(true));
-  }
-
-  @Test
   void unsupportedTelnetCommandsAreDropped() {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new ConnectionThrottler(1),
-            5,
             new java.util.concurrent.atomic.AtomicInteger(),
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
@@ -121,8 +91,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new ConnectionThrottler(1),
-            5,
             new java.util.concurrent.atomic.AtomicInteger(),
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
@@ -146,8 +114,6 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new ConnectionThrottler(1),
-            5,
             new java.util.concurrent.atomic.AtomicInteger(),
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
