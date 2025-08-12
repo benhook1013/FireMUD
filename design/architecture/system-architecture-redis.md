@@ -12,8 +12,8 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 
 - In-flight command queues
 - Tick locks and staged results
-- Cooldowns and timer expirations (stored in milliseconds) (TODO: Not yet implemented)
-- Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding); timers pending) (TODO: Not yet implemented)
+- Cooldowns and timer expirations (stored in milliseconds)
+- Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))
 - Retry metadata and inter-tick conflict tracking
 - TTL-based service caches such as hot room lookups and recent chat history
   _(see [Performance Optimization Guidelines](./performance-optimization.md))_
@@ -34,7 +34,7 @@ The **Game Session Service** is responsible for coordinating tick and session be
 - Low-latency access for gameplay-critical state
 - Enables stateless, horizontally scalable services
 - Supports safe concurrent ticks and session handling
-- Facilitates reconnection, failover, and replay (TODO: Not yet implemented)
+- Facilitates reconnection, failover, and replay
 
 ---
 
@@ -44,19 +44,19 @@ Redis is a **non-persistent** layer — but FireMUD treats it as **essential** f
 
 ### Cluster Deployment
 
-FireMUD runs Redis in a **clustered, replicated configuration** (TODO: Not yet implemented):
+FireMUD runs Redis in a **clustered, replicated configuration**:
 
-- Multiple **shards and replicas** for tick region and session partitioning (TODO: Not yet implemented)
-- Partitioning aligns with tick region boundaries (typically per-room or per-segment) (TODO: Not yet implemented)
-- Kubernetes-native failover (TODO: Not yet implemented)
-- **Failover behavior is tested under live tick loads** (TODO: Not yet implemented)
-- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff. (TODO: Not yet implemented)
+- Multiple **shards and replicas** for tick region and session partitioning
+- Partitioning aligns with tick region boundaries (typically per-room or per-segment)
+- Kubernetes-native failover
+- **Failover behavior is tested under live tick loads**
+- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff.
 
 > For operational context on Docker Compose vs Kubernetes, see [Deployment Environments](./infrastructure/deployment-environments.md).
 
 ### Replication and Durability
 
-- Writes are **asynchronously replicated** (TODO: Not yet implemented)
+- Writes are **asynchronously replicated**
 - **AOF (Append-Only File)** enabled for durability and crash recovery
 - AOF files are wiped on each Helm upgrade to start with a clean state
   (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment))
@@ -90,7 +90,7 @@ Redis keys follow strict naming conventions to ensure:
 | `room:{tenantId}:{roomId}`               | Hot room cache as JSON (occupants and metadata)                  |
 | `retry:{tenantId}:{regionId}`            | Retry queue for failed actions           |
 | `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
-| `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups (TODO: Not yet implemented) |
+| `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
 
 > 🔗 `remote:{tenantId}:{entityId}` keys route cross-region commands. See [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
 > for details.
@@ -105,9 +105,9 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 
 - Entity lock acquisition (`tick:lock:*`)
 - Tick staging, commit, and rollback (`tick:pending:*`)
-- Timer lifecycle management (TODO: Not yet implemented)
-- Session rebinding and deduplication (`session:*` keys) (TODO: Not yet implemented)
-- Retry queue updates (TODO: Not yet implemented)
+- Timer lifecycle management
+- Session rebinding and deduplication (`session:*` keys)
+- Retry queue updates
 
 All Lua scripts are:
 
@@ -133,7 +133,7 @@ Redis **does not support cross-shard operations**. All tick locks, Lua scripts,
 and queued commands execute on a **single shard** aligned to the tick region.
 When an action crosses regional boundaries (for example a player moving between
 rooms on different shards) the Game Session Service decomposes the transition
-into **two sequential ticks** (TODO: Not yet implemented):
+into **two sequential ticks**:
 
 1. **Tick&nbsp;A** on _Shard&nbsp;X_ performs exit logic and clears local state.
 2. **Tick&nbsp;B** on _Shard&nbsp;Y_ applies entry logic and rebinds the
@@ -147,10 +147,10 @@ for how follow-up commands are routed.
 
 ### 🌀 Global Effects and Region-Wide Coordination
 
-Tick regions **do not execute unless explicitly triggered**. Idle regions will
-never see scheduled global events on their own. To apply a world-wide effect —
-for example, a server-wide freeze or weather change — the **Game Session
-Service** identifies every active region and **fan-outs tick tasks (TODO: Not yet implemented)**:
+Tick regions **do not execute unless explicitly triggered**. Idle regions never
+see scheduled global events on their own. To apply a world-wide effect — for
+example, a server-wide freeze or weather change — the **Game Session Service**
+identifies every active region and **fan-outs tick tasks**:
 
 1. Commands are injected into each region’s shard-local keyspace.
 2. A tick is triggered in that region to apply the effect atomically.
@@ -162,7 +162,7 @@ also avoids scheduling global keys that might wake otherwise idle regions.
 
 Regions still run a lightweight background tick (for example every second) so
 queued timers, cooldowns, or delayed events progress even when no players are
-present. (TODO: Not yet implemented)
+present.
 
 ---
 
@@ -176,7 +176,7 @@ It provides:
 - Durable **tick staging**
 - Distributed **locks** and **retry tracking**
 - **Conflict metadata** for retry prioritization (TTL controlled by the `FIREMUD_CONFLICT_TTL_SECONDS` environment variable; see [Game Session Service variables](./microservices/game-session-service/README.md#environment-variables))
-- Accurate **cooldown and timer tracking** (TODO: Not yet implemented)
+- Accurate **cooldown and timer tracking**
 
 > 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.
 > 🔗 See [Tick Execution Flow](./system-architecture-ticks.md#🔄-tick-execution-flow)
@@ -212,8 +212,8 @@ FireMUD actively monitors Redis performance and tick health:
 - Metrics are scraped via a [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment
   (deployable via the instructions in [`k8s/README.md`](../../k8s/README.md))
 - **Grafana dashboards** visualize tick throughput and hotspots
-- **Prometheus Alertmanager** sends alerts if metrics exceed thresholds (TODO: Not yet implemented)
-- **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls (TODO: Not yet implemented)
+- **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
+- **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
 - Redis is the **single shared** volatile coordination layer — services do not maintain separate in-memory caches or alternative cache technologies
 - Local debugging tools such as the Redis CLI and RedisInsight are described in
   [Developer Setup](../../DEVELOPER_SETUP.md#redis-debugging)
@@ -229,7 +229,7 @@ Redis stores transient gameplay session state for each connected player, includi
 - Socket binding metadata
 - Active `playerId` and `tenantId` context
 - Tick region participation and queued commands
-- Timer and cooldown data (TODO: Not yet implemented)
+- Timer and cooldown data
 - Conflict and retry metadata
 
 Session keys use the prefix `session:{tenantId}:{sessionId}` as described in the
@@ -240,10 +240,10 @@ configured in [Environment & Secrets](./infrastructure/environment-and-secrets.m
 
 This state is used by the **Game Session Service** to:
 
-- Resume gameplay after disconnects (TODO: Not yet implemented)
-- Rebind gameplay context to a new socket (TODO: Not yet implemented)
-- Deduplicate reconnect attempts (TODO: Not yet implemented)
-- Handle character takeovers (one session per character) (TODO: Not yet implemented)
+- Resume gameplay after disconnects
+- Rebind gameplay context to a new socket
+- Deduplicate reconnect attempts
+- Handle character takeovers (one session per character)
 
 > 🔐 Key formats are internal and subject to change. Services treat Redis as a coordination layer, not a persistent or public contract.
 

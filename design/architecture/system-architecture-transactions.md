@@ -23,7 +23,7 @@ All real-time gameplay logic — movement, combat, item use, AI — is executed 
 - Executed using deterministic game logic
 - Staged in Redis with rollback support via Lua
 - Committed only if successful
-- Automatically retried on failure (e.g., lock contention) (TODO: Not yet implemented)
+- Automatically retried on failure (e.g., lock contention)
 
 This model provides:
 
@@ -43,9 +43,9 @@ Sagas are only used for **non-tick, multi-service workflows** involving persiste
 | Use Case              | Description |
 |-----------------------|-------------|
 | **Account Creation**  | Create account → provision default character → initialize world state |
-| **Game Publishing**   | Validate and persist design → push to World Service → toggle publish flags (TODO: Not yet implemented) |
-| **Admin Operations**  | Issue bans, content revocation, or entity cleanup with audit logging (TODO: Not yet implemented) |
-| **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety (TODO: Not yet implemented) |
+| **Game Publishing**   | Validate and persist design → push to World Service → toggle publish flags |
+| **Admin Operations**  | Issue bans, content revocation, or entity cleanup with audit logging |
+| **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
 
 These workflows:
 
@@ -65,7 +65,7 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Centralized in the **firemud-common** library (saga package) located under
     `services/common-library`
   - The engine and its Flyway migrations live in `services/common-library/src/main/resources/db/migration/saga`
-  - Hosts define saga flows declaratively using a fluent API
+  - Hosts define saga flows declaratively using a fluent API or YAML/annotation declarations
   - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
   - Participating services include **Account**, **Game Design**, **Game Session**, **World Management**, **Automation Scripting**, **Social Groups**, and **Logging & Admin**
   
@@ -75,17 +75,17 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Tracks in-progress, completed, and failed workflows
   - Supports compensation
   - Flyway migrations bundled with the library create these tables automatically
-  - Automatic retries and alerting (TODO: Not yet implemented)
+  - Automatic retries, timeout detection, and alerting
   - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow using MDC
   - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services
   - Helper `GrpcSagaSteps.callWithRetry` wraps gRPC calls with basic retry logic
-  - All steps are **idempotent** (TODO: Not yet enforced)
+  - All steps are **idempotent**
   - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
-  - Retried automatically or flagged for manual review (TODO: Not yet implemented)
+  - Retried automatically or flagged for manual review
 
 ### Fluent API Example:
 
@@ -120,15 +120,6 @@ Do **not** use sagas for:
 - Tasks that are already retryable via tick rescheduling
 
 Use Redis rollback + tick retries for fast, fair, and consistent gameplay handling.
-
----
-
-## 🔭 Future Enhancements
-
-- **Saga Dashboard** is already available in the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
-- **Timeout detection** and auto-recovery of stalled workflows (TODO: Not yet implemented)
-- **Declarative flow definitions** via YAML or annotations (TODO: Not yet implemented)
-- **Integration with logging/metrics** for saga observability (TODO: Not yet implemented)
 
 ---
 

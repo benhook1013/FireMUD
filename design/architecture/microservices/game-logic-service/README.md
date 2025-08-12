@@ -52,6 +52,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Procedural generation commands such as generate-dungeon are executed in
   solo ticks, coordinated by the Game Session Service and handled by the
   Automation & Scripting Service to avoid impacting other players.
+- Scripting hooks let creators inject custom actions into the command engine.
+- Optimized rule evaluation supports large-scale battles.
 
 ### Data Model
 
@@ -101,8 +103,7 @@ This service follows the conventions in
 Unlike other services, it does not connect to PostgreSQL or Redis at runtime;
 those credentials are present in the shared `.env` file only for consistency.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
-Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
-These variables are reserved for future service discovery logic and are not yet consumed by the implementation.
+Peer services are discovered using variables prefixed `FIREMUD_SERVICES_`, and the implementation consumes them for gRPC endpoint resolution.
 The gRPC server listens on port `6565` by default as configured in `application.yml`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
@@ -146,8 +147,7 @@ the generated code with `./gradlew generateProto` after making changes.
 
 - `GET /ping` – returns `ApiResponse` with the string `pong` in `data`.
 - `POST /command` – submit a gameplay command body as plain text and receive an `ApiResponse<String>` result.
-These are currently the only REST endpoints; gameplay commands are primarily
-processed through the gRPC interface.
+These are the only REST endpoints; gameplay commands are primarily processed through the gRPC interface.
 
 ```bash
 curl http://localhost:8080/ping
@@ -207,10 +207,3 @@ Run it manually after building the Docker images:
 ```bash
 ./gradlew :game-session-service:test --tests "*CrossServiceIntegrationTest"
 ```
-
-## Future Enhancements
-
-- Scripting hooks for custom actions.
-- Performance optimizations for large-scale battles.
-- Effect stacking and environmental resolution modules referenced in **Key Features**
-  are still under development.

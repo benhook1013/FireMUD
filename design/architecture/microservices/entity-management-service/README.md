@@ -22,7 +22,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Item transfers and other gameplay actions span services but execute within ticks
   using Redis scripts for rollback. Sagas are reserved for non-gameplay
   workflows. See [Transaction Strategies](../system-architecture-transactions.md).
-  This service currently does not participate in any saga workflows.
+  This service does not participate in any saga workflows.
 - All entity tables include a `tenantId` column. Service methods always filter on
   this value so character data for different games remains isolated; Redis keys
   mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
@@ -46,6 +46,8 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - Supports instance-based spaces in conjunction with the World Management Service
   so characters can enter private dungeons or personalized housing without affecting
   the shared world state.
+- Crafting recipe management with validation.
+- Cross-game character listing via account linkage.
 
 ### Data Model
 
@@ -149,9 +151,3 @@ This service participates in tick processing by acquiring Redis locks before mut
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
-
-## Future Enhancements
-
-The service now exposes crafting recipe management and an API to list characters
-for an account across all games. Future work will expand these APIs with
-additional validation and integration tests.

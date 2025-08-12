@@ -63,7 +63,7 @@ buffered commands. Their definitions live in
 
 The proxy sanitizes incoming bytes and allows only a safe subset of
 **Telnet protocol commands** as described in the
-[Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+[Security Architecture](../system-architecture-security.md#telnet-command-handling-and-controls).
 This avoids implementing the full Telnet specification while still protecting
 against malformed negotiation sequences and other legacy edge cases.
 

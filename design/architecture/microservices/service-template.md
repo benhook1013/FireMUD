@@ -64,8 +64,3 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 ## 📚 Related Documentation
 
 - {{ Links to other design docs that expand on this service. }}
-
-## Future Enhancements
-
-- {{ Planned Feature 1 }}
-- {{ Planned Feature 2 }}

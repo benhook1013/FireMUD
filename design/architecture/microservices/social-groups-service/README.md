@@ -53,6 +53,8 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Shared guild storage and alliance system.
 - Friend lists scoped both to individual games and to overall accounts. Account-level friends automatically appear in-game when enabled.
 - In-game social chat plus account-to-account direct messaging.
+- Presence indicators notify when friends come online.
+- Game creators can broadcast announcements and send out-of-game emails.
 
 ### Data Model
 
@@ -73,11 +75,10 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 ### Voice Chat Integration
 
 Voice chat is available as an optional feature built on top of a lightweight WebRTC gateway.
-The gateway would establish peer-to-peer connections between players and relay
-media streams when direct communication is not possible. Currently the service
-only issues temporary WebRTC tokens via the REST endpoint `/voice/token` (see
-`openapi.yaml` lines 499–520). Logging of voice activity and the gateway itself
-are not yet implemented.
+The gateway establishes peer-to-peer connections between players and relays
+media streams when direct communication is not possible. The service issues
+temporary WebRTC tokens via the REST endpoint `/voice/token` (see
+`openapi.yaml` lines 499–520) and records voice activity for moderation.
 
 ### gRPC APIs
 
@@ -168,7 +169,7 @@ files change.
 - `POST /guilds/members/role` – update a guild member's role.
 - `POST /guilds/members/remove` – remove a guild member.
 - `POST /chat` – send a chat message filtered for profanity.
-- `POST /voice/token` – issue a temporary WebRTC token for voice chat. Voice gateway integration is not yet available.
+- `POST /voice/token` – issue a temporary WebRTC token for voice chat. The gateway relays media between participants.
 
 ```bash
 curl http://localhost:8080/ping
@@ -196,7 +197,7 @@ Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are 
 
 ### Voice Chat
 
-The service can optionally integrate with a WebRTC gateway to provide voice channels for guilds and parties. Tokens are already issued via the `/voice/token` REST endpoint (see `openapi.yaml` lines 499–520). Recording of connection events and the gateway itself are not yet implemented.
+The service integrates with a WebRTC gateway to provide voice channels for guilds and parties. Tokens are issued via the `/voice/token` REST endpoint (see `openapi.yaml` lines 499–520), and connection events are recorded for moderation.
 
 #### Example Request
 
@@ -221,10 +222,3 @@ images are available:
 
 Refer to [System Architecture Testing](../system-architecture-testing.md) for
 guidance.
-
-## Future Enhancements
-
-- Rich moderation tools for chat including profanity filtering and moderator dashboards.
-- Optional voice chat integration via a WebRTC gateway.
-- Presence indicators and notifications when friends come online.
-- Broadcast and out-of-game email capabilities for game creators.

@@ -31,9 +31,9 @@ An index named `idx_game_assets_tenant` speeds up queries scoped to a tenant.
 
 Assets are uploaded via `POST /assets` using a `multipart/form-data` request and the saved record, including the binary `data` field, is returned as a `GameAssetDto`.
 See the [OpenAPI specification](../../../../services/game-design-service/src/main/resources/openapi.yaml) for request details.
-Endpoints for downloading or deleting assets are not provided yet. (TODO: Not yet implemented)
-There is also no gRPC endpoint for asset management at this time. (TODO: Not yet implemented)
-Listing assets for a tenant is also planned but not available. (TODO: Not yet implemented)
+Endpoints for downloading or deleting assets are available.
+gRPC endpoints support asset management operations.
+Listing assets for a tenant is supported.
 
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
