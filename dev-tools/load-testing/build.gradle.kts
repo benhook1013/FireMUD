@@ -1,5 +1,5 @@
 plugins {
-    id("io.gatling.gradle") version "3.14.3.3"
+    id("io.gatling.gradle") version "3.14.3.5"
 }
 
 dependencies {

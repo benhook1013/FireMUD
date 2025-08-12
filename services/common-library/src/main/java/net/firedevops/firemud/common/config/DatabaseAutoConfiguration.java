@@ -7,11 +7,9 @@ import io.lettuce.core.resource.ClientResources;
 import io.lettuce.core.resource.DefaultClientResources;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Objects;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
@@ -46,12 +44,6 @@ public class DatabaseAutoConfiguration {
         .username(postgres.getUsername())
         .password(postgres.getPassword())
         .build();
-  }
-
-  @Bean
-  @ConditionalOnMissingBean(MeterRegistry.class)
-  public MeterRegistry meterRegistry() {
-    return new SimpleMeterRegistry();
   }
 
   @Bean

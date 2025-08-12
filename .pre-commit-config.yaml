@@ -21,16 +21,12 @@ repos:
         entry: ./gradlew spotbugsMain
         language: system
         pass_filenames: false
-      - id: buf
-        name: Buf Lint
-        entry: buf lint
-        language: system
-        pass_filenames: false
       - id: hadolint
         name: Dockerfile Lint
-        entry: hadolint -c config/hadolint/hadolint.yaml
+        entry: hadolint
         language: system
         files: (?i)^Dockerfile$|\.Dockerfile$
+        args: ["-c", "config/hadolint/hadolint.yaml"]
       - id: frontend-lint
         name: Frontend ESLint
         entry: bash -c 'cd web-client && npm run lint && npm run format:fix'

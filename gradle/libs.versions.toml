@@ -1,14 +1,15 @@
 [versions]
 spring-boot = "3.5.4"
-flyway = "11.10.5"
+flyway = "11.11.0"
 mapstruct = "1.6.3"
 lombok = "1.18.38"
 lombok-mapstruct-binding = "0.2.0"
 grpc = "1.74.0"
 protobuf = "4.31.1"
-opentelemetry = "1.52.0"
+opentelemetry = "1.53.0"
 micrometer = "1.15.2"
 jjwt = "0.12.6"
+aws-sdk = "2.32.19"
 
 [libraries]
 # Spring Boot Starters
@@ -56,6 +57,7 @@ jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
 
 grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.7" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "aws-sdk" }
 
 [libraries.testcontainers-junit-jupiter]
 module = "org.testcontainers:junit-jupiter"

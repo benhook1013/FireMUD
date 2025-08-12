@@ -61,7 +61,7 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 - AOF files are wiped on each Helm upgrade to start with a clean state
   (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment))
 - Critical Lua writes use `WAIT 1 100` for **replica acknowledgment**
-- Development uses [config/redis.conf](../../config/redis.conf) for the single-node instance and can
+- Development uses [config/redis/redis.conf](../../config/redis/redis.conf) for the single-node instance and can
   persist the AOF via the `redis-data` volume. See
   [Developer Setup](../../DEVELOPER_SETUP.md#optional-redis-persistence) for details and the
   RedisInsight debugging UI.

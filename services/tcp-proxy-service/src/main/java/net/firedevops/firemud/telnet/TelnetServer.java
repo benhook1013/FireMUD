@@ -33,9 +33,6 @@ public class TelnetServer {
   private final boolean tlsEnabled;
   private final String certPath;
   private final String keyPath;
-  private final int maxConnectionsPerIp;
-  private final int maxMessagesPerSecond;
-
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
       new java.util.concurrent.atomic.AtomicInteger();
   private final Counter connectionCounter;
@@ -45,7 +42,6 @@ public class TelnetServer {
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
-  private final ConnectionThrottler connectionThrottler;
 
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,
@@ -53,8 +49,6 @@ public class TelnetServer {
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
-      @Value("${TCP_PROXY_MAX_CONNECTIONS_PER_IP:5}") int maxConnectionsPerIp,
-      @Value("${TCP_PROXY_MAX_MSGS_PER_SEC:5}") int maxMessagesPerSec,
       MeterRegistry meterRegistry)
       throws SSLException {
     this.port = port;
@@ -62,9 +56,6 @@ public class TelnetServer {
     this.tlsEnabled = tlsEnabled;
     this.certPath = certPath;
     this.keyPath = keyPath;
-    this.maxConnectionsPerIp = maxConnectionsPerIp;
-    this.maxMessagesPerSecond = maxMessagesPerSec;
-    this.connectionThrottler = new ConnectionThrottler(maxConnectionsPerIp);
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     Gauge.builder(
             "tcpproxy.connections.active",
@@ -97,11 +88,7 @@ public class TelnetServer {
                     .addLast(new StringDecoder())
                     .addLast(
                         new TelnetServerHandler(
-                            gatewayWsUrl,
-                            connectionThrottler,
-                            maxMessagesPerSecond,
-                            activeConnections,
-                            connectionCounter));
+                            gatewayWsUrl, activeConnections, connectionCounter));
               }
             });
     serverChannel = b.bind(port).sync().channel();

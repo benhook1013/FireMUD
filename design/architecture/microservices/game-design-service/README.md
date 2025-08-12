@@ -119,6 +119,18 @@ Additional variables specific to this service:
 | -------- | ------- | ------- |
 | `FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE` | gRPC endpoint for the Automation & Scripting Service | *(none)* |
 
+### Asset Store
+
+Published assets are uploaded to an S3-compatible bucket. Configure the client with:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `ASSET_STORE_ENDPOINT` | URL of the S3-compatible service | *(none)* |
+| `ASSET_STORE_BUCKET` | Bucket used for published assets | *(none)* |
+| `ASSET_STORE_REGION` | Region name for the S3 client | `ap-southeast-2` |
+| `ASSET_STORE_ACCESS_KEY` | Access key for the bucket | *(none)* |
+| `ASSET_STORE_SECRET_KEY` | Secret key for the bucket | *(none)* |
+
 ## Proto Files
 
 The service API contract resides in

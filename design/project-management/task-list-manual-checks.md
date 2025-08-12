@@ -17,7 +17,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `velero` CLI for backup validation
 - [ ] `aws` CLI if uploading backups to object storage
 - [ ] Verify Gradle wrapper with `./gradlew --version`
-- [ ] Generate wrappers if missing with `gradle wrapper --gradle-version 8.14.3 --distribution-type bin` (or run `services/init-gradle-wrappers.ps1` on Windows)
+  - [ ] Generate wrappers if missing with `gradle wrapper --gradle-version 8.14.3 --distribution-type bin` (or run `dev-tools/init-gradle-wrappers.ps1` on Windows)
 - [ ] Verify tool versions
   - [ ] `java --version`
   - [ ] `node --version`
@@ -66,8 +66,8 @@ This checklist covers optional manual steps to verify that development tooling a
 
 ## 📜 Protobuf & Documentation Scripts
 
-- [ ] `buf lint` for proto consistency
-- [ ] `buf breaking --against origin/main` to check for API changes
+- [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint` for proto consistency
+- [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main` to check for API changes
 - [ ] `./gradlew generateProto` to regenerate Java stubs
 - [ ] `./dev-tools/generate-grpc-docs.sh` to update gRPC docs
 - [ ] `./dev-tools/generate-erd.sh` to produce ERD diagrams

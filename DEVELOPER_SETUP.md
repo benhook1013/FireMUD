@@ -25,11 +25,10 @@ required `gradle-wrapper.jar` into `gradle/wrapper/`.
 
 This creates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`. You only need to run it once after cloning.
 
-If you're on Windows, a PowerShell script is available in the `services` directory to generate wrappers for every service:
+If you're on Windows, a PowerShell script is available to generate wrappers for every service:
 
 ```powershell
-cd services
-./init-gradle-wrappers.ps1
+./dev-tools/init-gradle-wrappers.ps1
 ```
 
 Run this script after cloning if the wrapper files are missing from the individual service folders.
@@ -130,7 +129,7 @@ Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so 
 
 ## Running with Docker Compose
 
-The `docker-compose.yml` file orchestrates all services, including PostgreSQL and Redis, for local development. Launch the stack with:
+The `docker/docker-compose.yml` file orchestrates all services, including PostgreSQL and Redis, for local development. Launch the stack with:
 
 > **Note**: The `deploy.resources` block in the compose file only applies to
 > Docker Swarm. Docker Compose ignores these limits, so CPU and memory
@@ -255,8 +254,8 @@ SCAN 0 MATCH timer:player-123:*
 ```
 
 For a graphical view, a RedisInsight container runs in development via
-`docker-compose.override.yml`. Bring up the stack with `docker compose -f
-docker-compose.yml -f docker-compose.override.yml up -d`. RedisInsight is then
+`docker/docker-compose.override.yml`. Bring up the stack with `docker compose -f
+docker/docker-compose.yml -f docker/docker-compose.override.yml up --build -d`. RedisInsight is then
 available at <http://localhost:8001> and connects to the default Redis instance
 on `localhost:6379`. Typical key patterns are `session:*`, `tick:*`, and
 `timer:*`.

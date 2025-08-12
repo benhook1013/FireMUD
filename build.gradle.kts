@@ -19,7 +19,7 @@ plugins {
     alias(libs.plugins.flyway) apply false
     id("com.diffplug.spotless") version "7.2.1"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.2.3"
+    id("com.github.spotbugs") version "6.2.4"
     jacoco
 }
 
@@ -191,9 +191,26 @@ tasks.register<Exec>("generateDevCerts") {
 
 tasks.register<Exec>("devUp") {
     dependsOn("generateDevCerts", "buildDockerImages")
-    commandLine("docker", "compose", "up", "--build")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "up",
+        "--build"
+    )
 }
 
 tasks.register<Exec>("devDown") {
-    commandLine("docker", "compose", "down")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "down"
+    )
 }

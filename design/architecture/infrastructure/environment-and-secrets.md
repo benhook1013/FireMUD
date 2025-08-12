@@ -143,6 +143,19 @@ Spring property `otel.endpoint`):
 
 Service design documents reference this table for the OpenTelemetry endpoint configuration.
 
+### Asset Storage
+
+Published game assets are uploaded to an S3-compatible bucket. The following
+variables configure the S3 client used by services:
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `ASSET_STORE_ENDPOINT` | URL of the S3-compatible service | *(none)* |
+| `ASSET_STORE_BUCKET` | Bucket name for published assets | *(none)* |
+| `ASSET_STORE_REGION` | Region for the S3 client | `ap-southeast-2` |
+| `ASSET_STORE_ACCESS_KEY` | Access key credential | *(none)* |
+| `ASSET_STORE_SECRET_KEY` | Secret key credential | *(none)* |
+
 ### Backup & Restore Variables
 
 Operational scripts and CronJobs rely on the following variables when uploading or restoring database dumps.

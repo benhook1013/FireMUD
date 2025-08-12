@@ -57,8 +57,8 @@ Despite their differences, both protocols are normalized into the same internal 
     provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
   - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client.
     Forwarding uses mutual TLS for this hop.
-  - Applies per-IP connection and message rate limits using
-    `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and `TCP_PROXY_MAX_MSGS_PER_SEC`.
+  - Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce
+    connection limits and rate limiting centrally.
   - Proxies I/O between the TCP client and Spring Cloud Gateway.
   - Buffers active input while the client remains connected and discards it if
     the TCP connection drops.

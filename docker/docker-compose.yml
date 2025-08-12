@@ -12,6 +12,11 @@ x-service-environment: &service-env
   OTEL_ENDPOINT: ${OTEL_ENDPOINT:-http://otel-collector:4317}
   FLUENT_ELASTICSEARCH_HOST: ${FLUENT_ELASTICSEARCH_HOST:-elasticsearch}
   FLUENT_ELASTICSEARCH_PORT: ${FLUENT_ELASTICSEARCH_PORT:-9200}
+  ASSET_STORE_ENDPOINT: ${ASSET_STORE_ENDPOINT:-http://minio:9000}
+  ASSET_STORE_BUCKET: ${ASSET_STORE_BUCKET:-firemud-assets}
+  ASSET_STORE_REGION: ${ASSET_STORE_REGION:-ap-southeast-2}
+  ASSET_STORE_ACCESS_KEY: ${ASSET_STORE_ACCESS_KEY:-minio}
+  ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}
 
 x-service-healthcheck: &service-health
   test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
@@ -26,6 +31,9 @@ x-service-resources: &service-resources
   cpus: "0.5"
   mem_limit: 512m
 
+x-service-env-file: &service-env-file
+  - ../.env
+
 services:
   account-service:
     build: ./services/account-service
@@ -34,8 +42,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -52,8 +59,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -70,8 +76,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -88,8 +93,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -106,8 +110,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -124,8 +127,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -142,8 +144,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -160,8 +161,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -178,8 +178,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -196,8 +195,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -214,8 +212,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
-    env_file:
-      - .env
+    env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
     depends_on:
@@ -229,8 +226,7 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: *service-env-file
     environment:
       POSTGRES_USER: ${FIREMUD_POSTGRES_USER:-firemud}
       POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD:-firemud}
@@ -248,11 +244,10 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: *service-env-file
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
-      - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis-data:/data
     ports:
       - "6379:6379"
@@ -262,14 +257,40 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${ASSET_STORE_ACCESS_KEY:-minio}
+      MINIO_ROOT_PASSWORD: ${ASSET_STORE_SECRET_KEY:-minio123}
+    ports:
+      - "9000:9000"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-setup:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "mc alias set local http://minio:9000 $ASSET_STORE_ACCESS_KEY $ASSET_STORE_SECRET_KEY && mc mb --ignore-existing local/$ASSET_STORE_BUCKET"]
+    environment:
+      ASSET_STORE_ACCESS_KEY: ${ASSET_STORE_ACCESS_KEY:-minio}
+      ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}
+      ASSET_STORE_BUCKET: ${ASSET_STORE_BUCKET:-firemud-assets}
+
   pg-dump-cron:
     build:
       context: .
       dockerfile: docker/pg-dump-cron.Dockerfile
     cpus: "0.5"
     mem_limit: 256m
-    env_file:
-      - .env
+    env_file: *service-env-file
     environment:
       <<: *service-env
       PG_DUMP_BUCKET: ${PG_DUMP_BUCKET:-}
@@ -284,3 +305,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  minio-data:

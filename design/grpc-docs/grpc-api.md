@@ -5,8 +5,8 @@ This reference is generated from the protobuf files under `protos/` using
 After editing any `.proto` definitions, run the following commands:
 
 ```bash
-buf lint
-buf breaking --against origin/main
+BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint
+BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main
 ./gradlew generateProto
 ./dev-tools/generate-grpc-docs.sh
 ```
@@ -1893,6 +1893,7 @@ Basic ping response containing a greeting and optional error details.
 | tenant_id | [string](#string) |  |  |
 | runtime_version | [string](#string) |  |  |
 | script_patch_version | [string](#string) |  |  |
+| client_ip | [string](#string) |  |  |
 
 
 

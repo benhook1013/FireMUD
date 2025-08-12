@@ -68,9 +68,7 @@ These notes summarize typical optimizations applied across FireMUD services.
 - Lua staging scripts move only a limited number of commands or events per tick
   (configurable via `game.tick-max-commands` and `automation.tick-max-events`).
   This prevents runaway loops and keeps work evenly distributed across ticks.
-- The TCP Proxy Service limits connections per IP and throttles messages per
-  client using `ConnectionThrottler` and a per-session rate limiter to shield
-  the gateway from abuse.
+- The Game Session Service centrally enforces per-IP connection limits and per-session message rate limiting via Redis-backed throttlers. Edge services like the TCP Proxy and Gateway forward client IP headers and may perform lightweight checks but defer to the Game Session Service for authoritative enforcement.
 
 ## Network Traffic
 
@@ -97,6 +95,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   - **Tells:** 48 hours or 50 messages per player
   - **Guild/City:** 48 hours or 50 messages per guild or city
   - **Account messages:** 48 hours or 50 messages
+  
   Older messages are persisted in PostgreSQL for long-term retrieval.
 - High concurrency load tests with Gatling, located under `dev-tools/load-testing`, help determine scaling limits and guide database indexing improvements.
 

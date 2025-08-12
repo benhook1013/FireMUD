@@ -17,6 +17,7 @@ dependencies {
     implementation(libs.micrometer.registry.prometheus)
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
+    implementation(libs.aws.sdk.s3)
     runtimeOnly(libs.postgresql)
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
