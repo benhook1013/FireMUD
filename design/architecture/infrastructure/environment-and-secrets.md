@@ -175,7 +175,7 @@ Service-specific settings such as SMTP credentials for the Account Service or `G
 [Game Session Service Design](../microservices/game-session-service/README.md#environment-variables)
 for concrete examples. This document covers only shared configuration keys.
 
-Operational scripts like `dev-tools/restore-cluster.sh` use an optional
+Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional
 `FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults
 to `firemud` when unset.
 

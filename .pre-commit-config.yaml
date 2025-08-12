@@ -34,7 +34,7 @@ repos:
         pass_filenames: false
       - id: link-check
         name: Link Check
-        entry: ./dev-tools/link-check.sh
+        entry: ./dev-tools/docs/link-check.sh
         language: script
         pass_filenames: false
       - id: shellcheck

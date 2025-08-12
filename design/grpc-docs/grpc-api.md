@@ -8,7 +8,7 @@ After editing any `.proto` definitions, run the following commands:
 BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint
 BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main
 ./gradlew generateProto
-./dev-tools/generate-grpc-docs.sh
+./dev-tools/docs/generate-grpc-docs.sh
 ```
 
 to regenerate these docs and verify compatibility.
@@ -136,18 +136,26 @@ for conventions on schema evolution and error handling. See each service's
 - [game-session/v1/game_session_service.proto](#game-session_v1_game_session_service-proto)
     - [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest)
     - [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse)
+    - [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest)
+    - [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse)
+    - [PauseTicksRequest](#game_session-v1-PauseTicksRequest)
+    - [PauseTicksResponse](#game_session-v1-PauseTicksResponse)
     - [PingRequest](#game_session-v1-PingRequest)
     - [PingResponse](#game_session-v1-PingResponse)
     - [QueryStateRequest](#game_session-v1-QueryStateRequest)
     - [QueryStateResponse](#game_session-v1-QueryStateResponse)
     - [RestartSessionRequest](#game_session-v1-RestartSessionRequest)
     - [RestartSessionResponse](#game_session-v1-RestartSessionResponse)
+    - [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest)
+    - [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse)
     - [StartSessionRequest](#game_session-v1-StartSessionRequest)
     - [StartSessionResponse](#game_session-v1-StartSessionResponse)
     - [StopSessionRequest](#game_session-v1-StopSessionRequest)
     - [StopSessionResponse](#game_session-v1-StopSessionResponse)
     - [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest)
     - [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse)
+  
+    - [TickStatus](#game_session-v1-TickStatus)
   
     - [GameSessionService](#game_session-v1-GameSessionService)
   
@@ -309,7 +317,7 @@ Parameters required to register a new account.
 | ----- | ---- | ----- | ----------- |
 | username | [string](#string) |  | Desired username for login and display. |
 | email | [string](#string) |  | Email address used for notifications and password recovery. |
-| password | [string](#string) |  | Raw password that is hashed before storage. |
+| password | [string](#string) |  | Raw password that will be hashed before storage. |
 
 
 
@@ -1794,6 +1802,63 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="game_session-v1-GetTickStatusRequest"></a>
+
+### GetTickStatusRequest
+
+
+
+
+
+
+
+<a name="game_session-v1-GetTickStatusResponse"></a>
+
+### GetTickStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| status | [TickStatus](#game_session-v1-TickStatus) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PauseTicksRequest"></a>
+
+### PauseTicksRequest
+Administrative request to pause tick execution.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PauseTicksResponse"></a>
+
+### PauseTicksResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="game_session-v1-PingRequest"></a>
 
 ### PingRequest
@@ -1869,6 +1934,37 @@ Basic ping response containing a greeting and optional error details.
 <a name="game_session-v1-RestartSessionResponse"></a>
 
 ### RestartSessionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ResumeTicksRequest"></a>
+
+### ResumeTicksRequest
+Resume ticks after a backup has started.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ResumeTicksResponse"></a>
+
+### ResumeTicksResponse
 
 
 
@@ -1981,6 +2077,19 @@ Basic ping response containing a greeting and optional error details.
 
  
 
+
+<a name="game_session-v1-TickStatus"></a>
+
+### TickStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TICK_STATUS_UNSPECIFIED | 0 |  |
+| TICK_STATUS_RUNNING | 1 |  |
+| TICK_STATUS_PAUSED | 2 |  |
+
+
  
 
  
@@ -2000,6 +2109,9 @@ Basic ping response containing a greeting and optional error details.
 | EnqueueCommand | [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest) | [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse) |  |
 | QueryState | [QueryStateRequest](#game_session-v1-QueryStateRequest) | [QueryStateResponse](#game_session-v1-QueryStateResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse) |  |
+| PauseTicks | [PauseTicksRequest](#game_session-v1-PauseTicksRequest) | [PauseTicksResponse](#game_session-v1-PauseTicksResponse) | Pause tick execution so a consistent pg_dump can be taken. |
+| ResumeTicks | [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest) | [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse) | Resume tick execution after a backup. |
+| GetTickStatus | [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest) | [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse) | Report whether ticks are currently paused. |
 
  
 

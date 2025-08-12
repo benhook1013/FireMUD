@@ -16,7 +16,7 @@ This document defines the backup schedule and disaster recovery procedures for F
   a script (`pg-dump.sh`) that enforces the retention policy. The environment
   variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set;
   otherwise uploads are skipped. When defined, the script also uploads each
-  dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/pg-dump-rotate.sh`.
+  dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests (`snapshotVolumes: false`). See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
 
@@ -39,7 +39,7 @@ PostgreSQL dumps must capture a consistent view of gameplay state. Before a `pg_
 3. Starts `pg_dump` immediately. Ticks may resume as soon as the dump command starts because PostgreSQL snapshots the data at launch time.
 4. Invokes `ResumeTicks` so queued commands continue processing.
 
-For convenience, `dev-tools/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
+For convenience, `dev-tools/backups/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
 
 Velero continues backing up Kubernetes manifests only and does **not** pause any services. Tick pausing is required only at the start of `pg_dump`, not for its entire runtime.
 
@@ -62,7 +62,7 @@ credentials:
   existingSecret: velero-minio-creds
 ```
 
-Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the `firemud-backups` bucket, and install Velero automatically. Keep `defaultVolumesToFsBackup` disabled to avoid saving PVC data. Refer to [Developer Setup](../../DEVELOPER_SETUP.md#backing-up-the-local-database) for local database backup tips.
+Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firemud-backups` bucket, and install Velero automatically. Keep `defaultVolumesToFsBackup` disabled to avoid saving PVC data. Refer to [Developer Setup](../../DEVELOPER_SETUP.md#backing-up-the-local-database) for local database backup tips.
 
 - If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
@@ -74,7 +74,7 @@ Run `dev-tools/setup-local-backup.sh` to deploy MinIO, create the `firemud-backu
 - Redis stores only **transient gameplay state**.
 - **AOF (Append‑Only File)** is enabled for crash recovery while the cluster is running.
 - Redis is **not restored** from backup during a cold start; it is repopulated from PostgreSQL after recovery.
-  In development a `redis-data` volume can persist the AOF between container restarts. Restore an AOF file with `dev-tools/restore-redis-aof.sh`.
+  In development a `redis-data` volume can persist the AOF between container restarts. Restore an AOF file with `dev-tools/restores/restore-redis-aof.sh`.
 
 ### Redis AOF Reset on Deployment
 
@@ -94,20 +94,20 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
     1. Restore the latest `pg_dump` file onto the PostgreSQL volume.
     2. Use Velero to restore Kubernetes manifests.
     3. Restart the affected pods; Redis starts empty and fills itself from PostgreSQL.
-    4. Operators can run `dev-tools/restore-cluster.sh <backup-name>` to automate these steps in production.
+    4. Operators can run `dev-tools/restores/restore-cluster.sh <backup-name>` to automate these steps in production.
        Set `FIREMUD_K8S_NAMESPACE` if restoring to a different namespace.
 
 ## 🐳 Local Development
 
-- Backups are restored using `dev-tools/restore-db.sh` with a snapshot file.
-- `dev-tools/restore-latest-db.sh` can fetch the newest dump from the object
+- Backups are restored using `dev-tools/restores/restore-db.sh` with a snapshot file.
+- `dev-tools/restores/restore-latest-db.sh` can fetch the newest dump from the object
   store and restore it automatically when `PG_DUMP_BUCKET` and
   `PG_DUMP_ENDPOINT` are configured.
-- Create ad hoc snapshots with `dev-tools/backup-db.sh` before restoring.
+- Create ad hoc snapshots with `dev-tools/backups/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
 - Redis starts empty and repopulates when services access the database.
 - The compose stack includes a `pg-dump-cron` service running
-  `dev-tools/pg-dump-rotate.sh` every 15 minutes to mirror the production
+  `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes to mirror the production
   backup schedule.
 
 ---
@@ -115,12 +115,12 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 ## ✅ Backup Verification & Restoration Testing
 
 - The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs nightly at **04:00**
-  and executes `dev-tools/verify-backups.sh` to ensure recent snapshots are present in
+  and executes `dev-tools/backups/verify-backups.sh` to ensure recent snapshots are present in
   the object store. The script also verifies that the latest PostgreSQL dump
   exists in `PG_DUMP_BUCKET`, failing the job if no dumps are found. This
   CronJob is installed automatically by the production Terraform modules. See [`k8s/terraform-production`](../../k8s/terraform-production) for the deployment configuration.
 - Operators should periodically test recovery by restoring a snapshot into a
-  throwaway namespace with `dev-tools/restore-cluster.sh <backup-name>
+  throwaway namespace with `dev-tools/restores/restore-cluster.sh <backup-name>
   <namespace>` (or by setting `FIREMUD_K8S_NAMESPACE`) and verifying
   services start successfully. A manual workflow
   `.github/workflows/manual-backup-restore.yml` can run these checks on
@@ -133,7 +133,7 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 | Environment      | Steps |
 |------------------|-------------------------------------------------------------|
 | **Kubernetes**   | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → allow Redis to repopulate |
-| **Docker Compose** | `dev-tools/restore-db.sh` snapshot → restart containers → Redis repopulates automatically |
+| **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot → restart containers → Redis repopulates automatically |
 
 Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. Gameplay resumes after services restart and Redis repopulates from PostgreSQL.
 

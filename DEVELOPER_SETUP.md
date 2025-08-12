@@ -171,12 +171,12 @@ Run `dev-tools/firemud-cli.sh` for shortcuts:
 
 ### Backing Up the Local Database
 
-Use `dev-tools/backup-db.sh` to create a snapshot and
-`dev-tools/restore-db.sh` to restore one:
+Use `dev-tools/backups/backup-db.sh` to create a snapshot and
+`dev-tools/restores/restore-db.sh` to restore one:
 
 ```bash
-./dev-tools/backup-db.sh             # writes to ./backups
-./dev-tools/restore-db.sh backups/<file>
+./dev-tools/backups/backup-db.sh             # writes to ./backups
+./dev-tools/restores/restore-db.sh backups/<file>
 ```
 
 ### Automatic Kubernetes Backups
@@ -190,7 +190,7 @@ runbooks. Velero schedules back up only Kubernetes manifests.
 ### Local Database Cron Backups
 
 The Docker Compose stack includes a `pg-dump-cron` service that runs
-`dev-tools/pg-dump-rotate.sh` every 15 minutes. Dumps are written to the
+`dev-tools/backups/pg-dump-rotate.sh` every 15 minutes. Dumps are written to the
 `./backups` directory and follow the same daily/weekly/monthly rotation policy as
 production. Set `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` to automatically upload
 the files to your object store.
@@ -202,7 +202,7 @@ Append-Only File (AOF) across container launches, the compose stack mounts a
 `redis-data` volume. You can manually restore an AOF backup with:
 
 ```bash
-./dev-tools/restore-redis-aof.sh backups/appendonly.aof
+./dev-tools/restores/restore-redis-aof.sh backups/appendonly.aof
 ```
 
 This helper is intended **only** for local development. Production Redis nodes
