@@ -38,3 +38,9 @@ spring:
           uri: http://world-management-service:8080
           predicates:
             - Path=/api/world/**
+        - id: asset-store
+          uri: http://minio:9000
+          predicates:
+            - Path=/assets/**
+          filters:
+            - StripPrefix=1 # remove /assets before forwarding
