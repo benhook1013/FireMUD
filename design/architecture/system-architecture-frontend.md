@@ -82,8 +82,9 @@ FireMUD aims to let each hosted game supply its own UI styling and layout tweaks
 - Published version metadata stores the manifest URL. At runtime the React app
   fetches this manifest to load logos, favicons, theme JSON, and optional route
   definitions, then applies Material-UI overrides.
-- Assets are loaded directly from the CDN; the Game Design Service is never
-  queried during gameplay.
+- Assets are loaded directly from the CDN or via the gateway's `/assets/**`
+  route when a self-hosted MinIO instance is used; the Game Design Service is
+  never queried during gameplay.
 - If the manifest omits an asset, the default platform styling is used.
 - Core components remain shared so feature updates reach all games without
   forks. (TODO: Not yet implemented)

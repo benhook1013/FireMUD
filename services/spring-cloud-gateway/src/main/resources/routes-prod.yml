@@ -38,3 +38,9 @@ spring:
           uri: http://world-management-service.default.svc.cluster.local:8080
           predicates:
             - Path=/api/world/**
+        - id: asset-store
+          uri: http://minio.default.svc.cluster.local:9000
+          predicates:
+            - Path=/assets/**
+          filters:
+            - StripPrefix=1 # remove /assets before forwarding
