@@ -43,6 +43,9 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Provide script to generate Gradle wrappers for all services (`init-gradle-wrappers.ps1`)
   - [x] Implement CI/CD pipeline for automated builds, testing, and deployment (see [CI/CD Pipeline](../architecture/system-architecture-cicd.md))
     - [x] Ensure CI/CD includes the common package build process
+    - [ ] Run `flywayValidate` for all services in the CI pipeline
+    - [ ] Fully automate Docker image deployment and Kubernetes rollout
+    - [ ] Provision cloud-hosted Kubernetes cluster for automated deployments
   - [x] Define API contracts & inter-service communication (REST, gRPC, WebSockets)
     - [x] Ensure API contracts include standard error handling and request validation
   - [x] Define high-level architecture & microservices boundaries
@@ -76,6 +79,10 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Document gRPC endpoints and compensating actions
     - [x] Describe Saga orchestration components in the shared library
     - [x] Provide example workflows (e.g., user registration)
+    - [ ] Implement automatic saga retries and timeout recovery
+    - [ ] Enforce idempotent saga steps
+    - [ ] Integrate saga metrics and logging for observability
+    - [ ] Support declarative saga flow definitions via YAML or annotations
   - [x] Update README after all services are defined
   - [x] Finalize architecture design documentation and diagrams
   - [x] Document service responsibility matrix
@@ -162,7 +169,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
     - [x] Runtime feature flags
   - [x] Document deployment steps:
     - [x] Use `helm install` (or `helmfile`) to deploy FireMUD services locally
-    - [x] Reference Terraform files as optional future cloud setup
+    - [x] Reference Terraform files as optional cloud setup
   - [x] Document network policy usage in architecture docs
   - [x] Apply Kubernetes `NetworkPolicy` manifests across environments
     - [x] Provide Helm umbrella chart for deploying all services together
@@ -176,7 +183,8 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Configure mutual TLS (mTLS) for gRPC between internal services
 - [x] Install and configure `cert-manager` in the Kubernetes cluster
 - [x] Manage certificates via Kubernetes `cert-manager`
-- [x] Secure credentials using Kubernetes Secrets (external secret stores not planned yet)
+- [x] Secure credentials using Kubernetes Secrets
+- [ ] Integrate an external secret store for centralized secret management
 - [x] Add integration test for mid-session role refresh via Game Session Service
 - [x] Implement hot reload for TLS certificates and JWKS keys
 - [x] Implement connection rate limiting in Spring Cloud Gateway
@@ -277,6 +285,8 @@ The standard microservice checklist is now copied into each service task list.
 - [x] Implement integration tests for multi-service interactions
 - [x] Validate saga workflows for account and world creation
 - [x] Create cross-service integration example scripts (account creation, game session startup)
+- [ ] Add unified `crossServiceTest` Gradle task and run cross-service tests in CI
+- [ ] Automate test data seeding for integration tests
 
 ---
 
@@ -296,6 +306,7 @@ The standard microservice checklist is now copied into each service task list.
   - [x] Simulate high-concurrency scenarios to identify bottlenecks
   - [x] Run load tests using JMeter, Gatling, or Locust
   - [x] Implement security testing (OWASP ZAP, penetration tests, rate limiting)
+  - [ ] Automate load testing in the CI pipeline
 - [x] **Deploy Staging Environments for Playtesting**
   - [x] Perform multi-user playtests and gather feedback
   - [ ] Set up dedicated staging Kubernetes cluster for community playtests

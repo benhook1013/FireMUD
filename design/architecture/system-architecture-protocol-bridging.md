@@ -48,7 +48,7 @@ Despite their differences, both protocols are normalized into the same internal 
   - Performs basic Telnet option negotiation for compatibility.
   - Sanitizes incoming data and allows only a safe subset of
     **Telnet protocol commands** as outlined in
-    [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-future-controls).
+    [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
   - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly.
     See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
   - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.

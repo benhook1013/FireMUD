@@ -12,6 +12,8 @@
 
 - [x] Implement cross-game account linking (allow single account across multiple hosted games)
 - [x] Support complex crafting recipes
+- [ ] Harden recipe management APIs with additional validation
+- [ ] Expand integration tests for cross-game character listing and recipe workflows
 
 ## Performance & Data Sync
 

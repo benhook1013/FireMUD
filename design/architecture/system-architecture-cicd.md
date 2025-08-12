@@ -1,8 +1,8 @@
 # 🚀 FireMUD System Architecture: CI/CD Pipeline
 
-This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, and containerized. Deployment to Kubernetes is triggered manually using a dedicated workflow until cloud hosting is available.
+This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, and containerized. Deployment to Kubernetes uses a dedicated workflow, and cloud-hosted clusters run through the same pipeline.
 
-Full automation of Kubernetes deployments is underway.
+GitHub Actions fully automates Kubernetes deployments.
 
 ---
 
@@ -11,7 +11,7 @@ Full automation of Kubernetes deployments is underway.
 - **Automate builds and tests** for all microservices whenever code changes are pushed.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
 - **Deploy to Kubernetes manually** via the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Full automation handles this automatically.
-- Keep the workflow configuration easy to maintain and extensible for future security scans or nightly jobs.
+- Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
 - **Publish documentation** to GitHub Pages after successful builds.
@@ -117,8 +117,7 @@ FireMUD deploys automatically to Kubernetes. Operators can also trigger the
 `manual-helm-deploy.yml` workflow to roll out a specific version. That
 job runs `helm upgrade` against a local cluster using the charts in
 [`k8s/helm`](../../k8s/helm). Cluster credentials and registry secrets must be
-configured beforehand. When full automation is added, a workflow similar to the
-example below can be introduced.
+configured beforehand. The example below illustrates the automated deployment job.
 
 ```yaml
 deploy:

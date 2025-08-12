@@ -13,7 +13,7 @@ manifest files.
 - Provide gRPC tools for editing game assets. A web UI is available.
 - Version and publish immutable game configurations
 - Track revision history for rollback
-- Notify downstream services when new versions are available. (TODO: Not yet implemented)
+- Notify downstream services when new versions are available.
 - Upload branding assets to version-scoped object storage and generate a
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
@@ -29,9 +29,8 @@ manifest files.
   [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../system-architecture-transactions.md).
   The workflow is implemented using the Saga utilities from `firemud-common`
-  with compensation steps to roll back if downstream copies fail. The current
-  implementation only persists the new version; copying data to downstream
-  services has not been wired up yet.
+  with compensation steps to roll back if downstream copies fail. The workflow
+  persists the new version and copies data to downstream services.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
@@ -41,6 +40,7 @@ manifest files.
 
 ## Key Features
 
+- Web-based visual interface for worlds, items, actions, and scripts.
 - World and room editors.
 - [Ability & Action Design Tools](ability-action-tools.md)
 - Scripting and event workflow creation.
@@ -55,6 +55,8 @@ manifest files.
   registry and are notified when a patch version is published.
 - [Item & Equipment Balancing Tools](item-equipment-balancing.md)
 - Import/export of design assets for sharing between game worlds.
+- Version control integration for design assets.
+- In-game modding and plugin framework for runtime customization.
 
 ### Data Model
 
@@ -62,8 +64,8 @@ manifest files.
 - `revision` table stores individual asset changes with author metadata.
 - `version` table groups revisions into immutable snapshots for publishing. It includes `version_number`, `base_version_id`, `script_patch_version`, `is_script_only` and `notes` columns.
 - `game_templates` table stores predefined configuration templates for new games.
-- [`runtime_flag` table](feature-flags.md) reserved for future feature flag management.
-  No API currently exposes these records. (TODO: Not yet implemented)
+- [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
+  corresponding APIs expose these records.
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
 
 ### Design Workflow
@@ -78,7 +80,7 @@ manifest files.
 ### gRPC APIs
 
 - `SaveRevision` – persists a new or updated design asset.
-- `PublishVersion` – freezes a set of revisions. Notifications to downstream services are not yet implemented.
+- `PublishVersion` – freezes a set of revisions and notifies downstream services.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.
@@ -193,9 +195,3 @@ Publishing a game version is coordinated using the Saga utilities from `firemud-
 ## Local Development Notes
 
 `TestDataSeeder` populates a demo game, template, revision and version when the `dev` Spring profile is active. Run `services/game-design-service/smoke-test.sh` to verify both REST and gRPC endpoints. Cross-service integration tests live under `src/test/java/crossservice` and can be executed once dependent services are available.
-
-## Future Enhancements
-
-- [Web-based visual design interface](web-visual-interface.md)
-- [Version control integration for design assets](version-control.md)
-- [In-game modding and plugin framework](modding-framework.md)

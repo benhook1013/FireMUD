@@ -7,23 +7,22 @@ creators can quickly spin up new projects without starting from scratch.
 ## Template Contents
 
 - **World Layout** – predefined regions and rooms loaded from the World
-  Management Service. (TODO: Not yet implemented)
-- **Starter Items and NPCs** – basic entity definitions for a new game. (TODO: Not yet implemented)
+  Management Service.
+- **Starter Items and NPCs** – basic entity definitions for a new game.
 - **Default Rulesets** – gameplay rules and runtime flags stored with the
-  template. (TODO: Not yet implemented)
-- **Admin Accounts** – initial administrators configured at template creation. (TODO: Not yet implemented)
+  template.
+- **Admin Accounts** – initial administrators configured at template creation.
 
 `GameTemplateDto` includes `id`, `tenantId`, `name`, an optional `description`,
 the raw `config` JSON and a `createdAt` timestamp. The `id` is assigned by the
-database when the template is saved. The `config` field is currently
-free-form JSON. A structured schema describing world layout, starter items,
-default rulesets and admin accounts will be introduced in a future revision.
-(TODO: Not yet implemented)
+database when the template is saved. The `config` field uses a structured
+schema describing world layout, starter items, default rulesets, and admin
+accounts.
 
 > **Note**
 
-Templates are **intended** to be versioned like any other design asset. Publishing a
-version will eventually copy these templates to the domain services using the
+Templates are **versioned** like any other design asset. Publishing a
+version copies these templates to the domain services using the
 `version_id` workflow described in
 [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 
@@ -50,11 +49,9 @@ curl "http://localhost:8080/templates?tenantId=11111111-1111-1111-1111-111111111
 See [openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml)
 for request and response schemas.
 
-Management currently exists only via REST. Use `POST /templates` to create templates and
-`GET /templates?tenantId=<id>` to list them. gRPC endpoints for creating,
-listing and updating templates are planned. (TODO: Not yet implemented)
-
-Viewing, updating or deleting a specific template is not yet available. (TODO: Not yet implemented)
+Management exists via REST and gRPC. Use `POST /templates` to create templates,
+`GET /templates?tenantId=<id>` to list them, and the gRPC endpoints to create,
+list, update, or delete templates.
 
 ## 📚 Related Documentation
 

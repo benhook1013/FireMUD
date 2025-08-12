@@ -4,6 +4,11 @@
 
 - [x] Provide game templates and configuration tools
 - [ ] Configure default administrator accounts when creating a new game template
+- [ ] Incorporate world layout from World Management Service into templates
+- [ ] Include starter items and NPCs in templates
+- [ ] Store default rulesets and runtime flags in a structured template schema
+- [ ] Provide gRPC endpoints for template CRUD operations
+- [ ] Support viewing, updating, and deleting templates
 - [x] Enable publishing of game versions
 - [x] Use saga orchestrator for game publishing workflow
 - [x] Ensure domain services copy data by `version_id` and never query the design database at runtime
@@ -17,6 +22,17 @@
 - [x] Sandbox script execution with quotas via the Automation & Scripting Service
 - [ ] Implement ability & action design tools
 - [ ] Implement item & equipment balancing tools
+- [ ] Add action sequencer for chained abilities
+- [ ] Provide balancing metrics and integrate with item statistics
+- [ ] Support ability categories for organization
+- [ ] Copy abilities to Game Logic Service during version publish
+- [ ] Add item stat editor with real-time validation
+- [ ] Visualize equipment curves across item tiers
+- [ ] Preview economy impact for vendor prices and drop rates
+- [ ] Integrate item balancing with ability design tools
+- [ ] Provide drag-and-drop interface for balancing views
+- [ ] Aggregate stats and cost vs. power graphs
+- [ ] Copy finalized item stats to Entity Management Service during publish
 - [x] Track version history and patch notes for published games
 - [x] Build a web-based visual design interface
 - [x] Integrate version control for design assets

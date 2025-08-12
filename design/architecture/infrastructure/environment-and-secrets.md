@@ -19,7 +19,7 @@ This document explains how configuration values and sensitive secrets are suppli
 - All secrets, including database passwords and JWT keys, are rotated automatically using cert-manager sync jobs.
 - Services reload TLS certificates for gRPC client and server channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the shared library.
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
-  credentials. External secret stores like Vault are not planned at this
+  credentials. External secret stores like Vault are out of scope at this
   stage.
 
 ## 🔄 Variable Prefixes

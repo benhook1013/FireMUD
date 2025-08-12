@@ -44,6 +44,10 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Timers and delayed actions for asynchronous events
 - Script evaluation occurs outside the tick system. Results are queued as commands that run during tick cycles, ensuring fair scheduling without blocking gameplay.
 - Faction reputation influences NPC aggression states. NPCs may become **FLEEING** or **SURRENDERED** when low on health or morale, allowing players to resolve encounters non-lethally.
+- Web UI for creating and testing scripts using a component-based DSL.
+- Advanced AI modules support formations, squads, and complex behaviors.
+- Procedural world generation hooks populate rooms with NPCs and loot based on biome and depth.
+- `ScriptQuotaService` enforces fairness quotas and per-script resource limits.
 
 ### PvE Mechanics
 
@@ -201,15 +205,3 @@ exported via the standard `sagas.active` gauge.
 
 - [System Architecture Diagram](../system-architecture-diagram.md)
 - [System Context Diagram](../system-context-diagram.md)
-
-## Future Enhancements
-
-- Web UI for creating and testing scripts (initial version implemented).
-- Additional AI modules for advanced behaviors.
-- Procedural world generation hooks working in tandem with the World Management Service. The initial implementation uses a lightweight dungeon generator described in [System Architecture: Procedural Generation](../system-architecture-procedural-generation.md).
-- Post-generation population scripts spawn NPCs and loot based on room tags, biome, and depth. Generators register via the `Generator` interface so designers can plug in custom logic or DSL-defined generators.
-- NPC fleeing and surrender logic.
-- NPC formations and squad AI for coordinated encounters. Implemented via
-  `NpcFormationService`.
-- Fairness quotas and per-script resource limits implemented via `ScriptQuotaService`, as outlined
-  in [System Architecture: Scripting & Automation](../system-architecture-scripting.md#fairness--abuse-prevention-planned).

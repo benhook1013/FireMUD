@@ -35,7 +35,7 @@ the multi-tenant requirements in the
   cached session state and runtime data remain isolated.
 - The React frontend loads per-tenant, version-scoped assets from a published
   `manifest.json` in object storage; the Game Design Service is not queried at
-  runtime. (TODO: Not yet implemented)
+  runtime.
 - See [Game Customization Options](./game-customization-options.md) and the
   [Frontend Architecture](./system-architecture-frontend.md) for details.
 

@@ -40,6 +40,9 @@ All admin APIs are secured via role-based access control integrated with the Acc
   Session Service for operator review.
 - Works with Saga workflows to record state changes across services. See
   [Transaction Strategies](../system-architecture-transactions.md).
+- Automated alerts for suspicious activity via Alertmanager.
+- Real-time analytics on game performance.
+- Optional TOTP-based two-factor authentication for administrator accounts.
 
 ### Data Model
 
@@ -159,12 +162,3 @@ the `saga_instance` and `saga_step` tables and publishes a `sagas.active` Promet
 
 See [Transaction Strategies](../system-architecture-transactions.md) for an overview of
 Saga usage across FireMUD.
-
-## Future Enhancements
-
-- [Role-based admin UI](./admin-ui.md).
-- Automated alerting for suspicious activity is configured via Prometheus
-  Alertmanager (see `k8s/monitoring/alertmanager.yaml`).
-- Real-time analytics on game performance.
-- Optional 2FA support for administrator accounts via TOTP codes. See
-  [Security Architecture](../system-architecture-security.md).

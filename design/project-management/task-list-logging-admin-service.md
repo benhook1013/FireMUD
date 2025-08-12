@@ -6,6 +6,7 @@
 - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
 - [x] Integrate Alertmanager for automated alerts
 - [x] Provide analytics dashboards for operators
+- [ ] Support dashboard filtering by `playerId`
 - [ ] Implement real-time analytics on game performance
 - [x] Evaluate adopting a zero-trust network model for internal traffic
 

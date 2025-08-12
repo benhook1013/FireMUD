@@ -9,7 +9,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Persist region, zone, and room data with tenant isolation
 - Execute scheduled world events.
 - Provide procedural generation support.
-- Provide pathfinding via `TravelService`. A gRPC API and navmesh support are available.
+- Provide pathfinding via `TravelService` with a gRPC API and navmesh support.
 - Notify Game Session and Automation services when the world changes
 - Track character locations and instance occupancy
 
@@ -85,7 +85,7 @@ specified region.
 ### gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
-- `UpdateWorldState` – applies pending world updates. Notifying other services is available.
+- `UpdateWorldState` – applies pending world updates and notifies other services.
 
 ## Dependencies
 
@@ -174,7 +174,7 @@ the [Security Architecture](../system-architecture-security.md) for details.
 
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../protos/world-management/v1/world_management_service.proto).
 - `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation.
-- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates. Notifying other services is available.
+- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates and notifies other services.
 
 Call the `Ping` method with:
 

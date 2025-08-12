@@ -72,7 +72,7 @@ flowchart TD
 
 ```
 
-The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md). (TODO: Not yet implemented)
+The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md).
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
 
@@ -80,25 +80,25 @@ Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from t
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, and send structured logs to Elasticsearch.
 
-All datastores are shared across games, but each table includes a `tenantId` column and Redis keys use a matching prefix. This isolates data per game while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details. (TODO: Not yet implemented)
+All datastores are shared across games, but each table includes a `tenantId` column and Redis keys use a matching prefix. This isolates data per game while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 
 All services run as Docker containers inside a shared Kubernetes cluster. They reuse a [common shared library](./system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and metrics helpers. See [Deployment Environments](./infrastructure/deployment-environments.md) for how the cluster is configured.
 
 ## 🧩 Core Services Shown
 
-The diagram covers every microservice currently in the repository:
+The diagram covers every microservice in the repository:
 
 - **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** – Bridges Telnet clients into the WebSocket-based backend.
 - **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** – Routes HTTP and WebSocket traffic to internal services.
 - **[Game Session Service](./microservices/game-session-service/README.md)** – Orchestrates sessions, ticks, and runtime configuration.
 - **[Account Service](./microservices/account-service/README.md)** – Handles accounts, authentication, and subscriptions.
-- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps. Pathfinding APIs and world snapshots are planned (TODO: Not yet implemented).
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps with pathfinding APIs and world snapshots.
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages players, NPCs, items, and inventory data.
 - **[Game Logic Service](./microservices/game-logic-service/README.md)** – Resolves commands and core gameplay mechanics.
-- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags. Version publishing copy steps and the web-based editor are in progress (TODO: Not yet implemented).
+- **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags with version publishing copy steps and a web-based editor.
 - **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** – Executes AI behaviors and custom scripts.
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
-- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools. Advanced analytics dashboards are planned (TODO: Not yet implemented).
+- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with advanced analytics dashboards.
 
 ## 🔍 Observability Components
 

@@ -1,6 +1,6 @@
 # 🎨 FireMUD System Architecture: Frontend Architecture
 
-This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. Compiled assets will ultimately be served by the Spring Cloud Gateway so all frontends share a common entry point. Additional React modules for the admin tools and Game Design interface are available.
+This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. Compiled assets are served by the Spring Cloud Gateway so all frontends share a common entry point. Additional React modules for the admin tools and Game Design interface are available.
 
 Other UIs include a role-based admin interface and a game design editor. See [Role-Based Admin UI](./microservices/logging-admin-service/admin-ui.md) and [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md).
 
@@ -8,7 +8,7 @@ Other UIs include a role-based admin interface and a game design editor. See [Ro
 
 ## 📐 Component Hierarchy
 
-FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling. The current code base still uses a flatter structure under `web-client/src/` and will transition to this layout.
+FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling.
 
 ```text
 web-client/
@@ -40,7 +40,7 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 
 ## 🔗 API Usage Patterns
 
-All API communication is handled by **RTK Query** services defined in `src/api/`. Currently only a few example endpoints live in `firemudApi.ts`; additional APIs such as login and character retrieval will follow the same pattern.
+All API communication is handled by **RTK Query** services defined in `src/api/`. Endpoints like login and character retrieval are implemented in `firemudApi.ts`, and additional APIs follow the same pattern.
 
 RTK Query automatically handles:
 
@@ -58,7 +58,7 @@ The frontend uses **Vite** for fast development and production builds:
 - `npm run dev` starts the local development server with hot module replacement.
 - `npm run build` produces an optimized bundle under `dist/`.
 - `npm run preview` serves the production bundle locally for verification.
-- `npm run test` will run unit tests with Jest and React Testing Library. The script runs the test suite.
+- `npm run test` runs unit tests with Jest and React Testing Library. The script runs the test suite.
 - `npm run lint` and `npm run format` ensure consistent code style.
 - `npm run format:fix` writes formatting changes back to disk.
 - `npm run accessibility` audits the compiled site with axe-core. See [Developer Setup](../../DEVELOPER_SETUP.md#frontend-lint--accessibility) for Chrome requirements.
@@ -86,7 +86,7 @@ FireMUD aims to let each hosted game supply its own UI styling and layout tweaks
   queried during gameplay.
 - If the manifest omits an asset, the default platform styling is used.
 - Core components remain shared so feature updates reach all games without
-  forks. (TODO: Not yet implemented)
+  forks.
 
 ## 🌍 Internationalization Strategy
 
@@ -94,7 +94,7 @@ The React client uses **react-i18next** to load translation JSON files at runtim
 
 ## 🧪 End-to-End Testing
 
-After the UI stabilizes, **Playwright** tests will exercise key flows by starting the Docker Compose stack and running a headless browser against the web client.
+**Playwright** tests exercise key flows by starting the Docker Compose stack and running a headless browser against the web client.
 
 ---
 
