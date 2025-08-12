@@ -26,7 +26,7 @@ After editing any `.proto` definitions, run the following commands:
 BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint
 BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main
 ./gradlew generateProto
-./dev-tools/generate-grpc-docs.sh
+./dev-tools/docs/generate-grpc-docs.sh
 ```
 
 to regenerate these docs and verify compatibility.

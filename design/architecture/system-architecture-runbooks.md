@@ -47,7 +47,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
 ## 🔄 Recovery
 
 1. **Database Failure**
-   - Run `dev-tools/restore-cluster.sh <backup-name>` to restore from the latest `pg_dump` and restart services.
+   - Run `dev-tools/restores/restore-cluster.sh <backup-name>` to restore from the latest `pg_dump` and restart services.
      Set `FIREMUD_K8S_NAMESPACE` to restore into a custom namespace.
    - Alternatively, restore manually:
 
@@ -62,7 +62,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
       the desired file with `aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz`
       (add `--endpoint-url` for MinIO) before running the above restore steps.
 
-   - For local development, run `dev-tools/restore-db.sh <backup-file>` and then
+   - For local development, run `dev-tools/restores/restore-db.sh <backup-file>` and then
      restart containers with `docker compose restart`.
    - Scheduled backups are created automatically by the Terraform modules using
      `k8s/velero/schedule.yaml`.
@@ -74,7 +74,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
     but long-lived persistent volumes can still fill up. The Docker Compose
     stack includes a `pg-dump-cron` service that runs the same rotation script
     every 15 minutes. Periodically check the `firemud-pg-dumps` PVC and prune
-    old `*.sql.gz` files or run `dev-tools/pg-dump-rotate.sh` manually if
+    old `*.sql.gz` files or run `dev-tools/backups/pg-dump-rotate.sh` manually if
     additional cleanup is required.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication.
@@ -82,7 +82,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
      [Redis Architecture](./system-architecture-redis.md)
      for persistence and recovery details.
    - For local development, restore an AOF file with
-     `dev-tools/restore-redis-aof.sh <file>` if you need to recover transient
+     `dev-tools/restores/restore-redis-aof.sh <file>` if you need to recover transient
      state.
 3. **Full Cluster Restore**
    - Recreate the cluster using Terraform modules in `k8s/terraform`. See

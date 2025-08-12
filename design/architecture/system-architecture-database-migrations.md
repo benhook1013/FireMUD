@@ -47,7 +47,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.
 - During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service. This step is fully automated.
 - On startup the container executes Flyway against its database schema before the Spring application fully starts.
-- The [`dev-tools/generate-erd.sh`](../../dev-tools/generate-erd.sh) script uses Flyway to clean and migrate temporary databases when generating ERD diagrams.
+- The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script uses Flyway to clean and migrate temporary databases when generating ERD diagrams.
 - Diagrams are written to `design/erd/` and the CI workflow collects this
    directory as an artifact.
 

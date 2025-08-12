@@ -142,7 +142,7 @@ tasks.register<NpxTask>("lintMarkdownFix") {
 }
 
 tasks.register<Exec>("linkCheck") {
-    commandLine("bash", "./dev-tools/link-check.sh")
+    commandLine("bash", "./dev-tools/docs/link-check.sh")
 }
 
 tasks.named("check") {

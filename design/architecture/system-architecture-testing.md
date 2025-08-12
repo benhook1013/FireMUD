@@ -14,7 +14,7 @@ Each microservice has its own unit and integration tests. Cross‑service scenar
 - Many of these tests are annotated with `@Testcontainers(disabledWithoutDocker = true)` so they are skipped when Docker is unavailable.
 - **Load tests** reside in `dev-tools/load-testing/src/gatling` and simulate real usage patterns. Run them with `./gradlew :load-testing:gatlingRun`. These tests also run in CI.
 
-Test data seeding strategies use the `dev-tools/seed-test-data.sh` script to populate a minimal world for local testing, and an automated approach seeds data for integration tests.
+Test data seeding strategies use the `dev-tools/seed/seed-test-data.sh` script to populate a minimal world for local testing, and an automated approach seeds data for integration tests.
 
 ---
 

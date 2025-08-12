@@ -26,7 +26,7 @@ configuration:
 For Google Cloud Storage set `provider: gcp` and adjust the bucket name accordingly.
 
 The repository includes a `verify-backups-cronjob.yaml` manifest that runs
-`dev-tools/verify-backups.sh` daily. Production Terraform modules deploy this
+`dev-tools/backups/verify-backups.sh` daily. Production Terraform modules deploy this
 CronJob automatically, but you can apply it manually in other environments:
 
 ```bash
@@ -74,7 +74,7 @@ aws_secret_access_key=mysecretkey'
 Run the helper script to deploy MinIO, create the bucket, and install Velero:
 
 ```bash
-dev-tools/setup-local-backup.sh
+dev-tools/backups/setup-local-backup.sh
 ```
 
 Velero backups exclude PostgreSQL and Redis data. PostgreSQL dumps are created by

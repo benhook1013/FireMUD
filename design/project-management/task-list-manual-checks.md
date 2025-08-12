@@ -69,9 +69,9 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint` for proto consistency
 - [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main` to check for API changes
 - [ ] `./gradlew generateProto` to regenerate Java stubs
-- [ ] `./dev-tools/generate-grpc-docs.sh` to update gRPC docs
-- [ ] `./dev-tools/generate-erd.sh` to produce ERD diagrams
-- [ ] `./dev-tools/link-check.sh` to validate links in docs
+- [ ] `./dev-tools/docs/generate-grpc-docs.sh` to update gRPC docs
+- [ ] `./dev-tools/docs/generate-erd.sh` to produce ERD diagrams
+- [ ] `./dev-tools/docs/link-check.sh` to validate links in docs
 - [ ] `./gradlew lintMarkdown` to check Markdown formatting
 - [ ] `./gradlew lintMarkdownFix` to auto-fix Markdown
 - [ ] `hadolint` on all Dockerfiles
@@ -79,14 +79,14 @@ This checklist covers optional manual steps to verify that development tooling a
 
 ## 📂 Database & Backup Utilities
 
-- [ ] `./dev-tools/backup-db.sh` to create a snapshot
-- [ ] `./dev-tools/restore-db.sh backups/<file>` to restore a backup
-- [ ] `./dev-tools/verify-backups.sh` to confirm scheduled dumps exist
-- [ ] Rotate local dumps with `./dev-tools/pg-dump-rotate.sh`
-- [ ] `./dev-tools/setup-local-backup.sh` to configure local backup tooling
-- [ ] `./dev-tools/restore-latest-db.sh` to restore the newest dump
-- [ ] `./dev-tools/restore-redis-aof.sh <file>` to restore Redis state
-- [ ] `./dev-tools/restore-cluster.sh <backup-name>` for full cluster recovery
+- [ ] `./dev-tools/backups/backup-db.sh` to create a snapshot
+- [ ] `./dev-tools/restores/restore-db.sh backups/<file>` to restore a backup
+- [ ] `./dev-tools/backups/verify-backups.sh` to confirm scheduled dumps exist
+- [ ] Rotate local dumps with `./dev-tools/backups/pg-dump-rotate.sh`
+- [ ] `./dev-tools/backups/setup-local-backup.sh` to configure local backup tooling
+- [ ] `./dev-tools/restores/restore-latest-db.sh` to restore the newest dump
+- [ ] `./dev-tools/restores/restore-redis-aof.sh <file>` to restore Redis state
+- [ ] `./dev-tools/restores/restore-cluster.sh <backup-name>` for full cluster recovery
 - [ ] Verify PostgreSQL access with `psql -h localhost -U firemud -d firemud -c '\dt'`
 - [ ] Verify Redis access with `redis-cli -h localhost -p 6379 ping`
 - [ ] Verify RedisInsight UI at <http://localhost:8001>
@@ -103,8 +103,8 @@ This checklist covers optional manual steps to verify that development tooling a
 
 ## 🌱 Data Seeding & API Clients
 
-- [ ] `./dev-tools/seed-test-data.sh` to populate sample game data
-- [ ] `./dev-tools/seed-automation-scripting-data.sh` to add scripting examples
+- [ ] `./dev-tools/seed/seed-test-data.sh` to populate sample game data
+- [ ] `./dev-tools/seed/seed-automation-scripting-data.sh` to add scripting examples
 - [ ] Import `dev-tools/insomnia/firemud-insomnia.json` in Insomnia for REST API calls
 - [ ] Open `dev-tools/kreya/.kreya-project.yaml` in Kreya for gRPC testing
 
