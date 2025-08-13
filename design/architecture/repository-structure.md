@@ -5,7 +5,7 @@ This repository uses a hierarchical Gradle layout. All microservices and the sha
 React UI resides in `web-client/` and various infrastructure manifests sit under
 `k8s/`. Additional build tooling and documentation live at the root.
 Hidden configuration files used by the CI pipeline and generated build output
-directories are omitted from the tree for brevity.
+directories are included for completeness.
 
 ```text
 root
@@ -30,7 +30,17 @@ root
 ├── docker/
 ├── k8s/
 ├── charts/
+├── build/
+├── .gradle/
 ├── AGENTS.md
+├── README.md
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── DEVELOPER_SETUP.md
+├── FAQ.md
+├── LICENSE.md
+├── NOTICE.md
+├── SECURITY.md
 ├── .editorconfig
 ├── .env.sample
 ├── .gitattributes
@@ -54,7 +64,7 @@ root
 - `web-client/` – React web application.
 - `design/` – Architecture, operations, and user guide documentation.
 - `config/` – Checkstyle, ESLint, git hooks, Hadolint, lychee link checker, Markdownlint, OpenAPI generator, protobuf (Buf), Redis, release automation, security scans, SpotBugs, and TypeScript configs.
-- `dev-tools/` – Shell utilities for database backups and restores, ERD generation, development certificates, a CLI, API client configs, data seeding, and a Gatling load-testing module.
+- `dev-tools/` – Shell utilities for database backups and restores, ERD generation, development certificates, a CLI, API client configs (Insomnia and Kreya), data seeding, and a Gatling load-testing module.
 - `docker/` – Base Dockerfiles and Docker Compose stack for local development.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs,
   network policies, and sample Terraform modules for local and production clusters.
