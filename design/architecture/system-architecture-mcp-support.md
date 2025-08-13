@@ -15,6 +15,18 @@ When MCP is enabled, JSON payloads are exchanged inside MCP packages.
 The Game Design Service exposes REST and gRPC commands for creating and updating content.
 These commands are wrapped in MCP messages so external tools, including AI assistants, drive world creation.
 
+## 🔌 Protocol Handshake
+
+When a client connects, the server begins with an `mcp` version line. The client selects a mutually supported version and responds with an authentication key. Both sides then advertise supported packages using `mcp-negotiate-can` messages and finish with `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
+
+## 📨 Message Format
+
+MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each message contains a name, the session’s authentication key, and keyword/value pairs. Values may be simple or multiline; simple values containing spaces require quoting.
+
+## 📦 Optional Packages
+
+FireMUD supports the `mcp-cord` package to multiplex additional channels over the same connection. Cords allow stateful conversations—such as room editing sessions—to be tied to specific client windows. Additional packages can be negotiated as needed.
+
 ## Example Workflow
 
 1. Client connects and upgrades to MCP.
