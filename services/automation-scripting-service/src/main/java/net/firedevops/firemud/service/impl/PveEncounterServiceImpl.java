@@ -9,8 +9,8 @@ import net.firedevops.firemud.service.PveEncounterService;
 import org.springframework.stereotype.Service;
 
 /**
- * Basic PvE encounter generator. Uses a fixed set of events per region for now. Future iterations
- * may load data from the database or design service.
+ * Basic PvE encounter generator that uses a predefined set of events per region.
+ * Encounters are seeded so results can be reproduced during testing.
  */
 @Service
 @Slf4j
