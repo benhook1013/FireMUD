@@ -14,6 +14,7 @@ GitHub Actions fully automates Kubernetes deployments.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
+- **Scan for vulnerabilities** with Trivy during CI runs.
 - **Publish documentation** to GitHub Pages after successful builds.
 - **Create release PRs automatically** using the `release-please` workflow.
 - **Generate database ERD diagrams** as build artifacts after each run. The diagrams are stored in `design/erd/` and uploaded as workflow artifacts.
@@ -46,18 +47,18 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-java@v3
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Format Code
-        run: ./gradlew spotlessApply
-      - name: Lint Markdown
-        run: ./gradlew lintMarkdownFix
+      - name: Check Formatting
+        run: ./gradlew spotlessCheck
+      - name: Lint Docs and Links
+        run: ./gradlew lintMarkdown linkCheck
       - name: Run Checks
         run: ./gradlew check
 ```
@@ -83,17 +84,17 @@ After tests pass, each service is packaged into a Docker image:
     needs: build-and-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
       - name: Login to Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and Push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: ./services/${{ matrix.service }}
           push: true
@@ -125,11 +126,11 @@ deploy:
   if: github.ref == 'refs/heads/main'
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v5
     - name: Set up kubectl
-      uses: azure/setup-kubectl@v3
+      uses: azure/setup-kubectl@v4
     - name: Set up Helm
-      uses: azure/setup-helm@v3
+      uses: azure/setup-helm@v4
     - name: Deploy
       run: |
         helm upgrade --install my-service ./charts/my-service \
@@ -156,12 +157,12 @@ manual steps.
 ## 🔍 PR Preview Environments
 
 Pull requests spin up a short-lived Docker Compose stack so reviewers can test
-changes interactively. The `.github/workflows/preview.yml` workflow starts the
-stack with `./gradlew devUp`, which builds the service images and runs Docker
-Compose. A status comment is posted with a summary once the gateway passes its
-health check. The runner is discarded at the end of the job, removing the
-preview automatically. The workflow first copies `.env.sample` to `.env` so
-Docker Compose has default environment variables available.
+changes interactively. The `.github/workflows/preview.yml` workflow uses Docker
+Buildx to build service images with cached layers, copies `.env.sample` to `.env`,
+generates development certificates, and launches the stack via Docker Compose.
+A status comment is posted once the gateway passes its health check, and the
+runner tears the stack down at the end of the job so the preview is removed
+automatically.
 
 ---
 
