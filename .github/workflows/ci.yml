@@ -91,7 +91,6 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: |
-            package-lock.json
             web-client/package-lock.json
             config/openapi/package-lock.json
 
