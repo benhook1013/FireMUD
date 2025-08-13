@@ -36,7 +36,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/buf
-          key: buf-mod-${{ runner.os }}-${{ hashFiles('protos/buf.yaml', 'protos/**/*.proto') }}
+          key: buf-mod-${{ runner.os }}-${{ hashFiles('protos/buf.yaml', 'protos/**/*.proto', 'config/protobuf/buf.gen.yaml', 'config/protobuf/buf.work.yaml') }}
           restore-keys: buf-mod-${{ runner.os }}-
 
       - name: 🛠️ Fetch Base Commit for Buf Breaking
