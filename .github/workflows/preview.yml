@@ -52,8 +52,10 @@ jobs:
           for service in $services; do
             docker pull ghcr.io/benhook1013/$service:latest || true
             docker buildx build \
+              --cache-from type=registry,ref=ghcr.io/benhook1013/$service:buildcache \
               --cache-from type=registry,ref=ghcr.io/benhook1013/$service:latest \
               --cache-from type=gha \
+              --cache-to type=registry,ref=ghcr.io/benhook1013/$service:buildcache,mode=max \
               --cache-to type=gha,mode=max \
               --load \
               -t firemud-$service \

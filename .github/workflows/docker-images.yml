@@ -42,6 +42,9 @@ jobs:
             ghcr.io/benhook1013/${{ matrix.service }}:latest
             ghcr.io/benhook1013/${{ matrix.service }}:${{ github.ref_name }}
           cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
             type=gha
-          cache-to: type=gha,mode=max
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
+            type=gha,mode=max
