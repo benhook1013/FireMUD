@@ -179,5 +179,6 @@ These can be added as separate workflows or additional jobs in the main pipeline
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Testing Strategy](./system-architecture-testing.md)
+- [Developer Tools & Scripting](./system-architecture-scripting.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
 - [User Journeys – Testing & Continuous Delivery](./user-journeys.md#17-testing--continuous-delivery)
