@@ -9,6 +9,7 @@ This document lists automated jobs that run on a schedule. Each entry links to t
 | CI — Build and Security | Daily at 03:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/ci.yml](../../../.github/workflows/ci.yml) |
 | CodeQL Analysis | Weekly on Sundays at 00:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/codeql.yml](../../../.github/workflows/codeql.yml) |
 | Weekly Security Scan | Weekly on Sundays at 03:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/weekly-security-scan.yml](../../../.github/workflows/weekly-security-scan.yml) |
+| Dependabot dependency updates | Weekly on Saturdays at 16:00 (Sunday 04:00 Pacific/Auckland) | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/dependabot.yml](../../../.github/dependabot.yml) |
 
 ## Kubernetes Cluster
 
