@@ -74,7 +74,7 @@ jobs:
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v5
-      - uses: ludeeus/action-shellcheck@2
+      - uses: ludeeus/action-shellcheck@master
         with:
           scandir: dev-tools
 
