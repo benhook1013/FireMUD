@@ -8,6 +8,10 @@ This document outlines how FireMUD incorporates the Mud Client Protocol (MCP) to
 - Enable scripted workflows where the AI can create rooms, items, and NPCs via standardized commands.
 - Maintain backward compatibility with traditional Telnet clients that do not understand MCP.
 
+## 📘 MCP Basics
+
+The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for sending out-of-band messages on the same channel as normal Telnet traffic. Both connection endpoints are treated symmetrically, and the protocol itself maintains no state; higher-level packages define application behavior. Lines beginning with the `#$#` marker are interpreted as MCP messages, while other lines remain in-band for legacy clients.
+
 ## Overview
 
 The TCP Proxy Service negotiates MCP with connecting clients and falls back to plain Telnet when unsupported.
@@ -17,7 +21,9 @@ These commands are wrapped in MCP messages so external tools, including AI assis
 
 ## 🔌 Protocol Handshake
 
-When a client connects, the server begins with an `mcp` version line advertising a minimum and maximum supported protocol version. The client replies with its own `mcp` line that includes the session’s `authentication-key` along with its version range. Both sides pick the highest overlapping version and tag all subsequent messages with the agreed key. After the version exchange, each side sends `mcp-negotiate-can` for every package it supports—including `mcp-negotiate` itself—and concludes with `mcp-negotiate-end`. A package becomes usable only after both sides have advertised it and both have sent `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
+When a client connects, the server begins with an `mcp` version line advertising a minimum and maximum supported protocol version. The client replies with its own `mcp` line that includes the session’s `authentication-key` along with its version range. Both sides pick the highest overlapping version and tag all subsequent messages with the agreed key.
+
+Each endpoint then advertises its capabilities using `mcp-negotiate-can package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
 
 Example handshake:
 
@@ -31,7 +37,7 @@ Example handshake:
 
 ## 📨 Message Format
 
-MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each message contains a case-insensitive name, the session’s case-sensitive authentication key, and keyword/value pairs. Values may be simple or multiline; simple values containing spaces or special characters require quoting, while multiline values append `*` to the keyword and include an `_data-tag` argument whose value is echoed on subsequent `* datatag keyword:` lines and closed with `#: datatag`. Malformed or unrecognized messages are silently discarded, allowing traditional Telnet clients to coexist with MCP-aware tooling.
+MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each message contains a case-insensitive name, the session’s case-sensitive authentication key, and keyword/value pairs. Values may be simple or multiline; simple values containing spaces or special characters require quoting, while multiline values append `*` to the keyword and include an `_data-tag` argument whose value is echoed on subsequent `* datatag keyword:` lines and closed with `#: datatag`. MCP places no limit on line length and relies on the underlying session for ordering and reliability. Malformed or unrecognized messages are silently discarded, allowing traditional Telnet clients to coexist with MCP-aware tooling.
 
 Example multiline message:
 
@@ -44,7 +50,13 @@ Example multiline message:
 
 ## 📦 Optional Packages
 
-FireMUD supports the `mcp-cord` package to multiplex additional channels over the same connection. The package defines `mcp-cord-open`, `mcp-cord`, and `mcp-cord-closed` messages to manage cord lifecycles so stateful conversations—such as room editing sessions—can be tied to specific client windows. Additional packages can be negotiated as needed.
+FireMUD supports the `mcp-cord` package (version 1.0) to multiplex additional channels over the same connection. The package defines:
+
+- `mcp-cord-open _id: <token> _type: <name>` to create a new cord identified by a unique `_id` and a descriptive `_type`.
+- `mcp-cord _id: <token> _message: <name> ...` to send messages scoped to that cord, with additional arguments defined by the message.
+- `mcp-cord-closed _id: <token>` to signal cord termination. Either side may send this, and it is safe to receive more than once.
+
+These primitives let stateful conversations—such as room editing sessions—be tied to specific client windows. Additional packages can be negotiated as needed.
 
 ## Example Workflow
 
