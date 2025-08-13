@@ -134,7 +134,7 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 ## 🎮 Staging Environment for Playtesting
 
 A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
-For details on collecting tester feedback see [Playtesting & Feedback Plan](../../project-management/playtesting-feedback.md).
+For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/playtesting-feedback.md).
 
 ---
 
