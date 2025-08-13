@@ -19,7 +19,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**; see the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, handling tick execution and runtime configuration
 - [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service
-- 🔁 **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
+- **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 
 🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
