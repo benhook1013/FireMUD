@@ -10,7 +10,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
-- For admin APIs the Gateway forwards JWTs to backend services without validating them. Gameplay login is processed by the **Game Session Service**; see [Authentication & Authorization](../system-architecture-authentication.md#-login-and-session-flow) for the detailed flow.
+- For admin APIs the Gateway forwards JWTs to backend services without validating them. Gameplay login is processed by the **Game Session Service**; see [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the detailed flow.
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
@@ -25,7 +25,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 > **Internal microservice-to-microservice communication does not pass through the Gateway**.
 > Microservices use Kubernetes native service discovery and DNS for direct communication.
 > Services communicate with each other over **gRPC**.
-> See [System Architecture Overview](../system-architecture-overview.md) and [Authentication & Authorization](../system-architecture-authentication.md#-login-and-session-flow) for the complete login and gRPC flow.
+> See [System Architecture Overview](../system-architecture-overview.md) and [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the complete login and gRPC flow.
 
 - Static URIs configured in the `dev` profile within `application.yml`
   (used by Docker Compose)
