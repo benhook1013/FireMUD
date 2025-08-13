@@ -41,3 +41,8 @@ protobuf {
 tasks.named('compileJava') {
     dependsOn('generateProto')
 }
+
+// Spotless needs generated sources available when formatting runs
+tasks.named('spotlessJava') {
+    dependsOn('generateProto')
+}

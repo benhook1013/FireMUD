@@ -1,5 +1,6 @@
 import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
+import org.gradle.api.plugins.quality.Checkstyle
 import java.io.File
 
 buildscript {
@@ -28,6 +29,8 @@ node {
     // Don't download Node in CI; use the version provided by the environment
     download.set(System.getenv("CI") == null)
 }
+
+val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
 
 allprojects {
     repositories {
@@ -81,7 +84,12 @@ subprojects {
         toolVersion.set("4.9.3")
     }
 
+    tasks.withType<Checkstyle>().configureEach {
+        enabled = fullCheck
+    }
+
     tasks.withType<SpotBugsTask>().configureEach {
+        enabled = fullCheck
         excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
         setIgnoreFailures(true)
         // Exclude generated sources such as Protobuf classes from analysis
@@ -101,10 +109,11 @@ subprojects {
 
     tasks.test {
         useJUnitPlatform()
-        finalizedBy("jacocoTestReport")
+        if (fullCheck) finalizedBy("jacocoTestReport")
     }
 
     tasks.jacocoTestReport {
+        enabled = fullCheck
         dependsOn(tasks.test)
         reports {
             xml.required.set(true)
@@ -145,14 +154,24 @@ tasks.register<Exec>("linkCheck") {
     commandLine("bash", "./dev-tools/docs/link-check.sh")
 }
 
+tasks.named("lintMarkdown") {
+    enabled = fullCheck
+}
+
+tasks.named("linkCheck") {
+    enabled = fullCheck
+}
+
 tasks.named("check") {
-    dependsOn(
-        "lintMarkdown",
-        "checkstyleMain",
-        "spotbugsMain",
-        "jacocoTestReport",
-        "linkCheck"
-    )
+    if (fullCheck) {
+        dependsOn(
+            "lintMarkdown",
+            "checkstyleMain",
+            "spotbugsMain",
+            "jacocoTestReport",
+            "linkCheck"
+        )
+    }
 }
 
 tasks.register<Exec>("buildBaseImage") {

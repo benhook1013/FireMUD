@@ -58,10 +58,16 @@ version from GitHub Container Registry.
 
 ## ✅ Markdown Linting via Gradle
 
-This project uses `markdownlint-cli2` to lint Markdown files. The `check` task automatically runs linting in check-only mode:
+This project uses `markdownlint-cli2` to lint Markdown files. To speed up local builds, `./gradlew check` skips Markdown lint and other heavy analysis unless the `fullCheck` property is supplied:
 
 ```bash
-./gradlew check
+./gradlew check -PfullCheck
+```
+
+You can also run the lint task directly:
+
+```bash
+./gradlew lintMarkdown
 ```
 
 To manually fix correctable issues, run:

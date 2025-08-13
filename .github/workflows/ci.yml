@@ -192,17 +192,17 @@ jobs:
           ./gradlew spotlessCheck
           echo "::endgroup::"
 
-      - name: 🧹 Fix Markdown Lint
+      - name: 🧹 Lint Docs
         run: |
-          echo "::group::Lint Markdown"
-          ./gradlew lintMarkdown
+          echo "::group::Lint Markdown and Links"
+          ./gradlew lintMarkdown linkCheck -PfullCheck
           echo "::endgroup::"
 
       - name: 🧪 Run Unit Tests
         id: checks
         run: |
           echo "::group::Run Tests"
-          ./gradlew :${{ matrix.service }}:check
+          ./gradlew :${{ matrix.service }}:check -PfullCheck
           echo "::endgroup::"
 
       - name: 📈 Parse Coverage %
