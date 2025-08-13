@@ -53,9 +53,10 @@ subprojects {
     group = "net.firedevops.firemud"
     version = project.property("version") as String
 
-    java {
-        toolchain {
-            languageVersion.set(JavaLanguageVersion.of(21))
+    plugins.withId("java") {
+        the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+        tasks.withType<JavaCompile>().configureEach {
+            options.release.set(21)
         }
     }
 
