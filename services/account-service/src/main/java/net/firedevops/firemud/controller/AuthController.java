@@ -3,7 +3,6 @@ package net.firedevops.firemud.controller;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AccountRefRequest;
-import net.firedevops.firemud.dto.AuthTokenDto;
 import net.firedevops.firemud.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.dto.LoginRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
@@ -26,11 +25,10 @@ public class AuthController {
   }
 
   @PostMapping("/login")
-  public ResponseEntity<ApiResponse<AuthTokenDto>> login(@Valid @RequestBody LoginRequest request) {
-    String token =
-        accountService.authenticate(
-            request.tenantId(), request.username(), request.password(), request.otp());
-    return ResponseEntity.ok(ApiResponse.success(new AuthTokenDto(token)));
+  public ResponseEntity<ApiResponse<Void>> login(@Valid @RequestBody LoginRequest request) {
+    accountService.authenticate(
+        request.tenantId(), request.username(), request.password(), request.otp());
+    return ResponseEntity.ok(ApiResponse.success(null));
   }
 
   @PostMapping("/request-password-reset")

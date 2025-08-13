@@ -25,7 +25,7 @@ class AuthControllerTest {
   @MockitoBean private AccountService accountService;
 
   @Test
-  void loginReturnsToken() throws Exception {
+  void loginDoesNotExposeToken() throws Exception {
     LoginRequest request = new LoginRequest(1L, "demo", "password", null);
     when(accountService.authenticate(1L, "demo", "password", null)).thenReturn("tok123");
 
@@ -36,7 +36,7 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.authToken").value("tok123"));
+        .andExpect(jsonPath("$.data.authToken").doesNotExist());
   }
 
   @Test

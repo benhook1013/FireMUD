@@ -10,6 +10,7 @@ opentelemetry = "1.53.0"
 micrometer = "1.15.3"
 jjwt = "0.12.6"
 aws-sdk = "2.32.21"
+argon2 = "2.11"
 
 [libraries]
 # Spring Boot Starters
@@ -54,6 +55,7 @@ micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-p
 jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version.ref = "jjwt" }
 jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version.ref = "jjwt" }
 jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
+argon2 = { module = "de.mkammerer:argon2-jvm", version.ref = "argon2" }
 
 grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.7" }

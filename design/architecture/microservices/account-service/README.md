@@ -93,7 +93,7 @@ resolved during authentication.
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | `GET`  | `/ping` | Simple health check |
-| `POST` | `/auth/login` | Authenticate and return JWT |
+| `POST` | `/auth/login` | Authenticate and establish a session; JWT is kept server-side |
 | `POST` | `/auth/request-password-reset` | Request password reset |
 | `POST` | `/auth/complete-password-reset` | Complete password reset |
 | `POST` | `/auth/request-email-verification` | Send verification email |
@@ -216,7 +216,7 @@ Two-factor authentication is optional and applies only when a `two_factor_secret
 - `POST /accounts` – create a new account and profile.
 - `GET /accounts/{accountId}/export` – export all account data.
 - `DELETE /accounts/{accountId}` – remove an account permanently.
-- `POST /auth/login` – authenticate and establish a session. The JWT returned is for internal service calls.
+- `POST /auth/login` – authenticate and establish a session. JWTs are stored for internal service calls and never returned to clients.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.
@@ -255,9 +255,7 @@ Example login response:
 ```json
 {
   "status": "SUCCESS",
-  "data": {
-    "authToken": "<token>"
-  }
+  "data": null
 }
 ```
 
