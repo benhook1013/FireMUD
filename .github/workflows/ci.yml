@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🐳 Run Hadolint
         uses: hadolint/hadolint-action@v3.1.0
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - uses: ludeeus/action-shellcheck@2
         with:
           scandir: dev-tools
@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@v4
@@ -172,7 +172,7 @@ jobs:
 
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v4
@@ -289,7 +289,7 @@ jobs:
     needs: [buf-check, docker-lint, shellcheck]
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 💾 Cache Trivy DB
         uses: actions/cache@v4
@@ -368,7 +368,7 @@ jobs:
     needs: [build-and-test, trivy-scan]
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v4
