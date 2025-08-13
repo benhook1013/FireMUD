@@ -129,16 +129,6 @@ jobs:
       - name: 📑 Lint OpenAPI Specs
         run: npm --prefix config/openapi run openapi:lint
 
-      - name: 💾 Cache Node Modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.npm
-            node_modules
-            config/openapi/node_modules
-          key: node-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: node-${{ runner.os }}-
-
       - name: 📦 Install Frontend Dependencies
         run: npm ci
         working-directory: web-client
