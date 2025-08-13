@@ -54,12 +54,13 @@ root
 - `web-client/` – React web application.
 - `design/` – Architecture, operations, and user guide documentation.
 - `config/` – Checkstyle, ESLint, git hooks, Hadolint, lychee link checker, Markdownlint, OpenAPI generator, protobuf (Buf), Redis, release automation, security scans, SpotBugs, and TypeScript configs.
-- `dev-tools/` – Shell utilities for database backups, ERD generation, API client configs, and a Gatling load-testing module.
+- `dev-tools/` – Shell utilities for database backups and restores, ERD generation, development certificates, a CLI, API client configs, data seeding, and a Gatling load-testing module.
 - `docker/` – Base Dockerfiles and Docker Compose stack for local development.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs,
   network policies, and sample Terraform modules for local and production clusters.
 - `charts/` – Umbrella Helm chart for deploying all services together.
 - `build/` – Generated Gradle build outputs (ignored by source control).
+- `.gradle/` – Local Gradle cache (ignored by source control).
 - `.github/` – GitHub Actions workflows and issue templates.
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `AGENTS.md` – Contribution guide pointing to project AI rules.
