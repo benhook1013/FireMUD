@@ -29,7 +29,7 @@
 - [x] Implement procedural world generation
 - [ ] Implement OverworldMapGenerator for biome-based terrain
 - [ ] Support selectable room generation modes (sparse vs full) per request
-- [ ] Provide pluggable GeneratorRegistry with scriptable or DSL-based generators
+- [ ] Provide pluggable GeneratorRegistry in the Automation & Scripting Service with scriptable or DSL-based generators
 - [ ] Validate biome compatibility and connectivity when generating maps
 - [ ] Generate procedural POI lore and descriptions
 - [ ] Support seasonal or climate-based biome variations

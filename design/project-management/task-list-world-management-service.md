@@ -6,7 +6,7 @@
 - [x] Implement instance-based game spaces (e.g., dungeons, player housing)
 - [x] Define instance rules, expiration, and persistence
 - [x] Implement A* or Dijkstra-based pathfinding for NPCs & movement validation
-- [ ] Expose pathfinding results via `TravelService` gRPC API with navmesh support
+- [ ] Expose pathfinding results via Movement/Travel subsystem (Game Logic Service) gRPC API with navmesh support
 
 ## World Events & Effects
 
@@ -23,6 +23,9 @@
 - [ ] Generate terrain chunks during world creation
 - [ ] Spawn default NPCs as part of initial world setup
 - [ ] Schedule initial world events during world creation
+- [ ] Persist generator metadata (`seed`, `generatorType`, params) on region/graph records and link editor overlays
+- [ ] Ensure A&S result payload includes seed/type/params but leaves persistence to World API
+- [x] Move `TravelService` to Game Logic as `MovementTravelService`; World Management exposes geometry only
 
 ## Data Sync & Notifications
 

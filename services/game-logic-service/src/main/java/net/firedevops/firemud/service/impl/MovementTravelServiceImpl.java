@@ -2,24 +2,17 @@ package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.*;
-import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.entity.RoomExit;
-import net.firedevops.firemud.repository.RoomExitRepository;
-import net.firedevops.firemud.service.TravelService;
+import net.firedevops.firemud.service.MovementTravelService;
 import org.springframework.stereotype.Service;
 
 @Service
-@RequiredArgsConstructor
-public class TravelServiceImpl implements TravelService {
-  private final RoomExitRepository exitRepository;
-
+public class MovementTravelServiceImpl implements MovementTravelService {
   @Override
-  @Timed(value = "travel.findPath")
-  public List<Long> findPath(Long tenantId, Long startRoomId, Long targetRoomId) {
+  @Timed(value = "movement.findPath")
+  public List<Long> findPath(List<RoomExit> exits, Long startRoomId, Long targetRoomId) {
     if (startRoomId.equals(targetRoomId)) {
       return List.of(startRoomId);
     }
-    List<RoomExit> exits = exitRepository.findByTenantId(tenantId);
     Map<Long, List<RoomExit>> graph = buildGraph(exits);
     return dijkstra(graph, startRoomId, targetRoomId);
   }
@@ -27,14 +20,11 @@ public class TravelServiceImpl implements TravelService {
   private Map<Long, List<RoomExit>> buildGraph(List<RoomExit> exits) {
     Map<Long, List<RoomExit>> graph = new HashMap<>();
     for (RoomExit exit : exits) {
-      graph.computeIfAbsent(exit.getFromRoom().getId(), k -> new ArrayList<>()).add(exit);
+      graph.computeIfAbsent(exit.fromRoomId(), k -> new ArrayList<>()).add(exit);
       // add reverse edge
-      RoomExit reverse = new RoomExit();
-      reverse.setFromRoom(exit.getToRoom());
-      reverse.setToRoom(exit.getFromRoom());
-      reverse.setCost(exit.getCost());
-      reverse.setTenantId(exit.getTenantId());
-      graph.computeIfAbsent(exit.getToRoom().getId(), k -> new ArrayList<>()).add(reverse);
+      RoomExit reverse =
+          new RoomExit(exit.toRoomId(), exit.fromRoomId(), exit.cost(), exit.spacingMultiplier());
+      graph.computeIfAbsent(exit.toRoomId(), k -> new ArrayList<>()).add(reverse);
     }
     return graph;
   }
@@ -56,9 +46,8 @@ public class TravelServiceImpl implements TravelService {
         break;
       }
       for (RoomExit exit : graph.getOrDefault(current, Collections.emptyList())) {
-        Long neighbor = exit.getToRoom().getId();
-        double multiplier = exit.getFromRoom().getRegion().getSpacingMultiplier();
-        int cost = (int) Math.round(exit.getCost() * multiplier);
+        Long neighbor = exit.toRoomId();
+        int cost = (int) Math.round(exit.cost() * exit.spacingMultiplier());
         int alt = dist.get(current) + cost;
         if (alt < dist.getOrDefault(neighbor, Integer.MAX_VALUE)) {
           dist.put(neighbor, alt);

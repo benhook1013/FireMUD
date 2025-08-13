@@ -44,7 +44,7 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked through `GenerationService`, which looks up the requested `Generator` from `GeneratorRegistry` and runs any registered `GenerationHook` implementations to populate newly created rooms. Current hooks include a simple logger and a basic spawn helper.
+Procedural generators are invoked through `GenerationService`, which looks up the requested `Generator` from the `GeneratorRegistry`. The `GeneratorRegistry` lives inside the Automation & Scripting Service and is discovered via Spring bean scanning; scripted or DSL-based generators are supported. `GenerationService` then runs any registered `GenerationHook` implementations to populate newly created rooms. Current hooks include a simple logger and a basic spawn helper.
 
 ---
 
@@ -84,7 +84,7 @@ All generators emit a normalized structure:
 | `elevation`   | Numeric terrain height (used for visuals or logic) |
 | `regionId`    | Optional grouping for partitioned maps             |
 
-`spacingMultiplier` is stored on the containing region and can globally scale movement speed across the map. In sparse layouts the `TravelService` bases exit costs on the distance between room coordinates, so nearby rooms are quick to traverse while large gaps produce longer travel times.
+`spacingMultiplier` is stored on the containing region (World Management) and can globally scale movement speed across the map. In sparse layouts Game Logic uses room coordinates and this `spacingMultiplier` to derive movement/travel cost, so nearby rooms are quick to traverse while large gaps produce longer travel times.
 
 In **full-grid mode**, every terrain tile becomes a room.
 In **sparse mode**, only selected POIs and waypoints are emitted, and the distance between them determines travel cost.
@@ -96,12 +96,14 @@ In **sparse mode**, only selected POIs and waypoints are emitted, and the distan
 The following rules align generators with the core runtime and tooling:
 
 1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended, configurable time budget.
-2. **Seed Metadata** – All requests specify a seed. During world creation these values are persisted by the World Management Service and reused at runtime to ensure reproducible layouts.
-3. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. Regions may define a `spacingMultiplier` to scale the overall pace if needed.
-4. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone.
-5. **Validation and Errors** – Generators validate parameters. Room count checks, biome compatibility, and connectivity validation ensure consistent results. Failures return `GenerationErrorDetail` objects and are logged for observability.
-6. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
-7. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service. Discovery uses Spring bean scanning, and scripted or DSL-based generators are supported.
+2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions.
+3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. The **Automation & Scripting Service** includes these values in its result payload but **does not store** them.
+4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. Generators resolve tenant feature flags/config before execution.
+5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
+6. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone.
+7. **Validation and Errors** – A&S validates parameters and connectivity and returns an atomic graph on success; otherwise a `GenerationErrorDetail` with no partial persistence.
+8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
+9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service. Discovery uses Spring bean scanning, and scripted or DSL-based generators are supported.
 
 Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service.
 
@@ -109,18 +111,23 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ## 🧱 Service Responsibilities
 
-- **Automation & Scripting Service**
-  - Owns and executes all procedural generation logic
-  - Registers available generator types
-  - Exposes generation via API and scripting interfaces
+**Automation & Scripting Service**
+- Owns `GenerationService` and `GeneratorRegistry`; executes all generators
+- Runs `GenerationHook`s and post-gen population scripts
+- Exposes generation via API and scripting DSL
+- Returns a complete, validated room/region graph (or error)—no partial commits
 
-- **World Management Service**
-  - Persists generated rooms, biomes, and regions
-  - Assigns canonical `roomId`s and manages region mappings
+**World Management Service**
+- Persists generated rooms/biomes/regions; assigns canonical `roomId`s
+- Persists generator metadata (`seed`, `generatorType`, params) and editor overlays
+- Provides read APIs for geometry, overlays, and region metadata
 
-- **Game Session Service**
-  - Can request runtime instancing for dungeons, portals, or quests
-  - Integrates with tick state and Redis coordination
+**Game Session Service**
+- Requests runtime instancing (portals/quests), schedules **solo ticks** for generation
+- Coordinates Redis tick isolation; hands generation to A&S
+
+**Game Logic Service (Movement/Travel)**
+- **Computes movement/travel costs** using World geometry (`coordinates`, region `spacingMultiplier`, biome/elevation rules)
 
 ---
 
