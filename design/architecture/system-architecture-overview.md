@@ -16,8 +16,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md)
 - **Session state is stored in Redis** to keep services stateless and enable full reconnect recovery
-- **Game definitions and rules are data-driven and editable via tooling without redeploying code**
-See the [Game Design Service documentation](./microservices/game-design-service/README.md).
+- **Game definitions and rules are data-driven and editable via tooling without redeploying code**; see the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, handling tick execution and runtime configuration
 - [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service
 - 🔁 **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
