@@ -9,7 +9,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Persist region, zone, and room data with tenant isolation
 - Execute scheduled world events.
 - Provide procedural generation support.
-- Provide pathfinding via `TravelService` with a gRPC API and navmesh support.
+- Expose geometry and region metadata; pathfinding is handled by the Movement/Travel subsystem (Game Logic Service) via gRPC with navmesh support.
 - Notify Game Session and Automation services when the world changes
 - Track character locations and instance occupancy
 
@@ -50,8 +50,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Persistent world state with incremental saves.
 - Procedural generation tools for rooms and terrain.
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
-- `TravelService` implements Dijkstra-based pathfinding using the `room_exit` table.
-  A gRPC API exposes pathfinding results.
+- The Movement/Travel subsystem in the Game Logic Service performs Dijkstra-based pathfinding using the `room_exit` table and exposes results via gRPC.
 - Event scheduling for world-wide holidays or timed modifiers. A `world_event` table
   stores pending events and a scheduled task processes them, updating regional weather
   or other state. Emitting gRPC notifications keeps other services synchronized.

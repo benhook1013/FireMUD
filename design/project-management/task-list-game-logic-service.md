@@ -6,6 +6,7 @@
 - [x] Implement action processing (movement, interactions, combat)
 - [x] Implement action aliases system (custom command mappings)
 - [x] Add scripting hooks for custom actions
+- [x] Add Movement/Travel subsystem to compute pathfinding and movement costs using world geometry
 
 ## Roleplay & Events
 

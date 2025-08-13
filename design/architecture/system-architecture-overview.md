@@ -51,8 +51,8 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **[Game Session Service](./microservices/game-session-service/README.md)**          | Manages player sessions, tick orchestration, stores runtime flags, input validation |
 | **[Account Service](./microservices/account-service/README.md)**               | Manages player accounts, login, auth, subscription status; ban workflows are available |
 | **[Entity Management Service](./microservices/entity-management-service/README.md)**     | Handles all entity data: players, NPCs, items, stats, inventories      |
-| **[World Management Service](./microservices/world-management-service/README.md)**      | Owns maps, rooms, and tick region structure; pathfinding APIs and world snapshots are provided |
-| **[Game Logic Service](./microservices/game-logic-service/README.md)**            | Executes gameplay mechanics; resolves actions deterministically       |
+| **[World Management Service](./microservices/world-management-service/README.md)**      | Owns maps, rooms, and tick region structure; provides geometry and world snapshots |
+| **[Game Logic Service](./microservices/game-logic-service/README.md)**            | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
 | **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)**| Triggers AI and scripted behaviors                                     |
 | **[Social & Groups Service](./microservices/social-groups-service/README.md)**     | Manages chat, mail, guilds, and social features                        |
 | **[Logging & Admin Service](./microservices/logging-admin-service/README.md)**       | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service |
@@ -145,6 +145,8 @@ for how the `dev` and `prod` profiles differ between Docker Compose and Kubernet
 - **Game Session Service** orchestrates tick lifecycles, retries, and session management
 - **Game Logic Service** resolves individual actions deterministically based on input state
 - **Redis** acts as a passive, high-speed execution substrate — storing volatile state and enabling atomic coordination via Lua scripts
+
+**Movement/Travel** rules are part of **Game Logic Service**. World stores geometry and region metadata (e.g., `spacingMultiplier`), while **Game Logic** derives movement/travel costs at runtime.
 
 🧠 **Why Game Session Service vs Game Logic Service?**
 Game Logic Service is stateless and deterministic.

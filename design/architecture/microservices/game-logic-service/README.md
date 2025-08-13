@@ -8,6 +8,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 - Parse player commands and resolve actions
 - Apply combat rules, cooldowns, and environmental effects
+- Compute movement/travel costs and pathfinding using world geometry
 - Interact with entity and world services for context data
 - Push results back to the Game Session Service for distribution
 - Forward chat actions to the Social & Groups Service for delivery and
