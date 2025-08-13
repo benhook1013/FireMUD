@@ -31,8 +31,12 @@ root
 ├── k8s/
 ├── charts/
 ├── AGENTS.md
+├── .editorconfig
 ├── .env.sample
+├── .gitattributes
+├── .gitignore
 ├── .pre-commit-config.yaml
+├── .windsurfrules
 ├── gradle/
 ├── .github/
 ├── .vscode/
@@ -62,13 +66,13 @@ root
 - `.pre-commit-config.yaml` – Configuration for automated formatting and lint checks.
 - `.editorconfig` – Consistent indentation and newline settings across editors.
 - `.gitignore` & `.gitattributes` – Source control rules and line-ending defaults.
+- `.windsurfrules` – Compatibility link to the local AI rules.
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.
 - `settings.gradle.kts` – Declares Gradle subprojects.
 - `gradle.properties` – Shared Gradle settings.
 - `README.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `DEVELOPER_SETUP.md`, `LICENSE.md`, `NOTICE.md`, `FAQ.md`, `SECURITY.md` and other root Markdown files – Project documentation and guidelines.
 - `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
 - `dev-tools/init-gradle-wrappers.ps1` – Utility script to generate Gradle wrappers for each service on Windows.
-- `.windsurfrules` – Compatibility link to the local AI rules.
 - `.vscode/` – Recommended workspace settings for VS Code.
 
 Proto definitions live under `protos/` organized by service and version as described in the
