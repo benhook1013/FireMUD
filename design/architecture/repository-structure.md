@@ -10,11 +10,18 @@ brevity.
 ```text
 root
 ├── services/
-│   ├── common-library
 │   ├── account-service
-│   ├── ...
+│   ├── automation-scripting-service
+│   ├── common-library
+│   ├── entity-management-service
+│   ├── game-design-service
+│   ├── game-logic-service
+│   ├── game-session-service
+│   ├── logging-admin-service
+│   ├── social-groups-service
 │   ├── spring-cloud-gateway
-│   └── tcp-proxy-service
+│   ├── tcp-proxy-service
+│   └── world-management-service
 ├── protos/
 ├── web-client/
 ├── design/
@@ -25,8 +32,10 @@ root
 ├── charts/
 ├── AGENTS.md
 ├── .env.sample
+├── .pre-commit-config.yaml
 ├── gradle/
 ├── .github/
+├── .vscode/
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── gradle.properties
@@ -52,6 +61,7 @@ root
 - `gradle/` – Gradle wrapper binaries.
 - `AGENTS.md` – Contribution guide pointing to project AI rules.
 - `.env.sample` – Example environment variables loaded by `docker compose` and the test suites.
+- `.pre-commit-config.yaml` – Configuration for automated formatting and lint checks.
 - `.editorconfig` – Consistent indentation and newline settings across editors.
 - `.gitignore` & `.gitattributes` – Source control rules and line-ending defaults.
 - `build.gradle.kts` – Root Gradle build file that aggregates all modules.
