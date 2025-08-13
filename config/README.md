@@ -17,5 +17,5 @@ alphabetically) contains its own settings and README describing how to use it.
 - `spotbugs/` – Static analysis rules for SpotBugs.
 - `ts/` – Base TypeScript configuration.
 
-Add future tooling or service configuration here to keep the repository root
-clean and discoverable.
+Use this directory for any tooling or service configuration so the repository
+root stays clean and discoverable.
