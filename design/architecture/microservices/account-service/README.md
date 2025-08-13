@@ -17,7 +17,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 ## Architecture / Design Notes
 
 - Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
-- Passwords are hashed with strong salts and stored only in PostgreSQL.
+- The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
 - Session information is stored in Redis as transient data for quick reconnections.
 - Creation events are logged to the Logging & Admin Service via a saga step.
 - Ban and recovery events are logged to the Logging & Admin Service for auditability.
