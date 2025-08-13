@@ -10,22 +10,22 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
-- For admin APIs the Gateway forwards JWTs to backend services without validating them. Gameplay login is processed by the **Game Session Service**; see [Authentication & Authorization](../system-architecture-authentication.md#login-and-session-flow) for the detailed flow.
+- For admin APIs the Gateway forwards JWTs to backend services without validating them. Gameplay login is processed by the **Game Session Service**; see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the detailed flow.
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
 - Auto‑scaling policies handle high concurrency.
 - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
-- Gateway restarts automatically re-establish WebSocket connections to backend services. See [Reconnection Strategy](../system-architecture-reconnection.md).
-- The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](../system-architecture-security.md#network-security--boundary-design) for details.
+- Gateway restarts automatically re-establish WebSocket connections to backend services. See [Reconnection Strategy](./system-architecture-reconnection.md).
+- The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
 
 > **Important:**
 > Spring Cloud Gateway is responsible for routing **only external client requests**.
 > **Internal microservice-to-microservice communication does not pass through the Gateway**.
 > Microservices use Kubernetes native service discovery and DNS for direct communication.
 > Services communicate with each other over **gRPC**.
-> See [System Architecture Overview](../system-architecture-overview.md) and [Authentication & Authorization](../system-architecture-authentication.md#login-and-session-flow) for the complete login and gRPC flow.
+> See [System Architecture Overview](./system-architecture-overview.md) and [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the complete login and gRPC flow.
 
 - Static URIs configured in the `dev` profile within `application.yml`
   (used by Docker Compose)
@@ -81,7 +81,7 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
   - The rate limiter stores tokens in Redis; the gateway reads `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT` for this connection.
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
-- TLS termination and mTLS between services are described in [Security Architecture](../system-architecture-security.md).
+- TLS termination and mTLS between services are described in [Security Architecture](./system-architecture-security.md).
 
 ## ⚙️ Dynamic Route Management
 
@@ -106,7 +106,7 @@ Internal services communicate directly with each other over **gRPC**.
 Spring Cloud Gateway does not handle these calls. Each service discovers
 its peers via Docker or Kubernetes DNS and connects using the service name.
 This approach minimizes latency and matches the protocol table in the
-[System Architecture Overview](../system-architecture-overview.md#communication-flows).
+[System Architecture Overview](./system-architecture-overview.md#communication-flows).
 
 ---
 
@@ -127,7 +127,7 @@ Spring profiles defined in `application.yml` and selected via
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
-- [Reconnection Strategy](../system-architecture-reconnection.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Spring Cloud Gateway Service Details](./microservices/spring-cloud-gateway/README.md)
 
 ---
