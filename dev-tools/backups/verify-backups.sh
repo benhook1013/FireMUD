@@ -26,7 +26,7 @@ if [ -n "${PG_DUMP_BUCKET:-}" ]; then
     exit 1
   }
   KEY=$(aws s3api list-objects-v2 --bucket "$PG_DUMP_BUCKET" \
-        --prefix "daily/" \
+        --prefix "15min/" \
         --endpoint-url "${PG_DUMP_ENDPOINT:-}" \
         --query 'sort_by(Contents,&LastModified)[-1].Key' --output text 2>/dev/null || echo None)
   if [ "$KEY" = "None" ]; then

@@ -14,7 +14,7 @@ command -v aws >/dev/null 2>&1 || {
 TMP_DIR=$(mktemp -d)
 FILE="$TMP_DIR/latest.sql.gz"
 
-KEY=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "daily/" \
+KEY=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "15min/" \
       --endpoint-url "$ENDPOINT" \
       --query 'sort_by(Contents,&LastModified)[-1].Key' --output text)
 

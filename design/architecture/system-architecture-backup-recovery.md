@@ -10,10 +10,11 @@ This document defines the backup schedule and disaster recovery procedures for F
 - The production Terraform modules automatically deploy this CronJob. See [`k8s/terraform-production`](../../k8s/terraform-production).
 - Retention policy:
   - **24 hours** of 15‑minute dumps
+  - **10 days** of daily dumps
   - **3 weekly** dumps
   - **3 monthly** dumps
 - The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
-  a script (`pg-dump.sh`) that enforces the retention policy. The environment
+  a script (`pg-dump.sh`) that enforces the retention policy. Dumps are stored under `15min`, `daily`, `weekly`, and `monthly` directories. The environment
   variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set;
   otherwise uploads are skipped. When defined, the script also uploads each
   dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
