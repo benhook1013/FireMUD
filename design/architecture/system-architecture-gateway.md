@@ -110,7 +110,7 @@ This approach minimizes latency and matches the protocol table in the
 
 ---
 
-## 🔧 Dev vs. Prod Configuration
+## Dev vs. Prod Configuration
 
 | Environment | Route Target Format      | Discovery Mechanism        |
 |-------------|---------------------------|-----------------------------|

@@ -17,7 +17,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 ---
 
-## 🔧 Utility Packages
+## Utility Packages
 
 - **Logging Utilities** – `LoggingUtil` is a thin SLF4J wrapper. The
   `LoggingInterceptor` and `SagaRunner` attach a `correlationId` using MDC so logs

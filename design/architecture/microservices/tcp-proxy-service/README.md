@@ -26,7 +26,7 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
    **Telnet protocol commands** as described in the
-   [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-future-controls).
+   [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-controls).
 - Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
 - Performs basic sanitization but defers connection and rate limits to downstream services.
 - Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.

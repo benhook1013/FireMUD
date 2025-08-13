@@ -1,4 +1,4 @@
-# 🔧 FireMUD System Architecture: Scripting & Automation Framework
+# FireMUD System Architecture: Scripting & Automation Framework
 
 This document outlines how FireMUD executes custom in-game behavior through a sandboxed scripting framework. It complements the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) and expands on the extensibility goals in the [core requirements](../project-management/core-requirements.md).
 

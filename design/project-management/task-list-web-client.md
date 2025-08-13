@@ -9,7 +9,7 @@
 - [ ] Integrate WebSocket events with RTK Query caches
 - [ ] Implement `npm run test` with Jest and React Testing Library
 - [ ] Extend API mocking using **msw**
-- [ ] Display procedural generation previews with overlay layers
+- [ ] Display procedural generation overlays in the Game Editor with selectable layers
 
 ## Customization & Internationalization
 
