@@ -151,7 +151,7 @@ jobs:
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
-    needs: [buf-check, docker-lint, shellcheck, frontend-checks]
+    needs: [buf-check, docker-lint, shellcheck]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
