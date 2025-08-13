@@ -34,7 +34,7 @@
     "prettier": "^3.6.2",
     "serve": "^14.2.4",
     "typescript": "~5.9.2",
-    "typescript-eslint": "^8.36.0",
+    "typescript-eslint": "^8.39.1",
     "vite": "^7.1.2",
     "wait-on": "^8.0.4"
   }
