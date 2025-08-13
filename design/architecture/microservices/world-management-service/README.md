@@ -43,6 +43,7 @@ The World Management Service stores and manages game world data such as rooms, r
 
 - Region and location management with shard support. Each region stores a
   `shard_id` value so the world can span multiple servers.
+- Automated region redistribution balances shard load when cluster capacity changes.
 - Instance-based zones are treated as regular rooms; this service records which
   characters occupy each instance so private dungeons or housing do not affect
   the shared world map.
