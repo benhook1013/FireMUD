@@ -122,9 +122,10 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             web-client/package-lock.json
+            config/openapi/package-lock.json
 
       - name: 📦 Install Root Dependencies
-        run: npm ci
+        run: npm --prefix config/openapi ci
 
       - name: 📑 Lint OpenAPI Specs
         run: npm --prefix config/openapi run openapi:lint
