@@ -84,10 +84,10 @@ All generators emit a normalized structure:
 | `elevation`   | Numeric terrain height (used for visuals or logic) |
 | `regionId`    | Optional grouping for partitioned maps             |
 
-`spacingMultiplier` is stored on the containing region to adjust travel cost when rooms are sparse. The `TravelService` multiplies exit costs by this value when pathfinding so long treks across empty terrain feel slower.
+`spacingMultiplier` is stored on the containing region and can globally scale movement speed across the map. In sparse layouts the `TravelService` bases exit costs on the distance between room coordinates, so nearby rooms are quick to traverse while large gaps produce longer travel times.
 
 In **full-grid mode**, every terrain tile becomes a room.
-In **sparse mode**, only selected POIs and waypoints are emitted.
+In **sparse mode**, only selected POIs and waypoints are emitted, and the distance between them determines travel cost.
 
 ---
 
@@ -97,7 +97,7 @@ The following rules align generators with the core runtime and tooling:
 
 1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended 500&nbsp;ms budget.
 2. **Seed Metadata** – All requests specify a seed. During world creation these values are persisted by the World Management Service and reused at runtime to ensure reproducible layouts.
-3. **Sparse Traversal Rules** – Sparse rooms exist on the map. A `spacingMultiplier` value on each region influences movement cost and travel time between them.
+3. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. Regions may define a `spacingMultiplier` to scale the overall pace if needed.
 4. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone.
 5. **Validation and Errors** – Generators validate parameters. Room count checks, biome compatibility, and connectivity validation ensure consistent results. Failures return `GenerationErrorDetail` objects and are logged for observability.
 6. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
