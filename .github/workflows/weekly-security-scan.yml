@@ -26,10 +26,10 @@ jobs:
           - world-management-service
     steps:
       - name: ⬇️ Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 💾 Cache Trivy DB
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
