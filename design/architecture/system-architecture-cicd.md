@@ -1,8 +1,6 @@
 # 🚀 FireMUD System Architecture: CI/CD Pipeline
 
-This document describes the basic continuous integration and deployment strategy for FireMUD using **GitHub Actions**. Every service is built, tested, and containerized. Deployment to Kubernetes uses a dedicated workflow, and cloud-hosted clusters run through the same pipeline.
-
-GitHub Actions fully automates Kubernetes deployments.
+This document describes the continuous integration strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and images are pushed to the registry. Deployment to Kubernetes runs through a separate workflow so both local and cloud-hosted clusters use the same pipeline.
 
 ---
 
@@ -10,7 +8,7 @@ GitHub Actions fully automates Kubernetes deployments.
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes manually** via the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Full automation handles this automatically.
+- **Deploy to Kubernetes** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
@@ -115,27 +113,31 @@ The firemud-base image provides a consistent OS and JVM setup across all service
 
 ## 🚢 Deploying to Kubernetes
 
-FireMUD deploys automatically to Kubernetes. Operators can also trigger the
-`manual-helm-deploy.yml` workflow to roll out a specific version. That
-job runs `helm upgrade` against a local cluster using the charts in
-[`k8s/helm`](../../k8s/helm). Cluster credentials and registry secrets must be
-configured beforehand. The example below illustrates the automated deployment job.
+Kubernetes rollouts are triggered through the
+[`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow.
+The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and
+`values-local.yaml` by default. Cluster credentials and registry secrets must be
+configured beforehand. The example below mirrors the deployment steps.
 
 ```yaml
-deploy:
-  needs: docker-build
-  if: github.ref == 'refs/heads/main'
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v5
-    - name: Set up kubectl
-      uses: azure/setup-kubectl@v4
-    - name: Set up Helm
-      uses: azure/setup-helm@v4
-    - name: Deploy
-      run: |
-        helm upgrade --install my-service ./charts/my-service \
-          --set image.tag=${{ github.sha }}
+name: Manual Helm Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install firemud ./k8s/helm/firemud \
+            -f k8s/helm/values-local.yaml
 ```
 
 ### Rollback Strategy
