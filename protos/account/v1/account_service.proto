@@ -39,7 +39,7 @@ message CreateAccountRequest {
   string username = 1;
   // Email address used for notifications and password recovery.
   string email = 2;
-  // Raw password that will be hashed before storage.
+  // Raw password that the server hashes before storage.
   string password = 3;
 }
 

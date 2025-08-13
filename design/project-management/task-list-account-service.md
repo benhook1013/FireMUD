@@ -12,6 +12,7 @@
 - [x] Use saga orchestrator for account creation workflow
 - [x] Implement self-service account recovery
 - [x] Add optional 2FA for admin and moderator roles
+- [ ] Hash user passwords before storage using a strong algorithm like Argon2
 - [ ] Track character ownership per account
 - [ ] Implement account ban and suspension workflows with audit logging
 - [ ] Provide web form and endpoints for players to submit ban appeals

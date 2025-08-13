@@ -317,7 +317,7 @@ Parameters required to register a new account.
 | ----- | ---- | ----- | ----------- |
 | username | [string](#string) |  | Desired username for login and display. |
 | email | [string](#string) |  | Email address used for notifications and password recovery. |
-| password | [string](#string) |  | Raw password that will be hashed before storage. |
+| password | [string](#string) |  | Raw password that the server hashes before storage. |
 
 
 
