@@ -7,13 +7,13 @@ Centralized logging and administration tools for the platform. Collects log data
 ### Responsibilities
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
-- Offer dashboards and search for operators and moderators.
+- Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
 - Enforce moderation actions such as bans via secured APIs
 - Record audit trails for feature flag changes and account events.
 
 ## Architecture / Design Notes
 
-Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions.
+Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions. It consumes Kibana and Grafana APIs to embed existing dashboards within the admin interface.
 All admin APIs are secured via role-based access control integrated with the Account Service.
 
 - gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
@@ -28,7 +28,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 ## Key Features
 
 - Central log search for entries collected via Fluent Bit sidecars.
-- [Analytics dashboards](./analytics-dashboards.md) for operators.
+- [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels.
 - Tools for banning or restricting accounts.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../system-architecture-transactions.md).
@@ -95,7 +95,7 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
   - Account Service forwards account events and payment notifications.
   - Game Session Service streams session lifecycle metrics.
   - Social & Groups Service delivers chat logs for moderation.
-  - **External:** Elasticsearch, Prometheus, Grafana, and Alertmanager for storage, visualization, and alerting.
+  - **External:** Elasticsearch, Prometheus, Kibana, Grafana, and Alertmanager for storage, visualization, embedding, and alerting.
 
 > See [**Gateway Architecture**](../system-architecture-gateway.md),
 [**Deployment Environments**](../infrastructure/deployment-environments.md),
