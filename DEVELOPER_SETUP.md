@@ -191,7 +191,7 @@ runbooks. Velero schedules back up only Kubernetes manifests.
 
 The Docker Compose stack includes a `pg-dump-cron` service that runs
 `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes. Dumps are written to the
-`./backups` directory and follow the same daily/weekly/monthly rotation policy as
+`./backups` directory and follow the same 15min/daily/weekly/monthly rotation policy as
 production. Set `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` to automatically upload
 the files to your object store.
 

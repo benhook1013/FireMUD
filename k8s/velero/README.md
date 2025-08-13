@@ -79,6 +79,6 @@ dev-tools/backups/setup-local-backup.sh
 
 Velero backups exclude PostgreSQL and Redis data. PostgreSQL dumps are created by
 the `firemud-pg-dump` CronJob defined under `k8s/postgres/pg-dump-cronjob.yaml`.
-The CronJob's script rotates daily/weekly/monthly dumps and can upload them to a
+The CronJob's script rotates 15min/daily/weekly/monthly dumps and can upload them to a
 bucket when `PG_DUMP_BUCKET` is set. Redis is intentionally ephemeral and
 repopulates from the database on startup.

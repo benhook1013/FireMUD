@@ -15,9 +15,9 @@ if [[ -n "$BUCKET" || -n "$ENDPOINT" ]]; then
 fi
 PREFIX=firemud
 
-mkdir -p "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly"
+mkdir -p "$BACKUP_DIR/15min" "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly"
 TS=$(date +%Y%m%d%H%M%S)
-DUMP="$BACKUP_DIR/daily/${PREFIX}_${TS}.sql.gz"
+DUMP="$BACKUP_DIR/15min/${PREFIX}_${TS}.sql.gz"
 
 # Install awscli if bucket upload is enabled and aws command missing
 if [ -n "$BUCKET" ] && ! command -v aws >/dev/null 2>&1; then
@@ -26,12 +26,20 @@ fi
 
 pg_dump -h "$FIREMUD_POSTGRES_HOST" -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB" | gzip > "$DUMP"
 
-# keep last 96 daily dumps
-cd "$BACKUP_DIR/daily"
+HOUR=$(date +%H)
+# keep last 96 15min dumps
+cd "$BACKUP_DIR/15min"
 find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +97 | cut -d' ' -f2- | xargs -r rm --
 
 DOW=$(date +%u) # 1-7 (Mon-Sun)
 DOM=$(date +%d)
+
+if [ "$HOUR" = "00" ]; then
+  DAILY_DEST="$BACKUP_DIR/daily/${PREFIX}_${TS}.sql.gz"
+  cp "$DUMP" "$DAILY_DEST"
+  cd "$BACKUP_DIR/daily"
+  find . -maxdepth 1 -name "${PREFIX}_*.sql.gz" -printf '%T@ %p\n' | sort -nr | tail -n +11 | cut -d' ' -f2- | xargs -r rm --
+fi
 
 if [ "$DOW" = "7" ]; then
   WEEKLY_DEST="$BACKUP_DIR/weekly/${PREFIX}_${TS}.sql.gz"
@@ -53,9 +61,15 @@ if [ -n "$BUCKET" ]; then
     AWS_ARGS="--endpoint-url $ENDPOINT"
   fi
   echo "Uploading $DUMP to s3://$BUCKET"
-  if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" "$AWS_ARGS"; then
-    echo "Failed to upload daily dump" >&2
+  if ! aws s3 cp "$DUMP" "s3://$BUCKET/15min/" "$AWS_ARGS"; then
+    echo "Failed to upload 15min dump" >&2
     exit 1
+  fi
+  if [ "$HOUR" = "00" ]; then
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" "$AWS_ARGS"; then
+      echo "Failed to upload daily dump" >&2
+      exit 1
+    fi
   fi
   if [ "$DOW" = "7" ]; then
     if ! aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" "$AWS_ARGS"; then
