@@ -1,10 +1,9 @@
 package net.firedevops.firemud.service.impl;
 
 import com.bastiaanjansen.otp.TOTPGenerator;
+import de.mkammerer.argon2.Argon2;
+import de.mkammerer.argon2.Argon2Factory;
 import io.micrometer.core.annotation.Timed;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.client.LoggingAdminClient;
@@ -146,8 +145,7 @@ public class AccountServiceImpl implements AccountService {
     Optional<Account> accountOpt = accountRepository.findByTenantIdAndUsername(tenantId, username);
     Account account =
         accountOpt.orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
-    String hash = hashPassword(password);
-    if (!hash.equals(account.getPasswordHash())) {
+    if (!verifyPassword(password, account.getPasswordHash())) {
       throw new IllegalArgumentException("Invalid credentials");
     }
     if (account.getTwoFactorSecret() != null
@@ -347,17 +345,13 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String hashPassword(String password) {
-    try {
-      MessageDigest md = MessageDigest.getInstance("SHA-256");
-      byte[] hash = md.digest(password.getBytes(StandardCharsets.UTF_8));
-      StringBuilder sb = new StringBuilder();
-      for (byte b : hash) {
-        sb.append(String.format("%02x", b));
-      }
-      return sb.toString();
-    } catch (NoSuchAlgorithmException e) {
-      throw new IllegalStateException("SHA-256 not available", e);
-    }
+    Argon2 argon2 = Argon2Factory.create();
+    return argon2.hash(2, 65536, 1, password.toCharArray());
+  }
+
+  private boolean verifyPassword(String password, String hash) {
+    Argon2 argon2 = Argon2Factory.create();
+    return argon2.verify(hash, password.toCharArray());
   }
 
   private String readTemplate(String name) {

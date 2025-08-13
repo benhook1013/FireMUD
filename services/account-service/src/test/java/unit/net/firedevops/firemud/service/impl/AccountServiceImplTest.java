@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
+import de.mkammerer.argon2.Argon2;
+import de.mkammerer.argon2.Argon2Factory;
 import java.util.Optional;
 import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.saga.SagaRunner;
@@ -260,16 +262,7 @@ class AccountServiceImplTest {
   }
 
   private static String hash(String password) {
-    try {
-      java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-      byte[] hash = md.digest(password.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-      StringBuilder sb = new StringBuilder();
-      for (byte b : hash) {
-        sb.append(String.format("%02x", b));
-      }
-      return sb.toString();
-    } catch (java.security.NoSuchAlgorithmException e) {
-      throw new IllegalStateException(e);
-    }
+    Argon2 argon2 = Argon2Factory.create();
+    return argon2.hash(2, 65536, 1, password.toCharArray());
   }
 }
