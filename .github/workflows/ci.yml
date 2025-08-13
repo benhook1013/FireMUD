@@ -122,13 +122,29 @@ jobs:
             web-client/package-lock.json
             config/openapi/package-lock.json
 
+      - name: 💾 Cache OpenAPI Dependencies
+        id: cache-openapi
+        uses: actions/cache@v3
+        with:
+          path: config/openapi/node_modules
+          key: openapi-node-${{ hashFiles('config/openapi/package-lock.json') }}
+
       - name: 📦 Install Root Dependencies
+        if: steps.cache-openapi.outputs.cache-hit != 'true'
         run: npm --prefix config/openapi ci
 
       - name: 📑 Lint OpenAPI Specs
         run: npm --prefix config/openapi run openapi:lint
 
+      - name: 💾 Cache Web Client Dependencies
+        id: cache-web-client
+        uses: actions/cache@v3
+        with:
+          path: web-client/node_modules
+          key: web-client-node-${{ hashFiles('web-client/package-lock.json') }}
+
       - name: 📦 Install Frontend Dependencies
+        if: steps.cache-web-client.outputs.cache-hit != 'true'
         run: npm ci
         working-directory: web-client
 
