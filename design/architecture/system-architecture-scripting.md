@@ -100,10 +100,10 @@ By constraining scripts to curated components and enforcing strict quotas, FireM
 
 ## 🛠️ Developer Tools
 
-Several helper scripts live under `dev-tools/` to streamline common tasks:
+Several helper scripts streamline common tasks:
 
-- `firemud-cli.sh` – command-line utility for starting and stopping the local stack.
-- `docs/generate-erd.sh` – produces Entity Relationship Diagrams for each service.
-- `docs/generate-grpc-docs.sh` – generates Markdown documentation from protobuf definitions.
+- `dev-tools/firemud-cli.sh` – command-line utility for starting and stopping the local stack.
+- `dev-tools/docs/generate-erd.sh` – produces Entity Relationship Diagrams for each service.
+- `dev-tools/docs/generate-grpc-docs.sh` – generates Markdown documentation from protobuf definitions.
 
 These scripts complement the web-based editor and allow creators to automate routine actions.
