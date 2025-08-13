@@ -169,13 +169,13 @@ jobs:
       - name: 🎨 Apply Spotless Formatting
         run: |
           echo "::group::Run Spotless"
-          ./gradlew spotlessApply
+          ./gradlew spotlessCheck
           echo "::endgroup::"
 
       - name: 🧹 Fix Markdown Lint
         run: |
           echo "::group::Lint Markdown"
-          ./gradlew lintMarkdownFix
+          ./gradlew lintMarkdown
           echo "::endgroup::"
 
       - name: 🧪 Run Unit Tests
