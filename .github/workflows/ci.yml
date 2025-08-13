@@ -104,7 +104,7 @@ jobs:
           path: config/openapi/node_modules
           key: openapi-node-${{ hashFiles('config/openapi/package-lock.json') }}
 
-      - name: 📦 Install Root Dependencies
+      - name: 📦 Install OpenAPI Dependencies
         if: steps.cache-openapi.outputs.cache-hit != 'true'
         run: npm --prefix config/openapi ci
 
@@ -123,7 +123,7 @@ jobs:
         run: npm ci
         working-directory: web-client
 
-      - name: 🛠 Run Frontend Lint
+      - name: 🛠 Run Frontend Lint and Format Check
         run: |
           npm run lint
           npm run format -- -c
@@ -189,19 +189,19 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: 🎨 Apply Spotless Formatting
+      - name: 🎨 Check Spotless Formatting
         run: |
           echo "::group::Run Spotless"
           ./gradlew spotlessCheck
           echo "::endgroup::"
 
-      - name: 🧹 Lint Docs
+      - name: 🧹 Lint Docs and Links
         run: |
           echo "::group::Lint Markdown and Links"
           ./gradlew lintMarkdown linkCheck -PfullCheck
           echo "::endgroup::"
 
-      - name: 🧪 Run Unit Tests
+      - name: 🧪 Run Gradle Checks
         id: checks
         run: |
           echo "::group::Run Tests"
