@@ -1,4 +1,4 @@
-# 🔄 Playtesting & Feedback Plan
+# 🔄 Playtesting & Feedback
 
 Early adopters can try new features in short-lived environments created by the
 [`preview.yml`](../../.github/workflows/preview.yml) workflow. Pull requests

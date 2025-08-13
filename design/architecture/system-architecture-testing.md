@@ -34,7 +34,7 @@ The repository uses a hierarchical Gradle setup. The root `build.gradle.kts` del
 
 Unit and integration tests run automatically in GitHub Actions through a matrix of `:service-name:check` tasks. Cross-service tests run via the `crossServiceTest` Gradle task.
 
-## 💡 Cross-Service Integration Plan
+## 💡 Cross-Service Integration Testing
 
 For workflows that span multiple services, such as account creation and world provisioning, the suite starts several containers at once using **Testcontainers**. Each container joins a shared network so gRPC calls function just like in production.
 

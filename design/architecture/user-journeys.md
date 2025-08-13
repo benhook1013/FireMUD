@@ -278,7 +278,7 @@ favicons, and theme overrides before applying them in the UI. See
 
 ## 16. Playtesting & Analytics
 
-Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 
 ---
 
@@ -412,7 +412,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Multi-Tenancy](./system-architecture-multi-tenancy.md)
 - [Operational Runbooks](./system-architecture-runbooks.md)
 - [Performance Optimization Guidelines](./performance-optimization.md)
-- [Playtesting & Feedback Plan](../project-management/playtesting-feedback.md)
+- [Playtesting & Feedback](../project-management/playtesting-feedback.md)
 - [Procedural Generation](./system-architecture-procedural-generation.md)
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
