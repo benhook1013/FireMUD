@@ -17,11 +17,20 @@ These commands are wrapped in MCP messages so external tools, including AI assis
 
 ## 🔌 Protocol Handshake
 
-When a client connects, the server begins with an `mcp` version line. The client selects a mutually supported version and responds with an authentication key. Both sides then advertise supported packages using `mcp-negotiate-can` messages and finish with `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
+When a client connects, the server begins with an `mcp` version line advertising a minimum and maximum supported protocol version. The client replies with its own `mcp` line that includes the session’s `authentication-key` along with its version range. Both sides pick the highest overlapping version and tag all subsequent messages with the agreed key. After the version exchange, each side advertises optional packages with `mcp-negotiate-can` and may confirm a version for a package using `mcp-negotiate-set` before concluding with `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
+
+Example handshake:
+
+```text
+#$#mcp version: 2.1 to: 2.1
+#$#mcp authentication-key: 18972163558 version: 2.1 to: 2.1
+#$#mcp-negotiate-can package: mcp-cord min-version: 1.0 max-version: 1.0
+#$#mcp-negotiate-end
+```
 
 ## 📨 Message Format
 
-MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each message contains a name, the session’s authentication key, and keyword/value pairs. Values may be simple or multiline; simple values containing spaces require quoting.
+MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each message contains a case-insensitive name, the session’s case-sensitive authentication key, and keyword/value pairs. Values may be simple or multiline; simple values containing spaces or special characters require quoting, while multiline values span additional lines prefixed with `* datatag` and terminate with `: datatag`.
 
 ## 📦 Optional Packages
 
