@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -33,7 +33,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 💾 Cache Buf modules
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/buf
           key: buf-mod-${{ runner.os }}-${{ hashFiles('protos/buf.yaml', 'protos/**/*.proto') }}
@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 🐳 Run Hadolint
         uses: hadolint/hadolint-action@v3.1.0
@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - uses: ludeeus/action-shellcheck@2
         with:
           scandir: dev-tools
@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@v4
@@ -97,7 +97,7 @@ jobs:
 
       - name: 💾 Cache OpenAPI Dependencies
         id: cache-openapi
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: config/openapi/node_modules
           key: openapi-node-${{ hashFiles('config/openapi/package-lock.json') }}
@@ -111,7 +111,7 @@ jobs:
 
       - name: 💾 Cache Web Client Dependencies
         id: cache-web-client
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: web-client/node_modules
           key: web-client-node-${{ hashFiles('web-client/package-lock.json') }}
@@ -129,7 +129,7 @@ jobs:
 
       - name: Cache Chrome .deb
         id: cache-chrome
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ./google-chrome-stable_current_amd64.deb
           key: chrome-deb-v1
@@ -173,7 +173,7 @@ jobs:
 
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v4
@@ -242,7 +242,7 @@ jobs:
 
       - name: 💬 Upload Build Summary Comment
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const coverage = Number("${{ steps.coverage.outputs.percent }}");
@@ -290,10 +290,10 @@ jobs:
     needs: [buf-check, docker-lint, shellcheck]
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 💾 Cache Trivy DB
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
@@ -319,7 +319,7 @@ jobs:
 
       - name: 💬 Upload Trivy Report as PR Comment
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
@@ -369,7 +369,7 @@ jobs:
     needs: [build-and-test, trivy-scan]
     steps:
       - name: ⬇️ Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v4
