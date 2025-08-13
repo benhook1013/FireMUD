@@ -6,6 +6,9 @@
 - [x] Deploy Fluent Bit sidecars to forward logs to Elasticsearch
 - [x] Integrate Alertmanager for automated alerts
 - [x] Provide analytics dashboards for operators
+- [ ] Integrate Prometheus metrics into admin dashboards
+- [ ] Surface Jaeger trace data within admin dashboards
+- [ ] Display Alertmanager notifications in the admin UI
 - [ ] Support dashboard filtering by `playerId`
 - [ ] Implement real-time analytics on game performance
 - [ ] Provide real-time saga workflow state charts
