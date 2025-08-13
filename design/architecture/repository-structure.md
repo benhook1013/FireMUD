@@ -4,8 +4,8 @@ This repository uses a hierarchical Gradle layout. All microservices and the sha
 `common-library` live under a top-level `services/` folder to keep the root tidy. The
 React UI resides in `web-client/` and various infrastructure manifests sit under
 `k8s/`. Additional build tooling and documentation live at the root.
-Hidden configuration files used by the CI pipeline are omitted from the tree for
-brevity.
+Hidden configuration files used by the CI pipeline and generated build output
+directories are omitted from the tree for brevity.
 
 ```text
 root
@@ -59,6 +59,7 @@ root
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs,
   network policies, and sample Terraform modules for local and production clusters.
 - `charts/` – Umbrella Helm chart for deploying all services together.
+- `build/` – Generated Gradle build outputs (ignored by source control).
 - `.github/` – GitHub Actions workflows and issue templates.
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `AGENTS.md` – Contribution guide pointing to project AI rules.
