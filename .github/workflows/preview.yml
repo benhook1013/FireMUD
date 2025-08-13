@@ -50,7 +50,9 @@ jobs:
         run: |
           services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
           for service in $services; do
+            docker pull ghcr.io/benhook1013/$service:latest || true
             docker buildx build \
+              --cache-from type=registry,ref=ghcr.io/benhook1013/$service:latest \
               --cache-from type=gha \
               --cache-to type=gha,mode=max \
               --load \
