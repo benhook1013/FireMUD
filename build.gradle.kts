@@ -30,6 +30,12 @@ node {
     download.set(System.getenv("CI") == null)
 }
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
 
 allprojects {
@@ -48,7 +54,9 @@ subprojects {
     version = project.property("version") as String
 
     java {
-        toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+        toolchain {
+            languageVersion.set(JavaLanguageVersion.of(21))
+        }
     }
 
     if (projectDir.parentFile.name == "services" && name != "common-library") {
