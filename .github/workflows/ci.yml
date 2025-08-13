@@ -47,12 +47,15 @@ jobs:
       - name: ⚠️ Buf Breaking
         if: github.event_name == 'pull_request'
         working-directory: protos
-        run: |
-          buf breaking --against "../.git#ref=${{ github.event.pull_request.base.sha }},subdir=protos" --config ../config/protobuf/buf.work.yaml
+        env:
+          BUF_WORKSPACE_CONFIG: ../config/protobuf/buf.work.yaml
+        run: buf breaking --against "../.git#ref=${{ github.event.pull_request.base.sha }},subdir=protos"
 
       - name: ⚙️ Generate Protobufs
         working-directory: protos
-        run: buf generate --template ../config/protobuf/buf.gen.yaml --config ../config/protobuf/buf.work.yaml
+        env:
+          BUF_WORKSPACE_CONFIG: ../config/protobuf/buf.work.yaml
+        run: buf generate --template ../config/protobuf/buf.gen.yaml
 
   docker-lint:
     name: Dockerfile Lint
