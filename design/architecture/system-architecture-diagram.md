@@ -69,12 +69,17 @@ flowchart TD
     Prom --> Grafana
     OTel --> Jaeger
     ES --> Kibana
+    ES -- logs --> Logging
+    Prom -- metrics --> Logging
+    Jaeger -- traces --> Logging
+    Alertmgr -- alerts --> Logging
 
 ```
 
 The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md).
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
+The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications to power dashboards and moderation workflows.
 
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design) for details.
 
@@ -98,7 +103,7 @@ The diagram covers every microservice in the repository:
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags with version publishing copy steps and a web-based editor.
 - **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** – Executes AI behaviors and custom scripts.
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
-- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with advanced analytics dashboards.
+- **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with dashboards built from Elasticsearch logs, Prometheus metrics, and Jaeger traces to support moderation.
 
 ## 🔍 Observability Components
 
@@ -107,6 +112,7 @@ The diagram also illustrates the monitoring stack shared by every service:
 - **Fluent Bit** – Collects structured logs from each container.
 - **Elasticsearch** – Stores logs for search and troubleshooting.
 - **Prometheus** – Scrapes metrics and forwards alerts to **Alertmanager**.
+- **Alertmanager** – Routes alerts and notifies the Logging & Admin Service.
 - **Grafana** – Visualizes dashboards based on Prometheus data.
 - **OpenTelemetry Collector** – Aggregates distributed traces.
 - **Jaeger** – Provides a UI for end‑to‑end trace analysis.
