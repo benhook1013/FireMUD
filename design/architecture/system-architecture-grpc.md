@@ -102,7 +102,7 @@ is handled by the Gradle `com.google.protobuf` plugin:
 protobuf {
   protoc { artifact = "com.google.protobuf:protoc:4.31.1" }
   plugins {
-    id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:1.73.0" }
+    id("grpc") { artifact = "io.grpc:protoc-gen-grpc-java:1.74.0" }
   }
   generateProtoTasks {
     ofSourceSet("main").forEach { it.plugins { id("grpc") } }
