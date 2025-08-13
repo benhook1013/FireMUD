@@ -8,7 +8,7 @@ This document consolidates the platform's observability architecture.
 
 - **Fluent Bit** sidecars collect service logs from every microservice.
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
-- The **Logging & Admin Service** exposes moderation tools and log queries.
+- The **Logging & Admin Service** exposes moderation tools and log queries and embeds Kibana dashboards via its API for richer visualization.
 - Logs are emitted in JSON with request tracing fields (e.g., `traceId`) and the active `playerId` for moderation context.
 - Kibana dashboards filter by both `traceId` and `playerId` to narrow investigations quickly.
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and `correlationId` in every log entry. See [Shared Libraries](./system-architecture-shared-libraries.md).
@@ -22,6 +22,7 @@ This document consolidates the platform's observability architecture.
 - **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**.
 - **Grafana** dashboards visualize performance data.
 - The Logging & Admin Service queries Prometheus for metrics and Jaeger for trace analysis to power moderation dashboards and investigations. See [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md) for examples.
+- It calls the Grafana API to embed existing dashboards alongside Kibana views for a unified operator experience.
 - The service consumes Alertmanager notifications so operators can triage alerts inside the admin UI.
 - **OpenTelemetry** spans provide distributed tracing across ticks and requests. Traces are collected by an OpenTelemetry Collector and visualized with Jaeger. See [Tracing](./system-architecture-tracing.md) for deployment details.
 - Sample Kubernetes manifests under [`k8s/monitoring`](../../k8s/monitoring) deploy the collector and Jaeger (`otel-collector.yaml`, `jaeger.yaml`).

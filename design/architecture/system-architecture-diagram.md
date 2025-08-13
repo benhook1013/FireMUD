@@ -73,13 +73,15 @@ flowchart TD
     Prom -- metrics --> Logging
     Jaeger -- traces --> Logging
     Alertmgr -- alerts --> Logging
+    Kibana -- dashboards --> Logging
+    Grafana -- dashboards --> Logging
 
 ```
 
 The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md).
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
-The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications to power dashboards and moderation workflows.
+The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications. It also embeds Kibana and Grafana dashboards via their APIs to power moderation workflows.
 
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design) for details.
 
@@ -113,10 +115,10 @@ The diagram also illustrates the monitoring stack shared by every service:
 - **Elasticsearch** – Stores logs for search and troubleshooting.
 - **Prometheus** – Scrapes metrics and forwards alerts to **Alertmanager**.
 - **Alertmanager** – Routes alerts and notifies the Logging & Admin Service.
-- **Grafana** – Visualizes dashboards based on Prometheus data.
+- **Grafana** – Visualizes dashboards based on Prometheus data and exposes an API that the Logging & Admin Service uses for embedding.
 - **OpenTelemetry Collector** – Aggregates distributed traces.
 - **Jaeger** – Provides a UI for end‑to‑end trace analysis.
-- **Kibana** – Queries and visualizes Elasticsearch logs.
+- **Kibana** – Queries and visualizes Elasticsearch logs and exposes an API that the Logging & Admin Service uses for embedding.
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for deployment details.
 
