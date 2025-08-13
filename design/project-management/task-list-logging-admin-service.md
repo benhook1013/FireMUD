@@ -8,6 +8,9 @@
 - [x] Provide analytics dashboards for operators
 - [ ] Support dashboard filtering by `playerId`
 - [ ] Implement real-time analytics on game performance
+- [ ] Provide real-time saga workflow state charts
+- [ ] Allow per-game custom dashboards using shared templates
+- [ ] Export analytics for external BI tools
 - [x] Evaluate adopting a zero-trust network model for internal traffic
 
 ## Moderation Tools

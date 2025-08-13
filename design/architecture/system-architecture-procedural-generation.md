@@ -66,7 +66,7 @@ Generates biome-aware terrain maps with elevation, water features, forest densit
 | **Connectivity Graph**   | Generate roads, rivers, and path exits      | A*, flow maps, elevation-aware routing     |
 | **Room Graph Export**    | Convert terrain grid into room data         | Either sparse (POIs and path nodes only) or full (1:1 room per map cell) |
 
-> 🔧 The room generation mode (sparse vs full) is selectable per generation request, depending on the game’s desired level of detail and exploration density.
+> The room generation mode (sparse vs full) is selectable per generation request, depending on the game’s desired level of detail and exploration density.
 
 ---
 
@@ -136,7 +136,7 @@ Additional capabilities:
 
 - Procedural POI lore naming and description generation
 - Seasonal or climate-based biome variations
-- Visual preview overlays in Game Editor
+- The Game Editor displays procedural generation overlays with selectable layers
 - Runtime tuning parameters via scripting
 
 ---

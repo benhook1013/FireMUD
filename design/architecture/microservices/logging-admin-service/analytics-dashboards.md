@@ -33,5 +33,5 @@ searches make it easy to pivot on `tenantId` or `playerId`.
 ## Additional Capabilities
 
 - Real-time charts for saga workflow states.
-- Custom dashboards per game with shared templates.
-- Export options for longer-term analytics in external BI tools.
+- Per-game custom dashboards generated from shared templates.
+- Export options for long-term analytics in external BI tools.

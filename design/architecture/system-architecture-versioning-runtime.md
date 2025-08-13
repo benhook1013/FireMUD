@@ -63,7 +63,7 @@ The **Game Session Service** controls which published version is active for each
 - Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.
 - All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
 
-## 🔧 Runtime Feature Flags
+## Runtime Feature Flags
 
 Runtime feature flags allow limited behavior changes without publishing a new design version.
 They are **defined in the Game Design Service** and copied into the **Game Session Service**

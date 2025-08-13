@@ -8,7 +8,7 @@ This document outlines how FireMUD is deployed across different environments, fo
 
 FireMUD uses Docker Compose for local development and testing:
 
-### 🔧 Docker Compose Characteristics
+### Docker Compose Characteristics
 
 - All services, including the gateway, are built locally via `Dockerfile`s.
 - Docker Compose orchestrates container startup. `depends_on` is configured with
@@ -49,7 +49,7 @@ pause startup until PostgreSQL and Redis are reachable.
 
 In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, or self-managed clusters).
 
-### 🔧 Kubernetes Characteristics
+### Kubernetes Characteristics
 
 - Services are deployed as Pods and exposed via Kubernetes Services.
 - DNS-based discovery is built into Kubernetes (e.g., `game-session-service.default.svc.cluster.local`).
@@ -96,7 +96,7 @@ Example manifests for the collector and dashboards live under [`k8s/monitoring`]
 
 Docker Compose and Kubernetes rely on the following monitoring tools:
 
-### 🔧 Monitoring Stack
+### Monitoring Stack
 
 - Prometheus scrapes metrics from all services.
 - Grafana dashboards visualize performance metrics.
