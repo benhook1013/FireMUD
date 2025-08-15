@@ -25,7 +25,7 @@ FireMUD supports the following generator types, and additional strategies can be
 
 Creates compact room graphs with bidirectional exits — ideal for dungeons, interiors, or short instances.
 
-#### Algorithm:
+#### Algorithm
 
 1. **Seeded Initialization**  
    Select a random seed to ensure repeatable layout.
