@@ -111,22 +111,26 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ## 🧱 Service Responsibilities
 
-**Automation & Scripting Service**
+### Automation & Scripting Service
+
 - Owns `GenerationService` and `GeneratorRegistry`; executes all generators
 - Runs `GenerationHook`s and post-gen population scripts
 - Exposes generation via API and scripting DSL
 - Returns a complete, validated room/region graph (or error)—no partial commits
 
-**World Management Service**
+### World Management Service
+
 - Persists generated rooms/biomes/regions; assigns canonical `roomId`s
 - Persists generator metadata (`seed`, `generatorType`, params) and editor overlays
 - Provides read APIs for geometry, overlays, and region metadata
 
-**Game Session Service**
+### Game Session Service
+
 - Requests runtime instancing (portals/quests), schedules **solo ticks** for generation
 - Coordinates Redis tick isolation; hands generation to A&S
 
-**Game Logic Service (Movement/Travel)**
+### Game Logic Service (Movement/Travel)
+
 - **Computes movement/travel costs** using World geometry (`coordinates`, region `spacingMultiplier`, biome/elevation rules)
 
 ---
