@@ -13,8 +13,20 @@ if [ ! -x "$BIN" ]; then
 fi
 
 # Run link check on documentation files only
-FILES=$(find design -name '*.md' -type f -print; find . -maxdepth 1 -name '*.md' -type f)
-FILES=$(echo "$FILES" | grep -v '/node_modules/' | grep -v '/build/' | grep -v '/\.gradle/')
+mapfile -t FILES < <(
+  find design -name '*.md' -type f
+  find . -maxdepth 1 -name '*.md' -type f
+)
 
-OPTIONS=(--scheme https --scheme http --exclude-file config/lychee/.lycheeignore)
-"$BIN" --no-progress --verbose "${OPTIONS[@]}" "$FILES"
+OPTIONS=(
+  --scheme https
+  --scheme http
+  --exclude-path node_modules
+  --exclude-path build
+  --exclude-path .gradle
+  --exclude-path design/grpc-docs
+  --max-retries 3
+  --retry-wait-time 2
+)
+
+"$BIN" --no-progress --verbose "${OPTIONS[@]}" "${FILES[@]}"

@@ -8,7 +8,7 @@ alphabetically) contains its own settings and README describing how to use it.
 - `git-hooks/` – Custom Git hooks; install with
   `git config core.hooksPath config/git-hooks`.
 - `hadolint/` – Dockerfile lint rules.
-- `lychee/` – Ignore list for the `lychee` link checker.
+- `lychee/` – Documentation for the `lychee` link checker (`.lycheeignore` lives at the repository root).
 - `markdownlint/` – Markdown linting configuration.
 - `protobuf/` – Buf workspace and code generation configs.
 - `redis/` – Sample `redis.conf` used by Docker Compose.
