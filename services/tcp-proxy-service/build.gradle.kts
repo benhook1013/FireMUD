@@ -10,7 +10,7 @@ dependencies {
     implementation(libs.mapstruct)
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
-    implementation("io.netty:netty-all:4.2.3.Final")
+    implementation("io.netty:netty-all:4.2.4.Final")
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-library"))
     implementation(libs.grpc.spring.boot.starter)
