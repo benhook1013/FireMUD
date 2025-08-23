@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import net.firedevops.firemud.dto.SagaInstanceDto;
@@ -19,6 +20,9 @@ public class SagaDashboardServiceImpl implements SagaDashboardService {
   private final SagaMapper mapper;
   private final SagaMetrics metrics;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring manages dependencies and metrics bean")
   public SagaDashboardServiceImpl(
       SagaInstanceRepository instanceRepository,
       SagaStepRepository stepRepository,

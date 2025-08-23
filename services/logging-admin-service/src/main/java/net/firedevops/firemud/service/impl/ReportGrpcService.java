@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
@@ -18,6 +19,9 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
   private final ReportService reportService;
   private final MeterRegistry meterRegistry;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring injects ReportService and MeterRegistry beans")
   public ReportGrpcService(ReportService reportService, MeterRegistry meterRegistry) {
     this.reportService = reportService;
     this.meterRegistry = meterRegistry;
