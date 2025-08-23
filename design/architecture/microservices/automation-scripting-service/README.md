@@ -11,7 +11,7 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 - Stores persistent NPC memory and automation queues
 - Integrates with Game Session and World Management services for real-time updates
 
-For details on how scripts are authored and executed safely, see [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
+For details on how scripts are authored and executed safely, see [System Architecture: Scripting & Automation](../../system-architecture-scripting.md).
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
@@ -23,7 +23,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   designers can build behaviors without coding.
 - AI computations are optimized for large worlds by evaluating scripts on a separate schedule and batching the resulting commands before handing them to the tick system.
 - Script definitions are versioned and can be hot reloaded without downtime as
-  described in [System Architecture: Scripting & Automation](../system-architecture-scripting.md).
+  described in [System Architecture: Scripting & Automation](../../system-architecture-scripting.md).
 - The service listens for a `NotifyScriptVersionUpdate` event and reloads the
   specified scripts in memory, validating compatibility before updating the
   runtime registry.
@@ -31,11 +31,11 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
     can be rolled back. The service uses the shared `SagaBuilder` and
     `SagaRunner` helpers to persist the script and emit `sagas.active` metrics
     with a `correlationId` for troubleshooting. See
-    [Transaction Strategies](../system-architecture-transactions.md).
+    [Transaction Strategies](../../system-architecture-transactions.md).
 - Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
   one game cannot access another's data. Redis queues also include the tenant
-  prefix; see [Multi-Tenancy](../system-architecture-multi-tenancy.md).
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+  prefix; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
@@ -79,7 +79,7 @@ interaction.
   runaway behavior.
 - The service uses `ScriptTickService` to stage, commit, and roll back events in Redis.
   This runs independently of the main game tick loop. Locks `tick:lock:{tenantId}:{scriptId}`
-  ensure only one script tick operates at a time. See [Tick System and Runtime Design](../system-architecture-ticks.md) for how queued commands are processed.
+  ensure only one script tick operates at a time. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed.
 
 ### gRPC APIs
 
@@ -110,14 +110,14 @@ values fall below configurable thresholds the NPC may become `FLEEING` or
   - World Management Service receives world-state updates from scripts.
 - **External:** PostgreSQL for script storage and Redis for queuing automation tasks.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -149,26 +149,26 @@ stubs.
 
 ## 📚 Related Documentation
 
-- [System Architecture: Scripting & Automation](../system-architecture-scripting.md)
-- [Tick System and Runtime Design](../system-architecture-ticks.md)
-- [Redis Architecture](../system-architecture-redis.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Add Automation & Scripting](../user-journeys.md#4-add-automation--scripting)
-- [System Architecture Overview](../system-architecture-overview.md)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Database Migrations](../system-architecture-database-migrations.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [System Architecture: Scripting & Automation](../../system-architecture-scripting.md)
+- [Tick System and Runtime Design](../../system-architecture-ticks.md)
+- [Redis Architecture](../../system-architecture-redis.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – Add Automation & Scripting](../../user-journeys.md#4-add-automation--scripting)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Database Migrations](../../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
 ### Configuration
 
-PostgreSQL and Redis connections are configured via the common `DatabaseAutoConfiguration` and `RedisProperties` classes. Refer to [Deployment Environments](../infrastructure/deployment-environments.md) for default values. Local development typically uses the settings from `.env.sample`.
+PostgreSQL and Redis connections are configured via the common `DatabaseAutoConfiguration` and `RedisProperties` classes. Refer to [Deployment Environments](../../infrastructure/deployment-environments.md) for default values. Local development typically uses the settings from `.env.sample`.
 
 ### REST & gRPC Endpoints
 
@@ -182,7 +182,7 @@ curl http://localhost:8080/ping
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`automation_scripting_service.proto`](../../../protos/automation-scripting/v1/automation_scripting_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`automation_scripting_service.proto`](../../../../protos/automation-scripting/v1/automation_scripting_service.proto).
 
 ```bash
 grpcurl -plaintext localhost:6565 automation_scripting.v1.AutomationScriptingService/Ping
@@ -204,5 +204,5 @@ configurable window. Counters are stored in Redis using keys of the form
 ignored and `script_quota_denied_total` is incremented. Enforcement metrics are
 exported via the standard `sagas.active` gauge.
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)

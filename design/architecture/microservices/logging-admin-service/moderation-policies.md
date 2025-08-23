@@ -22,7 +22,7 @@ Operators can customize the word list per tenant, and the filter flags attempts 
 
 1. Offending logs or reports are flagged in the Logging & Admin Service dashboards. These dashboards are described in [Analytics Dashboards](./analytics-dashboards.md).
 2. Moderators review the context and determine the severity.
-3. Actions are recorded via `ApplyModerationAction` gRPC calls (see [`logging_admin_service.proto`](../../../protos/logging-admin/v1/logging_admin_service.proto)). The service coordinates a saga to delete the account, terminate active sessions, and apply temporary suspensions with recorded durations in the `moderation_actions` table.
+3. Actions are recorded via `ApplyModerationAction` gRPC calls (see [`logging_admin_service.proto`](../../../../protos/logging-admin/v1/logging_admin_service.proto)). The service coordinates a saga to delete the account, terminate active sessions, and apply temporary suspensions with recorded durations in the `moderation_actions` table.
 4. Notifications are sent to affected players with reason and duration through the Account Service `NotificationService`.
 
 ## Appeals

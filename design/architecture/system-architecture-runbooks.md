@@ -70,7 +70,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
    - A manual workflow `manual-backup-restore.yml` can verify backups and
      perform an optional restore test in a temporary namespace. Trigger it
      from the GitHub Actions UI when needed.
-   - **Maintain dump volume**: the [`firemud-pg-dump` CronJob](k8s/postgres/pg-dump-cronjob.yaml) rotates files automatically,
+   - **Maintain dump volume**: the [`firemud-pg-dump` CronJob](../../k8s/postgres/pg-dump-cronjob.yaml) rotates files automatically,
     but long-lived persistent volumes can still fill up. The Docker Compose
     stack includes a `pg-dump-cron` service that runs the same rotation script
     every 15 minutes. Periodically check the `firemud-pg-dumps` PVC and prune

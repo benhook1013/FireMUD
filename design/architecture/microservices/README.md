@@ -42,7 +42,7 @@ For cross-service systems (e.g., networking, infrastructure), refer to:
 For new services, start from the [Service Template](./service-template.md) so documentation follows the same layout.
 
 All gRPC schema files are organized under the top-level
-[`protos/`](../../protos) directory. Individual service documents link to their
+[`protos/`](../../../protos) directory. Individual service documents link to their
 corresponding versioned proto folders.
 
 ## 📚 Related Documentation

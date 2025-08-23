@@ -20,25 +20,25 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Ensures atomic command execution using Redis transactions and Lua scripts.
 - Crash recovery replays ticks stored in Redis using AOF persistence and `WAIT`
   semantics, ensuring deterministic recovery as described in
-  [Tick System and Runtime Design](../system-architecture-ticks.md#crash-recovery-and-replay).
+  [Tick System and Runtime Design](../../system-architecture-ticks.md#crash-recovery-and-replay).
 - Every session record includes a `tenantId` identifying the game instance.
   Redis keys and database tables prefix this value so sessions from different
   games remain isolated. The platform may enforce per-game resource quotas at this level so one tenant cannot exhaust cluster capacity.
-  See the [Multi-Tenancy](../system-architecture-multi-tenancy.md) document.
+  See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Session state for reconnect recovery lives in Redis using keys of the form
   `session:{tenantId}:{sessionId}` and is purged when the session ends. All tick queues, locks and pending sets share this tenant-prefixed scheme.
   - Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
-  [Transaction Strategies](../system-architecture-transactions.md).
+  [Transaction Strategies](../../system-architecture-transactions.md).
 - Saga workflows use the shared `SagaBuilder` and emit metrics with correlation
   IDs via `SagaRunner`.
 - Monitors login attempts per IP and temporarily blacklists repeat
   offenders. Global spikes introduce small delays and suspicious activity
   triggers notification emails to the account holder. See
-  [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
+  [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Session objects are created as soon as a client connects. They remain unauthenticated until the Account Service verifies credentials and issues a token.
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
@@ -49,7 +49,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   sessions can reload updated scripts without restarting.
 - **Termination Handling** — cleans up resources and logs results when a game ends.
 - **Instance Initialization** — starts new games from published templates.
-- **Reconnection Handling** — resumes gameplay via Redis-backed session state as described in [Reconnection Strategy](../system-architecture-reconnection.md).
+- **Reconnection Handling** — resumes gameplay via Redis-backed session state as described in [Reconnection Strategy](../../system-architecture-reconnection.md).
 - **State Queries** — exposes gRPC methods to retrieve current game or player state for the web UI.
 
 ### Data Model
@@ -91,11 +91,11 @@ Orchestrates live game sessions, including tick execution, player input validati
 - gRPC clients discover endpoints via `ServiceEndpointsProperties` and secure
   connections with mTLS certificates issued by cert-manager.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md), [**Deployment Environments**](../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for details on shared infrastructure components.
+> See [**Gateway Architecture**](../../system-architecture-gateway.md), [**Deployment Environments**](../../infrastructure/deployment-environments.md), and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -127,24 +127,24 @@ Service definitions reside in
 
 ## 📚 Related Documentation
 
-- [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) — how game instances load published versions and runtime flags.
-- [Reconnection Strategy](../system-architecture-reconnection.md)
-- [Authentication & Authorization](../system-architecture-authentication.md)
-- [Tick System and Runtime Design](../system-architecture-ticks.md)
-- [Redis Architecture](../system-architecture-redis.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) — how game instances load published versions and runtime flags.
+- [Reconnection Strategy](../../system-architecture-reconnection.md)
+- [Authentication & Authorization](../../system-architecture-authentication.md)
+- [Tick System and Runtime Design](../../system-architecture-ticks.md)
+- [Redis Architecture](../../system-architecture-redis.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
 ### Configuration
 
-Environment variables configure the PostgreSQL and Redis connections via `DatabaseAutoConfiguration` and `RedisProperties`. Refer to [Deployment Environments](../infrastructure/deployment-environments.md) for details. The `.env.sample` file contains example values.
+Environment variables configure the PostgreSQL and Redis connections via `DatabaseAutoConfiguration` and `RedisProperties`. Refer to [Deployment Environments](../../infrastructure/deployment-environments.md) for details. The `.env.sample` file contains example values.
 
-The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in the [Multi-Tenancy design](../system-architecture-multi-tenancy.md).
+The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in the [Multi-Tenancy design](../../system-architecture-multi-tenancy.md).
 
 ### REST & gRPC Endpoints
 
@@ -173,7 +173,7 @@ curl -X POST http://localhost:8080/sessions \
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_session_service.proto`](../../../protos/game-session/v1/game_session_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_session_service.proto`](../../../../protos/game-session/v1/game_session_service.proto).
 - `StartSession(StartSessionRequest) returns (StartSessionResponse)` – creates a new game instance.
 - `StopSession(StopSessionRequest) returns (StopSessionResponse)` – stops a running session.
 - `RestartSession(RestartSessionRequest) returns (RestartSessionResponse)` – restarts a stopped session.
@@ -195,31 +195,31 @@ grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVer
 ### Additional Notes
 
 - See [Cross-Region Sharding and Session Handoff](#cross-region-sharding-and-session-handoff) for how sessions migrate between clusters.
-- Metrics emitted by this service feed the operator [Analytics Dashboards](../microservices/logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
+- Metrics emitted by this service feed the operator [Analytics Dashboards](../logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
 - Logs and metrics include a `script_patch_version` label so operators know which
   hotfix revision is active.
 
 ### Runtime Feature Flags
 
-Feature flags are stored in the `feature_flag` table and can be toggled through the Logging & Admin Service. The Game Session Service exposes a gRPC `ToggleFeatureFlag` method so administrators can enable or disable experimental behavior without restarting a session. See [Game Design Service Feature Flags](../microservices/game-design-service/feature-flags.md) for how definitions are created and published.
+Feature flags are stored in the `feature_flag` table and can be toggled through the Logging & Admin Service. The Game Session Service exposes a gRPC `ToggleFeatureFlag` method so administrators can enable or disable experimental behavior without restarting a session. See [Game Design Service Feature Flags](../game-design-service/feature-flags.md) for how definitions are created and published.
 
 ### Saga Participation
 
-Game startup and shutdown are coordinated using the shared `Saga` helpers from `firemud-common`. Each dependent service (World Management, Entity Management and Game Logic) confirms its part of the workflow before the session becomes active. Failures trigger compensating steps, ensuring consistent rollbacks. See [Transaction Strategies](../system-architecture-transactions.md) for background.
+Game startup and shutdown are coordinated using the shared `Saga` helpers from `firemud-common`. Each dependent service (World Management, Entity Management and Game Logic) confirms its part of the workflow before the session becomes active. Failures trigger compensating steps, ensuring consistent rollbacks. See [Transaction Strategies](../../system-architecture-transactions.md) for background.
 
 ### Redis Keys
 
 Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. Tick queues, locks and pending sets use the same prefix. Keys are removed when a session stops.
 
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Publish and Start a Game Instance](../user-journeys.md#5-publish-and-start-a-game-instance)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#7-player-login-and-gameplay)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – Publish and Start a Game Instance](../../user-journeys.md#5-publish-and-start-a-game-instance)
+- [User Journeys – Player Login and Gameplay](../../user-journeys.md#7-player-login-and-gameplay)
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ### Cross-Service Integration Test
 
@@ -231,7 +231,7 @@ the dependent Docker images are built:
 ./gradlew :game-session-service:test --tests "*CrossServiceIntegrationTest"
 ```
 
-See [System Architecture Testing](../system-architecture-testing.md) for more
+See [System Architecture Testing](../../system-architecture-testing.md) for more
 details.
 
 ## Additional Features
@@ -255,5 +255,5 @@ domains isolated.
 The service emits Prometheus metrics for tick timing, queue lengths and command
 latency. Logs include the `tenantId` and `traceId` fields so operators can build
 dashboards in the Logging & Admin Service. These metrics feed the default
-[Analytics Dashboards](../microservices/logging-admin-service/analytics-dashboards.md)
+[Analytics Dashboards](../logging-admin-service/analytics-dashboards.md)
 to monitor game health and player activity.
