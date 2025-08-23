@@ -29,8 +29,29 @@ public class AutomationScriptingClient implements AutoCloseable {
 
   public AutomationScriptingClient(
       ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
-    this.endpoints = endpoints;
-    this.tlsProps = tlsProps;
+    this.endpoints = copyEndpoints(endpoints);
+    this.tlsProps = copyTlsProps(tlsProps);
+  }
+
+  private static ServiceEndpointsProperties copyEndpoints(ServiceEndpointsProperties source) {
+    ServiceEndpointsProperties copy = new ServiceEndpointsProperties();
+    copy.setAccountService(source.getAccountService());
+    copy.setGameSessionService(source.getGameSessionService());
+    copy.setGameDesignService(source.getGameDesignService());
+    copy.setGameLogicService(source.getGameLogicService());
+    copy.setWorldManagementService(source.getWorldManagementService());
+    copy.setEntityManagementService(source.getEntityManagementService());
+    copy.setLoggingAdminService(source.getLoggingAdminService());
+    copy.setAutomationScriptingService(source.getAutomationScriptingService());
+    return copy;
+  }
+
+  private static GrpcClientProperties copyTlsProps(GrpcClientProperties source) {
+    GrpcClientProperties copy = new GrpcClientProperties();
+    copy.setCertChain(source.getCertChain());
+    copy.setPrivateKey(source.getPrivateKey());
+    copy.setCaCert(source.getCaCert());
+    return copy;
   }
 
   @PostConstruct

@@ -1,12 +1,12 @@
 package net.firedevops.firemud.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.config.AssetStoreProperties;
 import net.firedevops.firemud.entity.GameAsset;
 import net.firedevops.firemud.repository.GameAssetRepository;
@@ -18,12 +18,31 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Service
-@RequiredArgsConstructor
 public class AssetExportServiceImpl implements AssetExportService {
   private final GameAssetRepository repository;
+
+  @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "S3Client is thread-safe")
   private final S3Client s3Client;
+
   private final AssetStoreProperties properties;
   private final ObjectMapper objectMapper = new ObjectMapper();
+
+  public AssetExportServiceImpl(
+      GameAssetRepository repository, S3Client s3Client, AssetStoreProperties properties) {
+    this.repository = repository;
+    this.s3Client = s3Client;
+    this.properties = copyProperties(properties);
+  }
+
+  private static AssetStoreProperties copyProperties(AssetStoreProperties source) {
+    AssetStoreProperties copy = new AssetStoreProperties();
+    copy.setEndpoint(source.getEndpoint());
+    copy.setBucket(source.getBucket());
+    copy.setRegion(source.getRegion());
+    copy.setAccessKey(source.getAccessKey());
+    copy.setSecretKey(source.getSecretKey());
+    return copy;
+  }
 
   @Override
   @Timed("gamedesign.asset.export")
