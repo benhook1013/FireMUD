@@ -1,11 +1,9 @@
 package net.firedevops.firemud.entity;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import lombok.Data;
 
-@SuppressFBWarnings({"EI_EXPOSE_REP", "EI_EXPOSE_REP2"})
 @Data
 @Entity
 @Table(name = "instance")
@@ -31,4 +29,14 @@ public class Instance {
   private LocalDateTime expiresAt;
 
   @Version private int version;
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  public Zone getZone() {
+    return zone;
+  }
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  public void setZone(Zone zone) {
+    this.zone = zone;
+  }
 }
