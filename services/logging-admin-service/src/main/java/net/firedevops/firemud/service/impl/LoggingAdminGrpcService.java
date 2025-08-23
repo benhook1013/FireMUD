@@ -19,6 +19,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   private final FeatureFlagService featureFlagService;
   private final LogQueryService logQueryService;
   private final ModerationService moderationService;
+
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final MeterRegistry meterRegistry;
 

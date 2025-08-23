@@ -20,6 +20,7 @@ import org.lognet.springboot.grpc.GRpcService;
 public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceImplBase {
   private final PingService pingService;
   private final CommandService commandService;
+
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final MeterRegistry meterRegistry;
 

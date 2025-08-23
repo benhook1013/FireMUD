@@ -18,6 +18,7 @@ public class SimpleCommandProcessor implements CommandProcessor {
 
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final EventDispatcher dispatcher;
+
   private final ScriptingHook scriptingHook;
 
   public SimpleCommandProcessor(EventDispatcher dispatcher, ScriptingHook scriptingHook) {

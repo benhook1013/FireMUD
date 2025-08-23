@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 public class SessionRateLimiterImpl implements SessionRateLimiter {
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final StringRedisTemplate redisTemplate;
+
   private final int maxMessagesPerSecond;
 
   public SessionRateLimiterImpl(

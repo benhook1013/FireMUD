@@ -19,8 +19,10 @@ import org.springframework.stereotype.Service;
 public class TickLockServiceImpl implements TickLockService {
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final StringRedisTemplate redisTemplate;
+
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final MeterRegistry meterRegistry;
+
   private final ConflictTracker conflictTracker;
 
   private Counter lockContentionCounter;
