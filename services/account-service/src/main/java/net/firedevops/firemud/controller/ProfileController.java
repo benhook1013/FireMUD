@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.ProfileDto;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/profiles")
 public class ProfileController {
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final AccountService accountService;
 
   public ProfileController(AccountService accountService) {

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entity;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -11,6 +12,7 @@ public class CurrencyBalance {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
+  @SuppressFBWarnings(value = {"EI_EXPOSE_REP", "EI_EXPOSE_REP2"})
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "account_id", nullable = false)
   private Account account;
