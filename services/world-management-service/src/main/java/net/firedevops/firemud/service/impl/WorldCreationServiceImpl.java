@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -16,7 +17,6 @@ import net.firedevops.firemud.service.WorldCreationService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /**
  * Orchestrates world creation using the shared Saga library. In a real implementation this would
