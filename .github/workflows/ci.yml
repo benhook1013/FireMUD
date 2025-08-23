@@ -81,6 +81,29 @@ jobs:
         with:
           scandir: dev-tools
 
+  docs-check:
+    name: Lint Docs and Links
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v5
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: gradle
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 🧹 Lint Docs and Links
+        run: |
+          echo "::group::Lint Markdown and Links"
+          ./gradlew lintMarkdown linkCheck -PfullCheck
+          echo "::endgroup::"
+
   frontend-checks:
     name: Frontend Checks
     runs-on: ubuntu-latest
@@ -153,7 +176,7 @@ jobs:
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
-    needs: [buf-check, docker-lint, shellcheck]
+    needs: [buf-check, docker-lint, shellcheck, docs-check]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -192,13 +215,7 @@ jobs:
       - name: 🎨 Check Spotless Formatting
         run: |
           echo "::group::Run Spotless"
-          ./gradlew spotlessCheck
-          echo "::endgroup::"
-
-      - name: 🧹 Lint Docs and Links
-        run: |
-          echo "::group::Lint Markdown and Links"
-          ./gradlew lintMarkdown linkCheck -PfullCheck
+          ./gradlew :${{ matrix.service }}:spotlessCheck
           echo "::endgroup::"
 
       - name: 🧪 Run Gradle Checks
