@@ -21,6 +21,7 @@ dependencies {
     runtimeOnly(libs.postgresql)
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.4")
 }
 
 
