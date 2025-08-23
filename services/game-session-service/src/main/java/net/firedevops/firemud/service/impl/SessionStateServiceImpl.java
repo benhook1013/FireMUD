@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 public final class SessionStateServiceImpl implements SessionStateService {
   private static final Logger logger = LoggingUtil.getLogger(SessionStateServiceImpl.class);
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final RedisTemplate<String, Object> redisTemplate;
 
   @Override

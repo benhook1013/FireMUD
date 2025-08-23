@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -42,8 +43,13 @@ public final class GameSessionGrpcService
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
+
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final TickService tickService;
+
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final MeterRegistry meterRegistry;
+
   private final IpConnectionLimiter ipConnectionLimiter;
   private final SessionRateLimiter sessionRateLimiter;
 
