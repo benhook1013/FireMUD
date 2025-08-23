@@ -38,7 +38,7 @@ jobs:
           mkdir -p public/design
           cp -r design/* public/design/
           cp README.md public/index.md
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: ./public
 
