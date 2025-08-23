@@ -1,5 +1,6 @@
 package net.firedevops.firemud.client;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for the Game Logic Service using mTLS. */
 @Component
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public final class GameLogicClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
