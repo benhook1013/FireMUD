@@ -10,7 +10,7 @@ opentelemetry = "1.53.0"
 micrometer = "1.15.3"
 jjwt = "0.13.0"
 aws-sdk = "2.32.24"
-argon2 = "2.11"
+argon2 = "2.12"
 
 [libraries]
 # Spring Boot Starters
