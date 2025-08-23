@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AddGuildMemberRequest;
@@ -23,6 +24,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class GuildController {
   private final GuildService guildService;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring manages GuildService bean lifecycle")
   public GuildController(GuildService guildService) {
     this.guildService = guildService;
   }

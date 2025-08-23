@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AddFriendRequest;
@@ -16,6 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class FriendController {
   private final FriendService friendService;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring manages FriendService bean lifecycle")
   public FriendController(FriendService friendService) {
     this.friendService = friendService;
   }
