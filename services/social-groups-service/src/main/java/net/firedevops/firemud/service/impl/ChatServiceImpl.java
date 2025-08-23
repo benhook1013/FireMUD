@@ -87,8 +87,8 @@ public class ChatServiceImpl implements ChatService {
       }
 
       redisTemplate.opsForList().leftPush(key, saved.getContent());
-      redisTemplate.expire(key, java.time.Duration.ofSeconds(settings.getHistoryTtlSeconds()));
-      redisTemplate.opsForList().trim(key, 0, settings.getMaxMessages() - 1);
+      redisTemplate.expire(key, java.time.Duration.ofSeconds(settings.historyTtlSeconds()));
+      redisTemplate.opsForList().trim(key, 0, settings.maxMessages() - 1);
     } catch (Exception e) {
       redisErrorCounter.increment();
       logger.warn("Failed to publish chat message to Redis", e);
