@@ -71,8 +71,8 @@ class ChatServiceImplTest {
     assertEquals(1L, dto.id());
     verify(listOps).leftPush("say:1:1", "hello");
     verify(redisTemplate)
-        .expire("say:1:1", Duration.ofSeconds(props.getSays().getHistoryTtlSeconds()));
-    verify(listOps).trim("say:1:1", 0, props.getSays().getMaxMessages() - 1);
+        .expire("say:1:1", Duration.ofSeconds(props.getSays().historyTtlSeconds()));
+    verify(listOps).trim("say:1:1", 0, props.getSays().maxMessages() - 1);
     assertEquals(1.0, meterRegistry.get("chat_messages_published_total").counter().count(), 0.001);
     assertEquals(0.0, meterRegistry.get("chat_redis_errors_total").counter().count(), 0.001);
   }
