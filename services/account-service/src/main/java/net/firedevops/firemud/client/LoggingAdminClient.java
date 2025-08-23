@@ -29,8 +29,29 @@ public class LoggingAdminClient implements AutoCloseable {
   private TlsCertificateWatcher watcher;
 
   public LoggingAdminClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
-    this.endpoints = endpoints;
-    this.tlsProps = tlsProps;
+    this.endpoints = copyEndpoints(endpoints);
+    this.tlsProps = copyTlsProps(tlsProps);
+  }
+
+  private static ServiceEndpointsProperties copyEndpoints(ServiceEndpointsProperties src) {
+    var copy = new ServiceEndpointsProperties();
+    copy.setAccountService(src.getAccountService());
+    copy.setGameSessionService(src.getGameSessionService());
+    copy.setGameDesignService(src.getGameDesignService());
+    copy.setGameLogicService(src.getGameLogicService());
+    copy.setWorldManagementService(src.getWorldManagementService());
+    copy.setEntityManagementService(src.getEntityManagementService());
+    copy.setLoggingAdminService(src.getLoggingAdminService());
+    copy.setAutomationScriptingService(src.getAutomationScriptingService());
+    return copy;
+  }
+
+  private static GrpcClientProperties copyTlsProps(GrpcClientProperties src) {
+    var copy = new GrpcClientProperties();
+    copy.setCertChain(src.getCertChain());
+    copy.setPrivateKey(src.getPrivateKey());
+    copy.setCaCert(src.getCaCert());
+    return copy;
   }
 
   @PostConstruct
