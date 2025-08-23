@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import net.firedevops.firemud.client.AccountClient;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class ModerationServiceImpl implements ModerationService {
   private static final Logger logger = LoggingUtil.getLogger(ModerationServiceImpl.class);
 

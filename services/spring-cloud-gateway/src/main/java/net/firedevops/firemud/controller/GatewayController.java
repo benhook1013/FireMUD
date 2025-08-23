@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.service.GatewayRoute;
 import net.firedevops.firemud.service.GatewayRouteService;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class GatewayController {
   private final GatewayRouteService routeService;
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public GatewayController(GatewayRouteService routeService) {
     this.routeService = routeService;
   }
