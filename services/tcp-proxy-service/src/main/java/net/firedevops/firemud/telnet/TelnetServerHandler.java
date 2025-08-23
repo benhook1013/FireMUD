@@ -20,17 +20,20 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
 
   private final String gatewayWsUrl;
-  private final java.util.concurrent.atomic.AtomicInteger activeConnections;
+  private final Runnable onConnect;
+  private final Runnable onDisconnect;
   private final io.micrometer.core.instrument.Counter connectionCounter;
   private WebSocket webSocket;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
 
   public TelnetServerHandler(
       String gatewayWsUrl,
-      java.util.concurrent.atomic.AtomicInteger activeConnections,
+      Runnable onConnect,
+      Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter) {
     this.gatewayWsUrl = gatewayWsUrl;
-    this.activeConnections = activeConnections;
+    this.onConnect = onConnect;
+    this.onDisconnect = onDisconnect;
     this.connectionCounter = connectionCounter;
   }
 
@@ -61,7 +64,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       ip = address.getAddress().getHostAddress();
     }
     connectionCounter.increment();
-    activeConnections.incrementAndGet();
+    onConnect.run();
     HttpClient client = HttpClient.newHttpClient();
     var builder = client.newWebSocketBuilder();
     if (ip != null) {
@@ -107,7 +110,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
       webSocket = null;
     }
-    activeConnections.decrementAndGet();
+    onDisconnect.run();
     buffer.clear();
   }
 

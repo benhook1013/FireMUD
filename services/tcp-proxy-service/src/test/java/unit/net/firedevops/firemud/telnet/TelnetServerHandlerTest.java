@@ -22,7 +22,8 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new java.util.concurrent.atomic.AtomicInteger(),
+            () -> {},
+            () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
@@ -49,7 +50,8 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new java.util.concurrent.atomic.AtomicInteger(),
+            () -> {},
+            () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
@@ -68,7 +70,8 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new java.util.concurrent.atomic.AtomicInteger(),
+            () -> {},
+            () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
@@ -91,7 +94,8 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new java.util.concurrent.atomic.AtomicInteger(),
+            () -> {},
+            () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
@@ -114,7 +118,8 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
-            new java.util.concurrent.atomic.AtomicInteger(),
+            () -> {},
+            () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
