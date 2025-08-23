@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.session;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Duration;
 import net.firedevops.firemud.config.AuthProperties;
@@ -11,6 +12,9 @@ public class SessionServiceImpl implements SessionService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final AuthProperties authProperties;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Dependencies are injected and managed by Spring")
   public SessionServiceImpl(
       RedisTemplate<String, Object> redisTemplate, AuthProperties authProperties) {
     this.redisTemplate = redisTemplate;
