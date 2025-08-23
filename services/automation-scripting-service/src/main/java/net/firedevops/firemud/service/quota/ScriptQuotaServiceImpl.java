@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.quota;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -13,6 +14,9 @@ import org.springframework.stereotype.Service;
 /** Redis-backed implementation of {@link ScriptQuotaService}. */
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Dependencies are injected and not exposed")
 public class ScriptQuotaServiceImpl implements ScriptQuotaService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
