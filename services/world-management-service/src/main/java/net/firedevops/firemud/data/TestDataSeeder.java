@@ -14,11 +14,13 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** Seeds minimal world data for local development when the {@code dev} Spring profile is active. */
 @Component
 @Profile("dev")
 @RequiredArgsConstructor
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class TestDataSeeder implements ApplicationRunner {
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;
