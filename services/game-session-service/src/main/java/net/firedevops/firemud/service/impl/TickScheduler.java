@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 /** Periodically processes ticks for all running sessions. */
 @Component
 @RequiredArgsConstructor
-public class TickScheduler {
+public final class TickScheduler {
   private final GameInstanceRepository repository;
   private final TickService tickService;
 

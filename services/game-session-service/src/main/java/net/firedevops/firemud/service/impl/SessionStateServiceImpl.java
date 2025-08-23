@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 /** Default Redis-backed implementation of {@link SessionStateService}. */
 @Service
 @RequiredArgsConstructor
-public class SessionStateServiceImpl implements SessionStateService {
+public final class SessionStateServiceImpl implements SessionStateService {
   private static final Logger logger = LoggingUtil.getLogger(SessionStateServiceImpl.class);
 
   private final RedisTemplate<String, Object> redisTemplate;

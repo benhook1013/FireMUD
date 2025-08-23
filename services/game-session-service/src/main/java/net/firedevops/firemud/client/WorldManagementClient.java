@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for the World Management Service. */
 @Component
-public class WorldManagementClient implements AutoCloseable {
+public final class WorldManagementClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
   private ManagedChannel channel;

@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for the Game Logic Service using mTLS. */
 @Component
-public class GameLogicClient implements AutoCloseable {
+public final class GameLogicClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
   private ManagedChannel channel;
