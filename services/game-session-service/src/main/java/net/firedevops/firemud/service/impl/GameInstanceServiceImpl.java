@@ -22,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** Default implementation of {@link GameInstanceService}. */
 @Service
-public class GameInstanceServiceImpl implements GameInstanceService {
+public final class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
 
   private final GameInstanceRepository repository;

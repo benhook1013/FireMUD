@@ -37,7 +37,8 @@ import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC endpoints for the Game Session Service. */
 @GRpcService
-public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionServiceImplBase {
+public final class GameSessionGrpcService
+    extends GameSessionServiceGrpc.GameSessionServiceImplBase {
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
@@ -165,7 +166,7 @@ public class GameSessionGrpcService extends GameSessionServiceGrpc.GameSessionSe
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
     try {
-      long sessionId = Long.valueOf(request.getSessionId());
+      long sessionId = Long.parseLong(request.getSessionId());
       if (!sessionRateLimiter.allow(sessionId)) {
         EnqueueCommandResponse response =
             EnqueueCommandResponse.newBuilder()

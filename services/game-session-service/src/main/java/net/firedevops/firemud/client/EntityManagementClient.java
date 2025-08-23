@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for the Entity Management Service. */
 @Component
-public class EntityManagementClient implements AutoCloseable {
+public final class EntityManagementClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
   private ManagedChannel channel;
