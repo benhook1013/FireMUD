@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
@@ -15,6 +16,7 @@ import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC implementation for remote gateway management. */
 @GRpcService
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class GatewayManagementGrpcService
     extends GatewayManagementServiceGrpc.GatewayManagementServiceImplBase {
   private final GatewayRouteService routeService;

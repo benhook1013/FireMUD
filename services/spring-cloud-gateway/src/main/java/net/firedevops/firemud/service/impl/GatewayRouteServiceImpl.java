@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.net.URI;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 /** Implementation of {@link GatewayRouteService} that updates Spring Cloud Gateway at runtime. */
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 @Service
 public class GatewayRouteServiceImpl implements GatewayRouteService {
   private static final Logger logger = LoggingUtil.getLogger(GatewayRouteServiceImpl.class);
