@@ -5,12 +5,14 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 /** Records conflict metadata in Redis for hotspot detection. */
 @Component
 @RequiredArgsConstructor
+@ConditionalOnBean(StringRedisTemplate.class)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are safe to store without defensive copies")
