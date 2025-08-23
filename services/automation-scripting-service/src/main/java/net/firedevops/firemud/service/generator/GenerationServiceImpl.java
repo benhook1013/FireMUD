@@ -2,19 +2,22 @@ package net.firedevops.firemud.service.generator;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /** Default implementation invoking a generator then running hooks. */
 @Service
-@RequiredArgsConstructor
 public class GenerationServiceImpl implements GenerationService {
   private static final Logger logger = LoggerFactory.getLogger(GenerationServiceImpl.class);
 
   private final GeneratorRegistry registry;
   private final List<GenerationHook> hooks;
+
+  public GenerationServiceImpl(GeneratorRegistry registry, List<GenerationHook> hooks) {
+    this.registry = registry;
+    this.hooks = hooks == null ? List.of() : List.copyOf(hooks);
+  }
 
   @Override
   @Timed(value = "generation.generate")

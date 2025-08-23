@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -31,6 +32,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private final PingService pingService;
   private final AccountService accountService;
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public AccountGrpcService(PingService pingService, AccountService accountService) {
     this.pingService = pingService;
     this.accountService = accountService;

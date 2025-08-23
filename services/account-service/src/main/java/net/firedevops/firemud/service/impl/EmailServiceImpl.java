@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.config.MailProperties;
@@ -16,6 +17,7 @@ public class EmailServiceImpl implements EmailService {
   private final JavaMailSender mailSender;
   private final MailProperties mailProperties;
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public EmailServiceImpl(JavaMailSender mailSender, MailProperties mailProperties) {
     this.mailSender = mailSender;
     this.mailProperties = mailProperties;
