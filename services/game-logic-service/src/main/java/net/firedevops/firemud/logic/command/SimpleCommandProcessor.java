@@ -1,5 +1,6 @@
 package net.firedevops.firemud.logic.command;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.common.ErrorDetail;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.logic.dto.CommandResult;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 public class SimpleCommandProcessor implements CommandProcessor {
   private static final Logger logger = LoggingUtil.getLogger(SimpleCommandProcessor.class);
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final EventDispatcher dispatcher;
   private final ScriptingHook scriptingHook;
 

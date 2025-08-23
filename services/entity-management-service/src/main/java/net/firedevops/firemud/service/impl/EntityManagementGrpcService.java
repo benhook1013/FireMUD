@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
@@ -31,7 +32,9 @@ public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private final PingService pingService;
   private final CharacterService characterService;
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final InventoryService inventoryService;
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final MeterRegistry meterRegistry;
 
   public EntityManagementGrpcService(

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Service;
 /** Redis-backed implementation of {@link IpConnectionLimiter}. */
 @Service
 public class IpConnectionLimiterImpl implements IpConnectionLimiter {
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final StringRedisTemplate redisTemplate;
   private final int maxConnectionsPerIp;
 

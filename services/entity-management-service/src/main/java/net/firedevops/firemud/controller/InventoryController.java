@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/characters/{characterId}/inventory")
 @RequiredArgsConstructor
 public class InventoryController {
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final InventoryService inventoryService;
 
   @GetMapping
