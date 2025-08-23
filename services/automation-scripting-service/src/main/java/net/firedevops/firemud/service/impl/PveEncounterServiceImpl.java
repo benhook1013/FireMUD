@@ -2,7 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
-import java.util.Random;
+import java.util.SplittableRandom;
 import lombok.extern.slf4j.Slf4j;
 import net.firedevops.firemud.model.PveEvent;
 import net.firedevops.firemud.service.PveEncounterService;
@@ -23,7 +23,7 @@ public class PveEncounterServiceImpl implements PveEncounterService {
   @Override
   @Timed(value = "pve.generateEvent")
   public PveEvent generateEvent(String region, long seed) {
-    Random rnd = new Random(seed);
+    SplittableRandom rnd = new SplittableRandom(seed);
     List<String> pool;
     switch (region.toLowerCase()) {
       case "forest" -> pool = FOREST_EVENTS;

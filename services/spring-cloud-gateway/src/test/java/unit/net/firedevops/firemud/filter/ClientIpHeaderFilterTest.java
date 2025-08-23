@@ -1,6 +1,7 @@
 package net.firedevops.firemud.filter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.net.InetSocketAddress;
 import org.junit.jupiter.api.Test;
@@ -26,5 +27,40 @@ class ClientIpHeaderFilterTest {
         };
     filter.filter(exchange, chain).block();
     assertEquals("1.2.3.4", ref.get().getRequest().getHeaders().getFirst("X-Client-IP"));
+  }
+
+  @Test
+  void noHeaderWhenRemoteAddressMissing() {
+    ClientIpHeaderFilter filter = new ClientIpHeaderFilter();
+    MockServerHttpRequest request = MockServerHttpRequest.get("/").build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    java.util.concurrent.atomic.AtomicReference<ServerWebExchange> ref =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    WebFilterChain chain =
+        e -> {
+          ref.set(e);
+          return Mono.empty();
+        };
+    filter.filter(exchange, chain).block();
+    assertNull(ref.get().getRequest().getHeaders().getFirst("X-Client-IP"));
+  }
+
+  @Test
+  void noHeaderWhenAddressUnresolved() {
+    ClientIpHeaderFilter filter = new ClientIpHeaderFilter();
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/")
+            .remoteAddress(java.net.InetSocketAddress.createUnresolved("example.com", 0))
+            .build();
+    MockServerWebExchange exchange = MockServerWebExchange.from(request);
+    java.util.concurrent.atomic.AtomicReference<ServerWebExchange> ref =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    WebFilterChain chain =
+        e -> {
+          ref.set(e);
+          return Mono.empty();
+        };
+    filter.filter(exchange, chain).block();
+    assertNull(ref.get().getRequest().getHeaders().getFirst("X-Client-IP"));
   }
 }
