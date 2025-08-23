@@ -64,6 +64,25 @@ This project uses `markdownlint-cli2` to lint Markdown files. To speed up local 
 ./gradlew check -PfullCheck
 ```
 
+To always run the full suite of checks locally, add the property to your Gradle user settings:
+
+```properties
+# ~/.gradle/gradle.properties
+org.gradle.project.fullCheck=true
+```
+
+Restart the daemon once with `./gradlew --stop` so the new setting is picked up. Every subsequent build (`./gradlew build`, `./gradlew check`, etc.) then executes SpotBugs, Checkstyle, Jacoco coverage, and other tasks gated by `fullCheck`.
+
+Verify the property is active with:
+
+```bash
+./gradlew -q properties | grep fullCheck
+```
+
+which prints `org.gradle.project.fullCheck: true` when enabled.
+
+For faster iteration, comment out or remove the line from `~/.gradle/gradle.properties` and stop the daemon again. You can also run a single build with `./gradlew check -PfullCheck=false`, but the build script treats the presence of `fullCheck` as truthy, so removing it entirely is the safest way to skip heavy checks.
+
 You can also run the lint task directly:
 
 ```bash
