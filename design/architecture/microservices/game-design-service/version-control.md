@@ -21,4 +21,4 @@ Design assets are versioned to enable rollback and collaborative workflows. This
 ## 📚 Related Documentation
 
 - [Game Design Service Architecture](README.md)
-- [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
+- [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)

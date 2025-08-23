@@ -20,7 +20,7 @@ Feature flags can control optional UI layout tweaks, status effect experiments o
 
 ## Related Documentation
 
-- [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
+- [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
 - [Game Customization Options](../game-customization-options.md)
 - [Game Session Service](./game-session-service/README.md)
 - [Logging & Admin Service](./logging-admin-service/README.md)

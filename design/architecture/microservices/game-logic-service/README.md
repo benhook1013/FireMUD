@@ -14,7 +14,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Forward chat actions to the Social & Groups Service for delivery and
   profanity checks after verifying room context via the World Management
   Service and character state via the Entity Management Service
-- See the [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- See the [Service Responsibility Matrix](../../service-responsibility-matrix.md)
   for how this service fits into the overall architecture.
 
 ## Architecture / Design Notes
@@ -25,17 +25,17 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Fetches contextual world and entity data on demand via gRPC.
 - Gameplay rules are imported from the Game Design Service when a version is
   published; the runtime service does not query design databases.
-- Integrates with the tick system described in [Tick System and Runtime Design](../system-architecture-ticks.md) to ensure deterministic command ordering.
-- Cross-service combat or trade operations run within ticks and rely on Redis-based rollback, not sagas. See [Transaction Strategies](../system-architecture-transactions.md).
+- Integrates with the tick system described in [Tick System and Runtime Design](../../system-architecture-ticks.md) to ensure deterministic command ordering.
+- Cross-service combat or trade operations run within ticks and rely on Redis-based rollback, not sagas. See [Transaction Strategies](../../system-architecture-transactions.md).
 - All commands are scoped by `tenantId` so that rules execute only against data
   for the active game instance. The Game Session Service passes this context on
-  every request. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+  every request. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Gameplay gRPC requests do not include JWTs. The Game Session Service provides
   player identity from Redis via `SessionContext`. It may refresh a JWT from the
   Account Service if roles change but does not validate tokens for gameplay.
   Communications use mutual TLS certificates as outlined in the
-  [Security Architecture](../system-architecture-security.md).
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+  [Security Architecture](../../system-architecture-security.md).
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
 
 ## Key Features
@@ -87,14 +87,14 @@ This service is largely stateless. It relies on:
   - Automation & Scripting Service triggers additional effects during rule execution.
   - Social & Groups Service handles chat delivery and profanity filtering.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -126,19 +126,19 @@ the generated code with `./gradlew generateProto` after making changes.
 
 ## 📚 Related Documentation
 
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Tick System and Runtime Design](../system-architecture-ticks.md)
-- [Redis Architecture](../system-architecture-redis.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [Authentication & Authorization](../system-architecture-authentication.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#7-player-login-and-gameplay)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Tick System and Runtime Design](../../system-architecture-ticks.md)
+- [Redis Architecture](../../system-architecture-redis.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [Authentication & Authorization](../../system-architecture-authentication.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [User Journeys – Player Login and Gameplay](../../user-journeys.md#7-player-login-and-gameplay)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
@@ -188,10 +188,10 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
   localhost:6565 game_logic.v1.GameLogicService/ExecuteCommand
 ```
 
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ### Local Development Notes
 

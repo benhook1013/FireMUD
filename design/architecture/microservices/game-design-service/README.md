@@ -26,17 +26,17 @@ manifest files.
 - Maintains history of revisions so designers can roll back to prior versions.
 - Publishing a new game version triggers a Saga that copies data to other
   services as outlined in
-  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
-  and [Transaction Strategies](../system-architecture-transactions.md).
+  [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
+  and [Transaction Strategies](../../system-architecture-transactions.md).
   The workflow is implemented using the Saga utilities from `firemud-common`
   with compensation steps to roll back if downstream copies fail. The workflow
   persists the new version and copies data to downstream services.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
-  tenant filter. See [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+  tenant filter. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - All gRPC APIs require JWT authentication between services. REST authentication is supported.
-  Tokens are parsed by a shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../system-architecture-security.md).
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+  Tokens are parsed by a shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
@@ -93,14 +93,14 @@ manifest files.
   - Logging & Admin Service records publishing audits.
 - **External:** PostgreSQL for storing design assets.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -139,15 +139,15 @@ stubs with `./gradlew generateProto` whenever these files are updated.
 
 ## 📚 Related Documentation
 
-See [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
+See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
 
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Game Creation](../user-journeys.md#2-game-creation)
-- [User Journeys – World and Entity Design](../user-journeys.md#3-world-and-entity-design)
-- [User Journeys – Publish and Start a Game Instance](../user-journeys.md#5-publish-and-start-a-game-instance)
-- [User Journeys – Patch and Update a Live Game](../user-journeys.md#10-patch-and-update-a-live-game)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – Game Creation](../../user-journeys.md#2-game-creation)
+- [User Journeys – World and Entity Design](../../user-journeys.md#3-world-and-entity-design)
+- [User Journeys – Publish and Start a Game Instance](../../user-journeys.md#5-publish-and-start-a-game-instance)
+- [User Journeys – Patch and Update a Live Game](../../user-journeys.md#10-patch-and-update-a-live-game)
 - [Asset Storage Setup](asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
 - [Ability & Action Design Tools](ability-action-tools.md)
@@ -155,18 +155,18 @@ See [Versioning & Runtime Configuration](../system-architecture-versioning-runti
 - [Web-Based Visual Design Interface](web-visual-interface.md)
 - [Version Control for Design Assets](version-control.md)
 - [In-Game Modding and Plugin Framework](modding-framework.md)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Database Migrations](../system-architecture-database-migrations.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Authentication & Authorization](../system-architecture-authentication.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Database Migrations](../../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../../system-architecture-authentication.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ## Additional Details
 
@@ -190,7 +190,7 @@ Detailed request and response schemas are defined in the
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_design_service.proto`](../../../protos/game-design/v1/game_design_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_design_service.proto`](../../../../protos/game-design/v1/game_design_service.proto).
 - `SaveRevision(SaveRevisionRequest) returns (SaveRevisionResponse)` – persists a design change.
 - `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
 - `PublishScriptPatchVersion(PublishScriptPatchVersionRequest) returns (PublishScriptPatchVersionResponse)` – publishes a script-only patch version.
@@ -202,7 +202,7 @@ grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping
 
 ### Saga Participation
 
-Publishing a game version is coordinated using the Saga utilities from `firemud-common`. The `VersionServiceImpl` builds a workflow that first persists the new version and then copies design data to downstream services. If any step fails, previously executed actions are compensated so the database remains consistent. See the [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md) document for the overall flow.
+Publishing a game version is coordinated using the Saga utilities from `firemud-common`. The `VersionServiceImpl` builds a workflow that first persists the new version and then copies design data to downstream services. If any step fails, previously executed actions are compensated so the database remains consistent. See the [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) document for the overall flow.
 
 ## Local Development Notes
 

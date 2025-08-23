@@ -34,15 +34,15 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   - Account messages: 48 hours or 50 messages
   Older messages remain in PostgreSQL for moderation and historical logs.
 - Guild creation and membership changes participate in Saga workflows so other
-  services remain consistent. See [Transaction Strategies](../system-architecture-transactions.md).
+  services remain consistent. See [Transaction Strategies](../../system-architecture-transactions.md).
 - Chat history and guild data are stored with a `tenantId` so conversations are
   isolated per game. Redis list keys also include this prefix. See
-  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+  [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Cross-service calls always forward the `tenantId` so features remain isolated;
-  see [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details.
+  see [Multi-Tenancy](../../system-architecture-multi-tenancy.md) for details.
 - APIs require authenticated JWTs from the Account Service for role checks.
-  These tokens are exchanged only between services. All inter-service communication is encrypted via mutual TLS, following the [Security Architecture](../system-architecture-security.md).
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+  These tokens are exchanged only between services. All inter-service communication is encrypted via mutual TLS, following the [Security Architecture](../../system-architecture-security.md).
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
@@ -97,7 +97,7 @@ temporary WebRTC tokens via the REST endpoint `/voice/token` (see
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -138,20 +138,20 @@ files change.
 
 ## 📚 Related Documentation
 
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Social Interaction](../user-journeys.md#8-social-interaction)
-- [Redis Architecture](../system-architecture-redis.md)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Database Migrations](../system-architecture-database-migrations.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Authentication & Authorization](../system-architecture-authentication.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – Social Interaction](../../user-journeys.md#8-social-interaction)
+- [Redis Architecture](../../system-architecture-redis.md)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Database Migrations](../../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../../system-architecture-authentication.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
@@ -177,7 +177,7 @@ curl http://localhost:8080/ping
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`social_groups_service.proto`](../../../protos/social-groups/v1/social_groups_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`social_groups_service.proto`](../../../../protos/social-groups/v1/social_groups_service.proto).
 
 ```bash
 grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
@@ -207,8 +207,8 @@ curl -X POST http://localhost:8080/voice/token \
   -d '{"tenantId":"tenant-abc","accountId":100,"channelId":"guild-10"}'
 ```
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ### Cross-Service Integration Test
 
@@ -220,5 +220,5 @@ images are available:
 ./gradlew :social-groups-service:test --tests "*CrossServiceIntegrationTest"
 ```
 
-Refer to [System Architecture Testing](../system-architecture-testing.md) for
+Refer to [System Architecture Testing](../../system-architecture-testing.md) for
 guidance.

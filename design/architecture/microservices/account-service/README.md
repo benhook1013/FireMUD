@@ -24,22 +24,22 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Account-to-character relationships allow players to own characters across multiple games.
 - All tables include a `tenantId` column so the same platform account can join
   multiple games without data leakage. Every query enforces this tenant filter as
-  described in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  described in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
   design.
 - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
-  via cert-manager as described in the [Security Architecture](../system-architecture-security.md).
+  via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
 - Client authentication is initiated via the `LOGIN` command flow described in
-  [Authentication & Authorization](../system-architecture-authentication.md).
+  [Authentication & Authorization](../../system-architecture-authentication.md).
   Session tokens stored in Redis allow seamless reconnection by the Game Session
   Service without re-entering credentials.
 - Sends notification emails when the Game Session Service reports suspicious
   login activity. See
-  [Security Architecture](../system-architecture-security.md#brute-force-defense-and-abuse-handling).
+  [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Non-gameplay workflows such as account creation or billing updates are
   orchestrated using the Saga pattern outlined in
-  [Transaction Strategies](../system-architecture-transactions.md).
-- Leverages the [Shared Libraries](../system-architecture-shared-libraries.md) for common DTOs, logging interceptors, and Micrometer metrics.
+  [Transaction Strategies](../../system-architecture-transactions.md).
+- Leverages the [Shared Libraries](../../system-architecture-shared-libraries.md) for common DTOs, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
@@ -114,14 +114,14 @@ resolved during authentication.
   - Game Session Service consumes tokens to create gameplay sessions.
 - **External:** PostgreSQL for account data, Redis for transient session data.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -161,31 +161,31 @@ The gRPC schemas for this service live in
 
 ## 📚 Related Documentation
 
-- [Authentication & Authorization](../system-architecture-authentication.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Sign Up](../user-journeys.md#1-sign-up)
-- [User Journeys](../user-journeys.md#11-purchases-and-subscriptions) – payment and subscription workflow.
-- [User Journeys – Account Data Export & Deletion](../user-journeys.md#18-account-data-export--deletion)
-- [Redis Architecture](../system-architecture-redis.md)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Database Migrations](../system-architecture-database-migrations.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [Authentication & Authorization](../../system-architecture-authentication.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – Sign Up](../../user-journeys.md#1-sign-up)
+- [User Journeys](../../user-journeys.md#11-purchases-and-subscriptions) – payment and subscription workflow.
+- [User Journeys – Account Data Export & Deletion](../../user-journeys.md#18-account-data-export--deletion)
+- [Redis Architecture](../../system-architecture-redis.md)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Database Migrations](../../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ## Additional Details
 
 ### Monetization Design
 
-The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../design/project-management/core-requirements.md#2.8-moderation-administration--monetization). Entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../protos/account/v1/payment_service.proto).
+The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization). Entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../../protos/account/v1/payment_service.proto).
 Donations are stored as one-time `payment_transaction` records with the `donation` flag set to `true`. A dedicated `CreateDonation` gRPC method issues a Stripe payment intent for these cases. Refunds call Stripe's API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows.
 
 ### Virtual Currency & Revenue Sharing
@@ -198,7 +198,7 @@ Premium hosting tiers are modeled as subscription plans with higher resource lim
 
 ### Email & Notification Design
 
-This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables configure `spring.mail.*` along with `firemud.mail.from`, `firemud.mail.verification-url`, and `firemud.mail.reset-url`. The gRPC API is defined in [`notification_service.proto`](../../../protos/account/v1/notification_service.proto).
+This service sends verification and password reset emails using a configured SMTP provider. Notifications for suspicious logins or account events are queued for asynchronous delivery via a gRPC `NotificationService`. Sample templates live under `resources/templates/` and environment variables configure `spring.mail.*` along with `firemud.mail.from`, `firemud.mail.verification-url`, and `firemud.mail.reset-url`. The gRPC API is defined in [`notification_service.proto`](../../../../protos/account/v1/notification_service.proto).
 
 ### Session Management
 
@@ -261,7 +261,7 @@ Example login response:
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`account_service.proto`](../../../protos/account/v1/account_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`account_service.proto`](../../../../protos/account/v1/account_service.proto).
 - `CreateAccount(CreateAccountRequest) returns (CreateAccountResponse)` – registers a new user.
 - `SendNotification(SendNotificationRequest) returns (SendNotificationResponse)` – deliver account notifications asynchronously.
 - `ExportAccount(ExportAccountRequest) returns (ExportAccountResponse)` – export account data.
@@ -306,7 +306,7 @@ Account creation uses the shared `SagaBuilder` from `firemud-common` to persist
 the account record, create the profile, and log creation in the Logging & Admin
 Service. If any step fails, compensation actions roll back the database writes
 so the workflow remains consistent across services. See the
-[Transaction Strategies](../system-architecture-transactions.md) document for
+[Transaction Strategies](../../system-architecture-transactions.md) document for
 details on the saga pattern.
 
 Purchase workflows (one-time payments or donations) reuse this same runner. The
@@ -328,4 +328,4 @@ images are available:
 ./gradlew :account-service:test --tests "*CrossServiceIntegrationTest"
 ```
 
-See [System Architecture Testing](../system-architecture-testing.md) for more details.
+See [System Architecture Testing](../../system-architecture-testing.md) for more details.

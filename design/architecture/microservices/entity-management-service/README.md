@@ -21,19 +21,19 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - This design reduces write frequency and contention, making optimistic locking a natural fit — most entities are updated by only one process at a time, and conflicts are rare.
 - Item transfers and other gameplay actions span services but execute within ticks
   using Redis scripts for rollback. Sagas are reserved for non-gameplay
-  workflows. See [Transaction Strategies](../system-architecture-transactions.md).
+  workflows. See [Transaction Strategies](../../system-architecture-transactions.md).
   This service does not participate in any saga workflows.
 - All entity tables include a `tenantId` column. Service methods always filter on
   this value so character data for different games remains isolated; Redis keys
-  mirror this prefix. Details are in the [Multi-Tenancy](../system-architecture-multi-tenancy.md)
+  mirror this prefix. Details are in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
   document.
 - Gameplay-facing gRPC endpoints do not parse JWT tokens. The Game Session Service
   injects identity context using `SessionContext` and may request a new JWT from
   the Account Service if a player's roles change. It does not validate tokens for
   gameplay. Traffic between services still uses mutual TLS certificates as outlined in the
-  [Security Architecture](../system-architecture-security.md).
+  [Security Architecture](../../system-architecture-security.md).
 
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
 
 ## Key Features
@@ -72,14 +72,14 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
   - Game Session Service coordinates runtime updates via Redis queues.
 - **External:** PostgreSQL for entity data.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -106,21 +106,21 @@ proto files, run `./gradlew generateProto` to update generated sources.
 
 ## 📚 Related Documentation
 
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Tick System and Runtime Design](../system-architecture-ticks.md)
-- [Redis Architecture](../system-architecture-redis.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – World and Entity Design](../user-journeys.md#3-world-and-entity-design)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Database Migrations](../system-architecture-database-migrations.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Authentication & Authorization](../system-architecture-authentication.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Tick System and Runtime Design](../../system-architecture-ticks.md)
+- [Redis Architecture](../../system-architecture-redis.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – World and Entity Design](../../user-journeys.md#3-world-and-entity-design)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Database Migrations](../../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../../system-architecture-authentication.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
@@ -136,7 +136,7 @@ curl http://localhost:8080/ping
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`entity_management_service.proto`](../../../protos/entity-management/v1/entity_management_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`entity_management_service.proto`](../../../../protos/entity-management/v1/entity_management_service.proto).
 - `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – builds a new player character.
 - `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates stats or equipment.
 - `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity.
@@ -149,5 +149,5 @@ grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/P
 
 This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{tenantId}:{entityId}` key described in the [Redis Architecture](../../../design/architecture/system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)

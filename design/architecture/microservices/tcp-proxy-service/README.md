@@ -18,18 +18,18 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 - Buffers incoming input while the client remains connected and discards it if the
   TCP session drops. After reconnect, buffered commands are resent automatically.
 - Handles Telnet negotiation and character encoding quirks.
-- Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../system-architecture-mcp-support.md).
+- Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../../system-architecture-mcp-support.md).
 - Works with the Reconnection Strategy to resume sessions transparently.
 - Can optionally terminate Telnet-over-TLS. Forwarding to the gateway uses
   WebSocket connections and supports mutual TLS.
-  See [Security Architecture](../system-architecture-security.md).
+  See [Security Architecture](../../system-architecture-security.md).
 - Runs in the network DMZ and never contacts internal services directly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
    **Telnet protocol commands** as described in the
-   [Security Architecture](../system-architecture-security.md#telnet-command-handling-and-controls).
+   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
 - Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
 - Performs basic sanitization but defers connection and rate limits to downstream services.
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ## Key Features
 
@@ -57,13 +57,13 @@ for internal coordination:
 
 These events let the Game Session Service resume suspended sessions and deliver
 buffered commands. Their definitions live in
-[`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
+[`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Command Handling
 
 The proxy sanitizes incoming bytes and allows only a safe subset of
 **Telnet protocol commands** as described in the
-[Security Architecture](../system-architecture-security.md#telnet-command-handling-and-controls).
+[Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
 This avoids implementing the full Telnet specification while still protecting
 against malformed negotiation sequences and other legacy edge cases.
 
@@ -87,14 +87,14 @@ Commands outside this list are discarded and only sanitized printable characters
 The proxy is stateless. Any buffered input lives only in memory until forwarded
 to the Spring Cloud Gateway.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on how Telnet connections are integrated into the platform.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - A simple `smoke-test.sh` script in the service directory checks the REST and gRPC endpoints.
 
@@ -132,16 +132,16 @@ regenerated via `./gradlew generateProto` when the proto files change.
 
 ## 📚 Related Documentation
 
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Reconnection Strategy](../system-architecture-reconnection.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#7-player-login-and-gameplay)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Reconnection Strategy](../../system-architecture-reconnection.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – Player Login and Gameplay](../../user-journeys.md#7-player-login-and-gameplay)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
@@ -161,7 +161,7 @@ curl http://localhost:8080/ping
 - `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected.
 - `PushBufferedInput(PushBufferedInputRequest) returns (PushBufferedInputResponse)` – delivers queued commands after a reconnect.
 
-All RPC definitions live in [`tcp_proxy_service.proto`](../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
+All RPC definitions live in [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ```bash
 grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
@@ -169,11 +169,11 @@ grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
 
 Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger.
 
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ### Cross-Service Integration Test
 
@@ -187,5 +187,5 @@ This test requires the Spring Cloud Gateway Docker image to be available. Build 
 ./gradlew :tcp-proxy-service:test --tests "*CrossServiceIntegrationTest"
 ```
 
-See [System Architecture Testing](../system-architecture-testing.md) for more
+See [System Architecture Testing](../../system-architecture-testing.md) for more
 information.

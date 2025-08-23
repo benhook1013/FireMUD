@@ -23,19 +23,19 @@ The World Management Service stores and manages game world data such as rooms, r
 - Publishes world event notifications for NPC scripts and game logic processing.
 - During version publishing the service participates in a Saga that copies design
   data into its schema, ensuring world data matches the active version. See
-  [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
-  and [Transaction Strategies](../system-architecture-transactions.md).
+  [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
+  and [Transaction Strategies](../../system-architecture-transactions.md).
 - World creation for new games runs as a Saga, inserting a starter region and copying
   full design data. See [World Creation Workflow](world-creation-workflow.md).
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
-  [Multi-Tenancy](../system-architecture-multi-tenancy.md).
+  [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Gameplay gRPC operations do not validate JWTs directly. The Game Session
   Service binds player identity from Redis into `SessionContext`. It may request
   an updated JWT from the Account Service when roles change but does not perform
   token validation during gameplay. All traffic still uses mutual TLS as described in the
-  [Security Architecture](../system-architecture-security.md).
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+  [Security Architecture](../../system-architecture-security.md).
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints include the shared `LoggingInterceptor`, `MetricsInterceptor`, and
   `TracingInterceptor` so logs, metrics, and traces are emitted consistently.
 
@@ -95,14 +95,14 @@ specified region.
   - Automation & Scripting Service reacts to scheduled world changes.
 - **External:** PostgreSQL for world data, Redis for transient active state.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -131,22 +131,22 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 
 ## 📚 Related Documentation
 
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Versioning & Runtime Configuration](../system-architecture-versioning-runtime.md)
-- [Tick System and Runtime Design](../system-architecture-ticks.md)
-- [Redis Architecture](../system-architecture-redis.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – World and Entity Design](../user-journeys.md#3-world-and-entity-design)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Database Migrations](../system-architecture-database-migrations.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Authentication & Authorization](../system-architecture-authentication.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
+- [Tick System and Runtime Design](../../system-architecture-ticks.md)
+- [Redis Architecture](../../system-architecture-redis.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – World and Entity Design](../../user-journeys.md#3-world-and-entity-design)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Database Migrations](../../system-architecture-database-migrations.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Authentication & Authorization](../../system-architecture-authentication.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
@@ -168,11 +168,11 @@ curl http://localhost:8080/ping
 
 Requests to this service come from other internal services. Player identity is
 established by the Game Session Service, so no JWT header is required here. See
-the [Security Architecture](../system-architecture-security.md) for details.
+the [Security Architecture](../../system-architecture-security.md) for details.
 
 #### gRPC
 
-- `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../protos/world-management/v1/world_management_service.proto).
+- `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../../protos/world-management/v1/world_management_service.proto).
 - `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation.
 - `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates and notifies other services.
 
@@ -198,8 +198,8 @@ World events are persisted in the `world_event` table and processed periodically
 
 World creation for a new tenant runs as a Saga using the helper utilities from `firemud-common`. Each step is described in [world-creation-workflow.md](world-creation-workflow.md) and can be rolled back if a later step fails. This ensures worlds are created consistently even when the workflow spans multiple services.
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ## Procedural Generation Rules API
 

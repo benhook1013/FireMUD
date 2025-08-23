@@ -25,4 +25,4 @@ The saga state is stored in the `saga_instance` and `saga_step` tables defined i
 
 See [World Management Service](README.md) for additional service context.
 
-See [Transaction Strategies](../system-architecture-transactions.md) for background on how sagas are used across FireMUD.
+See [Transaction Strategies](../../system-architecture-transactions.md) for background on how sagas are used across FireMUD.

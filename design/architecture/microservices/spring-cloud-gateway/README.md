@@ -8,7 +8,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ### Responsibilities
 
-- Enforce authentication for admin routes. TLS termination occurs at the load balancer as described in the [Security Architecture](../system-architecture-security.md)
+- Enforce authentication for admin routes. TLS termination occurs at the load balancer as described in the [Security Architecture](../../system-architecture-security.md)
 - Upgrade WebSocket connections and forward them to backend services
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
@@ -18,13 +18,13 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 - Handles persistent WebSocket connections and supports raw TCP through the TCP Proxy Service.
 - Event-driven updates synchronize game state across connected players.
-- Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../system-architecture-reconnection.md).
+- Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../../system-architecture-reconnection.md).
 - Gateway restarts are transparent thanks to the layered reconnection model
-  outlined in [Reconnection Strategy](../system-architecture-reconnection.md).
+  outlined in [Reconnection Strategy](../../system-architecture-reconnection.md).
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
-- External TLS is terminated by the load balancer and traffic to backend services uses mutual TLS as described in the [Security Architecture](../system-architecture-security.md).
-- Utilizes the [Shared Libraries](../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+- External TLS is terminated by the load balancer and traffic to backend services uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
+- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
 ## Key Features
@@ -73,14 +73,14 @@ for the core services so Docker Compose environments work out of the box.
   - TCP Proxy Service forwards Telnet traffic into the gateway.
 - **External:** Spring Cloud Gateway infrastructure.
 
-> See [**Gateway Architecture**](../system-architecture-gateway.md),
-[**Deployment Environments**](../infrastructure/deployment-environments.md),
-and [**Protocol Bridging**](../system-architecture-protocol-bridging.md) for
+> See [**Gateway Architecture**](../../system-architecture-gateway.md),
+[**Deployment Environments**](../../infrastructure/deployment-environments.md),
+and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables
@@ -117,16 +117,16 @@ adding or removing routes at runtime.
 
 ## 📚 Related Documentation
 
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Reconnection Strategy](../system-architecture-reconnection.md)
-- [Security Architecture](../system-architecture-security.md)
-- [Multi-Tenancy](../system-architecture-multi-tenancy.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [User Journeys – Player Login and Gameplay](../user-journeys.md#7-player-login-and-gameplay)
-- [gRPC API Style & Versioning Guidelines](../system-architecture-grpc.md)
-- [Shared Libraries Overview](../system-architecture-shared-libraries.md)
-- [Testing Strategy](../system-architecture-testing.md)
-- [CI/CD Pipeline](../system-architecture-cicd.md)
+- [System Architecture Overview](../../system-architecture-overview.md)
+- [Reconnection Strategy](../../system-architecture-reconnection.md)
+- [Security Architecture](../../system-architecture-security.md)
+- [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
+- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
+- [User Journeys – Player Login and Gameplay](../../user-journeys.md#7-player-login-and-gameplay)
+- [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
+- [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
+- [Testing Strategy](../../system-architecture-testing.md)
+- [CI/CD Pipeline](../../system-architecture-cicd.md)
 
 ## Additional Details
 
@@ -166,11 +166,11 @@ curl -X DELETE http://localhost:8080/routes/demo
 grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementService/Ping
 ```
 
-- [Logging & Monitoring](../system-architecture-logging-monitoring.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
+- [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
+- [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
 
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
+- [System Architecture Diagram](../../system-architecture-diagram.md)
+- [System Context Diagram](../../system-context-diagram.md)
 
 ## Scalability
 
