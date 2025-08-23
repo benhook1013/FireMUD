@@ -32,8 +32,10 @@ public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private final PingService pingService;
   private final CharacterService characterService;
+
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final InventoryService inventoryService;
+
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final MeterRegistry meterRegistry;
 

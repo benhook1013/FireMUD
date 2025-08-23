@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final StringRedisTemplate redisTemplate;
+
   private final int maxConnectionsPerIp;
 
   public IpConnectionLimiterImpl(
