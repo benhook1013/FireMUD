@@ -13,8 +13,14 @@ public class ClientIpHeaderFilter implements WebFilter, Ordered {
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
     String headerIp = exchange.getRequest().getHeaders().getFirst("X-Client-IP");
-    if (headerIp == null && exchange.getRequest().getRemoteAddress() != null) {
-      headerIp = exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
+    if (headerIp == null) {
+      var remote = exchange.getRequest().getRemoteAddress();
+      if (remote != null) {
+        var address = remote.getAddress();
+        if (address != null) {
+          headerIp = address.getHostAddress();
+        }
+      }
     }
     if (headerIp != null) {
       final String ip = headerIp;
