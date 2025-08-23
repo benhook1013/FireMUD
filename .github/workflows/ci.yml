@@ -311,6 +311,20 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v5
 
+      - name: ⚙️ Set Up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            config/openapi/package-lock.json
+            web-client/package-lock.json
+
+      - name: 📦 Install Node Dependencies
+        run: |
+          npm --prefix config/openapi ci
+          npm --prefix web-client ci
+
       - name: 💾 Cache Trivy DB
         uses: actions/cache@v4
         with:
