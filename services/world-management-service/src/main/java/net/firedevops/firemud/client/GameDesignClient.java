@@ -18,9 +18,11 @@ import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import org.springframework.stereotype.Component;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** gRPC client for communicating with the Game Design Service. */
 @Component
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class GameDesignClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;

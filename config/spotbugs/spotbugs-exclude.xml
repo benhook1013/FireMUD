@@ -5,9 +5,21 @@
         <Source name=".*[\\/]build[\\/]generated[\\/].*" />
     </Match>
     
-    <!-- Exclude all protobuf-generated classes in versioned packages (v1, v2, v3, ...) -->
+    <!-- Exclude all protobuf-generated classes in versioned packages -->
     <Match>
-        <Package name="~.*\\.v[0-9]+" />
+        <Package name="net.firedevops.firemud.account.v1" />
+        <Bug pattern=".*" />
+    </Match>
+    <Match>
+        <Package name="net.firedevops.firemud.entitymanagement.v1" />
+        <Bug pattern=".*" />
+    </Match>
+    <Match>
+        <Package name="net.firedevops.firemud.gamesession.v1" />
+        <Bug pattern=".*" />
+    </Match>
+    <Match>
+        <Package name="net.firedevops.firemud.socialgroups.v1" />
         <Bug pattern=".*" />
     </Match>
 </FindBugsFilter>

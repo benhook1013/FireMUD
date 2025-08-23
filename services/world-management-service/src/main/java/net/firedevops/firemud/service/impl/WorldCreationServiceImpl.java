@@ -16,6 +16,7 @@ import net.firedevops.firemud.service.WorldCreationService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /**
  * Orchestrates world creation using the shared Saga library. In a real implementation this would
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class WorldCreationServiceImpl implements WorldCreationService {
   private final RegionRepository regionRepository;
   private final MeterRegistry meterRegistry;

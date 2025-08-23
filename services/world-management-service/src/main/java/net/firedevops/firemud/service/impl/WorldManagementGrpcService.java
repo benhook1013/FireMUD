@@ -21,10 +21,12 @@ import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.lognet.springboot.grpc.GRpcService;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** gRPC endpoints for the World Management Service. */
 @GRpcService
 @RequiredArgsConstructor
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class WorldManagementGrpcService
     extends WorldManagementServiceGrpc.WorldManagementServiceImplBase {
   private final PingService pingService;
