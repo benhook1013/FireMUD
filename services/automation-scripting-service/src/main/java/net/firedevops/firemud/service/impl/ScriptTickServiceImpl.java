@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import javax.annotation.PostConstruct;
@@ -105,7 +106,10 @@ public class ScriptTickServiceImpl implements ScriptTickService {
       redisTemplate.execute(
           (RedisCallback<Object>)
               connection -> {
-                connection.execute("WAIT", "1".getBytes(), "100".getBytes());
+                connection.execute(
+                    "WAIT",
+                    "1".getBytes(StandardCharsets.UTF_8),
+                    "100".getBytes(StandardCharsets.UTF_8));
                 return null;
               });
     } catch (Exception e) {
