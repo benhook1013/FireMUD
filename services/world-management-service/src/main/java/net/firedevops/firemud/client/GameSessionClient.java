@@ -1,6 +1,5 @@
 package net.firedevops.firemud.client;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -21,7 +20,6 @@ import net.firedevops.firemud.gamesession.v1.PingResponse;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Session Service. */
-@SuppressFBWarnings({"EI_EXPOSE_REP", "EI_EXPOSE_REP2"})
 @Component
 public class GameSessionClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
@@ -30,6 +28,7 @@ public class GameSessionClient implements AutoCloseable {
   private GameSessionServiceGrpc.GameSessionServiceBlockingStub stub;
   private TlsCertificateWatcher watcher;
 
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
   public GameSessionClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;

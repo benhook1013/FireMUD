@@ -1,10 +1,8 @@
 package net.firedevops.firemud.entity;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.persistence.*;
 import lombok.Data;
 
-@SuppressFBWarnings({"EI_EXPOSE_REP", "EI_EXPOSE_REP2"})
 @Data
 @Entity
 @Table(name = "room_exit")
@@ -28,4 +26,24 @@ public class RoomExit {
   private int cost = 1;
 
   @Version private int version;
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  public Room getFromRoom() {
+    return fromRoom;
+  }
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  public void setFromRoom(Room fromRoom) {
+    this.fromRoom = fromRoom;
+  }
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  public Room getToRoom() {
+    return toRoom;
+  }
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  public void setToRoom(Room toRoom) {
+    this.toRoom = toRoom;
+  }
 }

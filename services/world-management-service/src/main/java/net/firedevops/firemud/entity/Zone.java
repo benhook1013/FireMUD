@@ -22,4 +22,14 @@ public class Zone {
   private String name;
 
   @Version private int version;
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  public Region getRegion() {
+    return region;
+  }
+
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  public void setRegion(Region region) {
+    this.region = region;
+  }
 }
