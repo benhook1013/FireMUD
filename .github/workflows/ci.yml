@@ -212,12 +212,6 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: 🎨 Check Spotless Formatting
-        run: |
-          echo "::group::Run Spotless"
-          ./gradlew :${{ matrix.service }}:spotlessCheck
-          echo "::endgroup::"
-
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |
