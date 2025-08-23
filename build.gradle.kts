@@ -161,6 +161,7 @@ tasks.register<NpxTask>("lintMarkdownFix") {
 
 tasks.register<Exec>("linkCheck") {
     commandLine("bash", "./dev-tools/docs/link-check.sh")
+    environment("CHECK_EXTERNAL_LINKS", if (fullCheck) "1" else "0")
 }
 
 tasks.named("lintMarkdown") {
