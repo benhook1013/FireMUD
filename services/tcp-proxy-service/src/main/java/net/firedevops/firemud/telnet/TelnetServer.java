@@ -25,7 +25,7 @@ import org.springframework.stereotype.Component;
 
 /** Simple Netty-based Telnet server that forwards input to the gateway via WebSocket. */
 @Component
-public class TelnetServer {
+public final class TelnetServer {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServer.class);
 
   private final int port;
@@ -88,7 +88,10 @@ public class TelnetServer {
                     .addLast(new StringDecoder())
                     .addLast(
                         new TelnetServerHandler(
-                            gatewayWsUrl, activeConnections, connectionCounter));
+                            gatewayWsUrl,
+                            activeConnections::incrementAndGet,
+                            activeConnections::decrementAndGet,
+                            connectionCounter));
               }
             });
     serverChannel = b.bind(port).sync().channel();
