@@ -206,7 +206,7 @@ Authentication generates a JWT that is stored **server-side** in Redis for inter
 
 ### Two-Factor Authentication
 
-Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../../design/architecture/system-architecture-security.md).
+Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
 
 ### REST & gRPC Endpoints
 
