@@ -1,5 +1,6 @@
 package net.firedevops.firemud.client;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -18,7 +19,6 @@ import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import org.springframework.stereotype.Component;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** gRPC client for communicating with the Game Design Service. */
 @Component

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.data;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entity.Region;
 import net.firedevops.firemud.entity.Room;
@@ -14,7 +15,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** Seeds minimal world data for local development when the {@code dev} Spring profile is active. */
 @Component

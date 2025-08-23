@@ -2,6 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
@@ -21,7 +22,6 @@ import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.lognet.springboot.grpc.GRpcService;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 /** gRPC endpoints for the World Management Service. */
 @GRpcService
