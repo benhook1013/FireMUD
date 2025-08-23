@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import net.firedevops.firemud.service.SessionRateLimiter;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 /** Redis-backed implementation of {@link SessionRateLimiter}. */
 @Service
 public class SessionRateLimiterImpl implements SessionRateLimiter {
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final StringRedisTemplate redisTemplate;
   private final int maxMessagesPerSecond;
 

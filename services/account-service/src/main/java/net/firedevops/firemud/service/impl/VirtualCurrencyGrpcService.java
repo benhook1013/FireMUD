@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.account.v1.AddCurrencyRequest;
@@ -15,6 +16,7 @@ import org.lognet.springboot.grpc.GRpcService;
 @GRpcService
 public class VirtualCurrencyGrpcService
     extends VirtualCurrencyServiceGrpc.VirtualCurrencyServiceImplBase {
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final VirtualCurrencyService currencyService;
 
   public VirtualCurrencyGrpcService(VirtualCurrencyService currencyService) {
