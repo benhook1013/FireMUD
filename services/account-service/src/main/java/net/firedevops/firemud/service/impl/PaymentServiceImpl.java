@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.LocalDateTime;
 import net.firedevops.firemud.client.StripeClient;
@@ -26,6 +27,7 @@ public class PaymentServiceImpl implements PaymentService {
   private final SubscriptionRepository subscriptionRepository;
   private final StripeClient stripeClient;
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public PaymentServiceImpl(
       AccountRepository accountRepository,
       PaymentTransactionRepository paymentTransactionRepository,
