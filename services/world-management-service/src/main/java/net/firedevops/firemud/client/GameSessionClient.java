@@ -28,7 +28,6 @@ public class GameSessionClient implements AutoCloseable {
   private GameSessionServiceGrpc.GameSessionServiceBlockingStub stub;
   private TlsCertificateWatcher watcher;
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
   public GameSessionClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
     this.endpoints = copyEndpoints(endpoints);
     this.tlsProps = copyTlsProps(tlsProps);
