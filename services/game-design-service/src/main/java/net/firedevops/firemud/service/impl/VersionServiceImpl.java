@@ -4,6 +4,7 @@ import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.client.AutomationScriptingClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class VersionServiceImpl implements VersionService {
   private static final Logger logger = LoggingUtil.getLogger(VersionServiceImpl.class);
 
