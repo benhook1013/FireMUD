@@ -19,8 +19,7 @@ mapfile -t FILES < <(
 )
 
 OPTIONS=(
-  --scheme https
-  --scheme http
+  --scheme file
   --exclude-path node_modules
   --exclude-path build
   --exclude-path .gradle
@@ -28,5 +27,9 @@ OPTIONS=(
   --max-retries 3
   --retry-wait-time 2
 )
+
+if [[ "${CHECK_EXTERNAL_LINKS:-}" == 1 ]]; then
+  OPTIONS+=(--scheme https --scheme http)
+fi
 
 "$BIN" --no-progress --verbose "${OPTIONS[@]}" "${FILES[@]}"
