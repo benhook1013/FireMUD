@@ -1,11 +1,11 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.config.ChatProperties;
@@ -23,7 +23,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected services are managed by Spring")
 public class ChatServiceImpl implements ChatService {
   private static final Logger logger = LoggingUtil.getLogger(ChatServiceImpl.class);
 
@@ -37,6 +39,33 @@ public class ChatServiceImpl implements ChatService {
 
   private Counter publishCounter;
   private Counter redisErrorCounter;
+
+  public ChatServiceImpl(
+      ChatMessageRepository repository,
+      ChatMessageMapper mapper,
+      ProfanityFilter profanityFilter,
+      LoggingAdminClient loggingAdminClient,
+      RedisTemplate<String, Object> redisTemplate,
+      MeterRegistry meterRegistry,
+      ChatProperties chatProperties) {
+    this.repository = repository;
+    this.mapper = mapper;
+    this.profanityFilter = profanityFilter;
+    this.loggingAdminClient = loggingAdminClient;
+    this.redisTemplate = redisTemplate;
+    this.meterRegistry = meterRegistry;
+    this.chatProperties = copyProps(chatProperties);
+  }
+
+  private static ChatProperties copyProps(ChatProperties src) {
+    var copy = new ChatProperties();
+    copy.setSays(src.getSays());
+    copy.setTells(src.getTells());
+    copy.setGuild(src.getGuild());
+    copy.setCity(src.getCity());
+    copy.setAccount(src.getAccount());
+    return copy;
+  }
 
   @PostConstruct
   void init() {

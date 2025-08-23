@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,9 @@ import org.lognet.springboot.grpc.GRpcService;
 /** gRPC service implementation for the SocialGroupsService API. */
 @GRpcService
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected services are managed by Spring")
 public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroupsServiceImplBase {
   private final PingService pingService;
   private final ChatService chatService;
