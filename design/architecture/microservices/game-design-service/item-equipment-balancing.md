@@ -25,7 +25,7 @@ These capabilities are available in the current implementation.
 - [Game Design Service Architecture](README.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
 - [Version Control for Design Assets](version-control.md)
-- [Game Design Service gRPC API](../../../../../protos/game-design/v1/README.md)
+- [Game Design Service gRPC API](../../../../protos/game-design/v1/README.md)
 - [Entity Management Service](../entity-management-service/README.md)
 - [Ability & Action Design Tools](ability-action-tools.md)
 - [Web-Based Visual Design Interface](web-visual-interface.md)
