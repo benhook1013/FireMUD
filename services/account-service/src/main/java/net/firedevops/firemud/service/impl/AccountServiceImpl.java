@@ -3,6 +3,7 @@ package net.firedevops.firemud.service.impl;
 import com.bastiaanjansen.otp.TOTPGenerator;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.Map;
 import java.util.Optional;
@@ -62,6 +63,7 @@ public class AccountServiceImpl implements AccountService {
   private final net.firedevops.firemud.service.session.SessionService sessionService;
   private final SagaRunner sagaRunner;
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public AccountServiceImpl(
       AccountRepository accountRepository,
       AccountMapper accountMapper,

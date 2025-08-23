@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AccountRefRequest;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
   private final AccountService accountService;
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public AuthController(AccountService accountService) {
     this.accountService = accountService;
   }

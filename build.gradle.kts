@@ -101,10 +101,19 @@ subprojects {
         enabled = fullCheck
         excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
         setIgnoreFailures(true)
-        // Exclude generated sources such as Protobuf classes from analysis
+        // Exclude generated sources and protobuf-generated packages from analysis
         val generatedDir = "${File.separator}generated${File.separator}"
-        classDirs.setFrom(classDirs.files.filterNot { it.path.contains(generatedDir) })
-        sourceDirs.setFrom(sourceDirs.files.filterNot { it.path.contains(generatedDir) })
+        val protoPackages = listOf("net/firedevops/firemud/**/v1/**")
+        classDirs.setFrom(
+            classDirs.files
+                .filterNot { it.path.contains(generatedDir) }
+                .map { fileTree(it) { exclude(protoPackages) } }
+        )
+        sourceDirs.setFrom(
+            sourceDirs.files
+                .filterNot { it.path.contains(generatedDir) }
+                .map { fileTree(it) { exclude(protoPackages) } }
+        )
     }
 
     // SpotBugs analyzes the compiled classes, so ensure it runs after Java
@@ -161,6 +170,7 @@ tasks.register<NpxTask>("lintMarkdownFix") {
 
 tasks.register<Exec>("linkCheck") {
     commandLine("bash", "./dev-tools/docs/link-check.sh")
+    environment("CHECK_EXTERNAL_LINKS", if (fullCheck) "1" else "0")
 }
 
 tasks.named("lintMarkdown") {
