@@ -1,6 +1,5 @@
 package net.firedevops.firemud.client;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
@@ -23,7 +22,6 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Session Service. */
-@SuppressFBWarnings({"EI_EXPOSE_REP", "EI_EXPOSE_REP2"})
 @Component
 public class GameSessionClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
@@ -33,8 +31,29 @@ public class GameSessionClient implements AutoCloseable {
   private TlsCertificateWatcher watcher;
 
   public GameSessionClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
-    this.endpoints = endpoints;
-    this.tlsProps = tlsProps;
+    this.endpoints = copyEndpoints(endpoints);
+    this.tlsProps = copyTlsProps(tlsProps);
+  }
+
+  private static ServiceEndpointsProperties copyEndpoints(ServiceEndpointsProperties src) {
+    var copy = new ServiceEndpointsProperties();
+    copy.setAccountService(src.getAccountService());
+    copy.setGameSessionService(src.getGameSessionService());
+    copy.setGameDesignService(src.getGameDesignService());
+    copy.setGameLogicService(src.getGameLogicService());
+    copy.setWorldManagementService(src.getWorldManagementService());
+    copy.setEntityManagementService(src.getEntityManagementService());
+    copy.setLoggingAdminService(src.getLoggingAdminService());
+    copy.setAutomationScriptingService(src.getAutomationScriptingService());
+    return copy;
+  }
+
+  private static GrpcClientProperties copyTlsProps(GrpcClientProperties src) {
+    var copy = new GrpcClientProperties();
+    copy.setCertChain(src.getCertChain());
+    copy.setPrivateKey(src.getPrivateKey());
+    copy.setCaCert(src.getCaCert());
+    return copy;
   }
 
   @PostConstruct
