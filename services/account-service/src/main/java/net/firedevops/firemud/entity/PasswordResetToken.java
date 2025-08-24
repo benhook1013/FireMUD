@@ -15,8 +15,16 @@ public class PasswordResetToken {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Getter(onMethod_ = @SuppressFBWarnings("EI_EXPOSE_REP"))
-  @Setter(onMethod_ = @SuppressFBWarnings("EI_EXPOSE_REP2"))
+  @Getter(
+      onMethod_ =
+          @SuppressFBWarnings(
+              value = "EI_EXPOSE_REP",
+              justification = "JPA association is intentionally exposed"))
+  @Setter(
+      onMethod_ =
+          @SuppressFBWarnings(
+              value = "EI_EXPOSE_REP2",
+              justification = "JPA association stored directly"))
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "account_id", nullable = false)
   private Account account;

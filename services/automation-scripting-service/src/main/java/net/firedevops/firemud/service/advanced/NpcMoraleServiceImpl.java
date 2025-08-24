@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 /** Simple morale-based AI module. */
 @Service
 @RequiredArgsConstructor
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Service dependency is not exposed")
 public class NpcMoraleServiceImpl implements NpcMoraleService {
   private final NpcAggressionService aggressionService;
 

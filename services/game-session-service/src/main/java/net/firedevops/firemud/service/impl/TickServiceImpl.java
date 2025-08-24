@@ -27,7 +27,9 @@ import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 
 /** Default Redis-backed implementation of {@link TickService}. */
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are kept internal")
 @Service
 @RequiredArgsConstructor
 public class TickServiceImpl implements TickService {

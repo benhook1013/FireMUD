@@ -18,8 +18,16 @@ public class Revision {
   @Column(nullable = false, length = 36)
   private String tenantId;
 
-  @Getter(onMethod_ = @SuppressFBWarnings("EI_EXPOSE_REP"))
-  @Setter(onMethod_ = @SuppressFBWarnings("EI_EXPOSE_REP2"))
+  @Getter(
+      onMethod_ =
+          @SuppressFBWarnings(
+              value = "EI_EXPOSE_REP",
+              justification = "JPA association is intentionally exposed"))
+  @Setter(
+      onMethod_ =
+          @SuppressFBWarnings(
+              value = "EI_EXPOSE_REP2",
+              justification = "JPA association stored directly"))
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "tenant_id", nullable = false)
   private Game game;

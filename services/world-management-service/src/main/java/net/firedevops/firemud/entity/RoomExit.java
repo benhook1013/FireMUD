@@ -27,22 +27,30 @@ public class RoomExit {
 
   @Version private int version;
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "JPA association is intentionally exposed")
   public Room getFromRoom() {
     return fromRoom;
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "JPA association stored directly")
   public void setFromRoom(Room fromRoom) {
     this.fromRoom = fromRoom;
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "JPA association is intentionally exposed")
   public Room getToRoom() {
     return toRoom;
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "JPA association stored directly")
   public void setToRoom(Room toRoom) {
     this.toRoom = toRoom;
   }

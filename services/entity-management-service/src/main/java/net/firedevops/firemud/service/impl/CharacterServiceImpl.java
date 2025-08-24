@@ -20,7 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@SuppressFBWarnings(value = "EI2", justification = "Injected dependencies are not exposed")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are not exposed")
 public class CharacterServiceImpl implements CharacterService {
 
   private final CharacterRepository characterRepository;

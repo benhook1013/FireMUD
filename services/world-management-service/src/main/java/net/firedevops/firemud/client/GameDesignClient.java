@@ -22,7 +22,9 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Design Service. */
 @Component
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected configuration and channel references are not exposed")
 public class GameDesignClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;

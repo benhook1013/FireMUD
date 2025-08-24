@@ -1,9 +1,11 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
+import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
@@ -19,10 +21,12 @@ import org.lognet.springboot.grpc.GRpcService;
 @GRpcService
 public class NpcFormationGrpcService
     extends AutomationScriptingServiceGrpc.AutomationScriptingServiceImplBase {
+
+  @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Service dependency is not exposed")
   private final NpcFormationService formationService;
 
   public NpcFormationGrpcService(NpcFormationService formationService) {
-    this.formationService = formationService;
+    this.formationService = Objects.requireNonNull(formationService);
   }
 
   @Override

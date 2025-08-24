@@ -24,7 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected repositories and metrics remain internal")
 public class WorldEventServiceImpl implements WorldEventService {
   private final WorldEventRepository eventRepository;
   private final RegionRepository regionRepository;

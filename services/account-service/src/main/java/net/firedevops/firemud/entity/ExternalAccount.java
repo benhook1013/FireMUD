@@ -27,12 +27,14 @@ public class ExternalAccount {
   @Column(name = "external_id", nullable = false, length = 100)
   private String externalId;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "JPA association is intentionally exposed")
   public Account getAccount() {
     return account;
   }
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "JPA association stored directly")
   public void setAccount(Account account) {
     this.account = account;
   }

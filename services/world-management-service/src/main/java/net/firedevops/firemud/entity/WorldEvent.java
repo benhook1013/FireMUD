@@ -35,12 +35,16 @@ public class WorldEvent {
 
   @Version private int version;
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "JPA association is intentionally exposed")
   public Region getRegion() {
     return region;
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "JPA association stored directly")
   public void setRegion(Region region) {
     this.region = region;
   }

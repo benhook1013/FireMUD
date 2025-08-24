@@ -44,10 +44,14 @@ public final class GameSessionGrpcService
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "TickService is injected and not exposed")
   private final TickService tickService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
   private final IpConnectionLimiter ipConnectionLimiter;

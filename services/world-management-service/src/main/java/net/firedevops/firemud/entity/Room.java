@@ -18,12 +18,16 @@ public class Room {
   @JoinColumn(name = "region_id", nullable = false)
   private Region region;
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "JPA relationship is intentionally exposed")
   public Region getRegion() {
     return region;
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "JPA relationship is stored directly")
   public void setRegion(Region region) {
     this.region = region;
   }

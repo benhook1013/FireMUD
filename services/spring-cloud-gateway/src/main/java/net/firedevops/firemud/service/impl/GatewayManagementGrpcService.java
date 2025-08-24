@@ -16,7 +16,9 @@ import org.lognet.springboot.grpc.GRpcService;
 
 /** gRPC implementation for remote gateway management. */
 @GRpcService
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected route service is kept internal")
 public class GatewayManagementGrpcService
     extends GatewayManagementServiceGrpc.GatewayManagementServiceImplBase {
   private final GatewayRouteService routeService;

@@ -27,7 +27,9 @@ public class PaymentServiceImpl implements PaymentService {
   private final SubscriptionRepository subscriptionRepository;
   private final StripeClient stripeClient;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Repositories and client are injected and not exposed")
   public PaymentServiceImpl(
       AccountRepository accountRepository,
       PaymentTransactionRepository paymentTransactionRepository,

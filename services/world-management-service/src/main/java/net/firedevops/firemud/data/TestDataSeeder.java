@@ -20,7 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 @Profile("dev")
 @RequiredArgsConstructor
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Repositories are injected for seeding and not exposed")
 public class TestDataSeeder implements ApplicationRunner {
   private final RegionRepository regionRepository;
   private final ZoneRepository zoneRepository;

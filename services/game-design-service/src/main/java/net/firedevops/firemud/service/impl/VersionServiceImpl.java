@@ -24,7 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are not exposed")
 public class VersionServiceImpl implements VersionService {
   private static final Logger logger = LoggingUtil.getLogger(VersionServiceImpl.class);
 
