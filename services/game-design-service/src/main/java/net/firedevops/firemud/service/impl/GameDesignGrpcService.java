@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
@@ -30,6 +31,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final PingService pingService;
   private final RevisionService revisionService;
   private final VersionService versionService;
+
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   private final MeterRegistry meterRegistry;
 
   private ErrorDetail error(String code, String message) {
