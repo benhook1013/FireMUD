@@ -43,4 +43,23 @@ public class CraftingRecipe {
   public void setIngredients(Set<CraftingIngredient> ingredients) {
     this.ingredients = new HashSet<>(ingredients);
   }
+
+  public Item getResultItem() {
+    if (resultItem == null) {
+      return null;
+    }
+    Item copy = new Item();
+    copy.setId(resultItem.getId());
+    return copy;
+  }
+
+  public void setResultItem(Item resultItem) {
+    if (resultItem == null) {
+      this.resultItem = null;
+    } else {
+      Item copy = new Item();
+      copy.setId(resultItem.getId());
+      this.resultItem = copy;
+    }
+  }
 }

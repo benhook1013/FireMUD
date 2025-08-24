@@ -40,4 +40,42 @@ public class CraftingIngredient {
       this.id = copy;
     }
   }
+
+  public CraftingRecipe getRecipe() {
+    if (recipe == null) {
+      return null;
+    }
+    CraftingRecipe copy = new CraftingRecipe();
+    copy.setId(recipe.getId());
+    return copy;
+  }
+
+  public void setRecipe(CraftingRecipe recipe) {
+    if (recipe == null) {
+      this.recipe = null;
+    } else {
+      CraftingRecipe copy = new CraftingRecipe();
+      copy.setId(recipe.getId());
+      this.recipe = copy;
+    }
+  }
+
+  public Item getItem() {
+    if (item == null) {
+      return null;
+    }
+    Item copy = new Item();
+    copy.setId(item.getId());
+    return copy;
+  }
+
+  public void setItem(Item item) {
+    if (item == null) {
+      this.item = null;
+    } else {
+      Item copy = new Item();
+      copy.setId(item.getId());
+      this.item = copy;
+    }
+  }
 }

@@ -21,4 +21,23 @@ public class NpcFormationMember {
   @Version
   @Column(name = "row_version")
   private int version;
+
+  public NpcFormation getFormation() {
+    if (formation == null) {
+      return null;
+    }
+    NpcFormation copy = new NpcFormation();
+    copy.setId(formation.getId());
+    return copy;
+  }
+
+  public void setFormation(NpcFormation formation) {
+    if (formation == null) {
+      this.formation = null;
+    } else {
+      NpcFormation copy = new NpcFormation();
+      copy.setId(formation.getId());
+      this.formation = copy;
+    }
+  }
 }

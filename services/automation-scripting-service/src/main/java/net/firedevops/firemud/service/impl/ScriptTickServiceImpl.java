@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -25,6 +26,9 @@ import org.springframework.stereotype.Service;
 /** Redis-backed implementation of {@link ScriptTickService}. */
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI2",
+    justification = "Injected dependencies are not exposed externally")
 public class ScriptTickServiceImpl implements ScriptTickService {
   private static final Logger logger = LoggingUtil.getLogger(ScriptTickServiceImpl.class);
 
