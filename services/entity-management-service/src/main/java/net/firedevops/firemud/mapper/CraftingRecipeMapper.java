@@ -5,7 +5,7 @@ import net.firedevops.firemud.entity.CraftingRecipe;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
-@Mapper(componentModel = "spring")
+@Mapper(componentModel = "spring", uses = CraftingIngredientMapper.class)
 public interface CraftingRecipeMapper {
   @Mapping(target = "resultItemId", source = "resultItem.id")
   CraftingRecipeDto toDto(CraftingRecipe entity);
