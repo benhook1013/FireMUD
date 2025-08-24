@@ -1,7 +1,7 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AddFriendRequest;
 import net.firedevops.firemud.dto.CharacterFriendDto;
@@ -14,9 +14,15 @@ import org.springframework.web.bind.annotation.*;
 /** REST endpoints for managing per-game friend links. */
 @RestController
 @RequestMapping("/characters/{characterId}/friends")
-@RequiredArgsConstructor
 public class FriendController {
   private final FriendService friendService;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring manages FriendService bean lifecycle")
+  public FriendController(FriendService friendService) {
+    this.friendService = friendService;
+  }
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<CharacterFriendDto>>> list(

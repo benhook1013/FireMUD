@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entity;
 
 import jakarta.persistence.*;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.Data;
@@ -31,4 +32,12 @@ public class CraftingRecipe {
 
   @OneToMany(mappedBy = "recipe", cascade = CascadeType.ALL, orphanRemoval = true)
   private Set<CraftingIngredient> ingredients = new HashSet<>();
+
+  public Set<CraftingIngredient> getIngredients() {
+    return Collections.unmodifiableSet(ingredients);
+  }
+
+  public void setIngredients(Set<CraftingIngredient> ingredients) {
+    this.ingredients = new HashSet<>(ingredients);
+  }
 }
