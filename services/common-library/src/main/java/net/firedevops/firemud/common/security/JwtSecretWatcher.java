@@ -65,10 +65,13 @@ public class JwtSecretWatcher implements AutoCloseable {
           break;
         }
       }
-      key.reset();
+      boolean valid = key.reset();
       if (changed) {
         logger.info("JWT secret change detected; reloading");
         onChange.run();
+      }
+      if (!valid) {
+        break;
       }
     }
   }
