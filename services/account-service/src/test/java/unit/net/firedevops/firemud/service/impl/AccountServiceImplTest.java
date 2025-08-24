@@ -263,6 +263,11 @@ class AccountServiceImplTest {
 
   private static String hash(String password) {
     Argon2 argon2 = Argon2Factory.create();
-    return argon2.hash(2, 65536, 1, password.toCharArray());
+    char[] chars = password.toCharArray();
+    try {
+      return argon2.hash(2, 65536, 1, chars);
+    } finally {
+      argon2.wipeArray(chars);
+    }
   }
 }
