@@ -6,6 +6,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -33,7 +34,11 @@ import org.testcontainers.utility.DockerImageName;
     classes = TcpProxyServiceApplication.class,
     properties = {"TCP_PROXY_PORT=2323"})
 @EnableAutoConfiguration(
-    exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+    exclude = {
+      DataSourceAutoConfiguration.class,
+      RedisAutoConfiguration.class,
+      DatabaseAutoConfiguration.class
+    })
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
   static GenericContainer<?> gateway =
