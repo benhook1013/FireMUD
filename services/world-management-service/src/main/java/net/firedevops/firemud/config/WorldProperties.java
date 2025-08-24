@@ -13,11 +13,8 @@ public class WorldProperties {
   /** Properties related to room behaviour. */
   private Room room = new Room();
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Configuration object stored without defensive copy")
   public void setRoom(Room room) {
-    this.room = room;
+    this.room = new Room(room);
   }
 
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
@@ -30,5 +27,11 @@ public class WorldProperties {
   public static class Room {
     /** TTL in seconds for room cache entries. */
     @Getter @Setter private long cacheTtlSeconds = 60;
+
+    public Room() {}
+
+    public Room(Room other) {
+      this.cacheTtlSeconds = other.cacheTtlSeconds;
+    }
   }
 }
