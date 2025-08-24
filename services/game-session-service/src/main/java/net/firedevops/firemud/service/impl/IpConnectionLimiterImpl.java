@@ -1,6 +1,7 @@
 package net.firedevops.firemud.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Duration;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -16,11 +17,15 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   private final int maxConnectionsPerIp;
 
+  private final Duration entryTtl;
+
   public IpConnectionLimiterImpl(
       StringRedisTemplate redisTemplate,
-      @Value("${GAME_SESSION_MAX_CONNECTIONS_PER_IP:5}") int maxConnectionsPerIp) {
+      @Value("${GAME_SESSION_MAX_CONNECTIONS_PER_IP:5}") int maxConnectionsPerIp,
+      @Value("${GAME_SESSION_CONN_TTL_SEC:3600}") long entryTtlSeconds) {
     this.redisTemplate = redisTemplate;
     this.maxConnectionsPerIp = maxConnectionsPerIp;
+    this.entryTtl = Duration.ofSeconds(entryTtlSeconds);
   }
 
   @Override
@@ -33,8 +38,12 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   @Override
   public void register(String ip, long sessionId) {
-    redisTemplate.opsForValue().increment(ipKey(ip));
-    redisTemplate.opsForValue().set(sessionKey(sessionId), ip);
+    String ipKey = ipKey(ip);
+    Long count = redisTemplate.opsForValue().increment(ipKey);
+    if (count != null && count == 1L) {
+      redisTemplate.expire(ipKey, entryTtl);
+    }
+    redisTemplate.opsForValue().set(sessionKey(sessionId), ip, entryTtl);
   }
 
   @Override

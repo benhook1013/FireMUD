@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -44,7 +45,7 @@ class IpConnectionLimiterImplTest {
               return null;
             })
         .when(ops)
-        .set(anyString(), anyString());
+        .set(anyString(), anyString(), any());
     doAnswer(
             inv -> {
               store.remove(inv.getArgument(0));
@@ -53,7 +54,7 @@ class IpConnectionLimiterImplTest {
         .when(redis)
         .delete(anyString());
 
-    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1);
+    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
     assertTrue(limiter.canAccept("1.2.3.4"));
     limiter.register("1.2.3.4", 1L);
     assertFalse(limiter.canAccept("1.2.3.4"));
