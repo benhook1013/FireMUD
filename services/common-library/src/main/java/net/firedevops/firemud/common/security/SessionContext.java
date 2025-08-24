@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.security;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /** Thread-local storage for JWT claims extracted by {@link AuthTokenInterceptor}. */
 public final class SessionContext {
@@ -12,7 +13,16 @@ public final class SessionContext {
 
   public static void setContext(
       String accountId, List<String> globalRoles, Map<String, List<String>> scopedRoles) {
-    HOLDER.set(new ClaimsData(accountId, globalRoles, scopedRoles));
+    List<String> immutableGlobals =
+        globalRoles == null ? List.of() : List.copyOf(globalRoles);
+    Map<String, List<String>> immutableScoped =
+        scopedRoles == null
+            ? Map.of()
+            : scopedRoles.entrySet().stream()
+                .collect(
+                    Collectors.toUnmodifiableMap(
+                        Map.Entry::getKey, e -> List.copyOf(e.getValue())));
+    HOLDER.set(new ClaimsData(accountId, immutableGlobals, immutableScoped));
   }
 
   public static void clear() {
