@@ -9,6 +9,8 @@ buildscript {
     }
     dependencies {
         classpath("com.fasterxml.jackson.core:jackson-databind:2.19.2")
+        classpath("org.flywaydb:flyway-database-postgresql:11.11.2")
+        classpath("org.postgresql:postgresql:42.7.7")
     }
 }
 
@@ -53,6 +55,8 @@ subprojects {
     group = "net.firedevops.firemud"
     version = project.property("version") as String
 
+    val libs = rootProject.extensions.getByType<VersionCatalogsExtension>().named("libs")
+
     plugins.withId("java") {
         the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
         tasks.withType<JavaCompile>().configureEach {
@@ -63,9 +67,13 @@ subprojects {
     if (projectDir.parentFile.name == "services" && name != "common-library") {
         apply(plugin = "org.springframework.boot")
         apply(plugin = "org.flywaydb.flyway")
-    }
 
-    val libs = rootProject.extensions.getByType<VersionCatalogsExtension>().named("libs")
+        dependencies {
+            implementation(libs.findLibrary("flyway-core").get())
+            implementation(libs.findLibrary("flyway-database-postgresql").get())
+            implementation(libs.findLibrary("postgresql").get())
+        }
+    }
 
     dependencies {
         implementation(libs.findLibrary("protobuf-java").get())
