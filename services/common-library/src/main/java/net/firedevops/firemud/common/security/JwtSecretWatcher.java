@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.security;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
@@ -54,6 +55,9 @@ public class JwtSecretWatcher implements AutoCloseable {
         key = watchService.take();
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
+        return;
+      } catch (ClosedWatchServiceException e) {
+        // Watch service closed while waiting; exit loop
         return;
       }
       boolean changed = false;
