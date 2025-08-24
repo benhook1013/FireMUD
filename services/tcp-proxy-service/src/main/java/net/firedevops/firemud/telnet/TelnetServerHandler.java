@@ -61,7 +61,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
     String ip = null;
     if (remote instanceof java.net.InetSocketAddress address) {
-      ip = address.getAddress().getHostAddress();
+      var inetAddress = address.getAddress();
+      if (inetAddress != null) {
+        ip = inetAddress.getHostAddress();
+      }
     }
     connectionCounter.increment();
     onConnect.run();
