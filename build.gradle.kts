@@ -101,6 +101,7 @@ subprojects {
         toolVersion.set("4.9.3")
     }
 
+    // --- Gate Checkstyle & SpotBugs ---
     tasks.withType<Checkstyle>().configureEach {
         enabled = fullCheck
     }
@@ -112,12 +113,6 @@ subprojects {
         // Exclude generated sources and protobuf-generated packages from analysis
         val generatedDir = "${File.separator}generated${File.separator}"
         val protoPackages = listOf("net/firedevops/firemud/**/v1/**")
-        // Capture original class directories before filtering so we can supply them on the
-        // auxiliary classpath. Without this SpotBugs fails with missing class errors when our
-        // analyzed classes reference generated protobuf classes that were excluded from
-        // analysis. Providing the original directories on the auxiliary classpath allows
-        // SpotBugs to resolve those references while still skipping analysis of the generated
-        // sources.
         val originalClassDirs = classDirs.files
         classDirs.setFrom(
             originalClassDirs
@@ -132,14 +127,17 @@ subprojects {
         auxClassPaths.from(originalClassDirs)
     }
 
-    // SpotBugs analyzes the compiled classes, so ensure it runs after Java
-    // compilation to avoid implicit dependency issues reported by Gradle.
+    // Ensure SpotBugs runs after compilation
     tasks.named("spotbugsMain") {
         dependsOn("compileJava", "processResources")
     }
     tasks.named("spotbugsTest") {
         dependsOn("compileTestJava", "processTestResources")
     }
+
+    // Gate Spotless checks behind fullCheck (CI or -PfullCheck)
+    tasks.matching { it.name.startsWith("spotless") && it.name.endsWith("Check") }
+    .configureEach { enabled = fullCheck }
 
     tasks.test {
         useJUnitPlatform()
