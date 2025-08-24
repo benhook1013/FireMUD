@@ -48,6 +48,7 @@
 
 - When reviewing or refactoring code:
   - Identify bugs, anti-patterns, and improvements
+  - Note strange or nonstandard implementations and suggest better alternatives in your output, but do not apply fixes unless explicitly requested
   - Do not change functionality unless requested
   - Avoid touching unrelated code
   - Update or remove outdated comments
