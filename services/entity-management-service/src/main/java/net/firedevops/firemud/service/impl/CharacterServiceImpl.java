@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings(value = "EI2", justification = "Injected dependencies are not exposed")
 public class CharacterServiceImpl implements CharacterService {
 
   private final CharacterRepository characterRepository;

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/formations")
 @RequiredArgsConstructor
+@SuppressFBWarnings(value = "EI2", justification = "Service dependency is not exposed")
 public class NpcFormationController {
   private final NpcFormationService formationService;
 

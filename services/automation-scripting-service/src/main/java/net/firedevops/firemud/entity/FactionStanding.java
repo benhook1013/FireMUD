@@ -27,4 +27,23 @@ public class FactionStanding {
   @Version
   @Column(name = "row_version")
   private int version;
+
+  public Faction getFaction() {
+    if (faction == null) {
+      return null;
+    }
+    Faction copy = new Faction();
+    copy.setId(faction.getId());
+    return copy;
+  }
+
+  public void setFaction(Faction faction) {
+    if (faction == null) {
+      this.faction = null;
+    } else {
+      Faction copy = new Faction();
+      copy.setId(faction.getId());
+      this.faction = copy;
+    }
+  }
 }
