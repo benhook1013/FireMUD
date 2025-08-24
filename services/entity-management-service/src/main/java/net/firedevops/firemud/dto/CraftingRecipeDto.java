@@ -9,4 +9,9 @@ public record CraftingRecipeDto(
     @NotNull String name,
     @NotNull Long resultItemId,
     int resultQuantity,
-    List<CraftingIngredientDto> ingredients) {}
+    List<CraftingIngredientDto> ingredients) {
+
+  public CraftingRecipeDto {
+    ingredients = List.copyOf(ingredients);
+  }
+}

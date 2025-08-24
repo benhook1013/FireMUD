@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import jakarta.persistence.NamedAttributeNode;
 import jakarta.persistence.NamedEntityGraph;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.Data;
@@ -65,4 +66,12 @@ public class Character {
   private Instant lastLoginAt;
 
   @Version private int version;
+
+  public Set<InventoryEntry> getInventoryEntries() {
+    return Collections.unmodifiableSet(inventoryEntries);
+  }
+
+  public void setInventoryEntries(Set<InventoryEntry> inventoryEntries) {
+    this.inventoryEntries = new HashSet<>(inventoryEntries);
+  }
 }
