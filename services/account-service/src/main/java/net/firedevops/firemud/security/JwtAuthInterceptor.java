@@ -5,6 +5,7 @@ import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -35,8 +36,23 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
       String accountId = claims.getBody().get("accountId", String.class);
-      List<String> globalRoles = claims.getBody().get("globalRoles", List.class);
-      Map<String, List<String>> scopedRoles = claims.getBody().get("scopedRoles", Map.class);
+
+      List<?> globalRolesRaw = claims.getBody().get("globalRoles", List.class);
+      List<String> globalRoles =
+          globalRolesRaw == null ? null : globalRolesRaw.stream().map(Object::toString).toList();
+
+      Map<?, ?> scopedRolesRaw = claims.getBody().get("scopedRoles", Map.class);
+      Map<String, List<String>> scopedRoles = null;
+      if (scopedRolesRaw != null) {
+        scopedRoles = new HashMap<>();
+        for (Map.Entry<?, ?> entry : scopedRolesRaw.entrySet()) {
+          Object value = entry.getValue();
+          if (value instanceof List<?> list) {
+            scopedRoles.put(
+                String.valueOf(entry.getKey()), list.stream().map(Object::toString).toList());
+          }
+        }
+      }
 
       boolean allowed = false;
       if (globalRoles != null) {
