@@ -35,26 +35,10 @@ jobs:
           key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
           restore-keys: trivy-db-${{ runner.os }}-
 
-      - name: 🔍 Check container image exists
-        id: image-check
-        run: |
-          if docker manifest inspect ghcr.io/benhook1013/${{ matrix.service }}:latest > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: 🛡️ Trivy container and dependency scan
-        if: steps.image-check.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@0.32.0
         with:
           image-ref: ghcr.io/benhook1013/${{ matrix.service }}:latest
           format: 'table'
           output: 'trivy-report.txt'
           exit-code: '1'
-
-      - name: ℹ️ Image not found - skipping scan
-        if: steps.image-check.outputs.exists == 'false'
-        run: |
-          echo "Image ghcr.io/benhook1013/${{ matrix.service }}:latest not found"
-          exit 78
