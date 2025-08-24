@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.advanced;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.model.AggressionState;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 /** Simple morale-based AI module. */
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class NpcMoraleServiceImpl implements NpcMoraleService {
   private final NpcAggressionService aggressionService;
 

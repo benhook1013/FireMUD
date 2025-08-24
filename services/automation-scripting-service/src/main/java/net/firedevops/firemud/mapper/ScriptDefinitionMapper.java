@@ -11,5 +11,6 @@ public interface ScriptDefinitionMapper {
   ScriptDefinitionDto toDto(ScriptDefinition entity);
 
   @Mapping(source = "version", target = "scriptVersion")
+  @Mapping(target = "rowVersion", ignore = true)
   ScriptDefinition toEntity(ScriptDefinitionDto dto);
 }
