@@ -16,6 +16,7 @@ import io.netty.handler.codec.string.StringDecoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
 import org.slf4j.Logger;
@@ -86,7 +87,7 @@ public final class TelnetServer {
                   }
                   pipeline
                       .addLast(new LineBasedFrameDecoder(1024))
-                      .addLast(new StringDecoder())
+                      .addLast(new StringDecoder(StandardCharsets.UTF_8))
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
