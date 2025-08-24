@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 /** Redis-backed implementation of {@link AutomationQueueService}. */
 @Service
 @RequiredArgsConstructor
+@SuppressFBWarnings("EI_EXPOSE_REP2")
 public class AutomationQueueServiceImpl implements AutomationQueueService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
