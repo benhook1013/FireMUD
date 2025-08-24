@@ -37,6 +37,13 @@ export FIREMUD_POSTGRES_DB=firemud
 export FIREMUD_POSTGRES_USER=firemud
 export FIREMUD_POSTGRES_PASSWORD=firemud
 
+# Configure Flyway to use the temporary Postgres instance. The Gradle Flyway plugin
+# reads standard `FLYWAY_*` environment variables for connection details, so map
+# the FireMUD-specific settings accordingly.
+export FLYWAY_URL="jdbc:postgresql://${FIREMUD_POSTGRES_HOST}:${FIREMUD_POSTGRES_PORT}/${FIREMUD_POSTGRES_DB}"
+export FLYWAY_USER="$FIREMUD_POSTGRES_USER"
+export FLYWAY_PASSWORD="$FIREMUD_POSTGRES_PASSWORD"
+
 for service in "${SERVICES[@]}"; do
   MIGRATION_DIR="services/$service/src/main/resources/db/migration"
   if [ -d "$MIGRATION_DIR" ]; then
