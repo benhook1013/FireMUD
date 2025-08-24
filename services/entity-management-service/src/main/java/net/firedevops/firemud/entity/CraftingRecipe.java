@@ -5,16 +5,19 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 @Data
 @Entity
 @Table(name = "crafting_recipes")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @NamedEntityGraph(
     name = "recipe.ingredients",
     attributeNodes = {@NamedAttributeNode("ingredients"), @NamedAttributeNode("ingredients.item")})
 public class CraftingRecipe {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
+  @EqualsAndHashCode.Include
   private Long id;
 
   @Column(nullable = false)
