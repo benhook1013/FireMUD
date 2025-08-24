@@ -69,39 +69,44 @@ public final class TelnetServer {
 
   @Timed(value = "tcpproxy.start")
   public void start() throws InterruptedException {
-    if (running.get()) {
+    if (!running.compareAndSet(false, true)) {
       return;
     }
-    ServerBootstrap b = new ServerBootstrap();
-    b.group(bossGroup, workerGroup)
-        .channel(NioServerSocketChannel.class)
-        .childHandler(
-            new ChannelInitializer<SocketChannel>() {
-              @Override
-              protected void initChannel(SocketChannel ch) {
-                var pipeline = ch.pipeline();
-                if (tlsEnabled && sslContext != null) {
-                  pipeline.addLast(sslContext.newHandler(ch.alloc()));
+    try {
+      ServerBootstrap b = new ServerBootstrap();
+      b.group(bossGroup, workerGroup)
+          .channel(NioServerSocketChannel.class)
+          .childHandler(
+              new ChannelInitializer<SocketChannel>() {
+                @Override
+                protected void initChannel(SocketChannel ch) {
+                  var pipeline = ch.pipeline();
+                  if (tlsEnabled && sslContext != null) {
+                    pipeline.addLast(sslContext.newHandler(ch.alloc()));
+                  }
+                  pipeline
+                      .addLast(new LineBasedFrameDecoder(1024))
+                      .addLast(new StringDecoder())
+                      .addLast(
+                          new TelnetServerHandler(
+                              gatewayWsUrl,
+                              activeConnections::incrementAndGet,
+                              activeConnections::decrementAndGet,
+                              connectionCounter));
                 }
-                pipeline
-                    .addLast(new LineBasedFrameDecoder(1024))
-                    .addLast(new StringDecoder())
-                    .addLast(
-                        new TelnetServerHandler(
-                            gatewayWsUrl,
-                            activeConnections::incrementAndGet,
-                            activeConnections::decrementAndGet,
-                            connectionCounter));
-              }
-            });
-    serverChannel = b.bind(port).sync().channel();
-    running.set(true);
-    logger.info("Telnet server started on port {}", port);
+              });
+      serverChannel = b.bind(port).sync().channel();
+      logger.info("Telnet server started on port {}", port);
+    } catch (InterruptedException e) {
+      running.set(false);
+      Thread.currentThread().interrupt();
+      throw e;
+    }
   }
 
   @Timed(value = "tcpproxy.stop")
   public void stop() {
-    if (!running.get()) {
+    if (!running.compareAndSet(true, false)) {
       return;
     }
     try {
@@ -111,7 +116,6 @@ public final class TelnetServer {
     }
     bossGroup.shutdownGracefully();
     workerGroup.shutdownGracefully();
-    running.set(false);
     logger.info("Telnet server stopped");
   }
 
