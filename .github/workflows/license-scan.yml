@@ -33,7 +33,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
       - name: ⚙️ Set Up Node
         uses: actions/setup-node@v4
