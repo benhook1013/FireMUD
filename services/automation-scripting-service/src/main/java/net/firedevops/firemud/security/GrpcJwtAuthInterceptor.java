@@ -8,6 +8,7 @@ import io.grpc.Status;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -34,20 +35,33 @@ public class GrpcJwtAuthInterceptor implements ServerInterceptor {
     String token = authHeader.substring(7);
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
-      List<String> globalRoles = claims.getBody().get("globalRoles", List.class);
-      Map<String, List<String>> scopedRoles = claims.getBody().get("scopedRoles", Map.class);
-      boolean hasGlobal =
-          globalRoles != null
-              && (globalRoles.contains("platformAdmin") || globalRoles.contains("moderator"));
-      boolean hasScoped = false;
-      if (scopedRoles != null) {
-        for (List<String> roles : scopedRoles.values()) {
-          if (roles.contains("admin") || roles.contains("moderator")) {
-            hasScoped = true;
-            break;
+      List<?> rawGlobalRoles = claims.getBody().get("globalRoles", List.class);
+      List<String> globalRoles =
+          rawGlobalRoles == null
+              ? List.of()
+              : rawGlobalRoles.stream()
+                  .filter(String.class::isInstance)
+                  .map(String.class::cast)
+                  .toList();
+      Map<?, ?> rawScopedRoles = claims.getBody().get("scopedRoles", Map.class);
+      Map<String, List<String>> scopedRoles = new HashMap<>();
+      if (rawScopedRoles != null) {
+        for (Map.Entry<?, ?> entry : rawScopedRoles.entrySet()) {
+          if (entry.getKey() instanceof String key && entry.getValue() instanceof List<?> rolesList) {
+            List<String> roles =
+                rolesList.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .toList();
+            scopedRoles.put(key, roles);
           }
         }
       }
+      boolean hasGlobal =
+          globalRoles.contains("platformAdmin") || globalRoles.contains("moderator");
+      boolean hasScoped =
+          scopedRoles.values().stream()
+              .anyMatch(roles -> roles.contains("admin") || roles.contains("moderator"));
       if (!hasGlobal && !hasScoped) {
         call.close(Status.PERMISSION_DENIED.withDescription("Insufficient role"), new Metadata());
         return new ServerCall.Listener<>() {};
