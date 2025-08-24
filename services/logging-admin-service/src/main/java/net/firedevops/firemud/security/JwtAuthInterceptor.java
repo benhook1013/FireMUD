@@ -41,7 +41,7 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
       boolean hasScopedRole = false;
       if (scopedRoles != null) {
         for (List<String> roles : scopedRoles.values()) {
-          if (roles.contains("admin") || roles.contains("moderator")) {
+          if (roles != null && (roles.contains("admin") || roles.contains("moderator"))) {
             hasScopedRole = true;
             break;
           }
