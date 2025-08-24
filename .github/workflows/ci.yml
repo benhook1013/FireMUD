@@ -314,10 +314,29 @@ jobs:
             config/openapi/package-lock.json
             web-client/package-lock.json
 
-      - name: 📦 Install Node Dependencies
-        run: |
-          npm --prefix config/openapi ci
-          npm --prefix web-client ci
+      - name: 💾 Cache OpenAPI Dependencies
+        id: cache-openapi
+        uses: actions/cache@v4
+        with:
+          path: config/openapi/node_modules
+          key: openapi-node-modules-${{ runner.os }}-${{ hashFiles('config/openapi/package-lock.json') }}
+          restore-keys: openapi-node-modules-${{ runner.os }}-
+
+      - name: 📦 Install OpenAPI Dependencies
+        if: steps.cache-openapi.outputs.cache-hit != 'true'
+        run: npm --prefix config/openapi ci
+
+      - name: 💾 Cache Web Client Dependencies
+        id: cache-web-client
+        uses: actions/cache@v4
+        with:
+          path: web-client/node_modules
+          key: web-client-node-modules-${{ runner.os }}-${{ hashFiles('web-client/package-lock.json') }}
+          restore-keys: web-client-node-modules-${{ runner.os }}-
+
+      - name: 📦 Install Web Client Dependencies
+        if: steps.cache-web-client.outputs.cache-hit != 'true'
+        run: npm --prefix web-client ci
 
       - name: 💾 Cache Trivy DB
         uses: actions/cache@v4
