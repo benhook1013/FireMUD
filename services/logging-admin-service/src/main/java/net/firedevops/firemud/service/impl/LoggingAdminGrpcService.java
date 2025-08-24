@@ -20,7 +20,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   private final LogQueryService logQueryService;
   private final ModerationService moderationService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
   public LoggingAdminGrpcService(

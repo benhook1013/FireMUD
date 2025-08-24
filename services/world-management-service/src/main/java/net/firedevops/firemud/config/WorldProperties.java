@@ -13,12 +13,16 @@ public class WorldProperties {
   /** Properties related to room behaviour. */
   private Room room = new Room();
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Configuration object stored without defensive copy")
   public void setRoom(Room room) {
     this.room = room;
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Room properties are mutable and returned directly")
   public Room getRoom() {
     return room;
   }

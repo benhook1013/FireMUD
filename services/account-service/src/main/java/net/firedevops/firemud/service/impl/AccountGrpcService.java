@@ -32,7 +32,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private final PingService pingService;
   private final AccountService accountService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Services are injected and remain internal")
   public AccountGrpcService(PingService pingService, AccountService accountService) {
     this.pingService = pingService;
     this.accountService = accountService;

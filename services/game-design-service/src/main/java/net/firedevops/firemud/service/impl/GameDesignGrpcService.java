@@ -32,7 +32,9 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final RevisionService revisionService;
   private final VersionService versionService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is injected and not exposed")
   private final MeterRegistry meterRegistry;
 
   private ErrorDetail error(String code, String message) {

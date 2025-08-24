@@ -27,7 +27,7 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 @SuppressFBWarnings(
-    value = "EI2",
+    value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are not exposed externally")
 public class ScriptTickServiceImpl implements ScriptTickService {
   private static final Logger logger = LoggingUtil.getLogger(ScriptTickServiceImpl.class);

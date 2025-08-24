@@ -16,7 +16,9 @@ import org.lognet.springboot.grpc.GRpcService;
 @GRpcService
 public class VirtualCurrencyGrpcService
     extends VirtualCurrencyServiceGrpc.VirtualCurrencyServiceImplBase {
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "CurrencyService is injected and not exposed")
   private final VirtualCurrencyService currencyService;
 
   public VirtualCurrencyGrpcService(VirtualCurrencyService currencyService) {

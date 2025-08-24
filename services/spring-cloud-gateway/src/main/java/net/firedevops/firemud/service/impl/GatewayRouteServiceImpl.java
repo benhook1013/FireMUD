@@ -19,7 +19,9 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 /** Implementation of {@link GatewayRouteService} that updates Spring Cloud Gateway at runtime. */
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected writer and publisher references are not exposed")
 @Service
 public class GatewayRouteServiceImpl implements GatewayRouteService {
   private static final Logger logger = LoggingUtil.getLogger(GatewayRouteServiceImpl.class);

@@ -22,7 +22,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Default implementation of {@link GameInstanceService}. */
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are not exposed externally")
 @Service
 public final class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);

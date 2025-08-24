@@ -17,10 +17,14 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class TickLockServiceImpl implements TickLockService {
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "RedisTemplate is injected and used safely")
   private final StringRedisTemplate redisTemplate;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is thread-safe and injected by Spring")
   private final MeterRegistry meterRegistry;
 
   private final ConflictTracker conflictTracker;

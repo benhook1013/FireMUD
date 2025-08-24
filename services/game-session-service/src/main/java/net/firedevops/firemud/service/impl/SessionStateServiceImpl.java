@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
 public final class SessionStateServiceImpl implements SessionStateService {
   private static final Logger logger = LoggingUtil.getLogger(SessionStateServiceImpl.class);
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "RedisTemplate is injected and not exposed")
   private final RedisTemplate<String, Object> redisTemplate;
 
   @Override

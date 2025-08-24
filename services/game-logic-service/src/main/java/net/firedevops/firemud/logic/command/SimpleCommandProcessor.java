@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
 public class SimpleCommandProcessor implements CommandProcessor {
   private static final Logger logger = LoggingUtil.getLogger(SimpleCommandProcessor.class);
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "EventDispatcher is injected and not exposed")
   private final EventDispatcher dispatcher;
 
   private final ScriptingHook scriptingHook;

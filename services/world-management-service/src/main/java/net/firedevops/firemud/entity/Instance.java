@@ -30,12 +30,16 @@ public class Instance {
 
   @Version private int version;
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "JPA association is intentionally exposed")
   public Zone getZone() {
     return zone;
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings("EI_EXPOSE_REP2")
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "JPA association stored directly")
   public void setZone(Zone zone) {
     this.zone = zone;
   }

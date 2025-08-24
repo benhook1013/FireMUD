@@ -63,7 +63,9 @@ public class AccountServiceImpl implements AccountService {
   private final net.firedevops.firemud.service.session.SessionService sessionService;
   private final SagaRunner sagaRunner;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Dependencies are injected and kept internal")
   public AccountServiceImpl(
       AccountRepository accountRepository,
       AccountMapper accountMapper,

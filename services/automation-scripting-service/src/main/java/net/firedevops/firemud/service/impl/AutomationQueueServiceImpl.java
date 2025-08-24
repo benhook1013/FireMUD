@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 /** Redis-backed implementation of {@link AutomationQueueService}. */
 @Service
 @RequiredArgsConstructor
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Service dependency is not exposed")
 public class AutomationQueueServiceImpl implements AutomationQueueService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;

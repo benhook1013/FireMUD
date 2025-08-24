@@ -15,7 +15,9 @@ import net.firedevops.firemud.service.RoomService;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Spring-managed dependencies are stored internally")
 @Service
 @RequiredArgsConstructor
 public class RoomServiceImpl implements RoomService {

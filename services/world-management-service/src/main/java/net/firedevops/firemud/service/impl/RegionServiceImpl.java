@@ -11,7 +11,9 @@ import net.firedevops.firemud.service.RegionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected dependencies are not exposed")
 @Service
 @RequiredArgsConstructor
 public class RegionServiceImpl implements RegionService {

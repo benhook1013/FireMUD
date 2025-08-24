@@ -21,7 +21,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
   private final AccountService accountService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "AccountService is injected and not exposed")
   public AuthController(AccountService accountService) {
     this.accountService = accountService;
   }

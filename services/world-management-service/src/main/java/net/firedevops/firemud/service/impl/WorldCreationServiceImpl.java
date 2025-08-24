@@ -24,7 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @RequiredArgsConstructor
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Dependencies are injected and remain internal")
 public class WorldCreationServiceImpl implements WorldCreationService {
   private final RegionRepository regionRepository;
   private final MeterRegistry meterRegistry;

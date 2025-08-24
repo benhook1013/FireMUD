@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/formations")
 @RequiredArgsConstructor
-@SuppressFBWarnings(value = "EI2", justification = "Service dependency is not exposed")
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Service dependency is not exposed")
 public class NpcFormationController {
   private final NpcFormationService formationService;
 

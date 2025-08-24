@@ -26,7 +26,9 @@ import org.lognet.springboot.grpc.GRpcService;
 /** gRPC endpoints for the World Management Service. */
 @GRpcService
 @RequiredArgsConstructor
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected services and registry remain internal")
 public class WorldManagementGrpcService
     extends WorldManagementServiceGrpc.WorldManagementServiceImplBase {
   private final PingService pingService;

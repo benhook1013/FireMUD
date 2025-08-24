@@ -17,7 +17,9 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/characters/{characterId}/inventory")
 @RequiredArgsConstructor
 public class InventoryController {
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Spring injects InventoryService; storing reference is safe")
   private final InventoryService inventoryService;
 
   @GetMapping

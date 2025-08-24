@@ -9,7 +9,9 @@ import org.springframework.stereotype.Service;
 /** Redis-backed implementation of {@link IpConnectionLimiter}. */
 @Service
 public class IpConnectionLimiterImpl implements IpConnectionLimiter {
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "RedisTemplate is injected and not exposed")
   private final StringRedisTemplate redisTemplate;
 
   private final int maxConnectionsPerIp;

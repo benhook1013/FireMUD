@@ -17,7 +17,9 @@ public class EmailServiceImpl implements EmailService {
   private final JavaMailSender mailSender;
   private final MailProperties mailProperties;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Dependencies are injected and not exposed")
   public EmailServiceImpl(JavaMailSender mailSender, MailProperties mailProperties) {
     this.mailSender = mailSender;
     this.mailProperties = mailProperties;

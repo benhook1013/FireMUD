@@ -33,10 +33,14 @@ public class EntityManagementGrpcService
   private final PingService pingService;
   private final CharacterService characterService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected InventoryService is not exposed externally")
   private final InventoryService inventoryService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is thread-safe and stored as injected")
   private final MeterRegistry meterRegistry;
 
   public EntityManagementGrpcService(

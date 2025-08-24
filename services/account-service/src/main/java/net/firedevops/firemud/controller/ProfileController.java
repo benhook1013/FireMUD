@@ -17,7 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/profiles")
 public class ProfileController {
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "AccountService is injected and not exposed")
   private final AccountService accountService;
 
   public ProfileController(AccountService accountService) {

@@ -20,7 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@SuppressFBWarnings("EI_EXPOSE_REP2")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected clients and repositories remain internal")
 public class ModerationServiceImpl implements ModerationService {
   private static final Logger logger = LoggingUtil.getLogger(ModerationServiceImpl.class);
 

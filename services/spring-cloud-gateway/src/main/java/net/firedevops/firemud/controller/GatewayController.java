@@ -18,7 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class GatewayController {
   private final GatewayRouteService routeService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "RouteService is injected and not exposed externally")
   public GatewayController(GatewayRouteService routeService) {
     this.routeService = routeService;
   }

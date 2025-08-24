@@ -21,7 +21,9 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   private final PingService pingService;
   private final CommandService commandService;
 
-  @SuppressFBWarnings("EI_EXPOSE_REP2")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
   public GameLogicGrpcService(
