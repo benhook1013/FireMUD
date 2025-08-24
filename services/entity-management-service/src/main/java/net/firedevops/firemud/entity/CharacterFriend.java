@@ -23,4 +23,25 @@ public class CharacterFriend {
 
   @Column(nullable = false)
   private Instant createdAt = Instant.now();
+
+  public CharacterFriendKey getId() {
+    if (id == null) {
+      return null;
+    }
+    CharacterFriendKey copy = new CharacterFriendKey();
+    copy.setCharacterId(id.getCharacterId());
+    copy.setFriendId(id.getFriendId());
+    return copy;
+  }
+
+  public void setId(CharacterFriendKey id) {
+    if (id == null) {
+      this.id = null;
+    } else {
+      CharacterFriendKey copy = new CharacterFriendKey();
+      copy.setCharacterId(id.getCharacterId());
+      copy.setFriendId(id.getFriendId());
+      this.id = copy;
+    }
+  }
 }

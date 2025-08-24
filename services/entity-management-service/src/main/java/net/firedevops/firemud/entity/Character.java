@@ -8,10 +8,12 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 @Data
 @Entity
 @Table(name = "characters")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @NamedEntityGraph(
     name = "character.inventory",
     attributeNodes = {
@@ -21,6 +23,7 @@ import lombok.Data;
 public class Character {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
+  @EqualsAndHashCode.Include
   private Long id;
 
   @Column(nullable = false)
