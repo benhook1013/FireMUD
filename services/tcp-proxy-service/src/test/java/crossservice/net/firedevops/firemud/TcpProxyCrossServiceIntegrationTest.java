@@ -6,16 +6,12 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -33,24 +29,19 @@ import org.testcontainers.utility.DockerImageName;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class,
     properties = {"TCP_PROXY_PORT=2323"})
-@EnableAutoConfiguration(
-    exclude = {
-      DataSourceAutoConfiguration.class,
-      RedisAutoConfiguration.class,
-      DatabaseAutoConfiguration.class
-    })
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
-  static GenericContainer<?> gateway =
-      new GenericContainer<>(
-              DockerImageName.parse("ghcr.io/benhook1013/spring-cloud-gateway:latest"))
-          .withExposedPorts(8080);
+  static GenericContainer<?> gateway;
 
   private static boolean gatewayStarted = false;
 
   static {
     if (isDockerAvailable()) {
       try {
+        gateway =
+            new GenericContainer<>(
+                    DockerImageName.parse("ghcr.io/benhook1013/spring-cloud-gateway:latest"))
+                .withExposedPorts(8080);
         gateway.start();
         gatewayStarted = true;
       } catch (Exception e) {
