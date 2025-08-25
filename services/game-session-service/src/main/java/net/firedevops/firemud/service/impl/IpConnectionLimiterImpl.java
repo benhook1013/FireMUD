@@ -40,7 +40,7 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   public void register(String ip, long sessionId) {
     String ipKey = ipKey(ip);
     Long count = redisTemplate.opsForValue().increment(ipKey);
-    if (count != null && count == 1L) {
+    if (Long.valueOf(1L).equals(count)) {
       redisTemplate.expire(ipKey, entryTtl);
     }
     redisTemplate.opsForValue().set(sessionKey(sessionId), ip, entryTtl);
