@@ -49,13 +49,21 @@ class TcpProxyCrossServiceIntegrationTest {
   private static boolean gatewayStarted = false;
 
   static {
-    if (DockerClientFactory.instance().isDockerAvailable()) {
+    if (isDockerAvailable()) {
       try {
         gateway.start();
         gatewayStarted = true;
       } catch (Exception e) {
         gatewayStarted = false;
       }
+    }
+  }
+
+  private static boolean isDockerAvailable() {
+    try {
+      return DockerClientFactory.instance().isDockerAvailable();
+    } catch (Exception e) {
+      return false;
     }
   }
 
@@ -86,7 +94,7 @@ class TcpProxyCrossServiceIntegrationTest {
   @Test
   void proxyStartsAlongsideGateway() throws Exception {
     Assumptions.assumeTrue(
-        DockerClientFactory.instance().isDockerAvailable() && gatewayStarted,
+        isDockerAvailable() && gatewayStarted,
         "Gateway container not available, skipping cross-service test");
     assertThat(gateway.isRunning()).isTrue();
 
