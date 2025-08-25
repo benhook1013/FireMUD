@@ -47,7 +47,8 @@ public class GrpcJwtAuthInterceptor implements ServerInterceptor {
       Map<String, List<String>> scopedRoles = new HashMap<>();
       if (rawScopedRoles != null) {
         for (Map.Entry<?, ?> entry : rawScopedRoles.entrySet()) {
-          if (entry.getKey() instanceof String key && entry.getValue() instanceof List<?> rolesList) {
+          if (entry.getKey() instanceof String key
+              && entry.getValue() instanceof List<?> rolesList) {
             List<String> roles =
                 rolesList.stream()
                     .filter(String.class::isInstance)
