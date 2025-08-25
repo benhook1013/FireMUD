@@ -18,6 +18,7 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -27,11 +28,12 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = TcpProxyServiceApplication.class,
-    properties = {"TCP_PROXY_PORT=2323"})
+    classes = TcpProxyServiceApplication.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
   static GenericContainer<?> gateway;
+
+  private static final int proxyPort = TestSocketUtils.findAvailableTcpPort();
 
   private static boolean gatewayStarted = false;
 
@@ -73,6 +75,7 @@ class TcpProxyCrossServiceIntegrationTest {
     } else {
       registry.add("GATEWAY_WS_URL", () -> "ws://localhost:8080/ws");
     }
+    registry.add("TCP_PROXY_PORT", () -> proxyPort);
   }
 
   @AfterAll
