@@ -13,8 +13,7 @@ public final class SessionContext {
 
   public static void setContext(
       String accountId, List<String> globalRoles, Map<String, List<String>> scopedRoles) {
-    List<String> immutableGlobals =
-        globalRoles == null ? List.of() : List.copyOf(globalRoles);
+    List<String> immutableGlobals = globalRoles == null ? List.of() : List.copyOf(globalRoles);
     Map<String, List<String>> immutableScoped =
         scopedRoles == null
             ? Map.of()
