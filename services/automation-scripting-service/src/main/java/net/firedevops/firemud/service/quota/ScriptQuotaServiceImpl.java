@@ -7,6 +7,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.LoggingUtil;
+import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Dependencies are injected and not exposed")
 public class ScriptQuotaServiceImpl implements ScriptQuotaService {
+  private static final Logger logger = LoggingUtil.getLogger(ScriptQuotaServiceImpl.class);
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
 
@@ -42,7 +45,11 @@ public class ScriptQuotaServiceImpl implements ScriptQuotaService {
     String key = quotaKey(tenantId, scriptId);
     Long count = redisTemplate.opsForValue().increment(key);
     if (count != null && count == 1L) {
-      redisTemplate.expire(key, Duration.ofSeconds(windowSeconds));
+      boolean expirationSet =
+          Boolean.TRUE.equals(redisTemplate.expire(key, Duration.ofSeconds(windowSeconds)));
+      if (!expirationSet) {
+        logger.warn("Failed to set expiration for {}", key);
+      }
     }
     boolean allowed = count != null && count <= limit;
     if (allowed) {
