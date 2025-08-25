@@ -28,7 +28,7 @@ public class SessionRateLimiterImpl implements SessionRateLimiter {
   public boolean allow(long sessionId) {
     String key = key(sessionId);
     Long count = redisTemplate.opsForValue().increment(key);
-    if (count != null && count == 1L) {
+    if (Long.valueOf(1L).equals(count)) {
       redisTemplate.expire(key, Duration.ofSeconds(1));
     }
     return count != null && count <= maxMessagesPerSecond;

@@ -44,7 +44,7 @@ public class ScriptQuotaServiceImpl implements ScriptQuotaService {
   public boolean tryAcquire(Long tenantId, Long scriptId) {
     String key = quotaKey(tenantId, scriptId);
     Long count = redisTemplate.opsForValue().increment(key);
-    if (count != null && count == 1L) {
+    if (Long.valueOf(1L).equals(count)) {
       boolean expirationSet =
           Boolean.TRUE.equals(redisTemplate.expire(key, Duration.ofSeconds(windowSeconds)));
       if (!expirationSet) {
