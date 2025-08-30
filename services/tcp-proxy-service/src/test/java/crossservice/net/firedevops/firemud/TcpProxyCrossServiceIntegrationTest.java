@@ -32,25 +32,9 @@ import org.testcontainers.utility.DockerImageName;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
   static GenericContainer<?> gateway;
-
   private static final int proxyPort = TestSocketUtils.findAvailableTcpPort();
 
   private static boolean gatewayStarted = false;
-
-  static {
-    if (isDockerAvailable()) {
-      try {
-        gateway =
-            new GenericContainer<>(
-                    DockerImageName.parse("ghcr.io/benhook1013/spring-cloud-gateway:latest"))
-                .withExposedPorts(8080);
-        gateway.start();
-        gatewayStarted = true;
-      } catch (Exception e) {
-        gatewayStarted = false;
-      }
-    }
-  }
 
   private static boolean isDockerAvailable() {
     try {
@@ -68,6 +52,18 @@ class TcpProxyCrossServiceIntegrationTest {
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
+    if (isDockerAvailable()) {
+      try {
+        gateway =
+            new GenericContainer<>(
+                    DockerImageName.parse("ghcr.io/benhook1013/spring-cloud-gateway:latest"))
+                .withExposedPorts(8080);
+        gateway.start();
+        gatewayStarted = true;
+      } catch (Throwable e) {
+        gatewayStarted = false;
+      }
+    }
     if (gatewayStarted) {
       registry.add(
           "GATEWAY_WS_URL",
@@ -88,7 +84,7 @@ class TcpProxyCrossServiceIntegrationTest {
   @Test
   void proxyStartsAlongsideGateway() throws Exception {
     Assumptions.assumeTrue(
-        isDockerAvailable() && gatewayStarted,
+        gatewayStarted,
         "Gateway container not available, skipping cross-service test");
     assertThat(gateway.isRunning()).isTrue();
 
