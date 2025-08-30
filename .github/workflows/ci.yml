@@ -346,7 +346,7 @@ jobs:
           restore-keys: trivy-db-${{ runner.os }}-
 
       - name: 🛡️ Install Trivy
-        uses: aquasecurity/setup-trivy@v0.2.3
+        uses: aquasecurity/setup-trivy@v0.2.4
 
       - name: 🔍 Run Trivy and Save Report
         if: always()
