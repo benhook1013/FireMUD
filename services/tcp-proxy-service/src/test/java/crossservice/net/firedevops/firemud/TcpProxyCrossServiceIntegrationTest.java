@@ -32,7 +32,17 @@ import org.testcontainers.utility.DockerImageName;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TcpProxyCrossServiceIntegrationTest {
   static GenericContainer<?> gateway;
-  private static final int proxyPort = TestSocketUtils.findAvailableTcpPort();
+  private static final int proxyPort;
+
+  static {
+    int port;
+    try {
+      port = TestSocketUtils.findAvailableTcpPort();
+    } catch (IllegalStateException e) {
+      port = 0;
+    }
+    proxyPort = port;
+  }
 
   private static boolean gatewayStarted = false;
 
@@ -84,7 +94,8 @@ class TcpProxyCrossServiceIntegrationTest {
   @Test
   void proxyStartsAlongsideGateway() throws Exception {
     Assumptions.assumeTrue(
-        gatewayStarted, "Gateway container not available, skipping cross-service test");
+        gatewayStarted && proxyPort > 0,
+        "Gateway container or proxy port not available, skipping cross-service test");
     assertThat(gateway.isRunning()).isTrue();
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
