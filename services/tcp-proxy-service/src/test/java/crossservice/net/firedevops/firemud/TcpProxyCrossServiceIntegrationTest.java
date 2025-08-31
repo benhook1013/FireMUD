@@ -84,8 +84,7 @@ class TcpProxyCrossServiceIntegrationTest {
   @Test
   void proxyStartsAlongsideGateway() throws Exception {
     Assumptions.assumeTrue(
-        gatewayStarted,
-        "Gateway container not available, skipping cross-service test");
+        gatewayStarted, "Gateway container not available, skipping cross-service test");
     assertThat(gateway.isRunning()).isTrue();
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
