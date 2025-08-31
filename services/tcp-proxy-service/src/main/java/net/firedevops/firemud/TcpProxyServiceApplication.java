@@ -11,8 +11,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.event.EventListener;
 
-@SpringBootApplication(
-    exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
 @Import(CommonAutoConfiguration.class)
 public class TcpProxyServiceApplication {
   private final TelnetServer telnetServer;
