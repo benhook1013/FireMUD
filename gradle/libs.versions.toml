@@ -2,7 +2,7 @@
 spring-boot = "3.5.5"
 flyway = "11.11.2"
 mapstruct = "1.6.3"
-lombok = "1.18.38"
+lombok = "1.18.40"
 lombok-mapstruct-binding = "0.2.0"
 grpc = "1.75.0"
 protobuf = "4.32.0"
