@@ -9,7 +9,7 @@ protobuf = "4.32.0"
 opentelemetry = "1.54.0"
 micrometer = "1.15.3"
 jjwt = "0.13.0"
-aws-sdk = "2.33.4"
+aws-sdk = "2.35.0"
 argon2 = "2.12"
 
 [libraries]
