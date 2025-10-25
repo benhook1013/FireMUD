@@ -241,14 +241,14 @@ jobs:
           echo "### 📊 Code coverage: **$PERCENT%**" >> $GITHUB_STEP_SUMMARY
 
       - name: 📤 Upload Coverage Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: jacoco-${{ matrix.service }}-report-${{ github.sha }}
           path: services/${{ matrix.service }}/build/reports/jacoco/test/
 
       - name: 📤 Upload Test Logs if Failed
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-logs-${{ matrix.service }}-${{ github.sha }}
           path: services/${{ matrix.service }}/build/reports/tests/test/
@@ -358,7 +358,7 @@ jobs:
 
       - name: 📤 Upload Trivy Report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: trivy-report-${{ github.sha }}
           path: trivy-report.txt
@@ -432,7 +432,7 @@ jobs:
         run: ./dev-tools/docs/generate-erd.sh
 
       - name: 📤 Upload ERD artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: erd-${{ github.sha }}
           path: design/erd
