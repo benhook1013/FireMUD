@@ -18,7 +18,7 @@ dependencies {
     implementation(project(":common-library"))
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.4")
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 }
 
 

@@ -28,7 +28,7 @@ dependencies {
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)
 
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.4")
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 
     api(libs.spring.boot.starter.web)
     api(libs.spring.boot.starter.validation)
