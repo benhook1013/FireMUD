@@ -22,7 +22,7 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     implementation(libs.argon2)
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.4")
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
     implementation(libs.stripe.java)
     implementation(libs.otp.java)
     implementation(libs.jjwt.api)
