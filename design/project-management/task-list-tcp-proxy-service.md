@@ -9,15 +9,16 @@
 - [ ] Support mutual TLS when forwarding WebSocket traffic to the gateway
 - [ ] Handle Telnet option negotiation and character encoding quirks
 - [ ] Negotiate the Mud Client Protocol (MCP) when supported
+- [ ] Add a developer-local WebSocket echo target and console logging path so Telnet/MUD clients can validate stubbed traffic without a full gateway stack
 
 ## Connection Management
 
 - [x] Buffer Telnet input and discard on disconnect to support reconnection
 - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
 - [x] Enforce Telnet protocol command whitelist and input sanitization
-- [x] Implement connection throttling and rate limits
+- [ ] Implement connection throttling and rate limits
 - [ ] Resend buffered commands after reconnect via `PushBufferedInput`
-- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery
+- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery (currently log-only stubs)
 - [ ] Integrate with the Reconnection Strategy to resume sessions transparently
 
 ## Security
@@ -43,6 +44,7 @@ participate in CI.
 - [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
 - [x] Provide a `Dockerfile` and Gradle task to build the image
 - [x] Create `README.md` with local setup instructions and design links
+- [ ] Ship dev-friendly gRPC TLS defaults (sample certs or plaintext toggle) so the proxy starts locally without provisioning certificates
 - [x] Add the service to the GitHub Actions build matrix and Buf lint step
 - [x] Include the service in the Docker image workflow (`buildDockerImages`)
 - [x] Define Kubernetes `Deployment` and `Service` manifests
