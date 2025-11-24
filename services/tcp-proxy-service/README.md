@@ -3,4 +3,14 @@
 The complete design can be found in:
 [📄 TCP Proxy Service Design](../../design/architecture/microservices/tcp-proxy-service/README.md)
 
-This README is only a stub for reference. **Do not include design details here.**
+## Running locally with the echo loop
+
+Use the bundled developer echo target to validate the Telnet -> WebSocket bridge without running the gateway:
+
+1. Start the service: `./gradlew :services:tcp-proxy-service:bootRun`
+2. The dev profile disables gRPC TLS by default. Enable it with `GRPC_SERVER_TLS_ENABLED=true` if you want to use the sample certificates in `src/main/resources/certs`.
+3. Point the bridge at the local echo (default): `GATEWAY_WS_URL=ws://localhost:8080/dev/echo`
+4. Connect from a Telnet/MUD client: `telnet localhost 2323`
+5. Type any text. The proxy logs the input at INFO and echoes the same text back over the Telnet session.
+
+When pointing at a real gateway, override `GATEWAY_WS_URL` with its WebSocket endpoint.
