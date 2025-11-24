@@ -98,6 +98,19 @@ details on how Telnet connections are integrated into the platform.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - A simple `smoke-test.sh` script in the service directory checks the REST and gRPC endpoints.
 
+### Local development and echo loop
+
+Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to validate the Telnet -> WebSocket bridge without running the full gateway stack:
+
+1. Start the service: `./gradlew :services:tcp-proxy-service:bootRun`. The task defaults to the `dev` profile for local runs. Override with `SPRING_PROFILES_ACTIVE=<profile>` or `-Dspring.profiles.active=<profile>` when needed.
+2. The dev profile disables gRPC TLS by default. Enable it with `GRPC_SERVER_TLS_ENABLED=true` to use the sample certificates in `src/main/resources/certs`.
+3. For non-dev profiles (including production), TLS and mutual auth remain enabled unless explicitly disabled, and the `/dev/echo` WebSocket is not exposed.
+4. Point the bridge at the local echo when running with the dev profile: `GATEWAY_WS_URL=ws://localhost:8080/dev/echo`.
+5. Connect from a Telnet/MUD client: `telnet localhost 2323`.
+6. Type any text. The proxy logs the input at INFO and echoes the same text back over the Telnet session.
+
+When pointing at a real gateway, override `GATEWAY_WS_URL` with its WebSocket endpoint. Outside of the `dev` profile the default remains `ws://spring-cloud-gateway:8080/ws` so production pods continue to forward to the cluster gateway when the variable is unset.
+
 ## Environment Variables
 
 The proxy uses minimal configuration. It still follows the scheme in
