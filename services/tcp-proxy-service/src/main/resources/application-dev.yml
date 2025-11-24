@@ -3,6 +3,8 @@ spring:
   application:
     name: tcp-proxy-service
 
+GATEWAY_WS_URL: ${GATEWAY_WS_URL:ws://localhost:8080/dev/echo}
+
 grpc:
   server:
     security:

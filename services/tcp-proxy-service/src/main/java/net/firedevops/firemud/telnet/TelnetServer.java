@@ -46,7 +46,7 @@ public final class TelnetServer {
 
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,
-      @Value("${GATEWAY_WS_URL:ws://localhost:8080/dev/echo}") String gatewayWsUrl,
+      @Value("${GATEWAY_WS_URL:ws://spring-cloud-gateway:8080/ws}") String gatewayWsUrl,
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
