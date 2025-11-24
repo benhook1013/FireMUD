@@ -1,6 +1,4 @@
 spring:
-  profiles:
-    active: dev
   application:
     name: tcp-proxy-service
   flyway:
@@ -35,11 +33,11 @@ grpc:
     permitKeepAliveWithoutCalls: true
     compression: gzip
     security:
-      enabled: ${GRPC_SERVER_TLS_ENABLED:false}
+      enabled: true
       certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/dev-cert.pem}
       privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/dev-key.pem}
       trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
-      clientAuth: ${GRPC_SERVER_CLIENT_AUTH:NONE}
+      clientAuth: ${GRPC_SERVER_CLIENT_AUTH:REQUIRE}
 
 firemud:
   grpc:
