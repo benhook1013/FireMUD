@@ -22,7 +22,11 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation(libs.testcontainers.junit.jupiter)
-    testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
+}
+
+tasks.named<BootRun>("bootRun") {
+    systemProperty("spring.profiles.active", System.getProperty("spring.profiles.active") ?: "dev")
 }
 
 tasks.named<BootRun>("bootRun") {
