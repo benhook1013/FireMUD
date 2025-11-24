@@ -25,9 +25,10 @@ All clients — whether connecting via Telnet or WebSocket — authenticate usin
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
-Login commands include the `tenantId` along with the account credentials and optional OTP code.
-This selects the target game during authentication and enforces multi-tenant isolation from the
-start. Account management endpoints still rely solely on the account ID.
+Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and
+not tied to a single game or tenant; the same account is used across all worlds. Tenant context is
+bound later when the client selects a world, and the Game Session Service derives the `tenantId`
+from that world selection to enforce isolation when creating Redis session entries.
 
 Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss).
 If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes
