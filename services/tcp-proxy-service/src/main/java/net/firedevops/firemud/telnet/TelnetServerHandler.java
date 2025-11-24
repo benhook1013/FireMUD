@@ -68,6 +68,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     connectionCounter.increment();
     onConnect.run();
+    logger.info("Telnet client connected from {} targeting {}", ip != null ? ip : remote, gatewayWsUrl);
     HttpClient client = HttpClient.newHttpClient();
     var builder = client.newWebSocketBuilder();
     if (ip != null) {
@@ -85,11 +86,18 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
           @Override
           public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            logger.info("Gateway response: {}", data);
             ctx.writeAndFlush(data.toString() + "\n");
             webSocket.request(1);
             return null;
           }
-        });
+        })
+        .whenComplete(
+            (socket, error) -> {
+              if (error != null) {
+                logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
+              }
+            });
   }
 
   @Override
@@ -99,6 +107,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     if (sanitized == null) {
       return;
     }
+
+    logger.info("Received Telnet input: {}", sanitized);
 
     if (webSocket != null) {
       webSocket.sendText(sanitized, true);

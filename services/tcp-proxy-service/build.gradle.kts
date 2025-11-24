@@ -1,4 +1,6 @@
 
+import org.springframework.boot.gradle.tasks.run.BootRun
+
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
@@ -21,6 +23,14 @@ dependencies {
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
+}
+
+tasks.named<BootRun>("bootRun") {
+    val activeProfile = System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")
+
+    if (activeProfile == null) {
+        systemProperty("spring.profiles.active", "dev")
+    }
 }
 
 
