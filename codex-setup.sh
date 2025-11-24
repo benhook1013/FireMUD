@@ -18,7 +18,7 @@ npm --prefix config/openapi ci
 npm --prefix web-client ci
 
 # --- Java/Gradle bootstrap ---
-./gradlew build
+# ./gradlew build
 
 # Optional sanity checks (fail early if a tool is missing)
 docker --version
