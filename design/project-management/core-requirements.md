@@ -46,6 +46,7 @@ This document outlines the **core functional and non-functional requirements** f
 ### 2.3 User & Account Management
 
 - The platform must provide **secure authentication and user management**.
+- Gameplay login commands are fronted by the **Game Session Service**, which calls the **Account Service** to verify credentials and issue JWTs/tokens used by backend services.
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.

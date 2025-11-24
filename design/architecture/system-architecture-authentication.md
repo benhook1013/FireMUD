@@ -7,6 +7,12 @@ session state is managed server-side in Redis and restored via the Game Session
 Service. The service delegates credential verification to the Account Service's `/auth/login` endpoint. Accounts may also authenticate
 using linked external providers such as Google, Discord, or Steam.
 
+**Responsibility split**
+
+- **Account Service** – Verifies credentials (including OTP), issues JWTs, and publishes JWKS for validation.
+- **Game Session Service** – Fronts the `LOGIN` command, stores session context in Redis, and rebinds sockets on reconnect.
+- **Spring Cloud Gateway** – Pass-through for gameplay login; validates tokens only for admin/meta flows.
+
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a
 `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login.
 The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for
