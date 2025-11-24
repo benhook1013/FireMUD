@@ -37,4 +37,12 @@ tasks.named<BootRun>("bootRun") {
     }
 }
 
+tasks.register<BootRun>("runTcpProxyDev") {
+    group = "application"
+    description = "Start the TCP proxy in dev with the local echo WebSocket bridge"
+    mainClass.set("net.firedevops.firemud.TcpProxyServiceApplication")
+    classpath = sourceSets.main.get().runtimeClasspath
+    systemProperty("spring.profiles.active", "dev")
+    environment("GATEWAY_WS_URL", "ws://localhost:8080/dev/echo")
+}
 

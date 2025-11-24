@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Objects;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
@@ -19,6 +20,7 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisTemplate;
 
 @Configuration
+@ConditionalOnProperty(prefix = "firemud.database", name = "enabled", havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties({PostgresProperties.class, RedisProperties.class})
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
