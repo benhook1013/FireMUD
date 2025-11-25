@@ -27,11 +27,11 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
+import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.service.SessionRateLimiter;
 import net.firedevops.firemud.service.TickService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
@@ -43,6 +43,7 @@ public final class GameSessionGrpcService
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
+  private final CommandService commandService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -55,23 +56,22 @@ public final class GameSessionGrpcService
   private final MeterRegistry meterRegistry;
 
   private final IpConnectionLimiter ipConnectionLimiter;
-  private final SessionRateLimiter sessionRateLimiter;
 
   public GameSessionGrpcService(
       PingService pingService,
       GameInstanceService gameInstanceService,
       FeatureFlagService featureFlagService,
+      CommandService commandService,
       TickService tickService,
       MeterRegistry meterRegistry,
-      IpConnectionLimiter ipConnectionLimiter,
-      SessionRateLimiter sessionRateLimiter) {
+      IpConnectionLimiter ipConnectionLimiter) {
     this.pingService = pingService;
     this.gameInstanceService = gameInstanceService;
     this.featureFlagService = featureFlagService;
+    this.commandService = commandService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
     this.ipConnectionLimiter = ipConnectionLimiter;
-    this.sessionRateLimiter = sessionRateLimiter;
   }
 
   private ErrorDetail error(String code, String message) {
@@ -175,32 +175,16 @@ public final class GameSessionGrpcService
   @Timed(value = "gamesessionGrpc.enqueueCommand")
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
-    try {
-      long sessionId = Long.parseLong(request.getSessionId());
-      if (!sessionRateLimiter.allow(sessionId)) {
-        EnqueueCommandResponse response =
-            EnqueueCommandResponse.newBuilder()
-                .setAccepted(false)
-                .setError(error("RATE_LIMIT", "Command rate limit exceeded"))
-                .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
-        return;
-      }
-      tickService.enqueueCommand(sessionId, request.getCommand(), request.getRequiresSoloTick());
-      EnqueueCommandResponse response =
-          EnqueueCommandResponse.newBuilder().setAccepted(true).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      EnqueueCommandResponse response =
-          EnqueueCommandResponse.newBuilder()
-              .setAccepted(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+    var result =
+        commandService.enqueue(
+            request.getSessionId(), request.getCommand(), request.getRequiresSoloTick());
+    EnqueueCommandResponse.Builder builder =
+        EnqueueCommandResponse.newBuilder().setAccepted(result.accepted());
+    if (result.hasError()) {
+      builder.setError(error(result.errorCode(), result.errorMessage()));
     }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
   }
 
   @Override
