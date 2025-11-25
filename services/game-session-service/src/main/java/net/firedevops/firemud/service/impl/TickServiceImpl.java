@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.TickService;
 import org.slf4j.Logger;
@@ -39,6 +40,7 @@ public class TickServiceImpl implements TickService {
   private final MeterRegistry meterRegistry;
   private final ConflictTracker conflictTracker;
   private final GameInstanceRepository gameInstanceRepository;
+  private final LogOnlyProperties logOnlyProperties;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -131,6 +133,12 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.command.enqueue")
   public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info(
+          "Log-only mode enabled; recording enqueue request for session {} command {}", sessionId, command);
+      return;
+    }
+
     Long tenantId = findTenantId(sessionId);
     String value = (requiresSoloTick ? "S|" : "N|") + command;
     redisTemplate.opsForList().rightPush(queueKey(tenantId, sessionId), value);
@@ -142,6 +150,11 @@ public class TickServiceImpl implements TickService {
   @Timed(value = "gamesession.tick.process")
   @Async("tickExecutor")
   public void processTick(Long sessionId) {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info("Log-only mode enabled; skipping tick processing for session {}", sessionId);
+      return;
+    }
+
     if (pauseRequested.get()) {
       logger.debug("Tick processing skipped while paused");
       return;
@@ -222,6 +235,11 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.state.query")
   public String queryState(Long sessionId) {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info("Log-only mode enabled; returning empty state for session {}", sessionId);
+      return "{}";
+    }
+
     Long tenantId = findTenantId(sessionId);
     Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
     return state != null ? state.toString() : "{}";

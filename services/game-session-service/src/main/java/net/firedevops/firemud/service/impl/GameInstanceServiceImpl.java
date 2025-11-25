@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.entity.GameInstance;
@@ -37,6 +38,7 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
   private final EntityManagementClient entityManagementClient;
   private final SagaRunner sagaRunner;
   private final MeterRegistry meterRegistry;
+  private final LogOnlyProperties logOnlyProperties;
 
   public GameInstanceServiceImpl(
       GameInstanceRepository repository,
@@ -46,7 +48,8 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
       WorldManagementClient worldManagementClient,
       EntityManagementClient entityManagementClient,
       SagaRunner sagaRunner,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      LogOnlyProperties logOnlyProperties) {
     this.repository = repository;
     this.mapper = mapper;
     this.sessionStateService = sessionStateService;
@@ -55,6 +58,7 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
     this.entityManagementClient = entityManagementClient;
     this.sagaRunner = sagaRunner;
     this.meterRegistry = meterRegistry;
+    this.logOnlyProperties = logOnlyProperties;
   }
 
   // Constructor used in unit tests
@@ -70,13 +74,29 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
         null,
         null,
         null,
-        new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+        new LogOnlyProperties(false));
   }
 
   @Override
   @Timed(value = "gamesession.start")
   @Transactional
   public GameInstanceDto startSession(StartSessionRequest request) {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info(
+          "Log-only mode enabled; acknowledging start for tenant {} version {} patch {}", 
+          request.tenantId(),
+          request.runtimeVersion(),
+          request.scriptPatchVersion());
+      return new GameInstanceDto(
+          -1L,
+          request.tenantId(),
+          request.runtimeVersion(),
+          request.scriptPatchVersion(),
+          request.ownerAccountId(),
+          "RUNNING");
+    }
+
     logger.info(
         "Starting game session for tenant {} version {} patch {}",
         request.tenantId(),
@@ -135,6 +155,11 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
   @Timed(value = "gamesession.stop")
   @Transactional
   public GameInstanceDto stopSession(long sessionId) {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info("Log-only mode enabled; acknowledging stop for session {}", sessionId);
+      return new GameInstanceDto(sessionId, 0L, "log-only", null, 0L, "STOPPED");
+    }
+
     GameInstance instance =
         repository
             .findById(sessionId)
@@ -168,6 +193,11 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
   @Timed(value = "gamesession.restart")
   @Transactional
   public GameInstanceDto restartSession(long sessionId) {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info("Log-only mode enabled; acknowledging restart for session {}", sessionId);
+      return new GameInstanceDto(sessionId, 0L, "log-only", null, 0L, "RUNNING");
+    }
+
     GameInstance instance =
         repository
             .findById(sessionId)
