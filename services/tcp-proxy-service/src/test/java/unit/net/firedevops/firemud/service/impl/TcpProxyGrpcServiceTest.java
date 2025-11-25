@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import io.grpc.stub.StreamObserver;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.TcpProxyEventService;
@@ -22,8 +21,7 @@ class TcpProxyGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
-    TcpProxyGrpcService service =
-        new TcpProxyGrpcService(pingService, eventService, new SimpleMeterRegistry());
+    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -57,8 +55,7 @@ class TcpProxyGrpcServiceTest {
     Mockito.when(eventService.notifyDisconnect(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(upstream);
 
-    TcpProxyGrpcService service =
-        new TcpProxyGrpcService(pingService, eventService, new SimpleMeterRegistry());
+    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
 
     service.notifyDisconnect(
@@ -98,8 +95,7 @@ class TcpProxyGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
         .thenReturn(upstream);
 
-    TcpProxyGrpcService service =
-        new TcpProxyGrpcService(pingService, eventService, new SimpleMeterRegistry());
+    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
     AtomicReference<PushBufferedInputResponse> ref = new AtomicReference<>();
 
     service.pushBufferedInput(
@@ -127,7 +123,7 @@ class TcpProxyGrpcServiceTest {
   }
 
   @Test
-  void pushBufferedInputRecordsAppErrorMetric() {
+  void pushBufferedInputReturnsErrorDetailWithoutIncrementingGrpcCounter() {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
     PushBufferedInputResponse upstream =
@@ -140,8 +136,7 @@ class TcpProxyGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
         .thenReturn(upstream);
 
-    SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService, registry);
+    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
     AtomicReference<PushBufferedInputResponse> ref = new AtomicReference<>();
 
     service.pushBufferedInput(
@@ -165,19 +160,17 @@ class TcpProxyGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals(1.0, registry.counter("grpc.app_error", "code", "INVALID_ARGUMENT").count());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 
   @Test
-  void notifyDisconnectRecordsInternalMetricOnFailure() {
+  void notifyDisconnectReturnsInternalOnFailure() {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
     Mockito.when(eventService.notifyDisconnect(Mockito.anyString(), Mockito.anyString()))
         .thenThrow(new RuntimeException("boom"));
 
-    SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService, registry);
+    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
 
     service.notifyDisconnect(
@@ -200,7 +193,6 @@ class TcpProxyGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals(1.0, registry.counter("grpc.app_error", "code", "INTERNAL").count());
     assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 }

@@ -2,7 +2,6 @@ package net.firedevops.firemud.service.impl;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
-import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.TcpProxyEventService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -24,13 +23,10 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
   private static final String OK = "OK";
   private final PingService pingService;
   private final TcpProxyEventService eventService;
-  private final MeterRegistry meterRegistry;
 
-  public TcpProxyGrpcService(
-      PingService pingService, TcpProxyEventService eventService, MeterRegistry meterRegistry) {
+  public TcpProxyGrpcService(PingService pingService, TcpProxyEventService eventService) {
     this.pingService = pingService;
     this.eventService = eventService;
-    this.meterRegistry = meterRegistry;
   }
 
   @Override
@@ -52,13 +48,13 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
       NotifyDisconnectResponse response =
           eventService.notifyDisconnect(request.getSessionId(), request.getTenantId());
       NotifyDisconnectResponse safe = ensureErrorDetail(response, "NotifyDisconnect");
-      recordIfError(safe.getError(), "NotifyDisconnect");
+      logIfError(safe.getError(), "NotifyDisconnect");
       responseObserver.onNext(safe);
       responseObserver.onCompleted();
     } catch (RuntimeException ex) {
       logger.warn("NotifyDisconnect failed", ex);
       ErrorDetail error = error("INTERNAL", "NotifyDisconnect failed");
-      recordIfError(error, "NotifyDisconnect");
+      logIfError(error, "NotifyDisconnect");
       responseObserver.onNext(NotifyDisconnectResponse.newBuilder().setError(error).build());
       responseObserver.onCompleted();
     }
@@ -78,13 +74,13 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
           eventService.pushBufferedInput(
               request.getSessionId(), request.getCommandsList(), request.getTenantId());
       PushBufferedInputResponse safe = ensureErrorDetail(response, "PushBufferedInput");
-      recordIfError(safe.getError(), "PushBufferedInput");
+      logIfError(safe.getError(), "PushBufferedInput");
       responseObserver.onNext(safe);
       responseObserver.onCompleted();
     } catch (RuntimeException ex) {
       logger.warn("PushBufferedInput failed", ex);
       ErrorDetail error = error("INTERNAL", "PushBufferedInput failed");
-      recordIfError(error, "PushBufferedInput");
+      logIfError(error, "PushBufferedInput");
       responseObserver.onNext(PushBufferedInputResponse.newBuilder().setError(error).build());
       responseObserver.onCompleted();
     }
@@ -116,11 +112,10 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
     return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
-  private void recordIfError(ErrorDetail detail, String operation) {
+  private void logIfError(ErrorDetail detail, String operation) {
     if (detail == null || OK.equals(detail.getCode())) {
       return;
     }
-    meterRegistry.counter("grpc.app_error", "code", detail.getCode()).increment();
     logger.warn("{} returned error {}: {}", operation, detail.getCode(), detail.getMessage());
   }
 }
