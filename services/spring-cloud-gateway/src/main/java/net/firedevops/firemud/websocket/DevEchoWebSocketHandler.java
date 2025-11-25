@@ -66,7 +66,15 @@ public class DevEchoWebSocketHandler implements WebSocketHandler {
                 throwable ->
                     logger.warn(
                         "Dev echo session {} closed due to error", session.getId(), throwable))
-            .map(message -> session.textMessage(message.getPayloadAsText()));
+            .map(
+                message -> {
+                  String payload = message.getPayloadAsText();
+                  String responsePayload =
+                      "client-ip".equalsIgnoreCase(payload)
+                          ? session.getHandshakeInfo().getHeaders().getFirst("X-Client-IP")
+                          : payload;
+                  return session.textMessage(responsePayload != null ? responsePayload : "");
+                });
 
     return session
         .send(outbound)
