@@ -18,11 +18,11 @@ import net.firedevops.firemud.gamesession.v1.ResumeTicksResponse;
 import net.firedevops.firemud.gamesession.v1.StartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
+import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.service.SessionRateLimiter;
 import net.firedevops.firemud.service.TickService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -34,9 +34,9 @@ class GameSessionGrpcServiceTest {
     Mockito.when(pingService.ping()).thenReturn("pong");
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    CommandService commandService = Mockito.mock(CommandService.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
@@ -44,10 +44,10 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
+            commandService,
             tickService,
             meterRegistry,
-            ipLimiter,
-            rateLimiter);
+            ipLimiter);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -75,9 +75,9 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    CommandService commandService = Mockito.mock(CommandService.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     Mockito.when(
@@ -89,10 +89,10 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
+            commandService,
             tickService,
             meterRegistry,
-            ipLimiter,
-            rateLimiter);
+            ipLimiter);
 
     AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
     service.startSession(
@@ -125,9 +125,9 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    CommandService commandService = Mockito.mock(CommandService.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
@@ -135,10 +135,10 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
+            commandService,
             tickService,
             meterRegistry,
-            ipLimiter,
-            rateLimiter);
+            ipLimiter);
 
     service.pauseTicks(
         PauseTicksRequest.newBuilder().setReason("backup").build(),
@@ -202,9 +202,9 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    CommandService commandService = Mockito.mock(CommandService.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     Mockito.when(ipLimiter.canAccept("1.2.3.4")).thenReturn(false);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
@@ -212,10 +212,10 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
+            commandService,
             tickService,
             meterRegistry,
-            ipLimiter,
-            rateLimiter);
+            ipLimiter);
 
     AtomicReference<StartSessionResponse> ref = new AtomicReference<>();
     service.startSession(
@@ -247,21 +247,26 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    CommandService commandService = Mockito.mock(CommandService.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
-    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
-    Mockito.when(rateLimiter.allow(1L)).thenReturn(false);
+    Mockito.when(
+            commandService.enqueue(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean()))
+        .thenReturn(
+            net.firedevops.firemud.dto.CommandEnqueueResult.failure(
+                "RATE_LIMIT", "Command rate limit exceeded"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
             gameInstanceService,
             featureFlagService,
+            commandService,
             tickService,
             meterRegistry,
-            ipLimiter,
-            rateLimiter);
+            ipLimiter);
 
     AtomicReference<net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse> ref =
         new AtomicReference<>();
