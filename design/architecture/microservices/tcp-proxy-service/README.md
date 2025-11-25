@@ -102,7 +102,7 @@ details on how Telnet connections are integrated into the platform.
 
 Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to validate the Telnet -> WebSocket bridge without running the full gateway stack:
 
-1. Start the service: `./gradlew :services:tcp-proxy-service:bootRun`. The task defaults to the `dev` profile for local runs. Override with `SPRING_PROFILES_ACTIVE=<profile>` or `-Dspring.profiles.active=<profile>` when needed.
+1. Start the service: `./gradlew :tcp-proxy-service:bootRun`. The task defaults to the `dev` profile for local runs. Override with `SPRING_PROFILES_ACTIVE=<profile>` or `-Dspring.profiles.active=<profile>` when needed.
 2. The dev profile disables gRPC TLS by default. Enable it with `GRPC_SERVER_TLS_ENABLED=true` to use the sample certificates in `src/main/resources/certs`.
 3. For non-dev profiles (including production), TLS and mutual auth remain enabled unless explicitly disabled, and the `/dev/echo` WebSocket is not exposed.
 4. Point the bridge at the local echo when running with the dev profile: `GATEWAY_WS_URL=ws://localhost:8080/dev/echo`.

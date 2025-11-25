@@ -42,6 +42,17 @@ Build all modules with:
 
 Gradle compiles the services and prepares Docker images using the included Dockerfiles.
 
+### Running Tests for a Single Service
+
+Gradle project paths map directly to the names defined in `settings.gradle.kts`, so they do **not** include the `services:` prefix even though the source lives under `services/`. To run just one service's tests, use the project name from `settings.gradle.kts`:
+
+```bash
+# Example: tcp-proxy-service
+./gradlew :tcp-proxy-service:test
+```
+
+Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will fail because no such project path exists in the Gradle settings.
+
 ## 🐳 Building Docker Images
 
 Use the aggregated task to build container images for all services:
