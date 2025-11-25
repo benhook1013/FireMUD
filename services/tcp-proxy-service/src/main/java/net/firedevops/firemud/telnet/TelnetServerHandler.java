@@ -51,6 +51,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Timer idleCloseTimer;
   private final WebSocketConnector webSocketConnector;
   private final TcpProxyEventService eventService;
+  private final TelnetSessionContext sessionContext = new TelnetSessionContext();
   private volatile ChannelHandlerContext context;
   private volatile boolean closing;
   private volatile boolean reconnecting;
@@ -60,8 +61,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile long lastActivityNanos;
   private volatile boolean mcpNegotiated;
   private WebSocket webSocket;
-  private volatile String sessionId;
-  private volatile String tenantId;
   private volatile boolean connectedOnce;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
   private final Set<CompletableFuture<WebSocket>> outstandingSends =
@@ -301,7 +300,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         return;
       }
 
-      if (sessionId == null) {
+      if (!sessionContext.isReady()) {
         if (!captureSessionContext(sanitized)) {
           logger.warn("Ignoring Telnet input before session envelope: {}", sanitized);
           return;
@@ -355,22 +354,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private boolean captureSessionContext(String sanitized) {
-    if (sessionId != null) {
-      return false;
-    }
-    String trimmed = sanitized.trim();
-    if (!trimmed.toUpperCase().startsWith("SESSION ")) {
-      return false;
-    }
-    String[] parts = trimmed.split("\\s+");
-    if (parts.length < 3) {
-      logger.warn("Ignoring malformed session envelope: {}", sanitized);
-      return false;
-    }
-    sessionId = parts[1];
-    tenantId = parts[2];
-    logger.info("Captured Telnet session {} for tenant {}", sessionId, tenantId);
-    return true;
+    return sessionContext.captureFromEnvelope(sanitized);
   }
 
   private void cancelIdleCheck() {
@@ -405,7 +389,12 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     reconnecting = true;
     webSocketConnector
-        .connect(gatewayWsUrl, clientIp, sessionId, tenantId, gatewayListener())
+        .connect(
+            gatewayWsUrl,
+            clientIp,
+            sessionContext.sessionId(),
+            sessionContext.tenantId(),
+            gatewayListener())
         .whenComplete(
             (socket, error) -> {
               if (error != null) {
@@ -463,24 +452,32 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void pushBufferedInputAsync(List<String> buffered) {
-    if (logOnly || sessionId == null || buffered.isEmpty()) {
+    if (logOnly || !sessionContext.isReady() || buffered.isEmpty()) {
       return;
     }
     CompletableFuture
-        .supplyAsync(() -> eventService.pushBufferedInput(sessionId, buffered, tenantId))
+        .supplyAsync(
+            () ->
+                eventService.pushBufferedInput(
+                    sessionContext.sessionId(), buffered, sessionContext.tenantId()))
         .thenAccept(
             response -> {
               if (!isOk(response)) {
                 String code = response != null && response.hasError() ? response.getError().getCode() : "UNKNOWN";
                 logger.warn(
-                    "Failed to push buffered input for session {} with code {}", sessionId, code);
+                    "Failed to push buffered input for session {} with code {}",
+                    sessionContext.sessionId(),
+                    code);
                 buffer.addAll(buffered);
                 drainBuffer();
               }
             })
         .exceptionally(
             error -> {
-              logger.warn("Failed to push buffered input for session {}", sessionId, error);
+              logger.warn(
+                  "Failed to push buffered input for session {}",
+                  sessionContext.sessionId(),
+                  error);
               buffer.addAll(buffered);
               drainBuffer();
               return null;
@@ -498,10 +495,13 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void notifyDisconnectAsync() {
-    if (logOnly || sessionId == null) {
+    if (logOnly || !sessionContext.isReady()) {
       return;
     }
-    CompletableFuture.runAsync(() -> eventService.notifyDisconnect(sessionId, tenantId));
+    CompletableFuture.runAsync(
+        () ->
+            eventService.notifyDisconnect(
+                sessionContext.sessionId(), sessionContext.tenantId()));
   }
 
   private String extractIp(Object remote) {
