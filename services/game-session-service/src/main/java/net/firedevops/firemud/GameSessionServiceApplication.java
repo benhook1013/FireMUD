@@ -9,7 +9,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Import;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "net.firedevops.firemud")
 @EnableScheduling
 @EnableConfigurationProperties(GrpcClientProperties.class)
 @Import({DatabaseAutoConfiguration.class, CommonAutoConfiguration.class})

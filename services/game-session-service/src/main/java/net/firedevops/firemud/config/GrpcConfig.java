@@ -31,8 +31,4 @@ public class GrpcConfig {
     return new TracingInterceptor(tracer);
   }
 
-  @Bean
-  public Tracer tracer(io.opentelemetry.api.OpenTelemetry openTelemetry) {
-    return openTelemetry.getTracer("game-session-service");
-  }
 }
