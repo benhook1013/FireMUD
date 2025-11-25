@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import net.firedevops.firemud.config.LogOnlyProperties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.junit.jupiter.api.Test;
@@ -54,7 +55,8 @@ class IpConnectionLimiterImplTest {
         .when(redis)
         .delete(anyString());
 
-    IpConnectionLimiterImpl limiter = new IpConnectionLimiterImpl(redis, 1, 60);
+    IpConnectionLimiterImpl limiter =
+        new IpConnectionLimiterImpl(redis, 1, 60, new LogOnlyProperties(false));
     assertTrue(limiter.canAccept("1.2.3.4"));
     limiter.register("1.2.3.4", 1L);
     assertFalse(limiter.canAccept("1.2.3.4"));

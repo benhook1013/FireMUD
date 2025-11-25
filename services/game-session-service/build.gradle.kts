@@ -1,4 +1,6 @@
 
+import org.springframework.boot.gradle.tasks.run.BootRun
+
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
@@ -21,6 +23,27 @@ dependencies {
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
+}
+
+tasks.named<BootRun>("bootRun") {
+    systemProperty("spring.profiles.active", System.getProperty("spring.profiles.active") ?: "dev")
+}
+
+tasks.named<BootRun>("bootRun") {
+    val activeProfile = System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")
+
+    if (activeProfile == null) {
+        systemProperty("spring.profiles.active", "dev")
+    }
+}
+
+tasks.register<BootRun>("bootRunLogOnly") {
+    group = "application"
+    description = "Start the game session service in dev with log-only handling"
+    mainClass.set("net.firedevops.firemud.GameSessionServiceApplication")
+    classpath = sourceSets.main.get().runtimeClasspath
+    systemProperty("spring.profiles.active", "dev")
+    environment("GAME_SESSION_LOG_ONLY", "true")
 }
 
 

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.entity.GameInstance;
@@ -31,7 +32,15 @@ class GameInstanceServiceImplTest {
     meterRegistry = new SimpleMeterRegistry();
     service =
         new GameInstanceServiceImpl(
-            repository, mapper, stateService, null, null, null, null, meterRegistry);
+            repository,
+            mapper,
+            stateService,
+            null,
+            null,
+            null,
+            null,
+            meterRegistry,
+            new LogOnlyProperties(false));
   }
 
   @Test
