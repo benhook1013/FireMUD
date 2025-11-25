@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
@@ -13,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import net.firedevops.firemud.service.TcpProxyEventService;
 
 class TelnetPipelineIntegrationTest {
 
@@ -28,12 +30,15 @@ class TelnetPipelineIntegrationTest {
             registry.counter("connections"),
             registry.counter("discarded"),
             false,
-            registry);
+            registry,
+            Mockito.mock(TcpProxyEventService.class));
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
     handler.setWebSocket(ws);
+
+    handler.channelRead0(Mockito.mock(ChannelHandlerContext.class), "SESSION sess-1 tenant-1");
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
@@ -65,12 +70,15 @@ class TelnetPipelineIntegrationTest {
             registry.counter("connections"),
             registry.counter("discarded"),
             false,
-            registry);
+            registry,
+            Mockito.mock(TcpProxyEventService.class));
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
     handler.setWebSocket(ws);
+
+    handler.channelRead0(Mockito.mock(ChannelHandlerContext.class), "SESSION sess-1 tenant-1");
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
