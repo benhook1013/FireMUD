@@ -15,6 +15,7 @@ import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.lognet.springboot.grpc.GRpcService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
 
 /** gRPC endpoints for the TCP Proxy Service. */
 @GRpcService
@@ -47,9 +48,9 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
     try {
       NotifyDisconnectResponse response =
           eventService.notifyDisconnect(request.getSessionId(), request.getTenantId());
-      NotifyDisconnectResponse safe = ensureErrorDetail(response, "NotifyDisconnect");
-      logIfError(safe.getError(), "NotifyDisconnect");
-      responseObserver.onNext(safe);
+      NotifyDisconnectResponse normalized = ensureErrorDetail(response, "NotifyDisconnect");
+      logIfError(normalized.getError(), "NotifyDisconnect");
+      responseObserver.onNext(normalized);
       responseObserver.onCompleted();
     } catch (RuntimeException ex) {
       logger.warn("NotifyDisconnect failed", ex);
@@ -73,9 +74,9 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
       PushBufferedInputResponse response =
           eventService.pushBufferedInput(
               request.getSessionId(), request.getCommandsList(), request.getTenantId());
-      PushBufferedInputResponse safe = ensureErrorDetail(response, "PushBufferedInput");
-      logIfError(safe.getError(), "PushBufferedInput");
-      responseObserver.onNext(safe);
+      PushBufferedInputResponse normalized = ensureErrorDetail(response, "PushBufferedInput");
+      logIfError(normalized.getError(), "PushBufferedInput");
+      responseObserver.onNext(normalized);
       responseObserver.onCompleted();
     } catch (RuntimeException ex) {
       logger.warn("PushBufferedInput failed", ex);
@@ -88,20 +89,32 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
 
   private NotifyDisconnectResponse ensureErrorDetail(
       NotifyDisconnectResponse response, String operation) {
-    if (response.hasError()) {
-      return response;
+    if (response == null) {
+      return NotifyDisconnectResponse.newBuilder()
+          .setError(error("INTERNAL", operation + " returned no response"))
+          .build();
     }
-    ErrorDetail detail = ok(operation + " completed");
-    return NotifyDisconnectResponse.newBuilder(response).setError(detail).build();
+    NotifyDisconnectResponse safe = response;
+    ErrorDetail detail =
+        safe.hasError()
+            ? normalizeDetail(safe.getError(), operation)
+            : ok(operation + " completed");
+    return NotifyDisconnectResponse.newBuilder(safe).setError(detail).build();
   }
 
   private PushBufferedInputResponse ensureErrorDetail(
       PushBufferedInputResponse response, String operation) {
-    if (response.hasError()) {
-      return response;
+    if (response == null) {
+      return PushBufferedInputResponse.newBuilder()
+          .setError(error("INTERNAL", operation + " returned no response"))
+          .build();
     }
-    ErrorDetail detail = ok(operation + " completed");
-    return PushBufferedInputResponse.newBuilder(response).setError(detail).build();
+    PushBufferedInputResponse safe = response;
+    ErrorDetail detail =
+        safe.hasError()
+            ? normalizeDetail(safe.getError(), operation)
+            : ok(operation + " completed");
+    return PushBufferedInputResponse.newBuilder(safe).setError(detail).build();
   }
 
   private ErrorDetail ok(String message) {
@@ -110,6 +123,18 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
 
   private ErrorDetail error(String code, String message) {
     return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
+  }
+
+  private ErrorDetail normalizeDetail(ErrorDetail detail, String operation) {
+    if (detail == null) {
+      return error("INTERNAL", operation + " returned no details");
+    }
+    String code = StringUtils.hasText(detail.getCode()) ? detail.getCode() : "UNKNOWN";
+    String message =
+        StringUtils.hasText(detail.getMessage())
+            ? detail.getMessage()
+            : operation + " returned no message";
+    return ErrorDetail.newBuilder(detail).setCode(code).setMessage(message).build();
   }
 
   private void logIfError(ErrorDetail detail, String operation) {

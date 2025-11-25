@@ -216,6 +216,34 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void sessionEnvelopePropagatesIntoWebSocketHeaders() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    List<String> captured = new ArrayList<>();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (url, ip, session, tenant, listener) -> {
+              captured.add(session);
+              captured.add(tenant);
+              WebSocket ws = mock(WebSocket.class);
+              return CompletableFuture.completedFuture(ws);
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    when(ctx.channel()).thenReturn(channel);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION sess-1 tenant-9");
+
+    assertEquals(List.of("sess-1", "tenant-9"), captured);
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void emptyAfterSanitizeIsIgnored() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler = newHandler(registry, false);
@@ -382,6 +410,68 @@ class TelnetServerHandlerTest {
 
     assertEquals("sess-1", connector.getSessionId());
     assertEquals("tenant-1", connector.getTenantId());
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void sessionEnvelopeSupportsColonSeparatedPayload() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    RecordingConnector connector = new RecordingConnector();
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class));
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION sess-1:tenant-7");
+
+    assertEquals("sess-1", connector.getSessionId());
+    assertEquals("tenant-7", connector.getTenantId());
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void malformedSessionEnvelopeIsIgnored() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    RecordingConnector connector = new RecordingConnector();
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class));
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION missingTenant");
+
+    assertEquals(null, connector.getSessionId());
+    assertEquals(null, connector.getTenantId());
     executor.shutdownGracefully();
   }
 
