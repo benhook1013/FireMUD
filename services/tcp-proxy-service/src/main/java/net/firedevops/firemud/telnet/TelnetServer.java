@@ -34,9 +34,11 @@ public final class TelnetServer {
   private final boolean tlsEnabled;
   private final String certPath;
   private final String keyPath;
+  private final boolean advertiseMcp;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
       new java.util.concurrent.atomic.AtomicInteger();
   private final Counter connectionCounter;
+  private final Counter discardedCommandCounter;
 
   private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
   private final EventLoopGroup workerGroup = new NioEventLoopGroup();
@@ -50,6 +52,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
+      @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
       MeterRegistry meterRegistry)
       throws SSLException {
     this.port = port;
@@ -57,7 +60,9 @@ public final class TelnetServer {
     this.tlsEnabled = tlsEnabled;
     this.certPath = certPath;
     this.keyPath = keyPath;
+    this.advertiseMcp = advertiseMcp;
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
+    this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
     Gauge.builder(
             "tcpproxy.connections.active",
             activeConnections,
@@ -86,14 +91,16 @@ public final class TelnetServer {
                     pipeline.addLast(sslContext.newHandler(ch.alloc()));
                   }
                   pipeline
-                      .addLast(new LineBasedFrameDecoder(1024))
-                      .addLast(new StringDecoder(StandardCharsets.UTF_8))
+                      .addLast(new LineBasedFrameDecoder(1024, false, true))
+                      .addLast(new StringDecoder(StandardCharsets.ISO_8859_1))
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
                               activeConnections::incrementAndGet,
                               activeConnections::decrementAndGet,
-                              connectionCounter));
+                              connectionCounter,
+                              discardedCommandCounter,
+                              advertiseMcp));
                 }
               });
       serverChannel = b.bind(port).sync().channel();
