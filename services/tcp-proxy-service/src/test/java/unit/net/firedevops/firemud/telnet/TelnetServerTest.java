@@ -22,6 +22,7 @@ class TelnetServerTest {
             0,
             "ws://localhost/ws",
             false,
+            false,
             "",
             "",
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry());

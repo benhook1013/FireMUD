@@ -22,6 +22,7 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
+            false,
             () -> {},
             () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
@@ -50,6 +51,7 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
+            false,
             () -> {},
             () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
@@ -70,6 +72,7 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
+            false,
             () -> {},
             () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
@@ -94,6 +97,7 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
+            false,
             () -> {},
             () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
@@ -118,6 +122,7 @@ class TelnetServerHandlerTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
+            false,
             () -> {},
             () -> {},
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
@@ -135,5 +140,25 @@ class TelnetServerHandlerTest {
     handler.channelRead0(ctx, msg);
 
     verify(ws, times(0)).sendText(anyString(), eq(true));
+  }
+
+  @Test
+  void logOnlyModeSkipsWebSocketTraffic() {
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            true,
+            () -> {},
+            () -> {},
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry().counter("test"));
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    when(ctx.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "say hello");
+
+    assertEquals(0, handler.getBufferedSize());
   }
 }
