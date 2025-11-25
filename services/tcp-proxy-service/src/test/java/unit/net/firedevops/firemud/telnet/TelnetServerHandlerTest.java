@@ -17,8 +17,12 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
+import io.netty.util.concurrent.DefaultEventExecutor;
 import java.net.InetSocketAddress;
 import java.net.http.WebSocket;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,11 +33,29 @@ class TelnetServerHandlerTest {
   private TelnetServerHandler newHandler(SimpleMeterRegistry registry, boolean advertiseMcp) {
     return new TelnetServerHandler(
         "ws://localhost/ws",
+        false,
         () -> {},
         () -> {},
         registry.counter("test"),
         registry.counter("discarded"),
-        advertiseMcp);
+        advertiseMcp,
+        registry);
+  }
+
+  private TelnetServerHandler newHandler(
+      SimpleMeterRegistry registry,
+      boolean advertiseMcp,
+      TelnetServerHandler.WebSocketConnector connector) {
+    return new TelnetServerHandler(
+        "ws://localhost/ws",
+        false,
+        () -> {},
+        () -> {},
+        registry.counter("test"),
+        registry.counter("discarded"),
+        advertiseMcp,
+        registry,
+        connector);
   }
 
   @Test
@@ -74,6 +96,29 @@ class TelnetServerHandlerTest {
 
     handler.channelInactive(ctx);
     assertEquals(0, handler.getBufferedSize());
+  }
+
+  @Test
+  void connectionClosedWhenBufferDepthExceeded() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler = newHandler(registry, false);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+
+    for (int i = 0; i < 600; i++) {
+      handler.channelRead0(ctx, "cmd" + i);
+    }
+
+    verify(ctx).close();
+    assertEquals(512, handler.getBufferedSize());
+    assertEquals(1.0, registry.counter("discarded").count());
+    executor.shutdownGracefully();
   }
 
   @Test
@@ -239,5 +284,287 @@ class TelnetServerHandlerTest {
     buf.release();
     assertEquals(1.0, registry.counter("discarded").count());
     verify(ws).sendText("cmd", true);
+  }
+
+  @Test
+  void bufferedCommandsReplayAfterGatewayReconnect() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TestConnector connector = new TestConnector();
+    TelnetServerHandler handler = newHandler(registry, false, connector);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+
+    StubWebSocket initialSocket = connector.getCurrent();
+    handler.channelRead0(ctx, "look");
+    handler.channelRead0(ctx, "say hi");
+
+    connector.getListener().onClose(initialSocket, 1001, "closing");
+    handler.channelRead0(ctx, "move north");
+    handler.channelRead0(ctx, "get sword");
+
+    assertEquals(2, handler.getBufferedSize());
+
+    StubWebSocket reconnectedSocket = connector.reconnect();
+    handler.setWebSocket(reconnectedSocket);
+
+    executor.shutdownGracefully();
+
+    assertEquals(List.of("move north", "get sword"), reconnectedSocket.getSentTexts());
+  }
+
+  @Test
+  void stuckSendIsCancelledAndReplayedAfterDisconnect() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    ControllableConnector connector = new ControllableConnector(new HangingWebSocket());
+    TelnetServerHandler handler = newHandler(registry, false, connector);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+
+    HangingWebSocket initialSocket = (HangingWebSocket) connector.getCurrent();
+    handler.channelRead0(ctx, "look");
+
+    connector.getListener().onClose(initialSocket, 1001, "closing");
+
+    RecordingWebSocket reconnectedSocket = new RecordingWebSocket();
+    handler.setWebSocket(reconnectedSocket);
+
+    executor.shutdownGracefully();
+
+    assertTrue(initialSocket.getSendFuture().isCancelled());
+    assertEquals(List.of("look"), reconnectedSocket.getSentTexts());
+  }
+
+  private static final class TestConnector implements TelnetServerHandler.WebSocketConnector {
+    private StubWebSocket current;
+    private WebSocket.Listener listener;
+
+    @Override
+    public CompletableFuture<WebSocket> connect(String gatewayWsUrl, String clientIp, WebSocket.Listener listener) {
+      this.listener = listener;
+      current = new StubWebSocket();
+      listener.onOpen(current);
+      return CompletableFuture.completedFuture(current);
+    }
+
+    StubWebSocket getCurrent() {
+      return current;
+    }
+
+    WebSocket.Listener getListener() {
+      return listener;
+    }
+
+    StubWebSocket reconnect() {
+      current = new StubWebSocket();
+      listener.onOpen(current);
+      return current;
+    }
+  }
+
+  private static final class ControllableConnector implements TelnetServerHandler.WebSocketConnector {
+    private WebSocket current;
+    private WebSocket.Listener listener;
+
+    ControllableConnector(WebSocket first) {
+      this.current = first;
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> connect(String gatewayWsUrl, String clientIp, WebSocket.Listener listener) {
+      this.listener = listener;
+      listener.onOpen(current);
+      return CompletableFuture.completedFuture(current);
+    }
+
+    WebSocket.Listener getListener() {
+      return listener;
+    }
+
+    WebSocket getCurrent() {
+      return current;
+    }
+  }
+
+  private static final class StubWebSocket implements WebSocket {
+    private final List<String> sentTexts = new ArrayList<>();
+    private boolean closed;
+
+    List<String> getSentTexts() {
+      return sentTexts;
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {
+      sentTexts.add(data.toString());
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendBinary(ByteBuffer data, boolean last) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPing(ByteBuffer message) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPong(ByteBuffer message) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendClose(int statusCode, String reason) {
+      closed = true;
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public void request(long n) {}
+
+    @Override
+    public String getSubprotocol() {
+      return "";
+    }
+
+    @Override
+    public boolean isOutputClosed() {
+      return closed;
+    }
+
+    @Override
+    public boolean isInputClosed() {
+      return closed;
+    }
+
+    @Override
+    public void abort() {
+      closed = true;
+    }
+  }
+
+  private static final class HangingWebSocket implements WebSocket {
+    private final CompletableFuture<WebSocket> sendFuture = new CompletableFuture<>();
+
+    CompletableFuture<WebSocket> getSendFuture() {
+      return sendFuture;
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {
+      return sendFuture;
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendBinary(ByteBuffer data, boolean last) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPing(ByteBuffer message) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPong(ByteBuffer message) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendClose(int statusCode, String reason) {
+      sendFuture.cancel(true);
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public void request(long n) {}
+
+    @Override
+    public String getSubprotocol() {
+      return "";
+    }
+
+    @Override
+    public boolean isOutputClosed() {
+      return false;
+    }
+
+    @Override
+    public boolean isInputClosed() {
+      return false;
+    }
+
+    @Override
+    public void abort() {
+      sendFuture.cancel(true);
+    }
+  }
+
+  private static final class RecordingWebSocket implements WebSocket {
+    private final List<String> sentTexts = new ArrayList<>();
+
+    List<String> getSentTexts() {
+      return sentTexts;
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {
+      sentTexts.add(data.toString());
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendBinary(ByteBuffer data, boolean last) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPing(ByteBuffer message) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPong(ByteBuffer message) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendClose(int statusCode, String reason) {
+      return CompletableFuture.completedFuture(this);
+    }
+
+    @Override
+    public void request(long n) {}
+
+    @Override
+    public String getSubprotocol() {
+      return "";
+    }
+
+    @Override
+    public boolean isOutputClosed() {
+      return false;
+    }
+
+    @Override
+    public boolean isInputClosed() {
+      return false;
+    }
+
+    @Override
+    public void abort() {}
   }
 }

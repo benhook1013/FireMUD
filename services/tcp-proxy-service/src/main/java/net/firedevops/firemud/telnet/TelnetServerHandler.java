@@ -1,6 +1,8 @@
 package net.firedevops.firemud.telnet;
 
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
@@ -9,17 +11,28 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
 public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
+  private static final Duration INITIAL_RECONNECT_DELAY = Duration.ofSeconds(1);
+  private static final Duration MAX_RECONNECT_DELAY = Duration.ofSeconds(30);
+  private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(30);
+  private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
+  private static final int MAX_BUFFER_DEPTH = 512;
 
   private final String gatewayWsUrl;
   private final boolean logOnly;
@@ -28,9 +41,25 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final io.micrometer.core.instrument.Counter connectionCounter;
   private final io.micrometer.core.instrument.Counter discardedCommandCounter;
   private final boolean advertiseMcp;
+  private final MeterRegistry meterRegistry;
+  private final Timer commandTimer;
+  private final Timer heartbeatTimer;
+  private final Timer idleCloseTimer;
+  private final WebSocketConnector webSocketConnector;
+  private volatile ChannelHandlerContext context;
+  private volatile boolean closing;
+  private volatile boolean reconnecting;
+  private volatile int reconnectAttempts;
+  private volatile ScheduledFuture<?> heartbeatFuture;
+  private volatile ScheduledFuture<?> idleFuture;
+  private volatile long lastActivityNanos;
   private volatile boolean mcpNegotiated;
   private WebSocket webSocket;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
+  private final Set<CompletableFuture<WebSocket>> outstandingSends =
+      ConcurrentHashMap.newKeySet();
+  private volatile CompletableFuture<WebSocket> inFlightSend;
+  private String clientIp;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -39,7 +68,30 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
       io.micrometer.core.instrument.Counter discardedCommandCounter,
-      boolean advertiseMcp) {
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry) {
+    this(
+        gatewayWsUrl,
+        logOnly,
+        onConnect,
+        onDisconnect,
+        connectionCounter,
+        discardedCommandCounter,
+        advertiseMcp,
+        meterRegistry,
+        TelnetServerHandler::createWebSocket);
+  }
+
+  TelnetServerHandler(
+      String gatewayWsUrl,
+      boolean logOnly,
+      Runnable onConnect,
+      Runnable onDisconnect,
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry,
+      WebSocketConnector webSocketConnector) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.logOnly = logOnly;
     this.onConnect = onConnect;
@@ -47,104 +99,355 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.connectionCounter = connectionCounter;
     this.discardedCommandCounter = discardedCommandCounter;
     this.advertiseMcp = advertiseMcp;
+    this.meterRegistry = meterRegistry;
+    this.webSocketConnector = webSocketConnector;
+    this.commandTimer = meterRegistry.timer("tcpproxy.command");
+    this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
+    this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
+  }
+
+  @FunctionalInterface
+  interface WebSocketConnector {
+    CompletableFuture<WebSocket> connect(String gatewayWsUrl, String clientIp, Listener listener);
+  }
+
+  private static CompletableFuture<WebSocket> createWebSocket(
+      String gatewayWsUrl, String clientIp, Listener listener) {
+    HttpClient client = HttpClient.newHttpClient();
+    var builder = client.newWebSocketBuilder();
+    if (clientIp != null) {
+      builder.header("X-Client-IP", clientIp);
+    }
+    return builder.buildAsync(URI.create(gatewayWsUrl), listener);
   }
 
   void setWebSocket(WebSocket webSocket) {
     this.webSocket = webSocket;
-    flushBuffer();
+    reconnecting = false;
+    startHeartbeat();
+    touchActivity();
+    drainBuffer();
   }
 
   int getBufferedSize() {
     return buffer.size();
   }
 
-  private void flushBuffer() {
-    if (webSocket == null) {
+  private void startHeartbeat() {
+    if (context == null || closing) {
       return;
     }
-    String msg;
-    while ((msg = buffer.poll()) != null) {
-      webSocket.sendText(msg, true);
+    stopHeartbeat();
+    heartbeatFuture =
+        context
+            .executor()
+            .scheduleAtFixedRate(
+                this::sendHeartbeat,
+                HEARTBEAT_INTERVAL.toMillis(),
+                HEARTBEAT_INTERVAL.toMillis(),
+                TimeUnit.MILLISECONDS);
+  }
+
+  private void stopHeartbeat() {
+    if (heartbeatFuture != null) {
+      heartbeatFuture.cancel(false);
+      heartbeatFuture = null;
     }
+  }
+
+  private void touchActivity() {
+    lastActivityNanos = System.nanoTime();
+    scheduleIdleCheck();
+  }
+
+  private void scheduleIdleCheck() {
+    if (context == null || closing) {
+      return;
+    }
+    if (idleFuture != null) {
+      idleFuture.cancel(false);
+    }
+    idleFuture =
+        context
+            .executor()
+            .schedule(this::closeIfIdle, IDLE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+  }
+
+  private void closeIfIdle() {
+    if (closing) {
+      return;
+    }
+    long idleNanos = System.nanoTime() - lastActivityNanos;
+    if (idleNanos < IDLE_TIMEOUT.toNanos()) {
+      scheduleIdleCheck();
+      return;
+    }
+    logger.warn(
+        "Closing Telnet session for {} after {} ms of inactivity",
+        gatewayWsUrl,
+        Duration.ofNanos(idleNanos).toMillis());
+    idleCloseTimer.record(Duration.ofNanos(idleNanos));
+    if (context != null) {
+      context.close();
+    }
+  }
+
+  private void sendHeartbeat() {
+    WebSocket socket = this.webSocket;
+    if (socket == null || closing) {
+      return;
+    }
+    Timer.Sample sample = Timer.start(meterRegistry);
+    CompletableFuture<WebSocket> pingFuture = socket.sendPing(ByteBuffer.wrap(new byte[] {1, 2, 3, 4}));
+    outstandingSends.add(pingFuture);
+    pingFuture.whenComplete(
+        (ws, error) -> {
+          outstandingSends.remove(pingFuture);
+          sample.stop(heartbeatTimer);
+          if (error != null) {
+            logger.warn("Gateway heartbeat failed; triggering reconnect", error);
+            handleGatewayDisconnect();
+          }
+        });
+  }
+
+  private synchronized void drainBuffer() {
+    if (webSocket == null || inFlightSend != null || closing) {
+      return;
+    }
+    String next = buffer.peek();
+    if (next == null) {
+      return;
+    }
+    CompletableFuture<WebSocket> sendFuture = webSocket.sendText(next, true);
+    inFlightSend = sendFuture;
+    outstandingSends.add(sendFuture);
+    sendFuture.whenComplete(
+        (ws, error) -> {
+          outstandingSends.remove(sendFuture);
+          inFlightSend = null;
+          if (error == null) {
+            buffer.poll();
+            touchActivity();
+          } else {
+            logger.warn("Gateway send failed; scheduling reconnect", error);
+            handleGatewayDisconnect();
+          }
+          drainBuffer();
+        });
   }
 
   @Override
   public void channelActive(ChannelHandlerContext ctx) {
+    context = ctx;
+    touchActivity();
     var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
-    String ip = null;
-    if (remote instanceof java.net.InetSocketAddress address) {
-      var inetAddress = address.getAddress();
-      if (inetAddress != null) {
-        ip = inetAddress.getHostAddress();
-      }
-    }
+    clientIp = extractIp(remote);
     connectionCounter.increment();
     onConnect.run();
-    logger.info("Telnet client connected from {} targeting {}", ip != null ? ip : remote, gatewayWsUrl);
+    logger.info(
+        "Telnet client connected from {} targeting {}", clientIp != null ? clientIp : remote, gatewayWsUrl);
     if (logOnly) {
       logger.info("Log-only mode enabled; skipping WebSocket bridge for {}", gatewayWsUrl);
       return;
     }
-    HttpClient client = HttpClient.newHttpClient();
-    var builder = client.newWebSocketBuilder();
-    if (ip != null) {
-      builder.header("X-Client-IP", ip);
-    }
-    builder.buildAsync(
-        URI.create(gatewayWsUrl),
-        new Listener() {
-          @Override
-          public void onOpen(WebSocket webSocket) {
-            setWebSocket(webSocket);
-            webSocket.request(1);
-            logger.info("WebSocket connected to {}", gatewayWsUrl);
-          }
-
-          @Override
-          public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-            logger.info("Gateway response: {}", data);
-            ctx.writeAndFlush(data.toString() + "\n");
-            webSocket.request(1);
-            return null;
-          }
-        })
-        .whenComplete(
-            (socket, error) -> {
-              if (error != null) {
-                logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-              }
-            });
+    connectToGateway();
   }
 
   @Override
   @Timed(value = "tcpproxy.command")
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
-    String sanitized = sanitize(ctx, msg);
-    if (sanitized == null) {
-      return;
-    }
+    Timer.Sample sample = Timer.start(meterRegistry);
+    try {
+      String sanitized = sanitize(ctx, msg);
+      if (sanitized == null) {
+        return;
+      }
 
-    logger.info("Received Telnet input: {}", sanitized);
+      logger.info("Received Telnet input: {}", sanitized);
+      touchActivity();
 
-    if (logOnly) {
-      return;
-    }
+      if (logOnly) {
+        return;
+      }
 
-    if (webSocket != null) {
-      webSocket.sendText(sanitized, true);
-    } else {
+      if (!canBufferMore()) {
+        return;
+      }
+
       buffer.add(sanitized);
+      drainBuffer();
+    } finally {
+      sample.stop(commandTimer);
     }
   }
 
   @Override
   public void channelInactive(ChannelHandlerContext ctx) {
-    if (webSocket != null) {
-      webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
-      webSocket = null;
-    }
+    closing = true;
+    stopHeartbeat();
+    cancelIdleCheck();
+    closeGatewayWebSocket();
     onDisconnect.run();
     buffer.clear();
+    cancelOutstandingSends();
+  }
+
+  private boolean canBufferMore() {
+    int depth = buffer.size() + outstandingSends.size();
+    if (depth >= MAX_BUFFER_DEPTH) {
+      if (!closing) {
+        closing = true;
+        logger.warn(
+            "Telnet buffer depth {} exceeded for {}; closing connection to prevent memory pressure",
+            MAX_BUFFER_DEPTH,
+            gatewayWsUrl);
+        discardedCommandCounter.increment();
+        if (context != null) {
+          context.close();
+        }
+      }
+      return false;
+    }
+    return true;
+  }
+
+  private void cancelIdleCheck() {
+    if (idleFuture != null) {
+      idleFuture.cancel(false);
+      idleFuture = null;
+    }
+  }
+
+  private void closeGatewayWebSocket() {
+    WebSocket socket = this.webSocket;
+    webSocket = null;
+    if (socket != null) {
+      try {
+        socket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+      } catch (Exception e) {
+        logger.warn("Failed to close gateway WebSocket cleanly", e);
+      }
+    }
+  }
+
+  private void connectToGateway() {
+    if (closing) {
+      return;
+    }
+    reconnecting = true;
+    webSocketConnector
+        .connect(gatewayWsUrl, clientIp, gatewayListener())
+        .whenComplete(
+            (socket, error) -> {
+              if (error != null) {
+                logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
+                reconnecting = false;
+                scheduleReconnect();
+              }
+            });
+  }
+
+  private void handleGatewayDisconnect() {
+    if (closing || logOnly) {
+      return;
+    }
+    cancelOutstandingSends();
+    closeGatewayWebSocket();
+    stopHeartbeat();
+    reconnecting = false;
+    scheduleReconnect();
+  }
+
+  private void scheduleReconnect() {
+    if (context == null || closing || reconnecting) {
+      return;
+    }
+    reconnecting = true;
+    long delayMillis = backoffDelayMillis();
+    context.executor().schedule(this::connectToGateway, delayMillis, TimeUnit.MILLISECONDS);
+  }
+
+  private void cancelOutstandingSends() {
+    CompletableFuture<WebSocket> flight = inFlightSend;
+    inFlightSend = null;
+    if (flight != null) {
+      flight.cancel(true);
+    }
+    outstandingSends.forEach(future -> future.cancel(true));
+    outstandingSends.clear();
+  }
+
+  private long backoffDelayMillis() {
+    long baseDelay = INITIAL_RECONNECT_DELAY.toMillis();
+    long delay = baseDelay * (1L << Math.min(reconnectAttempts, 10));
+    reconnectAttempts++;
+    return Math.min(delay, MAX_RECONNECT_DELAY.toMillis());
+  }
+
+  private String extractIp(Object remote) {
+    if (remote instanceof java.net.InetSocketAddress address) {
+      var inetAddress = address.getAddress();
+      if (inetAddress != null) {
+        return inetAddress.getHostAddress();
+      }
+    }
+    return null;
+  }
+
+  private Listener gatewayListener() {
+    return new Listener() {
+      @Override
+      public void onOpen(WebSocket webSocket) {
+        setWebSocket(webSocket);
+        webSocket.request(1);
+        reconnectAttempts = 0;
+        logger.info("WebSocket connected to {}", gatewayWsUrl);
+      }
+
+      @Override
+      public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+        touchActivity();
+        logger.info("Gateway response: {}", data);
+        if (context != null) {
+          context.writeAndFlush(data.toString() + "\n");
+        }
+        webSocket.request(1);
+        return null;
+      }
+
+      @Override
+      public CompletionStage<?> onPong(WebSocket webSocket, ByteBuffer message) {
+        touchActivity();
+        webSocket.request(1);
+        return Listener.super.onPong(webSocket, message);
+      }
+
+      @Override
+      public CompletionStage<?> onPing(WebSocket webSocket, ByteBuffer message) {
+        touchActivity();
+        webSocket.sendPong(message);
+        webSocket.request(1);
+        return Listener.super.onPing(webSocket, message);
+      }
+
+      @Override
+      public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+        logger.warn(
+            "Gateway WebSocket closed for {} with status {} and reason {}",
+            gatewayWsUrl,
+            statusCode,
+            reason);
+        handleGatewayDisconnect();
+        return Listener.super.onClose(webSocket, statusCode, reason);
+      }
+
+      @Override
+      public void onError(WebSocket webSocket, Throwable error) {
+        logger.error("WebSocket error for {}", gatewayWsUrl, error);
+        handleGatewayDisconnect();
+      }
+    };
   }
 
   @Override
