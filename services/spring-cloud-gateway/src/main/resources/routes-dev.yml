@@ -3,9 +3,9 @@ spring:
     gateway:
       routes:
         - id: session
-          uri: http://game-session-service:8080
+          uri: ws://game-session-service:8080
           predicates:
-            - Path=/api/session/**
+            - Path=/api/session/**,/ws/game/**
         - id: admin
           uri: http://logging-admin-service:8080
           predicates:

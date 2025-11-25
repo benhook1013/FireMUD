@@ -55,8 +55,10 @@ spring:
         - id: game-session
           uri: ws://game-session-service:8080
           predicates:
-            - Path=/api/session/**
+            - Path=/api/session/**,/ws/game/**
 ```
+
+The gateway uses the `ws://` scheme so Spring Cloud Gateway upgrades HTTP requests into WebSocket connections automatically. The `ClientIpHeaderFilter` copies or preserves the `X-Client-IP` header during the handshake so backend services (and the TCP Proxy bridge) can rely on it when routing gameplay sessions.
 
 ---
 
