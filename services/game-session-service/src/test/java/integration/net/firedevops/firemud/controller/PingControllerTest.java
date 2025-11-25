@@ -1,5 +1,6 @@
 package net.firedevops.firemud.controller;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -30,6 +31,6 @@ class PingControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data").value("pong"))
-        .andExpect(jsonPath("$.error").doesNotExist());
+        .andExpect(jsonPath("$.error").value(nullValue()));
   }
 }
