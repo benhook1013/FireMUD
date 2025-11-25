@@ -37,12 +37,13 @@ tasks.named<BootRun>("bootRun") {
     }
 }
 
-tasks.register<BootRun>("runTcpProxyDev") {
+tasks.register<BootRun>("bootRunLogOnly") {
     group = "application"
-    description = "Start the TCP proxy in dev with the local echo WebSocket bridge"
+    description = "Start the TCP proxy in dev with log-only Telnet handling"
     mainClass.set("net.firedevops.firemud.TcpProxyServiceApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
+    environment("TCP_PROXY_LOG_ONLY", "true")
     environment("GATEWAY_WS_URL", "ws://localhost:8080/dev/echo")
 }
 

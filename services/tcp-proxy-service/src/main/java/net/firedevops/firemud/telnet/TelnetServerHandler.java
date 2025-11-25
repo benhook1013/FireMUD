@@ -20,6 +20,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
 
   private final String gatewayWsUrl;
+  private final boolean logOnly;
   private final Runnable onConnect;
   private final Runnable onDisconnect;
   private final io.micrometer.core.instrument.Counter connectionCounter;
@@ -28,10 +29,12 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   public TelnetServerHandler(
       String gatewayWsUrl,
+      boolean logOnly,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter) {
     this.gatewayWsUrl = gatewayWsUrl;
+    this.logOnly = logOnly;
     this.onConnect = onConnect;
     this.onDisconnect = onDisconnect;
     this.connectionCounter = connectionCounter;
@@ -69,6 +72,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     connectionCounter.increment();
     onConnect.run();
     logger.info("Telnet client connected from {} targeting {}", ip != null ? ip : remote, gatewayWsUrl);
+    if (logOnly) {
+      logger.info("Log-only mode enabled; skipping WebSocket bridge for {}", gatewayWsUrl);
+      return;
+    }
     HttpClient client = HttpClient.newHttpClient();
     var builder = client.newWebSocketBuilder();
     if (ip != null) {
@@ -109,6 +116,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
 
     logger.info("Received Telnet input: {}", sanitized);
+
+    if (logOnly) {
+      return;
+    }
 
     if (webSocket != null) {
       webSocket.sendText(sanitized, true);

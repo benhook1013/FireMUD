@@ -32,6 +32,7 @@ public final class TelnetServer {
   private final int port;
   private final String gatewayWsUrl;
   private final boolean tlsEnabled;
+  private final boolean logOnly;
   private final String certPath;
   private final String keyPath;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
@@ -48,6 +49,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_PORT:2323}") int port,
       @Value("${GATEWAY_WS_URL:ws://localhost:8080/dev/echo}") String gatewayWsUrl,
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
+      @Value("${TCP_PROXY_LOG_ONLY:false}") boolean logOnly,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       MeterRegistry meterRegistry)
@@ -55,6 +57,7 @@ public final class TelnetServer {
     this.port = port;
     this.gatewayWsUrl = gatewayWsUrl;
     this.tlsEnabled = tlsEnabled;
+    this.logOnly = logOnly;
     this.certPath = certPath;
     this.keyPath = keyPath;
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
@@ -91,6 +94,7 @@ public final class TelnetServer {
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
+                              logOnly,
                               activeConnections::incrementAndGet,
                               activeConnections::decrementAndGet,
                               connectionCounter));
