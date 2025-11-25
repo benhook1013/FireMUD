@@ -22,11 +22,13 @@ class TelnetPipelineIntegrationTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
+            false,
             () -> {},
             () -> {},
             registry.counter("connections"),
             registry.counter("discarded"),
-            false);
+            false,
+            registry);
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
@@ -57,11 +59,13 @@ class TelnetPipelineIntegrationTest {
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
+            false,
             () -> {},
             () -> {},
             registry.counter("connections"),
             registry.counter("discarded"),
-            false);
+            false,
+            registry);
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
