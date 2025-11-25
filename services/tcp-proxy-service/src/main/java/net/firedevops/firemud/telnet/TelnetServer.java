@@ -37,6 +37,7 @@ public final class TelnetServer {
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
       new java.util.concurrent.atomic.AtomicInteger();
   private final Counter connectionCounter;
+  private final MeterRegistry meterRegistry;
 
   private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
   private final EventLoopGroup workerGroup = new NioEventLoopGroup();
@@ -57,6 +58,7 @@ public final class TelnetServer {
     this.tlsEnabled = tlsEnabled;
     this.certPath = certPath;
     this.keyPath = keyPath;
+    this.meterRegistry = meterRegistry;
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     Gauge.builder(
             "tcpproxy.connections.active",
@@ -93,7 +95,8 @@ public final class TelnetServer {
                               gatewayWsUrl,
                               activeConnections::incrementAndGet,
                               activeConnections::decrementAndGet,
-                              connectionCounter));
+                              connectionCounter,
+                              meterRegistry));
                 }
               });
       serverChannel = b.bind(port).sync().channel();
