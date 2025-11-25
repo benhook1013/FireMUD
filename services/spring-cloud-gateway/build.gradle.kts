@@ -27,18 +27,6 @@ dependencies {
     testRuntimeOnly("io.grpc:grpc-netty:1.77.0")
 }
 
-tasks.named<BootRun>("bootRun") {
-    val jvmProfile = System.getProperty("spring.profiles.active")
-    val envProfile = System.getenv("SPRING_PROFILES_ACTIVE")
-
-    when {
-        jvmProfile != null -> systemProperty("spring.profiles.active", jvmProfile)
-        envProfile != null -> {
-        }
-        else -> systemProperty("spring.profiles.active", "dev")
-    }
-}
-
 tasks.register<BootRun>("bootRunLogOnly") {
     group = "application"
     description = "Start the gateway in dev with log-only WebSocket handling"
