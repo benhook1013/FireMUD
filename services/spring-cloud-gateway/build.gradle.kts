@@ -1,4 +1,6 @@
 
+import org.springframework.boot.gradle.tasks.run.BootRun
+
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
@@ -23,6 +25,15 @@ dependencies {
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation("io.projectreactor:reactor-test:3.6.8")
     testRuntimeOnly("io.grpc:grpc-netty:1.77.0")
+}
+
+tasks.register<BootRun>("bootRunLogOnly") {
+    group = "application"
+    description = "Start the gateway in dev with log-only WebSocket handling"
+    mainClass.set("net.firedevops.firemud.SpringCloudGatewayApplication")
+    classpath = sourceSets.main.get().runtimeClasspath
+    systemProperty("spring.profiles.active", "dev")
+    environment("GATEWAY_WS_LOG_ONLY", "true")
 }
 
 
