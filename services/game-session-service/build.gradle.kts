@@ -26,15 +26,11 @@ dependencies {
 }
 
 tasks.named<BootRun>("bootRun") {
-    systemProperty("spring.profiles.active", System.getProperty("spring.profiles.active") ?: "dev")
-}
+    val activeProfile = System.getProperty("spring.profiles.active")
+        ?: System.getenv("SPRING_PROFILES_ACTIVE")
+        ?: "dev"
 
-tasks.named<BootRun>("bootRun") {
-    val activeProfile = System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")
-
-    if (activeProfile == null) {
-        systemProperty("spring.profiles.active", "dev")
-    }
+    systemProperty("spring.profiles.active", activeProfile)
 }
 
 tasks.register<BootRun>("bootRunLogOnly") {
