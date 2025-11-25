@@ -71,6 +71,41 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void logOnlyModeSkipsGatewayConnection() throws Exception {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler.WebSocketConnector connector =
+        Mockito.mock(TelnetServerHandler.WebSocketConnector.class);
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            true,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class));
+
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.channelRead0(ctx, "look");
+
+    verify(connector, never()).connect(anyString(), anyString(), anyString(), anyString(), any());
+    assertEquals(0, handler.getBufferedSize());
+
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void bufferedInputFlushedOnWebSocketConnect() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =

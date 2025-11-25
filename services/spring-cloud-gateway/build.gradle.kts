@@ -33,7 +33,7 @@ tasks.register<BootRun>("bootRunLogOnly") {
     mainClass.set("net.firedevops.firemud.SpringCloudGatewayApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
-    environment("GATEWAY_WS_LOG_ONLY", "true")
+    environment("TCP_PROXY_LOG_ONLY", "true")
 }
 
 
