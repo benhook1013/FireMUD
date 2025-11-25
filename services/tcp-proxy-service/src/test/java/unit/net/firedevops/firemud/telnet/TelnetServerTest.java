@@ -25,6 +25,7 @@ class TelnetServerTest {
             false,
             "",
             "",
+            false,
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     server.start();
     server.stop();

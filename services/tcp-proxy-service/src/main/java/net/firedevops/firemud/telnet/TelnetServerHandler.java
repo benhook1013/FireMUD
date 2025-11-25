@@ -1,6 +1,8 @@
 package net.firedevops.firemud.telnet;
 
 import io.micrometer.core.annotation.Timed;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import java.net.URI;
@@ -24,6 +26,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Runnable onConnect;
   private final Runnable onDisconnect;
   private final io.micrometer.core.instrument.Counter connectionCounter;
+  private final io.micrometer.core.instrument.Counter discardedCommandCounter;
+  private final boolean advertiseMcp;
+  private volatile boolean mcpNegotiated;
   private WebSocket webSocket;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
 
@@ -32,12 +37,16 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       boolean logOnly,
       Runnable onConnect,
       Runnable onDisconnect,
-      io.micrometer.core.instrument.Counter connectionCounter) {
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.logOnly = logOnly;
     this.onConnect = onConnect;
     this.onDisconnect = onDisconnect;
     this.connectionCounter = connectionCounter;
+    this.discardedCommandCounter = discardedCommandCounter;
+    this.advertiseMcp = advertiseMcp;
   }
 
   void setWebSocket(WebSocket webSocket) {
@@ -110,7 +119,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @Override
   @Timed(value = "tcpproxy.command")
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
-    String sanitized = sanitize(msg);
+    String sanitized = sanitize(ctx, msg);
     if (sanitized == null) {
       return;
     }
@@ -146,30 +155,139 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private static final byte IAC = (byte) 255;
 
+  private static final byte WILL = (byte) 251;
+  private static final byte WONT = (byte) 252;
+  private static final byte DO = (byte) 253;
+  private static final byte DONT = (byte) 254;
+  private static final byte SB = (byte) 250;
+  private static final byte SE = (byte) 240;
+  private static final String MCP_PREFIX = "#$#";
+
   private static final Set<Byte> ALLOWED_COMMANDS =
       Set.of((byte) 240, (byte) 241, (byte) 249, (byte) 251, (byte) 252, (byte) 253, (byte) 254);
 
-  private String sanitize(String msg) {
+  private static final Set<Byte> SUPPORTED_OPTIONS = Set.of((byte) 1, (byte) 3);
+
+  boolean isMcpNegotiated() {
+    return mcpNegotiated;
+  }
+
+  private String sanitize(ChannelHandlerContext ctx, String msg) {
     byte[] bytes = msg.getBytes(StandardCharsets.ISO_8859_1);
     StringBuilder sb = new StringBuilder();
     for (int i = 0; i < bytes.length; i++) {
       byte b = bytes[i];
       if (b == IAC) {
-        if (i + 1 < bytes.length) {
-          byte cmd = bytes[++i];
-          if (!ALLOWED_COMMANDS.contains(cmd)) {
-            continue;
-          }
-          // drop allowed Telnet commands rather than forwarding
-          continue;
+        i = handleIacSequence(ctx, bytes, i + 1, sb);
+        continue;
+      }
+      if (b == '\r') {
+        if (i + 1 < bytes.length && bytes[i + 1] == '\n') {
+          i++;
         }
+        sb.append('\n');
+        continue;
+      }
+      if (b == '\n') {
+        sb.append('\n');
         continue;
       }
       if (b >= 32 && b <= 126) {
         sb.append((char) b);
       }
     }
-    String cleaned = sb.toString().trim();
-    return cleaned.isEmpty() ? null : cleaned;
+    String cleaned = sb.toString();
+    String negotiationCandidate = cleaned.stripLeading();
+    if (!negotiationCandidate.isEmpty() && negotiationCandidate.startsWith(MCP_PREFIX)) {
+      boolean initialNegotiation = !mcpNegotiated;
+      mcpNegotiated = true;
+      if (advertiseMcp && initialNegotiation) {
+        ctx.writeAndFlush("#$#mcp version:2.1\r\n");
+      }
+    }
+    return cleaned.isBlank() ? null : cleaned;
+  }
+
+  private int handleIacSequence(ChannelHandlerContext ctx, byte[] bytes, int index, StringBuilder sb) {
+    if (index >= bytes.length) {
+      discardedCommandCounter.increment();
+      return bytes.length;
+    }
+    byte command = bytes[index];
+    if (command == IAC) {
+      sb.append((char) IAC);
+      return index;
+    }
+    switch (command) {
+      case DO:
+      case DONT:
+        return negotiate(ctx, command, bytes, index);
+      case WILL:
+      case WONT:
+        return negotiate(ctx, command, bytes, index);
+      case SB:
+        return handleSubNegotiation(ctx, bytes, index);
+      default:
+        if (!ALLOWED_COMMANDS.contains(command)) {
+          discardedCommandCounter.increment();
+        }
+        return index;
+    }
+  }
+
+  private int negotiate(ChannelHandlerContext ctx, byte command, byte[] bytes, int index) {
+    if (index + 1 >= bytes.length) {
+      discardedCommandCounter.increment();
+      return bytes.length;
+    }
+    byte option = bytes[index + 1];
+    boolean supported = SUPPORTED_OPTIONS.contains(option);
+    byte response;
+    if (command == DO) {
+      response = supported ? WILL : WONT;
+    } else if (command == DONT) {
+      response = WONT;
+    } else if (command == WILL) {
+      response = supported ? DO : DONT;
+    } else {
+      response = DONT;
+    }
+    if (!supported) {
+      discardedCommandCounter.increment();
+    }
+    writeNegotiationResponse(ctx, response, option);
+    return index + 1;
+  }
+
+  private int handleSubNegotiation(ChannelHandlerContext ctx, byte[] bytes, int index) {
+    if (index + 1 >= bytes.length) {
+      discardedCommandCounter.increment();
+      return bytes.length;
+    }
+    byte option = bytes[index + 1];
+    int cursor = index + 2;
+    while (cursor < bytes.length - 1) {
+      if (bytes[cursor] == IAC && bytes[cursor + 1] == SE) {
+        break;
+      }
+      cursor++;
+    }
+    if (cursor >= bytes.length - 1) {
+      discardedCommandCounter.increment();
+      return bytes.length;
+    }
+    if (!SUPPORTED_OPTIONS.contains(option)) {
+      discardedCommandCounter.increment();
+      writeNegotiationResponse(ctx, DONT, option);
+    }
+    return cursor + 1;
+  }
+
+  private void writeNegotiationResponse(ChannelHandlerContext ctx, byte response, byte option) {
+    ByteBuf responseBuf = Unpooled.buffer(3);
+    responseBuf.writeByte(IAC);
+    responseBuf.writeByte(response);
+    responseBuf.writeByte(option);
+    ctx.writeAndFlush(responseBuf);
   }
 }
