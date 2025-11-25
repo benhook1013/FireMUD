@@ -14,6 +14,7 @@ import java.net.http.WebSocket.Listener;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -22,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.service.TcpProxyEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,6 +48,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Timer heartbeatTimer;
   private final Timer idleCloseTimer;
   private final WebSocketConnector webSocketConnector;
+  private final TcpProxyEventService eventService;
   private volatile ChannelHandlerContext context;
   private volatile boolean closing;
   private volatile boolean reconnecting;
@@ -55,6 +58,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile long lastActivityNanos;
   private volatile boolean mcpNegotiated;
   private WebSocket webSocket;
+  private volatile String sessionId;
+  private volatile String tenantId;
+  private volatile boolean connectedOnce;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
   private final Set<CompletableFuture<WebSocket>> outstandingSends =
       ConcurrentHashMap.newKeySet();
@@ -69,7 +75,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       io.micrometer.core.instrument.Counter connectionCounter,
       io.micrometer.core.instrument.Counter discardedCommandCounter,
       boolean advertiseMcp,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      TcpProxyEventService eventService) {
     this(
         gatewayWsUrl,
         logOnly,
@@ -79,7 +86,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         discardedCommandCounter,
         advertiseMcp,
         meterRegistry,
-        TelnetServerHandler::createWebSocket);
+        TelnetServerHandler::createWebSocket,
+        eventService);
   }
 
   TelnetServerHandler(
@@ -91,7 +99,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       io.micrometer.core.instrument.Counter discardedCommandCounter,
       boolean advertiseMcp,
       MeterRegistry meterRegistry,
-      WebSocketConnector webSocketConnector) {
+      WebSocketConnector webSocketConnector,
+      TcpProxyEventService eventService) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.logOnly = logOnly;
     this.onConnect = onConnect;
@@ -101,6 +110,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.advertiseMcp = advertiseMcp;
     this.meterRegistry = meterRegistry;
     this.webSocketConnector = webSocketConnector;
+    this.eventService = eventService;
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
     this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
@@ -108,24 +118,42 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   @FunctionalInterface
   interface WebSocketConnector {
-    CompletableFuture<WebSocket> connect(String gatewayWsUrl, String clientIp, Listener listener);
+    CompletableFuture<WebSocket> connect(
+        String gatewayWsUrl,
+        String clientIp,
+        String sessionId,
+        String tenantId,
+        Listener listener);
   }
 
   private static CompletableFuture<WebSocket> createWebSocket(
-      String gatewayWsUrl, String clientIp, Listener listener) {
+      String gatewayWsUrl, String clientIp, String sessionId, String tenantId, Listener listener) {
     HttpClient client = HttpClient.newHttpClient();
     var builder = client.newWebSocketBuilder();
     if (clientIp != null) {
       builder.header("X-Client-IP", clientIp);
     }
+    if (sessionId != null && !sessionId.isBlank()) {
+      builder.header("X-Session-Id", sessionId);
+    }
+    if (tenantId != null && !tenantId.isBlank()) {
+      builder.header("X-Tenant-Id", tenantId);
+    }
     return builder.buildAsync(URI.create(gatewayWsUrl), listener);
   }
 
   void setWebSocket(WebSocket webSocket) {
+    setWebSocket(webSocket, false);
+  }
+
+  private void setWebSocket(WebSocket webSocket, boolean reconnected) {
     this.webSocket = webSocket;
     reconnecting = false;
     startHeartbeat();
     touchActivity();
+    if (reconnected) {
+      pushBufferedInputAsync();
+    }
     drainBuffer();
   }
 
@@ -249,9 +277,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         "Telnet client connected from {} targeting {}", clientIp != null ? clientIp : remote, gatewayWsUrl);
     if (logOnly) {
       logger.info("Log-only mode enabled; skipping WebSocket bridge for {}", gatewayWsUrl);
-      return;
     }
-    connectToGateway();
   }
 
   @Override
@@ -271,6 +297,17 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         return;
       }
 
+      if (sessionId == null) {
+        if (!captureSessionContext(sanitized)) {
+          logger.warn("Ignoring Telnet input before session envelope: {}", sanitized);
+          return;
+        }
+        ensureGatewayConnected();
+        return;
+      }
+
+      ensureGatewayConnected();
+
       if (!canBufferMore()) {
         return;
       }
@@ -289,6 +326,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     cancelIdleCheck();
     closeGatewayWebSocket();
     onDisconnect.run();
+    notifyDisconnectAsync();
     buffer.clear();
     cancelOutstandingSends();
   }
@@ -312,6 +350,25 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return true;
   }
 
+  private boolean captureSessionContext(String sanitized) {
+    if (sessionId != null) {
+      return false;
+    }
+    String trimmed = sanitized.trim();
+    if (!trimmed.toUpperCase().startsWith("SESSION ")) {
+      return false;
+    }
+    String[] parts = trimmed.split("\\s+");
+    if (parts.length < 3) {
+      logger.warn("Ignoring malformed session envelope: {}", sanitized);
+      return false;
+    }
+    sessionId = parts[1];
+    tenantId = parts[2];
+    logger.info("Captured Telnet session {} for tenant {}", sessionId, tenantId);
+    return true;
+  }
+
   private void cancelIdleCheck() {
     if (idleFuture != null) {
       idleFuture.cancel(false);
@@ -331,13 +388,20 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
   }
 
+  private void ensureGatewayConnected() {
+    if (logOnly || closing || webSocket != null || reconnecting) {
+      return;
+    }
+    connectToGateway();
+  }
+
   private void connectToGateway() {
-    if (closing) {
+    if (closing || logOnly) {
       return;
     }
     reconnecting = true;
     webSocketConnector
-        .connect(gatewayWsUrl, clientIp, gatewayListener())
+        .connect(gatewayWsUrl, clientIp, sessionId, tenantId, gatewayListener())
         .whenComplete(
             (socket, error) -> {
               if (error != null) {
@@ -385,6 +449,21 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return Math.min(delay, MAX_RECONNECT_DELAY.toMillis());
   }
 
+  private void pushBufferedInputAsync() {
+    if (logOnly || sessionId == null || buffer.isEmpty()) {
+      return;
+    }
+    List<String> snapshot = List.copyOf(buffer);
+    CompletableFuture.runAsync(() -> eventService.pushBufferedInput(sessionId, snapshot, tenantId));
+  }
+
+  private void notifyDisconnectAsync() {
+    if (logOnly || sessionId == null) {
+      return;
+    }
+    CompletableFuture.runAsync(() -> eventService.notifyDisconnect(sessionId, tenantId));
+  }
+
   private String extractIp(Object remote) {
     if (remote instanceof java.net.InetSocketAddress address) {
       var inetAddress = address.getAddress();
@@ -399,7 +478,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return new Listener() {
       @Override
       public void onOpen(WebSocket webSocket) {
-        setWebSocket(webSocket);
+        boolean wasConnected = connectedOnce;
+        connectedOnce = true;
+        setWebSocket(webSocket, wasConnected);
         webSocket.request(1);
         reconnectAttempts = 0;
         logger.info("WebSocket connected to {}", gatewayWsUrl);

@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import net.firedevops.firemud.service.TcpProxyEventService;
 
 class TelnetServerTest {
   private TelnetServer server;
@@ -26,7 +28,8 @@ class TelnetServerTest {
             "",
             "",
             false,
-            new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+            Mockito.mock(TcpProxyEventService.class));
     server.start();
     server.stop();
     assertTrue(true); // no exception means success
