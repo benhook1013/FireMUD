@@ -27,7 +27,9 @@ import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 
 class TelnetServerHandlerTest {
 
@@ -422,6 +424,11 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TestConnector connector = new TestConnector();
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    when(eventService.pushBufferedInput(Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
+        .thenReturn(
+            PushBufferedInputResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("OK").build())
+                .build());
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -469,6 +476,11 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     ControllableConnector connector = new ControllableConnector(new HangingWebSocket());
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    when(eventService.pushBufferedInput(Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
+        .thenReturn(
+            PushBufferedInputResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("OK").build())
+                .build());
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -513,6 +525,11 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TestConnector connector = new TestConnector();
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    when(eventService.pushBufferedInput(Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
+        .thenReturn(
+            PushBufferedInputResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("OK").build())
+                .build());
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -547,6 +564,57 @@ class TelnetServerHandlerTest {
         .pushBufferedInput(Mockito.eq("sess-1"), captor.capture(), Mockito.eq("tenant-1"));
     assertEquals(List.of("move north"), captor.getValue());
     assertTrue(connector.getCurrent().getSentTexts().isEmpty());
+  }
+
+  @Test
+  void bufferedCommandsRetryWhenPushReturnsErrorDetail() throws Exception {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TestConnector connector = new TestConnector();
+    TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    when(eventService.pushBufferedInput(Mockito.eq("sess-1"), Mockito.anyList(), Mockito.eq("tenant-1")))
+        .thenReturn(
+            PushBufferedInputResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("UPSTREAM_FAILURE")
+                        .setMessage("session service down")
+                        .build())
+                .build());
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            eventService);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+
+    connector.getListener().onClose(connector.getCurrent(), 1001, "closing");
+    handler.channelRead0(ctx, "cast fireball");
+
+    connector.reconnect();
+    executor.shutdownGracefully();
+
+    Mockito.verify(eventService, Mockito.timeout(1000))
+        .pushBufferedInput(Mockito.eq("sess-1"), Mockito.eq(List.of("cast fireball")), Mockito.eq("tenant-1"));
+
+    Thread.sleep(200);
+
+    assertEquals(List.of("cast fireball"), connector.getCurrent().getSentTexts());
+    assertEquals(0, handler.getBufferedSize());
   }
 
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {

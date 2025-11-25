@@ -21,6 +21,13 @@ spec:
         - name: tcp-proxy-service
           image: ghcr.io/benhook1013/tcp-proxy-service:latest
           imagePullPolicy: Always
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/client.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/client.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -36,6 +43,10 @@ spec:
               memory: "512Mi"
           ports:
             - containerPort: 2323
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
           readinessProbe:
             tcpSocket:
               port: 2323
@@ -74,6 +85,9 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
       volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-tls
         - name: varlog
           hostPath:
             path: /var/log

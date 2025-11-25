@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +36,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(30);
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final int MAX_BUFFER_DEPTH = 512;
+  private static final String OK = "OK";
 
   private final String gatewayWsUrl;
   private final boolean logOnly;
@@ -465,7 +467,17 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       return;
     }
     CompletableFuture
-        .runAsync(() -> eventService.pushBufferedInput(sessionId, buffered, tenantId))
+        .supplyAsync(() -> eventService.pushBufferedInput(sessionId, buffered, tenantId))
+        .thenAccept(
+            response -> {
+              if (!isOk(response)) {
+                String code = response != null && response.hasError() ? response.getError().getCode() : "UNKNOWN";
+                logger.warn(
+                    "Failed to push buffered input for session {} with code {}", sessionId, code);
+                buffer.addAll(buffered);
+                drainBuffer();
+              }
+            })
         .exceptionally(
             error -> {
               logger.warn("Failed to push buffered input for session {}", sessionId, error);
@@ -473,6 +485,16 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
               drainBuffer();
               return null;
             });
+  }
+
+  private boolean isOk(PushBufferedInputResponse response) {
+    if (response == null) {
+      return false;
+    }
+    if (!response.hasError()) {
+      return true;
+    }
+    return OK.equals(response.getError().getCode());
   }
 
   private void notifyDisconnectAsync() {
