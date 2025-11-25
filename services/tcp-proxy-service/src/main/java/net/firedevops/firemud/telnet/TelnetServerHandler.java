@@ -152,7 +152,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     startHeartbeat();
     touchActivity();
     if (reconnected) {
-      pushBufferedInputAsync();
+      List<String> drained = consumeBuffer();
+      pushBufferedInputAsync(drained);
+      return;
     }
     drainBuffer();
   }
@@ -449,12 +451,28 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return Math.min(delay, MAX_RECONNECT_DELAY.toMillis());
   }
 
-  private void pushBufferedInputAsync() {
-    if (logOnly || sessionId == null || buffer.isEmpty()) {
+  private List<String> consumeBuffer() {
+    List<String> drained = new java.util.ArrayList<>();
+    String next;
+    while ((next = buffer.poll()) != null) {
+      drained.add(next);
+    }
+    return drained;
+  }
+
+  private void pushBufferedInputAsync(List<String> buffered) {
+    if (logOnly || sessionId == null || buffered.isEmpty()) {
       return;
     }
-    List<String> snapshot = List.copyOf(buffer);
-    CompletableFuture.runAsync(() -> eventService.pushBufferedInput(sessionId, snapshot, tenantId));
+    CompletableFuture
+        .runAsync(() -> eventService.pushBufferedInput(sessionId, buffered, tenantId))
+        .exceptionally(
+            error -> {
+              logger.warn("Failed to push buffered input for session {}", sessionId, error);
+              buffer.addAll(buffered);
+              drainBuffer();
+              return null;
+            });
   }
 
   private void notifyDisconnectAsync() {

@@ -418,10 +418,22 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void bufferedCommandsReplayAfterGatewayReconnect() {
+  void bufferedCommandsPushedAfterGatewayReconnect() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TestConnector connector = new TestConnector();
-    TelnetServerHandler handler = newHandler(registry, false, connector);
+    TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            eventService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -443,19 +455,32 @@ class TelnetServerHandlerTest {
 
     assertEquals(2, handler.getBufferedSize());
 
-    StubWebSocket reconnectedSocket = connector.reconnect();
-    handler.setWebSocket(reconnectedSocket);
-
+    connector.reconnect();
     executor.shutdownGracefully();
 
-    assertEquals(List.of("move north", "get sword"), reconnectedSocket.getSentTexts());
+    Mockito.verify(eventService, Mockito.timeout(1000))
+        .pushBufferedInput(
+            Mockito.eq("sess-1"), Mockito.eq(List.of("move north", "get sword")), Mockito.eq("tenant-1"));
+    assertTrue(connector.getCurrent().getSentTexts().isEmpty());
   }
 
   @Test
-  void stuckSendIsCancelledAndReplayedAfterDisconnect() {
+  void stuckSendIsCancelledAndPushedAfterDisconnect() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     ControllableConnector connector = new ControllableConnector(new HangingWebSocket());
-    TelnetServerHandler handler = newHandler(registry, false, connector);
+    TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            eventService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -473,12 +498,14 @@ class TelnetServerHandlerTest {
     connector.getListener().onClose(initialSocket, 1001, "closing");
 
     RecordingWebSocket reconnectedSocket = new RecordingWebSocket();
-    handler.setWebSocket(reconnectedSocket);
+    connector.reconnect(reconnectedSocket);
 
     executor.shutdownGracefully();
 
     assertTrue(initialSocket.getSendFuture().isCancelled());
-    assertEquals(List.of("look"), reconnectedSocket.getSentTexts());
+    Mockito.verify(eventService, Mockito.timeout(1000))
+        .pushBufferedInput(Mockito.eq("sess-1"), Mockito.eq(List.of("look")), Mockito.eq("tenant-1"));
+    assertTrue(reconnectedSocket.getSentTexts().isEmpty());
   }
 
   @Test
@@ -516,9 +543,10 @@ class TelnetServerHandlerTest {
     executor.shutdownGracefully();
 
     ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
-    Mockito.verify(eventService)
+    Mockito.verify(eventService, Mockito.timeout(1000))
         .pushBufferedInput(Mockito.eq("sess-1"), captor.capture(), Mockito.eq("tenant-1"));
     assertEquals(List.of("move north"), captor.getValue());
+    assertTrue(connector.getCurrent().getSentTexts().isEmpty());
   }
 
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {
@@ -616,6 +644,12 @@ class TelnetServerHandlerTest {
     }
 
     WebSocket getCurrent() {
+      return current;
+    }
+
+    WebSocket reconnect(WebSocket next) {
+      current = next;
+      listener.onOpen(current);
       return current;
     }
   }
