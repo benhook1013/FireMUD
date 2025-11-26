@@ -16,12 +16,10 @@ import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the Entity Management Service. */
 @Component
-@Profile("!dev")
 @ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",

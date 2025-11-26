@@ -16,12 +16,10 @@ import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the World Management Service. */
 @Component
-@Profile("!dev")
 @ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",

@@ -21,12 +21,10 @@ import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the Game Logic Service using mTLS. */
 @Component
-@Profile("!dev")
 @ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
