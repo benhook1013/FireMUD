@@ -5,6 +5,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -35,18 +36,21 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final SessionStateService sessionStateService;
   private final MeterRegistry meterRegistry;
   private final PingService pingService;
+  private final LogOnlyProperties logOnlyProperties;
 
   public TcpProxyServiceImpl(
       CommandService commandService,
       GameInstanceRepository repository,
       SessionStateService sessionStateService,
       MeterRegistry meterRegistry,
-      PingService pingService) {
+      PingService pingService,
+      LogOnlyProperties logOnlyProperties) {
     this.commandService = commandService;
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
+    this.logOnlyProperties = logOnlyProperties;
   }
 
   @Override
@@ -149,6 +153,13 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       return SessionValidationResult.failed(
           error("INVALID_ARGUMENT", "tenantId must be numeric"));
     }
+    // Log-only mode never persists GameInstance records, so this lookup currently always fails
+    // and propagates NOT_FOUND. We should skip the DB check or seed the session state when log-only
+    // mode is enabled so buffered input/disconnect hooks remain usable in that profile.
+    if (logOnlyProperties.isLogOnly()) {
+      return new SessionValidationResult(
+          sessionId, tenantId, buildLogOnlyInstance(sessionId, tenantId), null);
+    }
     Optional<GameInstance> maybeInstance = repository.findById(sessionId);
     if (maybeInstance.isEmpty()) {
       return SessionValidationResult.failed(error("NOT_FOUND", "Session not found"));
@@ -159,6 +170,17 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
           error("INVALID_ARGUMENT", "Tenant does not own session"));
     }
     return new SessionValidationResult(sessionId, tenantId, instance, null);
+  }
+
+  private GameInstance buildLogOnlyInstance(long sessionId, long tenantId) {
+    GameInstance instance = new GameInstance();
+    instance.setId(sessionId);
+    instance.setTenantId(tenantId);
+    instance.setRuntimeVersion("log-only");
+    instance.setScriptPatchVersion(null);
+    instance.setOwnerAccountId(0L);
+    instance.setStatus("RUNNING");
+    return instance;
   }
 
   private ErrorDetail error(String code, String message) {
