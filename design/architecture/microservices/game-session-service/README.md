@@ -98,6 +98,11 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
+## Log-only Mode
+
+- Use `./gradlew :game-session-service:bootRunLogOnly` (or set `GAME_SESSION_LOG_ONLY=true`) when you need to exercise the Game Session Service without PostgreSQL, Redis, or downstream gRPC dependencies. The log-only beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
+- The `LogOnlyGameSessionSmokeTest` in `services/game-session-service/src/test/java/integration/net/firedevops/firemud/LogOnlyGameSessionSmokeTest.java` starts the dev profile in log-only mode, posts to `POST /sessions`, and asserts the request is accepted and logged, proving the fast-path smoke test that only touches in-memory components.
+
 ## Environment Variables
 
 This service follows the configuration scheme from
@@ -124,6 +129,7 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 Service definitions reside in
 [../../../../protos/game-session/v1](../../../../protos/game-session/v1). Run
 `./gradlew generateProto` after modifying these files to regenerate stubs.
+The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `build/generated/sources/proto/main/{grpc,java}` and are wired into `services/game-session-service/src/main/java/net/firedevops/firemud/service/impl/GameSessionGrpcService.java` so the module compiles the gRPC contract directly when it is built.
 
 ## 📚 Related Documentation
 
