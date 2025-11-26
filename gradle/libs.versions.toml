@@ -11,6 +11,7 @@ micrometer = "1.16.0"
 jjwt = "0.13.0"
 aws-sdk = "2.39.3"
 argon2 = "2.12"
+h2 = "2.3.232"
 
 [libraries]
 # Spring Boot Starters
@@ -61,6 +62,7 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version.ref = "argon2" }
 grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.8" }
 aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "aws-sdk" }
+h2 = { module = "com.h2database:h2", version.ref = "h2" }
 
 [libraries.testcontainers-junit-jupiter]
 module = "org.testcontainers:junit-jupiter"

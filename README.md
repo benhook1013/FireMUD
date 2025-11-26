@@ -72,7 +72,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 #### Backend
 
 - **Framework**: Java Spring Framework
-- **Database**: PostgreSQL
+- **Database**: PostgreSQL for production; dev/test profiles default to an in-memory H2 database with Flyway disabled so `bootRun` and CI tests work without Postgres. Set `SPRING_PROFILES_ACTIVE=prod` when you want to run against PostgreSQL.
 - **Caching**: Redis for transient session and gameplay state
 - **Networking**: WebSocket/TCP
 - **Inter-Service Communication**: gRPC

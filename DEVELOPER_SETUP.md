@@ -53,6 +53,10 @@ Gradle project paths map directly to the names defined in `settings.gradle.kts`,
 
 Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will fail because no such project path exists in the Gradle settings.
 
+### Spring Profiles and Databases
+
+Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
+
 ## 🐳 Building Docker Images
 
 Use the aggregated task to build container images for all services:
@@ -162,6 +166,10 @@ dependencies {
 ```
 
 Make sure annotation processing is enabled in your IDE (e.g., IntelliJ IDEA) so Lombok and MapStruct can generate code during compilation.
+
+## Spring Profiles and Databases
+
+Local dev and CI tasks default to the `dev` or `test` Spring profiles. These profiles disable Flyway and point the services at an in-memory H2 datasource so `bootRun` and unit tests start without a running PostgreSQL instance. Use the `prod` profile (for example, `SPRING_PROFILES_ACTIVE=prod ./gradlew :service:bootRun` or via Docker Compose) when you need Flyway migrations against PostgreSQL.
 
 ## Running with Docker Compose
 

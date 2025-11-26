@@ -2,6 +2,7 @@ import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
 import org.gradle.api.plugins.quality.Checkstyle
 import java.io.File
+import org.springframework.boot.gradle.tasks.run.BootRun
 
 buildscript {
     repositories {
@@ -72,6 +73,23 @@ subprojects {
             implementation(libs.findLibrary("flyway-core").get())
             implementation(libs.findLibrary("flyway-database-postgresql").get())
             implementation(libs.findLibrary("postgresql").get())
+            developmentOnly(libs.findLibrary("h2").get())
+            testRuntimeOnly(libs.findLibrary("h2").get())
+        }
+
+        tasks.named<BootRun>("bootRun") {
+            val activeProfile = System.getProperty("spring.profiles.active")
+                ?: System.getenv("SPRING_PROFILES_ACTIVE")
+                ?: "dev"
+
+            systemProperty("spring.profiles.active", activeProfile)
+        }
+
+        tasks.withType<Test>().configureEach {
+            systemProperty(
+                "spring.profiles.active",
+                System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE") ?: "test"
+            )
         }
     }
 
