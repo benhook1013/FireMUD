@@ -1,7 +1,25 @@
+# Test overrides for tcp-proxy-service
 spring:
+  application:
+    name: tcp-proxy-service
   flyway:
     enabled: false
 
+grpc:
+  server:
+    security:
+      enabled: ${GRPC_SERVER_TLS_ENABLED:false}
+      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/dev-cert.pem}
+      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/dev-key.pem}
+      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
+      clientAuth: ${GRPC_SERVER_CLIENT_AUTH:NONE}
+
+GATEWAY_WS_URL: ${GATEWAY_WS_URL:ws://localhost:8080/dev/echo}
+
 firemud:
+  grpc:
+    cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/dev-cert.pem}
+    private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/dev-key.pem}
+    ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
   database:
     enabled: false
