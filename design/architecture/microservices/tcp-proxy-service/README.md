@@ -109,7 +109,15 @@ Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to valida
 5. Connect from a Telnet/MUD client: `telnet localhost 2323`.
 6. Type any text. The proxy logs the input at INFO and echoes the same text back over the Telnet session.
 
-When pointing at a real gateway, override `GATEWAY_WS_URL` with its WebSocket endpoint. Outside of the `dev` profile the default remains `ws://spring-cloud-gateway:8080/ws` so production pods continue to forward to the cluster gateway when the variable is unset.
+For a single-command smoke test, enable log-only forwarding with `TCP_PROXY_LOG_ONLY=true` so no other services are required and send traffic through the built-in echo handler. The `bootRunLogOnly` Gradle tasks and the Docker Compose profile all use the same `TCP_PROXY_LOG_ONLY` flag so the proxy behaves consistently across local tooling.
+
+- Terminal 1 (gateway): `SPRING_PROFILES_ACTIVE=dev ./gradlew :spring-cloud-gateway:bootRun` (exposes `/dev/echo`).
+- Terminal 2 (proxy): `TCP_PROXY_LOG_ONLY=true GATEWAY_WS_URL=ws://localhost:8080/dev/echo ./gradlew :tcp-proxy-service:bootRun`.
+- Terminal 3 (verification): `telnet localhost 2323` and type a few commands. Watch the proxy logs for entries like `Received Telnet input: look` and `Received Telnet input: move north` without any attempts to connect to the gateway, demonstrating the log-only path.
+
+Prefer containers? A minimal Docker Compose profile launches just the gateway and the proxy with the same settings and emits the same log-only Telnet lines. Start it with `docker compose -f docker/docker-compose.tcp-proxy-logonly.yml --profile tcp-proxy-logonly up` and in another terminal run `telnet localhost 2323`. Stop the stack with `docker compose -f docker/docker-compose.tcp-proxy-logonly.yml --profile tcp-proxy-logonly down` when finished.
+
+When pointing at a real gateway, override `GATEWAY_WS_URL` with its WebSocket endpoint. Outside of the `dev` profile the default remains `ws://spring-cloud-gateway:8080/ws/game` so production pods continue to forward to the routed gameplay endpoint on the cluster gateway when the variable is unset.
 
 ## Environment Variables
 
@@ -124,7 +132,7 @@ Additional variables control the proxy runtime behaviour:
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
-| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws` |
+| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws/game` |
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the TLS private key | *(empty)* |
