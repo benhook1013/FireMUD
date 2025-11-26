@@ -1060,16 +1060,6 @@ class TelnetServerHandlerTest {
     throw new IllegalStateException("No reconnect task recorded");
   }
 
-  private static int maxBufferDepth() {
-    try {
-      Field field = TelnetServerHandler.class.getDeclaredField("MAX_BUFFER_DEPTH");
-      field.setAccessible(true);
-      return field.getInt(null);
-    } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException(e);
-    }
-  }
-
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {
     private StubWebSocket current;
     private WebSocket.Listener listener;
