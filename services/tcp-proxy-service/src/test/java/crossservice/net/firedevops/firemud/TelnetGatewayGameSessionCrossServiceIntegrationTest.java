@@ -47,11 +47,13 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /** Cross-service integration test verifying the full Telnet → Gateway → Game Session path. */
+@Testcontainers
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class)
 class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
+  private static final GenericContainer<?> REDIS = startRedis();
   private static final GameSessionStubHolder GAME_SESSION_STUB = startGameSessionStub();
   private static final GatewayHolder GATEWAY = startGateway(GAME_SESSION_STUB.port);
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
@@ -75,6 +77,9 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     }
     if (GAME_SESSION_STUB != null) {
       GAME_SESSION_STUB.close();
+    }
+    if (REDIS != null) {
+      REDIS.stop();
     }
   }
 
@@ -133,6 +138,8 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     props.put("spring.profiles.active", "dev");
     props.put("grpc.server.security.enabled", false);
     props.put("grpc.server.port", 0);
+    props.put("spring.redis.host", REDIS.getHost());
+    props.put("spring.redis.port", REDIS.getFirstMappedPort());
     props.put("spring.cloud.gateway.routes[0].uri", "ws://localhost:" + gameSessionPort);
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(SpringCloudGatewayApplication.class)
@@ -179,6 +186,13 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     void close() {
       context.close();
     }
+  }
+
+  private static GenericContainer<?> startRedis() {
+    GenericContainer<?> container =
+        new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+    container.start();
+    return container;
   }
 
   @SpringBootApplication
