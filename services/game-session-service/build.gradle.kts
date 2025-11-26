@@ -1,7 +1,14 @@
 
 import org.springframework.boot.gradle.tasks.run.BootRun
 
+val gameSessionProto = rootDir.resolve("protos/game-session/v1/game_session_service.proto")
+
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
+
+tasks.named("generateProto") {
+    // Make sure the Game Session proto definition is part of the stub generation inputs.
+    inputs.file(gameSessionProto)
+}
 
 dependencies {
     annotationProcessor(libs.mapstruct.processor)
@@ -47,5 +54,4 @@ tasks.register<BootRun>("bootRunLogOnly") {
     environment("GAME_SESSION_LOG_ONLY", "true")
     systemProperty("game-session.log-only", "true")
 }
-
 

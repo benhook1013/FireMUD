@@ -73,6 +73,16 @@ Despite their differences, both protocols are normalized into the same internal 
   - Metrics are exported at `/actuator/prometheus` and tracing data is sent to
     the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
+### Production WebSocket Bridge
+
+In production the bridge speaks directly to Spring Cloud Gateway through the WebSocket route that also serves modern clients. The TCP Proxy Service uses the
+`GATEWAY_WS_URL` environment variable (default `ws://spring-cloud-gateway:8080/ws/game`) so the proxy always connects to the `/ws/game/**` predicate shown in the
+[Gateway Architecture](./system-architecture-gateway.md) document (`Path=/api/session/**,/ws/game/**`). This keeps the Telnet flow and the web client flow aligned:
+they both traverse the same filters, metrics, and downstream `game-session-service` backend.
+
+Override `GATEWAY_WS_URL` only when the gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
+whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point.
+
 ### 🌟 TCP Flow Benefits
 
 - Maintains full compatibility with legacy tools and the wider MUD ecosystem.

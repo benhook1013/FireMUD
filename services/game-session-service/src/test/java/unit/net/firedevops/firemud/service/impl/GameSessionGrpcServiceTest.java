@@ -68,6 +68,8 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals("pong", ref.get().getMessage());
+    assertEquals("OK", ref.get().getError().getCode());
+    assertEquals("pong", ref.get().getError().getMessage());
   }
 
   @Test
