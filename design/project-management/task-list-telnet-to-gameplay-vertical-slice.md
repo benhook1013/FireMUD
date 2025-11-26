@@ -51,9 +51,9 @@ Link to the [Minimal Text Command Protocol](../architecture/microservices/game-s
 
 ### 6.3 Interpreter and dispatch into existing tick/command flow
 
-- [ ] Add a minimal `TextCommandInterpreter` (or equivalent service) in `services/game-session-service` that takes a `TextCommand` and enqueues the appropriate internal command into the existing tick/command queue (reusing the same enqueue logic used for current WebSocket/game commands).
-- [ ] Wire the WebSocket/Game Session entry point to call `TextCommandParser` + `TextCommandInterpreter` for each incoming text line so that text commands follow the same tick-based processing path as any other gameplay command.
-- [ ] Add tests (unit or small Spring test) that simulate a WebSocket message containing a text line and assert that the correct internal command is enqueued for a given session/tenant.
+- [x] Add a minimal `TextCommandInterpreter` (or equivalent service) in `services/game-session-service` that takes a `TextCommand` and enqueues the appropriate internal command into the existing tick/command queue (reusing the same enqueue logic used for current WebSocket/game commands).
+- [x] Wire the WebSocket/Game Session entry point to call `TextCommandParser` + `TextCommandInterpreter` for each incoming text line so that text commands follow the same tick-based processing path as any other gameplay command.
+- [x] Add tests (unit or small Spring test) that simulate a WebSocket message containing a text line and assert that the correct internal command is enqueued for a given session/tenant.
 
 ### 6.4 Minimal LOOK gameplay command
 

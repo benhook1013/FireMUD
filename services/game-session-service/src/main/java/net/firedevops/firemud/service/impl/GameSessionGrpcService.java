@@ -27,11 +27,11 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
-import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.service.TickService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
@@ -43,7 +43,7 @@ public final class GameSessionGrpcService
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
-  private final CommandService commandService;
+  private final TextCommandInterpreter textCommandInterpreter;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -61,14 +61,14 @@ public final class GameSessionGrpcService
       PingService pingService,
       GameInstanceService gameInstanceService,
       FeatureFlagService featureFlagService,
-      CommandService commandService,
+      TextCommandInterpreter textCommandInterpreter,
       TickService tickService,
       MeterRegistry meterRegistry,
       IpConnectionLimiter ipConnectionLimiter) {
     this.pingService = pingService;
     this.gameInstanceService = gameInstanceService;
     this.featureFlagService = featureFlagService;
-    this.commandService = commandService;
+    this.textCommandInterpreter = textCommandInterpreter;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
     this.ipConnectionLimiter = ipConnectionLimiter;
@@ -180,7 +180,7 @@ public final class GameSessionGrpcService
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
     var result =
-        commandService.enqueue(
+        textCommandInterpreter.interpret(
             request.getSessionId(), request.getCommand(), request.getRequiresSoloTick());
     EnqueueCommandResponse.Builder builder =
         EnqueueCommandResponse.newBuilder().setAccepted(result.accepted());

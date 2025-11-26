@@ -11,12 +11,12 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
-import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.TickService;
+import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -27,17 +27,17 @@ class GameSessionGrpcServicePingIntegrationTest {
     Mockito.when(pingService.ping()).thenReturn("pong");
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    CommandService commandService = Mockito.mock(CommandService.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
 
     GameSessionGrpcService grpcService =
         new GameSessionGrpcService(
             pingService,
             gameInstanceService,
             featureFlagService,
-            commandService,
+            textCommandInterpreter,
             tickService,
             meterRegistry,
             ipLimiter);
