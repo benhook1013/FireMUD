@@ -29,7 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Iterator;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledFuture;
+import io.netty.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -97,7 +97,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            Mockito.mock(TcpProxyEventService.class));
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger());
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);

@@ -1,36 +1,22 @@
 package net.firedevops.firemud.websocket;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.reactive.HandlerMapping;
-import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
-import org.springframework.web.reactive.socket.WebSocketHandler;
-import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
+import org.springframework.web.socket.config.annotation.EnableWebSocket;
+import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
-/** Registers the Game Session WebSocket handler and maps it under `/ws/game`. */
+/** Registers the WebSocket handler with the standard Servlet WebSocket stack. */
 @Configuration
-public class GameSessionWebSocketConfig {
+@EnableWebSocket
+public class GameSessionWebSocketConfig implements WebSocketConfigurer {
   private final GameSessionWebSocketHandler handler;
 
   public GameSessionWebSocketConfig(GameSessionWebSocketHandler handler) {
     this.handler = handler;
   }
 
-  @Bean
-  public HandlerMapping gameSessionWebSocketMapping() {
-    SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
-    mapping.setOrder(-1);
-    Map<String, WebSocketHandler> urlMap = new LinkedHashMap<>();
-    urlMap.put("/ws/game", handler);
-    urlMap.put("/ws/game/**", handler);
-    mapping.setUrlMap(urlMap);
-    return mapping;
-  }
-
-  @Bean
-  public WebSocketHandlerAdapter webSocketHandlerAdapter() {
-    return new WebSocketHandlerAdapter();
+  @Override
+  public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+    registry.addHandler(handler, "/ws/game", "/ws/game/**").setAllowedOrigins("*");
   }
 }
