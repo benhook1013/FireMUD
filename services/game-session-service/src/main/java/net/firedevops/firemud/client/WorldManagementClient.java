@@ -9,31 +9,46 @@ import java.io.File;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.config.GrpcClientProperties;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the World Management Service. */
 @Component
+@Profile("!dev")
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Configuration and channel references remain internal")
 public final class WorldManagementClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
+  private final LogOnlyProperties logOnlyProperties;
+  private static final org.slf4j.Logger logger = LoggingUtil.getLogger(WorldManagementClient.class);
   private ManagedChannel channel;
   private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub;
 
   public WorldManagementClient(
-      ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
+      ServiceEndpointsProperties endpoints,
+      GrpcClientProperties tlsProps,
+      LogOnlyProperties logOnlyProperties) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;
+    this.logOnlyProperties = logOnlyProperties;
   }
 
   @PostConstruct
   void init() throws SSLException {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info("Log-only mode enabled; skipping WorldManagementClient channel initialization");
+      return;
+    }
     String target = endpoints.getWorldManagementService();
     if (target == null || target.isEmpty()) {
       target = "world-management-service:6565";

@@ -5,11 +5,13 @@ import java.time.Duration;
 import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.service.SessionRateLimiter;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 /** Redis-backed implementation of {@link SessionRateLimiter}. */
 @Service
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 public class SessionRateLimiterImpl implements SessionRateLimiter {
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
