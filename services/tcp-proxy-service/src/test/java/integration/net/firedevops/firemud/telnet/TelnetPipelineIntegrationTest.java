@@ -12,6 +12,7 @@ import io.netty.handler.codec.string.StringDecoder;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import net.firedevops.firemud.service.TcpProxyEventService;
@@ -31,7 +32,8 @@ class TelnetPipelineIntegrationTest {
             registry.counter("discarded"),
             false,
             registry,
-            Mockito.mock(TcpProxyEventService.class));
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger());
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
@@ -71,7 +73,8 @@ class TelnetPipelineIntegrationTest {
             registry.counter("discarded"),
             false,
             registry,
-            Mockito.mock(TcpProxyEventService.class));
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger());
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);

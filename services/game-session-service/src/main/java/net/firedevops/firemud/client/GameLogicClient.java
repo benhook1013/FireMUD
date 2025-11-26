@@ -12,33 +12,47 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.config.GrpcClientProperties;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the Game Logic Service using mTLS. */
 @Component
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Configuration and channel references remain internal")
 public final class GameLogicClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
+  private final LogOnlyProperties logOnlyProperties;
+  private static final org.slf4j.Logger logger = LoggingUtil.getLogger(GameLogicClient.class);
   private ManagedChannel channel;
   private GameLogicServiceGrpc.GameLogicServiceBlockingStub stub;
   private TlsCertificateWatcher watcher;
 
-  public GameLogicClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
+  public GameLogicClient(
+      ServiceEndpointsProperties endpoints,
+      GrpcClientProperties tlsProps,
+      LogOnlyProperties logOnlyProperties) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;
+    this.logOnlyProperties = logOnlyProperties;
   }
 
   @PostConstruct
   void init() throws SSLException, IOException {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info("Log-only mode enabled; skipping GameLogicClient channel initialization");
+      return;
+    }
     reloadChannel();
     watcher =
         TlsCertificateWatcher.createAndStart(

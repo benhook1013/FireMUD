@@ -19,6 +19,7 @@ import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are not exposed externally")
 @Service
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 public final class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
 

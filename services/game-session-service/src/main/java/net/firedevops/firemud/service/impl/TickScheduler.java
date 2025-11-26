@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.TickService;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repository and service are not exposed")
 @Component
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @RequiredArgsConstructor
 public final class TickScheduler {
   private final GameInstanceRepository repository;

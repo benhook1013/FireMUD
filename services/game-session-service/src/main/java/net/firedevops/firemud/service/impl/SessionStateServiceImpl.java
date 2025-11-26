@@ -7,11 +7,13 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.service.SessionStateService;
 import org.slf4j.Logger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 /** Default Redis-backed implementation of {@link SessionStateService}. */
 @Service
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @RequiredArgsConstructor
 public final class SessionStateServiceImpl implements SessionStateService {
   private static final Logger logger = LoggingUtil.getLogger(SessionStateServiceImpl.class);

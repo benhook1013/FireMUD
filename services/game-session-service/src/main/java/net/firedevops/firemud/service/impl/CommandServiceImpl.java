@@ -12,10 +12,12 @@ import net.firedevops.firemud.service.SessionRateLimiter;
 import net.firedevops.firemud.service.TickService;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /** Default implementation of {@link CommandService}. */
 @Service
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 public class CommandServiceImpl implements CommandService {
   private static final Logger logger = LoggingUtil.getLogger(CommandServiceImpl.class);
 

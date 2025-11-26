@@ -12,11 +12,13 @@ import net.firedevops.firemud.mapper.FeatureFlagMapper;
 import net.firedevops.firemud.repository.FeatureFlagRepository;
 import net.firedevops.firemud.service.FeatureFlagService;
 import org.slf4j.Logger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 public class FeatureFlagServiceImpl implements FeatureFlagService {
   private static final Logger logger = LoggingUtil.getLogger(FeatureFlagServiceImpl.class);
 

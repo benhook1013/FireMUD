@@ -1,7 +1,10 @@
 package net.firedevops.firemud.service;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.util.List;
+import java.time.Duration;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
@@ -18,10 +21,46 @@ public class TcpProxyEventService {
 
   private final TcpProxyEventClient client;
   private final MeterRegistry meterRegistry;
+  private final Timer connectionDurationTimer;
+  private final Counter connectCounter;
+  private final Counter disconnectCounter;
 
   public TcpProxyEventService(TcpProxyEventClient client, MeterRegistry meterRegistry) {
     this.client = client;
     this.meterRegistry = meterRegistry;
+    this.connectionDurationTimer =
+        Timer.builder("tcpproxy.connection.duration")
+            .publishPercentileHistogram()
+            .register(meterRegistry);
+    this.connectCounter = meterRegistry.counter("tcpproxy.connection.events", "type", "connect");
+    this.disconnectCounter =
+        meterRegistry.counter("tcpproxy.connection.events", "type", "disconnect");
+  }
+
+  public void recordConnectEvent(String sessionId, String tenantId, String clientIp) {
+    connectCounter.increment();
+    logger
+        .atInfo()
+        .addKeyValue("sessionId", sessionId)
+        .addKeyValue("tenantId", tenantId)
+        .addKeyValue("clientIp", clientIp)
+        .log("Telnet connect event");
+  }
+
+  public void recordDisconnectEvent(
+      String sessionId, String tenantId, String clientIp, Duration connectionDuration) {
+    disconnectCounter.increment();
+    if (connectionDuration != null) {
+      connectionDurationTimer.record(connectionDuration);
+    }
+    logger
+        .atInfo()
+        .addKeyValue("sessionId", sessionId)
+        .addKeyValue("tenantId", tenantId)
+        .addKeyValue("clientIp", clientIp)
+        .addKeyValue(
+            "durationMs", connectionDuration != null ? connectionDuration.toMillis() : null)
+        .log("Telnet disconnect event");
   }
 
   public NotifyDisconnectResponse notifyDisconnect(String sessionId, String tenantId) {

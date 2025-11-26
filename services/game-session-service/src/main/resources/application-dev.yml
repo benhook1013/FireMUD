@@ -13,3 +13,21 @@ spring:
   sql:
     init:
       mode: never
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+firemud:
+  database:
+    enabled: false
+
+# Disable external stateful dependencies in local/testing profile.
+game-session:
+  log-only: true
+
+# Keep this "env-style" key around as a placeholder for now.
+GAME_SESSION_LOG_ONLY: true

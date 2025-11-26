@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import net.firedevops.firemud.service.TcpProxyEventService;
 
 /** Simple Netty-based Telnet server that forwards input to the gateway via WebSocket. */
@@ -39,8 +40,11 @@ public final class TelnetServer {
   private final boolean advertiseMcp;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
       new java.util.concurrent.atomic.AtomicInteger();
+  private final java.util.concurrent.atomic.AtomicInteger bufferDepth =
+      new java.util.concurrent.atomic.AtomicInteger();
   private final Counter connectionCounter;
   private final Counter discardedCommandCounter;
+  private final Counter tlsMisconfigCounter;
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
 
@@ -59,8 +63,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
       MeterRegistry meterRegistry,
-      TcpProxyEventService eventService)
-      throws SSLException {
+      TcpProxyEventService eventService) {
     this.port = port;
     this.gatewayWsUrl = gatewayWsUrl;
     this.tlsEnabled = tlsEnabled;
@@ -71,14 +74,46 @@ public final class TelnetServer {
     this.meterRegistry = meterRegistry;
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
+    this.tlsMisconfigCounter = meterRegistry.counter("tcpproxy.tls.misconfig");
     this.eventService = eventService;
     Gauge.builder(
             "tcpproxy.connections.active",
             activeConnections,
             java.util.concurrent.atomic.AtomicInteger::get)
         .register(meterRegistry);
+    Gauge.builder("tcpproxy.buffer.depth", bufferDepth, java.util.concurrent.atomic.AtomicInteger::get)
+        .register(meterRegistry);
+    meterRegistry.counter("tcpproxy.websocket.reconnects").increment(0.0);
     if (tlsEnabled) {
-      sslContext = SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
+      validateTlsConfiguration();
+      try {
+        sslContext = SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
+      } catch (SSLException e) {
+        tlsMisconfigCounter.increment();
+        String message = "TCP proxy TLS configuration failed to load";
+        logger.error(message, e);
+        throw new IllegalStateException(message, e);
+      }
+    }
+  }
+
+  private void validateTlsConfiguration() {
+    if (!StringUtils.hasText(certPath) || !StringUtils.hasText(keyPath)) {
+      tlsMisconfigCounter.increment();
+      String message = "TCP proxy TLS is enabled but TCP_PROXY_TLS_CERT and TCP_PROXY_TLS_KEY must be set";
+      logger.error(message);
+      throw new IllegalStateException(message);
+    }
+
+    File certFile = new File(certPath);
+    File keyFile = new File(keyPath);
+    if (!certFile.isFile() || !keyFile.isFile() || !certFile.canRead() || !keyFile.canRead()) {
+      tlsMisconfigCounter.increment();
+      String message =
+          "TCP proxy TLS configuration invalid: certificate or key file does not exist or is unreadable";
+      logger.error(
+          "{} (certPath={}, keyPath={})", message, certFile.getAbsolutePath(), keyFile.getAbsolutePath());
+      throw new IllegalStateException(message);
     }
   }
 
@@ -112,7 +147,8 @@ public final class TelnetServer {
                               discardedCommandCounter,
                               advertiseMcp,
                               meterRegistry,
-                              eventService));
+                              eventService,
+                              bufferDepth));
                 }
               });
       serverChannel = b.bind(port).sync().channel();

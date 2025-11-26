@@ -8,10 +8,12 @@ import net.firedevops.firemud.mapper.GameManifestMapper;
 import net.firedevops.firemud.repository.GameManifestRepository;
 import net.firedevops.firemud.service.GameManifestService;
 import org.slf4j.Logger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 public class GameManifestServiceImpl implements GameManifestService {
   private static final Logger logger = LoggingUtil.getLogger(GameManifestServiceImpl.class);
   private final GameManifestRepository repository;
