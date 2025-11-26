@@ -16,6 +16,7 @@ import io.netty.handler.codec.string.StringDecoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import java.io.File;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
@@ -47,6 +48,7 @@ public final class TelnetServer {
   private final Counter tlsMisconfigCounter;
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
+  private volatile int boundPort;
 
   private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
   private final EventLoopGroup workerGroup = new NioEventLoopGroup();
@@ -65,6 +67,7 @@ public final class TelnetServer {
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService) {
     this.port = port;
+    this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
     this.tlsEnabled = tlsEnabled;
     this.logOnly = logOnly;
@@ -152,7 +155,8 @@ public final class TelnetServer {
                 }
               });
       serverChannel = b.bind(port).sync().channel();
-      logger.info("Telnet server started on port {}", port);
+      boundPort = ((InetSocketAddress) serverChannel.localAddress()).getPort();
+      logger.info("Telnet server started on port {}", boundPort);
     } catch (InterruptedException e) {
       running.set(false);
       Thread.currentThread().interrupt();
@@ -177,7 +181,7 @@ public final class TelnetServer {
 
   /** Expose the configured port for testing purposes. */
   public int getPort() {
-    return port;
+    return boundPort;
   }
 
   /** Current active connection count for metrics testing. */
