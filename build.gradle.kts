@@ -73,7 +73,7 @@ subprojects {
             implementation(libs.findLibrary("flyway-core").get())
             implementation(libs.findLibrary("flyway-database-postgresql").get())
             implementation(libs.findLibrary("postgresql").get())
-            developmentOnly(libs.findLibrary("h2").get())
+            add("developmentOnly", libs.findLibrary("h2").get())
             testRuntimeOnly(libs.findLibrary("h2").get())
         }
 
