@@ -18,6 +18,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
 import io.netty.util.concurrent.DefaultEventExecutor;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
@@ -184,6 +185,66 @@ class TelnetServerHandlerTest {
 
     verify(ctx).close();
     assertEquals(512, handler.getBufferedSize());
+    assertEquals(1.0, registry.counter("discarded").count());
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void telnetConnectionClosesWhenBufferDepthLimitReached() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (url, ip, session, tenant, listener) -> new CompletableFuture<>());
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+
+    int maxDepth = maxBufferDepth();
+    for (int i = 0; i < maxDepth; i++) {
+      handler.channelRead0(ctx, "cmd" + i);
+    }
+
+    assertEquals(maxDepth, handler.getBufferedSize());
+    handler.channelRead0(ctx, "overflow");
+
+    verify(ctx).close();
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void discardedCounterIncrementsWhenBufferDepthLimitReached() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (url, ip, session, tenant, listener) -> new CompletableFuture<>());
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+
+    int maxDepth = maxBufferDepth();
+    for (int i = 0; i < maxDepth; i++) {
+      handler.channelRead0(ctx, "cmd" + i);
+    }
+
+    assertEquals(0.0, registry.counter("discarded").count());
+    handler.channelRead0(ctx, "overflow");
+
     assertEquals(1.0, registry.counter("discarded").count());
     executor.shutdownGracefully();
   }
@@ -788,6 +849,16 @@ class TelnetServerHandlerTest {
             eq("sess-99"), eq("tenant-42"), eq("10.0.0.5"), durationCaptor.capture());
     assertTrue(durationCaptor.getValue().toMillis() >= 0);
     executor.shutdownGracefully();
+  }
+
+  private static int maxBufferDepth() {
+    try {
+      Field field = TelnetServerHandler.class.getDeclaredField("MAX_BUFFER_DEPTH");
+      field.setAccessible(true);
+      return field.getInt(null);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {
