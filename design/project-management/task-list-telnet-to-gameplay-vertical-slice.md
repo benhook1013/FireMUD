@@ -4,21 +4,21 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 1. Dev Echo Path and Local Telnet Loop
 
-- [ ] Add a short "Dev Echo Path" section to `services/tcp-proxy-service/README.md` documenting how to run the proxy with the `dev` profile, which WebSocket URL is used (`/dev/echo`), and how to connect via Telnet locally.
-- [ ] Extend or add a Spring Boot integration test in `services/tcp-proxy-service` that runs with the `dev` profile and verifies a Telnet client can send a line and receive the same line back via the `DevEchoWebSocketHandler` (no gateway or game-session involvement).
-- [ ] Add a small helper script or documented curl/telnet commands alongside `smoke-test.sh` to manually exercise the Telnet → WebSocket dev echo flow on a developer machine.
+- [x] Add a short "Dev Echo Path" section to `services/tcp-proxy-service/README.md` documenting how to run the proxy with the `dev` profile, which WebSocket URL is used (`/dev/echo`), and how to connect via Telnet locally.
+- [x] Extend or add a Spring Boot integration test in `services/tcp-proxy-service` that runs with the `dev` profile and verifies a Telnet client can send a line and receive the same line back via the `DevEchoWebSocketHandler` (no gateway or game-session involvement).
+- [x] Add a small helper script or documented curl/telnet commands alongside `smoke-test.sh` to manually exercise the Telnet → WebSocket dev echo flow on a developer machine.
 
 ## 2. Telnet Session Envelope and Event Metrics
 
-- [ ] Document the Telnet session envelope format (`SESSION <sessionId> <tenantId>` and `SESSION <sessionId>:<tenantId>`) in the TCP Proxy design or README so MUD tools and scripts know how to bind a Telnet connection to a session.
-- [ ] Add focused unit tests for `TelnetSessionContext` covering valid envelopes (space-separated, colon-separated) and invalid/malformed cases, asserting sessionId/tenantId handling and log behaviour.
-- [ ] Add a Spring Boot test for `TelnetServerHandler` that opens a Netty channel, sends a valid `SESSION` envelope followed by a command, and asserts that `TcpProxyEventService.recordConnectEvent` is invoked with the expected sessionId, tenantId, and client IP.
+- [x] Document the Telnet session envelope format (`SESSION <sessionId> <tenantId>` and `SESSION <sessionId>:<tenantId>`) in the TCP Proxy design or README so MUD tools and scripts know how to bind a Telnet connection to a session.
+- [x] Add focused unit tests for `TelnetSessionContext` covering valid envelopes (space-separated, colon-separated) and invalid/malformed cases, asserting sessionId/tenantId handling and log behaviour.
+- [x] Add a Spring Boot test for `TelnetServerHandler` that opens a Netty channel, sends a valid `SESSION` envelope followed by a command, and asserts that `TcpProxyEventService.recordConnectEvent` is invoked with the expected sessionId, tenantId, and client IP.
 
 ## 3. Reconnection and Buffered Input Behaviour
 
-- [ ] Add unit or component tests for `TelnetServerHandler` that simulate a dropped WebSocket connection (e.g., triggering `onClose`/`onError`) and verify that reconnect backoff, reconnect counter metrics, and buffer preservation behave as designed.
-- [ ] Add a test that populates the buffer with several commands, forces a reconnect, and verifies `pushBufferedInputAsync` calls `TcpProxyEventService.pushBufferedInput` with the correct sessionId, tenantId, and ordered command list.
-- [ ] Add tests around the buffer depth limit (`MAX_BUFFER_DEPTH`) to ensure the handler closes the Telnet connection and increments the discarded command counter when the buffer is exhausted.
+- [x] Add unit or component tests for `TelnetServerHandler` that simulate a dropped WebSocket connection (e.g., triggering `onClose`/`onError`) and verify that reconnect backoff, reconnect counter metrics, and buffer preservation behave as designed.
+- [x] Add a test that populates the buffer with several commands, forces a reconnect, and verifies `pushBufferedInputAsync` calls `TcpProxyEventService.pushBufferedInput` with the correct sessionId, tenantId, and ordered command list.
+- [x] Add tests around the buffer depth limit (`MAX_BUFFER_DEPTH`) to ensure the handler closes the Telnet connection and increments the discarded command counter when the buffer is exhausted.
 
 ## 4. Game Session gRPC TcpProxyService Implementation
 
@@ -39,6 +39,15 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 - [ ] Implement a minimal command interpreter in `game-session-service` that parses these text commands from the existing WebSocket/Game Session entry point and dispatches them into the existing tick/command handling flow.
 - [ ] Implement at least one simple gameplay command end-to-end (for example `LOOK` returning a static or test-seeded room description) that works both via WebSocket (through the Gateway) and via Telnet (through the TCP Proxy).
 - [ ] Add integration tests that exercise the same command protocol over a direct WebSocket connection through Spring Cloud Gateway (no Telnet) and verify behaviour matches the Telnet path for the implemented commands.
+
+## 7. Additional Infrastructure Tasks
+
+- [ ] Document the production WebSocket bridge between the TCP proxy and Spring Cloud Gateway (expected `GATEWAY_WS_URL` and Gateway route path such as `/ws/game/**`) so the Telnet and web client paths are explicitly aligned and easy to configure.
+- [ ] Ensure the `game-session-service` Gradle configuration generates and compiles gRPC stubs from `protos/game-session/v1/game_session_service.proto` into the module, and add a short note in the Game Session design docs describing where the generated stubs are used.
+- [ ] Implement a minimal `GameSessionService` gRPC server in `game-session-service` based on the `game_session.v1` proto (at least the `Ping` RPC), reusing existing service-layer logic where possible.
+- [ ] Add tests that exercise the `GameSessionService` gRPC `Ping` endpoint and verify it returns a successful `ErrorDetail` code and message.
+- [ ] Add a smoke test that starts `game-session-service` in log-only mode (matching the `bootRunLogOnly` configuration) and verifies a simple request flow (for example starting a session or enqueuing a command) is accepted and logged without hitting external dependencies.
+- [ ] Update `services/game-session-service/README.md` or the Game Session design docs with a brief "Log-only mode" section that links to the smoke test, explains when to use it, and clarifies that it avoids database and external service calls.
 
 ---
 
