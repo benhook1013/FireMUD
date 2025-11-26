@@ -12,6 +12,7 @@ import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.SessionStateService;
@@ -36,7 +37,12 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            commandService, repository, sessionStateService, meterRegistry, pingService);
+            commandService,
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new LogOnlyProperties(false));
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -71,7 +77,12 @@ class TcpProxyServiceImplTest {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            commandService, repository, sessionStateService, meterRegistry, pingService);
+            commandService,
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new LogOnlyProperties(false));
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -118,7 +129,12 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            commandService, repository, sessionStateService, meterRegistry, pingService);
+            commandService,
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new LogOnlyProperties(false));
 
     AtomicReference<PushBufferedInputResponse> ref = new AtomicReference<>();
     service.pushBufferedInput(
@@ -164,7 +180,12 @@ class TcpProxyServiceImplTest {
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
-            commandService, repository, sessionStateService, meterRegistry, pingService);
+            commandService,
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new LogOnlyProperties(false));
 
     AtomicReference<PushBufferedInputResponse> ref = new AtomicReference<>();
     service.pushBufferedInput(
