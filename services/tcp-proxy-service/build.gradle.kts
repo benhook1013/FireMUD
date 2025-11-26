@@ -24,6 +24,8 @@ dependencies {
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.micrometer.registry.prometheus)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
+    testImplementation(libs.spring.boot.starter.webflux)
+    testImplementation(project(":spring-cloud-gateway"))
 }
 
 tasks.named<BootRun>("bootRun") {
@@ -47,4 +49,3 @@ tasks.register<BootRun>("bootRunLogOnly") {
     environment("TCP_PROXY_LOG_ONLY", "true")
     environment("GATEWAY_WS_URL", "ws://localhost:8080/dev/echo")
 }
-

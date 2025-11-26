@@ -22,16 +22,16 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 4. Game Session gRPC TcpProxyService Implementation
 
-- [ ] Scaffold a `TcpProxyServiceImpl` gRPC server in `services/game-session-service` implementing the `TcpProxyService` proto (`NotifyDisconnect`, `PushBufferedInput`) and register it with the existing gRPC server configuration.
-- [ ] Implement `NotifyDisconnect` in `TcpProxyServiceImpl` to validate inputs and mark the appropriate session as disconnected/suspended in Redis using the existing session repository or service layer, returning an `ErrorDetail` code of `OK` on success.
-- [ ] Implement `PushBufferedInput` in `TcpProxyServiceImpl` to validate inputs and enqueue the provided commands into the per-session command queue in Redis, reusing the existing command enqueue logic used for WebSocket-driven input.
-- [ ] Add unit tests for `TcpProxyServiceImpl` covering happy paths and validation failures for both `NotifyDisconnect` and `PushBufferedInput`, ensuring `ErrorDetail` codes and `grpc.app_error` metrics are set correctly.
+- [x] Scaffold a `TcpProxyServiceImpl` gRPC server in `services/game-session-service` implementing the `TcpProxyService` proto (`NotifyDisconnect`, `PushBufferedInput`) and register it with the existing gRPC server configuration.
+- [x] Implement `NotifyDisconnect` in `TcpProxyServiceImpl` to validate inputs and mark the appropriate session as disconnected/suspended in Redis using the existing session repository or service layer, returning an `ErrorDetail` code of `OK` on success.
+- [x] Implement `PushBufferedInput` in `TcpProxyServiceImpl` to validate inputs and enqueue the provided commands into the per-session command queue in Redis, reusing the existing command enqueue logic used for WebSocket-driven input.
+- [x] Add unit tests for `TcpProxyServiceImpl` covering happy paths and validation failures for both `NotifyDisconnect` and `PushBufferedInput`, ensuring `ErrorDetail` codes and `grpc.app_error` metrics are set correctly.
 
 ## 5. Telnet → Gateway → Game Session Cross-Service Flow
 
-- [ ] Add a cross-service integration test (in `services/tcp-proxy-service` or a shared test module) that starts tcp-proxy-service, Spring Cloud Gateway, and game-session-service together using Testcontainers or Spring Boot test harnesses.
-- [ ] In that test, open a Telnet socket, send a valid `SESSION` envelope and a simple command, and assert that the command arrives at the Game Session command queue (or an observable stub) and that an expected response can be read back over the Telnet connection.
-- [ ] Ensure this cross-service test is wired into Gradle (e.g., via a dedicated `crossServiceTest` or naming convention) and is documented so it can be run locally and in CI.
+- [x] Add a cross-service integration test (in `services/tcp-proxy-service` or a shared test module) that starts tcp-proxy-service, Spring Cloud Gateway, and game-session-service together using Testcontainers or Spring Boot test harnesses.
+- [x] In that test, open a Telnet socket, send a valid `SESSION` envelope and a simple command, and assert that the command arrives at the Game Session command queue (or an observable stub) and that an expected response can be read back over the Telnet connection.
+- [x] Ensure this cross-service test is wired into Gradle (e.g., via a dedicated `crossServiceTest` or naming convention) and is documented so it can be run locally and in CI (run via `./gradlew :tcp-proxy-service:test --tests net.firedevops.firemud.TelnetGatewayGameSessionCrossServiceIntegrationTest`).
 
 ## 6. Minimal Text Command Protocol and Gameplay Slice
 
