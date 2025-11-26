@@ -29,9 +29,9 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 5. Telnet → Gateway → Game Session Cross-Service Flow
 
-- [ ] Add a cross-service integration test (in `services/tcp-proxy-service` or a shared test module) that starts tcp-proxy-service, Spring Cloud Gateway, and game-session-service together using Testcontainers or Spring Boot test harnesses.
-- [ ] In that test, open a Telnet socket, send a valid `SESSION` envelope and a simple command, and assert that the command arrives at the Game Session command queue (or an observable stub) and that an expected response can be read back over the Telnet connection.
-- [ ] Ensure this cross-service test is wired into Gradle (e.g., via a dedicated `crossServiceTest` or naming convention) and is documented so it can be run locally and in CI.
+- [x] Add a cross-service integration test (in `services/tcp-proxy-service` or a shared test module) that starts tcp-proxy-service, Spring Cloud Gateway, and game-session-service together using Testcontainers or Spring Boot test harnesses.
+- [x] In that test, open a Telnet socket, send a valid `SESSION` envelope and a simple command, and assert that the command arrives at the Game Session command queue (or an observable stub) and that an expected response can be read back over the Telnet connection.
+- [x] Ensure this cross-service test is wired into Gradle (e.g., via a dedicated `crossServiceTest` or naming convention) and is documented so it can be run locally and in CI (run via `./gradlew :tcp-proxy-service:test --tests net.firedevops.firemud.TelnetGatewayGameSessionCrossServiceIntegrationTest`).
 
 ## 6. Minimal Text Command Protocol and Gameplay Slice
 
