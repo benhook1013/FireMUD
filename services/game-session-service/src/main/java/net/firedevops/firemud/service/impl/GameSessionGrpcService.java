@@ -83,7 +83,11 @@ public final class GameSessionGrpcService
   @Timed(value = "gamesessionGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     String msg = pingService.ping();
-    PingResponse response = PingResponse.newBuilder().setMessage(msg).build();
+    PingResponse response =
+        PingResponse.newBuilder()
+            .setMessage(msg)
+            .setError(ErrorDetail.newBuilder().setCode("OK").setMessage(msg))
+            .build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }

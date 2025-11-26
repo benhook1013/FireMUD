@@ -98,6 +98,11 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
+## Log-only Mode
+
+- Use `./gradlew :game-session-service:bootRunLogOnly` (or set `GAME_SESSION_LOG_ONLY=true`) when you need to exercise the Game Session Service without PostgreSQL, Redis, or downstream gRPC dependencies. The log-only beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
+- The `LogOnlyGameSessionSmokeTest` in `services/game-session-service/src/test/java/integration/net/firedevops/firemud/LogOnlyGameSessionSmokeTest.java` starts the dev profile in log-only mode, posts to `POST /sessions`, and asserts the request is accepted and logged, proving the fast-path smoke test that only touches in-memory components.
+
 ## Environment Variables
 
 This service follows the configuration scheme from
@@ -124,6 +129,7 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 Service definitions reside in
 [../../../../protos/game-session/v1](../../../../protos/game-session/v1). Run
 `./gradlew generateProto` after modifying these files to regenerate stubs.
+The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `build/generated/sources/proto/main/{grpc,java}` and are wired into `services/game-session-service/src/main/java/net/firedevops/firemud/service/impl/GameSessionGrpcService.java` so the module compiles the gRPC contract directly when it is built.
 
 ## 📚 Related Documentation
 
@@ -137,6 +143,46 @@ Service definitions reside in
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
 - [Testing Strategy](../../system-architecture-testing.md)
 - [CI/CD Pipeline](../../system-architecture-cicd.md)
+
+## Minimal Text Command Protocol
+
+Telnet and WebSocket clients share a minimal line-based command protocol that powers the initial MVP gameplay set. Clients send ASCII lines terminated by `\n`; the first token is the command name (case-insensitive) and the rest of the line is command-specific arguments. Empty lines are ignored.
+
+| Command | Purpose | Example |
+| ------- | ------- | ------- |
+| `LOGIN <username> <password>` | Authenticates a session and binds it to an account. | `LOGIN demo@example.com swordfish` |
+| `LOOK` | Requests the current room description plus exits. | `LOOK` |
+| `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
+
+This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature.
+
+### Response format
+
+- Every response is plain text. The first line is either `OK <COMMAND>` or `ERROR <CODE> <message>`.
+- Success responses may include additional lines describing the outcome. A blank line terminates the response block so multiple responses can be streamed back-to-back without ambiguity.
+- Asynchronous world events (such as other players talking) use the same rules but are prefixed with `EVENT <TYPE>` to distinguish them from direct command responses.
+- Unknown commands return `ERROR UNKNOWN_COMMAND <rawLine>`.
+
+Examples:
+
+```
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
+
+LOOK
+OK LOOK
+You are in a candle-lit antechamber carved into basalt.
+Exits: NORTH EAST
+
+SAY Hello travelers
+OK SAY
+You say: Hello travelers
+EVENT SAY
+A kobold says: Stay sharp.
+
+DANCE
+ERROR UNKNOWN_COMMAND DANCE
+```
 
 ## Additional Details
 

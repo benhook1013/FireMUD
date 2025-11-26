@@ -35,19 +35,45 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 6. Minimal Text Command Protocol and Gameplay Slice
 
-- [ ] Define and document a minimal line-based command protocol for the Telnet/WebSocket path (for example `LOGIN <user> <password>`, `LOOK`, `SAY <text>`), updating the Game Session design docs to reference these commands as the initial MVP.
-- [ ] Implement a minimal command interpreter in `game-session-service` that parses these text commands from the existing WebSocket/Game Session entry point and dispatches them into the existing tick/command handling flow.
-- [ ] Implement at least one simple gameplay command end-to-end (for example `LOOK` returning a static or test-seeded room description) that works both via WebSocket (through the Gateway) and via Telnet (through the TCP Proxy).
-- [ ] Add integration tests that exercise the same command protocol over a direct WebSocket connection through Spring Cloud Gateway (no Telnet) and verify behaviour matches the Telnet path for the implemented commands.
+### 6.1 Protocol definition and docs
+
+Link to the [Minimal Text Command Protocol](../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section, which defines the initial MVP gameplay command set shared by Telnet and WebSocket clients in this vertical slice.
+
+- [x] Add a "Minimal Text Command Protocol" section to `design/architecture/microservices/game-session-service/README.md` describing a line-based command protocol for Telnet/WebSocket clients (for example `LOGIN <user> <password>`, `LOOK`, `SAY <text>`), including at least one concrete example per command.
+- [x] In that section, define the expected response format for commands (plain text lines, how errors are reported, behavior for unknown commands, and how multiple responses are separated).
+- [x] Update this vertical slice doc (`design/project-management/task-list-telnet-to-gameplay-vertical-slice.md`) to link to the new protocol section and explicitly call it the initial MVP command set for gameplay.
+
+### 6.2 Command model and parser in game-session-service
+
+- [x] Introduce a minimal text command model in `services/game-session-service` (for example a `TextCommand` record with fields like `type`, `args`, `rawLine`, plus a `CommandType` enum including `LOGIN`, `LOOK`, `SAY`, `UNKNOWN`).
+- [x] Implement a `TextCommandParser` (or similar) in `services/game-session-service` that takes a raw text line and returns a `TextCommand`, handling trimming, case-insensitive command names, and falling back to `UNKNOWN` for unrecognized commands.
+- [x] Add unit tests for `TextCommandParser` covering valid commands, extra whitespace, empty lines, malformed input, and the `UNKNOWN` command path.
+
+### 6.3 Interpreter and dispatch into existing tick/command flow
+
+- [ ] Add a minimal `TextCommandInterpreter` (or equivalent service) in `services/game-session-service` that takes a `TextCommand` and enqueues the appropriate internal command into the existing tick/command queue (reusing the same enqueue logic used for current WebSocket/game commands).
+- [ ] Wire the WebSocket/Game Session entry point to call `TextCommandParser` + `TextCommandInterpreter` for each incoming text line so that text commands follow the same tick-based processing path as any other gameplay command.
+- [ ] Add tests (unit or small Spring test) that simulate a WebSocket message containing a text line and assert that the correct internal command is enqueued for a given session/tenant.
+
+### 6.4 Minimal LOOK gameplay command
+
+- [ ] Implement a minimal `LOOK` command handler in `services/game-session-service` that produces a static or test-seeded room description string (it can ignore real world state for this slice as long as the output is deterministic).
+- [ ] Connect the `LOOK` handler into the interpreter so that a parsed `LOOK` `TextCommand` results in the handler being invoked and its output being sent back to the client via the existing outbound messaging mechanism.
+- [ ] Add tests within `services/game-session-service` that exercise the `LOOK` command end-to-end inside the service (without Telnet or Gateway), asserting that a `LOOK` input results in the expected response text being produced.
+
+### 6.5 Telnet and WebSocket parity for LOOK
+
+- [ ] Ensure the Telnet path (TCP Proxy → Gateway → Game Session) forwards raw text command lines into the same `TextCommandParser` / interpreter pipeline used by direct WebSocket clients, with no Telnet-specific command parsing beyond the `SESSION` envelope already defined earlier in this checklist.
+- [ ] Add an integration test that exercises `LOOK` over a direct WebSocket connection through Spring Cloud Gateway (no Telnet) and asserts the response text matches the Telnet path exercised by the cross-service test in section 5 (for example by sharing a helper that asserts the `LOOK` response string is identical).
 
 ## 7. Additional Infrastructure Tasks
 
-- [ ] Document the production WebSocket bridge between the TCP proxy and Spring Cloud Gateway (expected `GATEWAY_WS_URL` and Gateway route path such as `/ws/game/**`) so the Telnet and web client paths are explicitly aligned and easy to configure.
-- [ ] Ensure the `game-session-service` Gradle configuration generates and compiles gRPC stubs from `protos/game-session/v1/game_session_service.proto` into the module, and add a short note in the Game Session design docs describing where the generated stubs are used.
-- [ ] Implement a minimal `GameSessionService` gRPC server in `game-session-service` based on the `game_session.v1` proto (at least the `Ping` RPC), reusing existing service-layer logic where possible.
-- [ ] Add tests that exercise the `GameSessionService` gRPC `Ping` endpoint and verify it returns a successful `ErrorDetail` code and message.
-- [ ] Add a smoke test that starts `game-session-service` in log-only mode (matching the `bootRunLogOnly` configuration) and verifies a simple request flow (for example starting a session or enqueuing a command) is accepted and logged without hitting external dependencies.
-- [ ] Update `services/game-session-service/README.md` or the Game Session design docs with a brief "Log-only mode" section that links to the smoke test, explains when to use it, and clarifies that it avoids database and external service calls.
+- [x] Document the production WebSocket bridge between the TCP proxy and Spring Cloud Gateway (expected `GATEWAY_WS_URL` and Gateway route path such as `/ws/game/**`) so the Telnet and web client paths are explicitly aligned and easy to configure.
+- [x] Ensure the `game-session-service` Gradle configuration generates and compiles gRPC stubs from `protos/game-session/v1/game_session_service.proto` into the module, and add a short note in the Game Session design docs describing where the generated stubs are used.
+- [x] Implement a minimal `GameSessionService` gRPC server in `game-session-service` based on the `game_session.v1` proto (at least the `Ping` RPC), reusing existing service-layer logic where possible.
+- [x] Add tests that exercise the `GameSessionService` gRPC `Ping` endpoint and verify it returns a successful `ErrorDetail` code and message.
+- [x] Add a smoke test that starts `game-session-service` in log-only mode (matching the `bootRunLogOnly` configuration) and verifies a simple request flow (for example starting a session or enqueuing a command) is accepted and logged without hitting external dependencies.
+- [x] Update `services/game-session-service/README.md` or the Game Session design docs with a brief "Log-only mode" section that links to the smoke test, explains when to use it, and clarifies that it avoids database and external service calls.
 
 ---
 
