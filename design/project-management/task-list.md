@@ -287,6 +287,7 @@ The standard microservice checklist is now copied into each service task list.
 - [x] Create cross-service integration example scripts (account creation, game session startup)
 - [ ] Add unified `crossServiceTest` Gradle task and run cross-service tests in CI
 - [ ] Automate test data seeding for integration tests
+- [ ] Establish a centralized directory/listing of all test suites (unit, integration, cross-service, load, etc.) that explains what each covers and the environments/flags that skip or gate them, and link this catalog from the relevant docs and task lists.
 
 ---
 
