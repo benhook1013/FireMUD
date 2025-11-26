@@ -117,7 +117,7 @@ For a single-command smoke test, enable log-only forwarding with `TCP_PROXY_LOG_
 
 Prefer containers? A minimal Docker Compose profile launches just the gateway and the proxy with the same settings and emits the same log-only Telnet lines. Start it with `docker compose -f docker/docker-compose.tcp-proxy-logonly.yml --profile tcp-proxy-logonly up` and in another terminal run `telnet localhost 2323`. Stop the stack with `docker compose -f docker/docker-compose.tcp-proxy-logonly.yml --profile tcp-proxy-logonly down` when finished.
 
-When pointing at a real gateway, override `GATEWAY_WS_URL` with its WebSocket endpoint. Outside of the `dev` profile the default remains `ws://spring-cloud-gateway:8080/ws` so production pods continue to forward to the cluster gateway when the variable is unset.
+When pointing at a real gateway, override `GATEWAY_WS_URL` with its WebSocket endpoint. Outside of the `dev` profile the default remains `ws://spring-cloud-gateway:8080/ws/game` so production pods continue to forward to the routed gameplay endpoint on the cluster gateway when the variable is unset.
 
 ## Environment Variables
 
@@ -132,7 +132,7 @@ Additional variables control the proxy runtime behaviour:
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
-| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws` |
+| `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws/game` |
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the TLS private key | *(empty)* |
