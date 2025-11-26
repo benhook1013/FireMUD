@@ -1,4 +1,4 @@
-package net.firedevops.firemud.telnet;
+package net.firedevops.firemud.tcpproxy.telnet;
 
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

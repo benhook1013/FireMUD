@@ -1,10 +1,10 @@
-package net.firedevops.firemud.telnet;
+package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,7 +12,7 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import net.firedevops.firemud.telnet.TelnetServer;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 
 class TlsMisconfigurationIntegrationTest {
 
@@ -25,6 +25,7 @@ class TlsMisconfigurationIntegrationTest {
                     .properties(
                         "TCP_PROXY_PORT=0",
                         "TCP_PROXY_TLS_ENABLED=true",
+                        "GATEWAY_WS_URL=ws://localhost/ws",
                         "TCP_PROXY_TLS_CERT=/nonexistent/cert.pem",
                         "TCP_PROXY_TLS_KEY=/nonexistent/key.pem",
                         "spring.flyway.enabled=false",

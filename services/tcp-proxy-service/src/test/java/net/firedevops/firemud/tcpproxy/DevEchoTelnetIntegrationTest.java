@@ -1,4 +1,4 @@
-package net.firedevops.firemud;
+package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -9,14 +9,16 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.test.util.TestSocketUtils;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import net.firedevops.firemud.telnet.TelnetServer;
+import org.springframework.test.util.TestSocketUtils;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 
 @SpringBootTest(
     classes = TcpProxyServiceApplication.class,
@@ -27,12 +29,14 @@ class DevEchoTelnetIntegrationTest {
   private static final int TELNET_SERVER_PORT = allocatePort();
 
   @Autowired private TelnetServer telnetServer;
+  @MockBean private GRpcServerRunner grpcServerRunner;
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
     registry.add("server.port", () -> WEB_SERVER_PORT);
     registry.add("GATEWAY_WS_URL", () -> "ws://localhost:" + WEB_SERVER_PORT + "/dev/echo");
     registry.add("TCP_PROXY_PORT", () -> TELNET_SERVER_PORT);
+    registry.add("grpc.server.port", () -> 0);
   }
 
   @Test

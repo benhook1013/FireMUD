@@ -1,8 +1,8 @@
-package net.firedevops.firemud.service.impl;
+package net.firedevops.firemud.tcpproxy.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.tcpproxy.service.PingService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 

@@ -1,4 +1,4 @@
-package net.firedevops.firemud.telnet;
+package net.firedevops.firemud.tcpproxy.telnet;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

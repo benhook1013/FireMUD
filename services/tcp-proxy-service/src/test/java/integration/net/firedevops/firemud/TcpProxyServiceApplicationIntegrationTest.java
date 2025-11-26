@@ -1,4 +1,4 @@
-package net.firedevops.firemud;
+package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

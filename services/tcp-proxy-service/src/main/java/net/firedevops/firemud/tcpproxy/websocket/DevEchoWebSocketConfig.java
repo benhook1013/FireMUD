@@ -1,4 +1,4 @@
-package net.firedevops.firemud.websocket;
+package net.firedevops.firemud.tcpproxy.websocket;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -10,9 +10,9 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 @Profile("dev")
 @EnableWebSocket
 public class DevEchoWebSocketConfig implements WebSocketConfigurer {
-  private final DevEchoWebSocketHandler devEchoWebSocketHandler;
+  private final TcpProxyDevEchoWebSocketHandler devEchoWebSocketHandler;
 
-  public DevEchoWebSocketConfig(DevEchoWebSocketHandler devEchoWebSocketHandler) {
+  public DevEchoWebSocketConfig(TcpProxyDevEchoWebSocketHandler devEchoWebSocketHandler) {
     this.devEchoWebSocketHandler = devEchoWebSocketHandler;
   }
 

@@ -1,4 +1,4 @@
-package net.firedevops.firemud.telnet;
+package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -12,7 +12,7 @@ import io.netty.handler.codec.string.StringDecoder;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;

@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service.impl;
+package net.firedevops.firemud.tcpproxy.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

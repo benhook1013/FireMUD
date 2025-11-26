@@ -1,7 +1,7 @@
-package net.firedevops.firemud.controller;
+package net.firedevops.firemud.tcpproxy.controller;
 
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.tcpproxy.service.PingService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

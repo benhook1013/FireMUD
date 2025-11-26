@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service;
+package net.firedevops.firemud.tcpproxy.service;
 
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -11,24 +11,31 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
-import net.firedevops.firemud.config.GrpcClientProperties;
+import net.firedevops.firemud.tcpproxy.config.GrpcClientProperties;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputRequest;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
+import org.slf4j.Logger;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** gRPC client used to notify the Game Session Service about Telnet events. */
 @Component
 public class TcpProxyEventClient implements AutoCloseable {
+  private static final Logger logger = LoggingUtil.getLogger(TcpProxyEventClient.class);
+
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
   private ManagedChannel channel;
   private TcpProxyServiceGrpc.TcpProxyServiceBlockingStub stub;
   private TlsCertificateWatcher watcher;
+  private TlsFiles tlsFiles;
 
   public TcpProxyEventClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
     this.endpoints = copyEndpoints(endpoints);
@@ -59,21 +66,24 @@ public class TcpProxyEventClient implements AutoCloseable {
   @PostConstruct
   void init() throws SSLException, IOException {
     reloadChannel();
-    watcher =
-        TlsCertificateWatcher.createAndStart(
-            List.of(
-                Path.of(tlsProps.getCertChain()),
-                Path.of(tlsProps.getPrivateKey()),
-                Path.of(tlsProps.getCaCert())),
-            this::safeReload);
+    if (tlsFiles != null) {
+      watcher =
+          TlsCertificateWatcher.createAndStart(
+              List.of(
+                  tlsFiles.certChain().toPath(),
+                  tlsFiles.privateKey().toPath(),
+                  tlsFiles.caCert().toPath()),
+              this::safeReload);
+    } else {
+      logger.info("TLS certificates not configured; TcpProxyEventClient will use plaintext");
+    }
   }
 
   private synchronized void safeReload() {
     try {
       reloadChannel();
     } catch (SSLException e) {
-      net.firedevops.firemud.common.LoggingUtil.getLogger(TcpProxyEventClient.class)
-          .error("Failed to reload gRPC channel", e);
+      logger.error("Failed to reload gRPC channel", e);
     }
   }
 
@@ -85,23 +95,29 @@ public class TcpProxyEventClient implements AutoCloseable {
     String[] parts = target.split(":");
     String host = parts[0];
     int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
-    var sslContext =
-        GrpcSslContexts.forClient()
-            .trustManager(new File(tlsProps.getCaCert()))
-            .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
-            .build();
-    ManagedChannel newChannel =
+    TlsFiles resolved = resolveTlsFiles();
+    NettyChannelBuilder builder =
         NettyChannelBuilder.forAddress(host, port)
-            .sslContext(sslContext)
             .keepAliveTime(30, TimeUnit.SECONDS)
             .keepAliveTimeout(5, TimeUnit.SECONDS)
-            .keepAliveWithoutCalls(true)
-            .build();
+            .keepAliveWithoutCalls(true);
+    if (resolved != null) {
+      var sslContext =
+          GrpcSslContexts.forClient()
+              .trustManager(resolved.caCert())
+              .keyManager(resolved.certChain(), resolved.privateKey())
+              .build();
+      builder = builder.sslContext(sslContext);
+    } else {
+      builder = builder.usePlaintext();
+    }
+    ManagedChannel newChannel = builder.build();
     if (channel != null) {
       channel.shutdown();
     }
     channel = newChannel;
     stub = TcpProxyServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    tlsFiles = resolved;
   }
 
   public NotifyDisconnectResponse notifyDisconnect(String sessionId, String tenantId) {
@@ -131,4 +147,42 @@ public class TcpProxyEventClient implements AutoCloseable {
       channel.shutdown();
     }
   }
+
+  private TlsFiles resolveTlsFiles() {
+    File certChainFile = resolveFile(tlsProps.getCertChain());
+    File privateKeyFile = resolveFile(tlsProps.getPrivateKey());
+    File caCertFile = resolveFile(tlsProps.getCaCert());
+    if (certChainFile == null || privateKeyFile == null || caCertFile == null) {
+      return null;
+    }
+    return new TlsFiles(certChainFile, privateKeyFile, caCertFile);
+  }
+
+  private File resolveFile(String configuredPath) {
+    if (!StringUtils.hasText(configuredPath)) {
+      return null;
+    }
+    try {
+      if (configuredPath.startsWith("classpath:")) {
+        String resourcePath = configuredPath.substring("classpath:".length());
+        ClassPathResource resource = new ClassPathResource(resourcePath);
+        if (!resource.exists()) {
+          logger.debug("Classpath resource {} not found for TLS configuration", resourcePath);
+          return null;
+        }
+        return resource.getFile();
+      }
+      File file = new File(configuredPath);
+      if (file.exists()) {
+        return file;
+      }
+      logger.debug("TLS file {} does not exist", configuredPath);
+      return null;
+    } catch (IOException e) {
+      logger.warn("Failed to resolve TLS file {}", configuredPath, e);
+      return null;
+    }
+  }
+
+  private record TlsFiles(File certChain, File privateKey, File caCert) {}
 }

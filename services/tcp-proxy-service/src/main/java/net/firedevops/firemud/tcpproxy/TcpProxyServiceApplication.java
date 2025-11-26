@@ -1,9 +1,9 @@
-package net.firedevops.firemud;
+package net.firedevops.firemud.tcpproxy;
 
 import jakarta.annotation.PreDestroy;
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.config.GrpcClientProperties;
-import net.firedevops.firemud.telnet.TelnetServer;
+import net.firedevops.firemud.tcpproxy.config.GrpcClientProperties;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;

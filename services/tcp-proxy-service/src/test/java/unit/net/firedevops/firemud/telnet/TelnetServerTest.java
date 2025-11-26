@@ -1,4 +1,4 @@
-package net.firedevops.firemud.telnet;
+package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -9,7 +9,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
-import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 
 class TelnetServerTest {
   private TelnetServer server;

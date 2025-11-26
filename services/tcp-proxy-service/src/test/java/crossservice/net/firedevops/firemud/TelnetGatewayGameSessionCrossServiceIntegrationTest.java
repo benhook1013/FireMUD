@@ -1,4 +1,4 @@
-package net.firedevops.firemud;
+package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,14 +16,22 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
-import net.firedevops.firemud.telnet.TelnetServer;
+import net.firedevops.firemud.SpringCloudGatewayApplication;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
+import org.lognet.springboot.grpc.GRpcServicesRegistry;
+import org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration;
+import org.lognet.springboot.grpc.autoconfigure.GRpcServerProperties;
+import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.web.context.WebServerApplicationContext;
@@ -33,6 +41,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.TestSocketUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
@@ -52,12 +61,13 @@ import reactor.core.publisher.Mono;
     classes = TcpProxyServiceApplication.class)
 class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
-  private static final GameSessionStubHolder GAME_SESSION_STUB = startGameSessionStub();
-  private static final GatewayHolder GATEWAY = startGateway(GAME_SESSION_STUB.port);
+private static GameSessionStubHolder GAME_SESSION_STUB;
+private static GatewayHolder GATEWAY;
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
+    ensureTestServicesStarted();
     registry.add("GATEWAY_WS_URL", GATEWAY::websocketUrl);
     registry.add("TCP_PROXY_PORT", () -> 0);
   }
@@ -67,19 +77,23 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @Autowired private TestRestTemplate restTemplate;
 
   @Autowired private TelnetServer telnetServer;
+  @MockBean private GRpcServerRunner grpcServerRunner;
 
   @AfterAll
   static void stopTestServices() {
     if (GATEWAY != null) {
       GATEWAY.close();
+      GATEWAY = null;
     }
     if (GAME_SESSION_STUB != null) {
       GAME_SESSION_STUB.close();
+      GAME_SESSION_STUB = null;
     }
   }
 
   @Test
   void telnetCommandFlowsThroughGatewayToGameSession() throws Exception {
+    ensureTestServicesStarted();
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
     assertThat(body).contains("pong");
 
@@ -102,6 +116,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   }
 
   private static void awaitCommand(String expected) {
+    ensureTestServicesStarted();
     long deadline = System.nanoTime() + COMMAND_WAIT.toNanos();
     while (System.nanoTime() < deadline) {
       if (GAME_SESSION_STUB.stub().receivedCommands().contains(expected)) {
@@ -117,26 +132,44 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     assertThat(GAME_SESSION_STUB.stub().receivedCommands()).contains(expected);
   }
 
+  private static synchronized void ensureTestServicesStarted() {
+    if (GAME_SESSION_STUB == null) {
+      GAME_SESSION_STUB = startGameSessionStub();
+    }
+    if (GATEWAY == null) {
+      GATEWAY = startGateway(GAME_SESSION_STUB.port);
+    }
+  }
+
   private static GameSessionStubHolder startGameSessionStub() {
-    Map<String, Object> props = new HashMap<>();
-    props.put("server.port", 0);
-    props.put("spring.main.web-application-type", "reactive");
+    int grpcPort = TestSocketUtils.findAvailableTcpPort();
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GameSessionStubApplication.class).properties(props).run();
+        new SpringApplicationBuilder(GameSessionStubApplication.class)
+            .properties(
+                "server.port=0",
+                "spring.main.web-application-type=reactive",
+                "grpc.server.enabled=false",
+                "grpc.server.security.enabled=false",
+                "grpc.server.port=" + grpcPort,
+                "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration")
+            .run();
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {
-    Map<String, Object> props = new HashMap<>();
-    props.put("server.port", 0);
-    props.put("spring.profiles.active", "dev");
-    props.put("grpc.server.security.enabled", false);
-    props.put("grpc.server.port", 0);
-    props.put("spring.cloud.gateway.routes[0].uri", "ws://localhost:" + gameSessionPort);
+    int grpcPort = TestSocketUtils.findAvailableTcpPort();
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(SpringCloudGatewayApplication.class)
-            .properties(props)
+        new SpringApplicationBuilder(GatewayTestApplication.class)
+            .properties(
+                "server.port=0",
+                "spring.profiles.active=dev",
+                "grpc.server.enabled=false",
+                "grpc.server.security.enabled=false",
+                "grpc.server.port=" + grpcPort,
+                "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration",
+                "spring.cloud.gateway.enabled=true",
+                "spring.cloud.gateway.routes[0].uri=ws://localhost:" + gameSessionPort)
             .run();
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GatewayHolder(context, port);
@@ -181,9 +214,13 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     }
   }
 
-  @SpringBootApplication
-  @Import(GameSessionStubConfiguration.class)
+  @SpringBootApplication(exclude = GRpcAutoConfiguration.class)
+  @Import({GameSessionStubConfiguration.class, DisabledGrpcConfig.class})
   static class GameSessionStubApplication {}
+
+  @SpringBootApplication(exclude = GRpcAutoConfiguration.class)
+  @Import({SpringCloudGatewayApplication.class, DisabledGrpcConfig.class})
+  static class GatewayTestApplication {}
 
   @Configuration
   static class GameSessionStubConfiguration {
@@ -207,10 +244,32 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       mapping.setUrlMap(urlMap);
       return mapping;
     }
-
     @Bean
     WebSocketHandlerAdapter webSocketHandlerAdapter() {
       return new WebSocketHandlerAdapter();
+    }
+  }
+
+  @Configuration
+  static class DisabledGrpcConfig {
+    @Bean
+    GRpcServerRunner grpcServerRunner() {
+      return Mockito.mock(GRpcServerRunner.class);
+    }
+
+    @Bean
+    GRpcServerProperties grpcServerProperties() {
+      return new GRpcServerProperties();
+    }
+
+    @Bean
+    GRpcServicesRegistry grpcServicesRegistry() {
+      return Mockito.mock(GRpcServicesRegistry.class);
+    }
+
+    @Bean
+    ManagedHealthStatusService managedHealthStatusService() {
+      return Mockito.mock(ManagedHealthStatusService.class);
     }
   }
 

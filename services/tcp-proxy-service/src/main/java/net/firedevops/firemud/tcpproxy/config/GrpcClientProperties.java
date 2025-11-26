@@ -1,4 +1,4 @@
-package net.firedevops.firemud.config;
+package net.firedevops.firemud.tcpproxy.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

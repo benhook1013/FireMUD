@@ -1,4 +1,4 @@
-package net.firedevops.firemud.websocket;
+package net.firedevops.firemud.tcpproxy.websocket;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,8 +15,9 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
  */
 @Component
 @Profile("dev")
-public class DevEchoWebSocketHandler extends TextWebSocketHandler {
-  private static final Logger logger = LoggerFactory.getLogger(DevEchoWebSocketHandler.class);
+public class TcpProxyDevEchoWebSocketHandler extends TextWebSocketHandler {
+  private static final Logger logger =
+      LoggerFactory.getLogger(TcpProxyDevEchoWebSocketHandler.class);
 
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {

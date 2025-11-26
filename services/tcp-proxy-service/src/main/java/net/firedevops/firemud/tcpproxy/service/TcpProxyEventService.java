@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service;
+package net.firedevops.firemud.tcpproxy.service;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;

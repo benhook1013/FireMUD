@@ -1,4 +1,4 @@
-package net.firedevops.firemud.telnet;
+package net.firedevops.firemud.tcpproxy.telnet;
 
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
@@ -13,6 +13,7 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
+import io.netty.handler.codec.string.StringEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import java.io.File;
@@ -25,7 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 
 /** Simple Netty-based Telnet server that forwards input to the gateway via WebSocket. */
 @Component
@@ -140,6 +141,7 @@ public final class TelnetServer {
                   pipeline
                       .addLast(new LineBasedFrameDecoder(1024, false, true))
                       .addLast(new StringDecoder(StandardCharsets.ISO_8859_1))
+                      .addLast(new StringEncoder(StandardCharsets.ISO_8859_1))
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
