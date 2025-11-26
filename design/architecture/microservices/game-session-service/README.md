@@ -144,6 +144,46 @@ The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `b
 - [Testing Strategy](../../system-architecture-testing.md)
 - [CI/CD Pipeline](../../system-architecture-cicd.md)
 
+## Minimal Text Command Protocol
+
+Telnet and WebSocket clients share a minimal line-based command protocol that powers the initial MVP gameplay set. Clients send ASCII lines terminated by `\n`; the first token is the command name (case-insensitive) and the rest of the line is command-specific arguments. Empty lines are ignored.
+
+| Command | Purpose | Example |
+| ------- | ------- | ------- |
+| `LOGIN <username> <password>` | Authenticates a session and binds it to an account. | `LOGIN demo@example.com swordfish` |
+| `LOOK` | Requests the current room description plus exits. | `LOOK` |
+| `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
+
+This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature.
+
+### Response format
+
+- Every response is plain text. The first line is either `OK <COMMAND>` or `ERROR <CODE> <message>`.
+- Success responses may include additional lines describing the outcome. A blank line terminates the response block so multiple responses can be streamed back-to-back without ambiguity.
+- Asynchronous world events (such as other players talking) use the same rules but are prefixed with `EVENT <TYPE>` to distinguish them from direct command responses.
+- Unknown commands return `ERROR UNKNOWN_COMMAND <rawLine>`.
+
+Examples:
+
+```
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
+
+LOOK
+OK LOOK
+You are in a candle-lit antechamber carved into basalt.
+Exits: NORTH EAST
+
+SAY Hello travelers
+OK SAY
+You say: Hello travelers
+EVENT SAY
+A kobold says: Stay sharp.
+
+DANCE
+ERROR UNKNOWN_COMMAND DANCE
+```
+
 ## Additional Details
 
 ### Configuration

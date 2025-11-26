@@ -37,15 +37,17 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ### 6.1 Protocol definition and docs
 
-- [ ] Add a "Minimal Text Command Protocol" section to `design/architecture/microservices/game-session-service/README.md` describing a line-based command protocol for Telnet/WebSocket clients (for example `LOGIN <user> <password>`, `LOOK`, `SAY <text>`), including at least one concrete example per command.
-- [ ] In that section, define the expected response format for commands (plain text lines, how errors are reported, behavior for unknown commands, and how multiple responses are separated).
-- [ ] Update this vertical slice doc (`design/project-management/task-list-telnet-to-gameplay-vertical-slice.md`) to link to the new protocol section and explicitly call it the initial MVP command set for gameplay.
+Link to the [Minimal Text Command Protocol](../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section, which defines the initial MVP gameplay command set shared by Telnet and WebSocket clients in this vertical slice.
+
+- [x] Add a "Minimal Text Command Protocol" section to `design/architecture/microservices/game-session-service/README.md` describing a line-based command protocol for Telnet/WebSocket clients (for example `LOGIN <user> <password>`, `LOOK`, `SAY <text>`), including at least one concrete example per command.
+- [x] In that section, define the expected response format for commands (plain text lines, how errors are reported, behavior for unknown commands, and how multiple responses are separated).
+- [x] Update this vertical slice doc (`design/project-management/task-list-telnet-to-gameplay-vertical-slice.md`) to link to the new protocol section and explicitly call it the initial MVP command set for gameplay.
 
 ### 6.2 Command model and parser in game-session-service
 
-- [ ] Introduce a minimal text command model in `services/game-session-service` (for example a `TextCommand` record with fields like `type`, `args`, `rawLine`, plus a `CommandType` enum including `LOGIN`, `LOOK`, `SAY`, `UNKNOWN`).
-- [ ] Implement a `TextCommandParser` (or similar) in `services/game-session-service` that takes a raw text line and returns a `TextCommand`, handling trimming, case-insensitive command names, and falling back to `UNKNOWN` for unrecognized commands.
-- [ ] Add unit tests for `TextCommandParser` covering valid commands, extra whitespace, empty lines, malformed input, and the `UNKNOWN` command path.
+- [x] Introduce a minimal text command model in `services/game-session-service` (for example a `TextCommand` record with fields like `type`, `args`, `rawLine`, plus a `CommandType` enum including `LOGIN`, `LOOK`, `SAY`, `UNKNOWN`).
+- [x] Implement a `TextCommandParser` (or similar) in `services/game-session-service` that takes a raw text line and returns a `TextCommand`, handling trimming, case-insensitive command names, and falling back to `UNKNOWN` for unrecognized commands.
+- [x] Add unit tests for `TextCommandParser` covering valid commands, extra whitespace, empty lines, malformed input, and the `UNKNOWN` command path.
 
 ### 6.3 Interpreter and dispatch into existing tick/command flow
 
