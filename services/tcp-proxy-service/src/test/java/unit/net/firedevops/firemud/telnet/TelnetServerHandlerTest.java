@@ -21,9 +21,11 @@ import io.netty.util.concurrent.DefaultEventExecutor;
 import java.net.InetSocketAddress;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -43,7 +45,8 @@ class TelnetServerHandlerTest {
         registry.counter("discarded"),
         advertiseMcp,
         registry,
-        Mockito.mock(TcpProxyEventService.class));
+        Mockito.mock(TcpProxyEventService.class),
+        new AtomicInteger());
   }
 
   private TelnetServerHandler newHandler(
@@ -60,7 +63,8 @@ class TelnetServerHandlerTest {
         advertiseMcp,
         registry,
         connector,
-        Mockito.mock(TcpProxyEventService.class));
+        Mockito.mock(TcpProxyEventService.class),
+        new AtomicInteger());
   }
 
   private WebSocket stubWebSocket() {
@@ -397,7 +401,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            Mockito.mock(TcpProxyEventService.class));
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -428,7 +433,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            Mockito.mock(TcpProxyEventService.class));
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -459,7 +465,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            Mockito.mock(TcpProxyEventService.class));
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -493,7 +500,8 @@ class TelnetServerHandlerTest {
               listener.onOpen(new RecordingWebSocket());
               return CompletableFuture.completedFuture(new RecordingWebSocket());
             },
-            eventService);
+            eventService,
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -530,7 +538,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            eventService);
+            eventService,
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -582,7 +591,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            eventService);
+            eventService,
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -631,7 +641,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            eventService);
+            eventService,
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -681,7 +692,8 @@ class TelnetServerHandlerTest {
             false,
             registry,
             connector,
-            eventService);
+            eventService,
+            new AtomicInteger());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -705,6 +717,42 @@ class TelnetServerHandlerTest {
 
     assertEquals(List.of("cast fireball"), connector.getCurrent().getSentTexts());
     assertEquals(0, handler.getBufferedSize());
+  }
+
+  @Test
+  void structuredEventsIncludeConnectionDuration() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            eventService,
+            new AtomicInteger());
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("10.0.0.5", 9000));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "SESSION sess-99 tenant-42");
+    handler.channelInactive(ctx);
+
+    ArgumentCaptor<Duration> durationCaptor = ArgumentCaptor.forClass(Duration.class);
+    verify(eventService).recordConnectEvent("sess-99", "tenant-42", "10.0.0.5");
+    verify(eventService)
+        .recordDisconnectEvent(
+            eq("sess-99"), eq("tenant-42"), eq("10.0.0.5"), durationCaptor.capture());
+    assertTrue(durationCaptor.getValue().toMillis() >= 0);
+    executor.shutdownGracefully();
   }
 
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {
