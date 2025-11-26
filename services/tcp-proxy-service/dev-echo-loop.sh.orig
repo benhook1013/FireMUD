@@ -35,4 +35,8 @@ if stripped != message:
     raise SystemExit("Dev echo handler did not return the expected text.")
 PYTHON
 
+<<<<<<< HEAD
+echo "Telnet ??? WebSocket dev echo flow succeeded."
+=======
 echo "Telnet → WebSocket dev echo flow succeeded."
+>>>>>>> feature/telnet-session-envelope

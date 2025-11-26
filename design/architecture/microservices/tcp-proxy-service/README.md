@@ -59,6 +59,36 @@ These events let the Game Session Service resume suspended sessions and deliver
 buffered commands. Their definitions live in
 [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
+### Telnet Session Envelope & Event Metrics
+
+Telnet clients must send a session envelope before any gameplay traffic so the
+proxy can bind the TCP connection to a FireMUD session. The envelope is a
+plain-text line that starts with `SESSION` (case-insensitive) followed by either
+`SESSION <sessionId> <tenantId>` or the more compact `SESSION <sessionId>:<tenantId>`.
+The `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
+prefix, splits on the first colon or whitespace, and ignores envelopes that are
+missing either identifier. Once captured, `sessionId` and `tenantId` are
+propagated over the WebSocket bridge (`X-Session-Id` and `X-Tenant-Id` headers)
+and also drive the event and metric generation below.
+
+Metrics give observability into each Telnet connection:
+
+- `tcpproxy.connection.events{type="connect"}` increments when a session is
+  established and logs the `sessionId`, `tenantId`, and client IP.
+- `tcpproxy.connection.events{type="disconnect"}` increments when the Telnet
+  socket closes and the same identifiers are logged along with the connection
+  duration in `durationMs`.
+- `tcpproxy.connection.duration` (a Micrometer `Timer`) records the wall-clock
+  lifetime of every socket so latency dashboards can highlight long-running
+  connections.
+- `grpc.app_error{code="<code>"}` is incremented whenever the `TcpProxyEventService`
+  observes an error from `NotifyDisconnect` or `PushBufferedInput`, making it
+  easy to correlate gRPC failures with session IDs in the logs.
+
+Together these events and timers ensure downstream services and monitoring tools
+can reconcile Telnet traffic with the correct tenant/session pair while keeping
+metric streams annotated with the same identifiers.
+
 ### Telnet Command Handling
 
 The proxy sanitizes incoming bytes and allows only a safe subset of

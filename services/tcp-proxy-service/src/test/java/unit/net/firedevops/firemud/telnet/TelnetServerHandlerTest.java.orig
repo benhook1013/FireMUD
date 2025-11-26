@@ -19,7 +19,10 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
 import io.netty.util.concurrent.DefaultEventExecutor;
+<<<<<<< HEAD
+=======
 import io.netty.util.concurrent.EventExecutor;
+>>>>>>> feature/telnet-session-envelope
 import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.net.http.WebSocket;
@@ -1038,16 +1041,8 @@ class TelnetServerHandlerTest {
     executor.shutdownGracefully();
   }
 
-  private static int maxBufferDepth() {
-    try {
-      Field field = TelnetServerHandler.class.getDeclaredField("MAX_BUFFER_DEPTH");
-      field.setAccessible(true);
-      return field.getInt(null);
-    } catch (ReflectiveOperationException e) {
-      throw new IllegalStateException(e);
-    }
-  }
-
+<<<<<<< HEAD
+=======
   private ScheduledTask takeReconnectTask(List<ScheduledTask> tasks) {
     Iterator<ScheduledTask> iterator = tasks.iterator();
     while (iterator.hasNext()) {
@@ -1060,6 +1055,7 @@ class TelnetServerHandlerTest {
     throw new IllegalStateException("No reconnect task recorded");
   }
 
+>>>>>>> feature/telnet-session-envelope
   private static int maxBufferDepth() {
     try {
       Field field = TelnetServerHandler.class.getDeclaredField("MAX_BUFFER_DEPTH");
