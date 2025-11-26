@@ -31,6 +31,11 @@ tasks.named<BootRun>("bootRun") {
         ?: "dev"
 
     systemProperty("spring.profiles.active", activeProfile)
+    val logOnly = System.getProperty("game-session.log-only")
+        ?: System.getenv("GAME_SESSION_LOG_ONLY")
+        ?: "true"
+    systemProperty("game-session.log-only", logOnly)
+    environment("GAME_SESSION_LOG_ONLY", logOnly)
 }
 
 tasks.register<BootRun>("bootRunLogOnly") {
@@ -40,6 +45,7 @@ tasks.register<BootRun>("bootRunLogOnly") {
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
     environment("GAME_SESSION_LOG_ONLY", "true")
+    systemProperty("game-session.log-only", "true")
 }
 
 

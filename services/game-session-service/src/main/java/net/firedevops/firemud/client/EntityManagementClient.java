@@ -9,31 +9,44 @@ import java.io.File;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.config.GrpcClientProperties;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the Entity Management Service. */
 @Component
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Configuration and channel references remain internal")
 public final class EntityManagementClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
+  private final LogOnlyProperties logOnlyProperties;
+  private static final org.slf4j.Logger logger = LoggingUtil.getLogger(EntityManagementClient.class);
   private ManagedChannel channel;
   private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub;
 
   public EntityManagementClient(
-      ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
+      ServiceEndpointsProperties endpoints,
+      GrpcClientProperties tlsProps,
+      LogOnlyProperties logOnlyProperties) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;
+    this.logOnlyProperties = logOnlyProperties;
   }
 
   @PostConstruct
   void init() throws SSLException {
+    if (logOnlyProperties.isLogOnly()) {
+      logger.info("Log-only mode enabled; skipping EntityManagementClient channel initialization");
+      return;
+    }
     String target = endpoints.getEntityManagementService();
     if (target == null || target.isEmpty()) {
       target = "entity-management-service:6565";

@@ -7,7 +7,8 @@ import org.springframework.stereotype.Component;
 public class LogOnlyProperties {
   private final boolean logOnly;
 
-  public LogOnlyProperties(@Value("${GAME_SESSION_LOG_ONLY:false}") boolean logOnly) {
+  public LogOnlyProperties(
+      @Value("${game-session.log-only:${GAME_SESSION_LOG_ONLY:false}}") boolean logOnly) {
     this.logOnly = logOnly;
   }
 
