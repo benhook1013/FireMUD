@@ -14,13 +14,16 @@ public class TextCommandInterpreter {
     this(commandService, new TextCommandParser());
   }
 
-  TextCommandInterpreter(CommandService commandService, TextCommandParser parser) {
+  public TextCommandInterpreter(CommandService commandService, TextCommandParser parser) {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
   }
 
   public CommandEnqueueResult interpret(String sessionId, String rawLine, boolean requiresSoloTick) {
-    TextCommand command = parser.parse(rawLine);
+    return interpret(sessionId, parser.parse(rawLine), requiresSoloTick);
+  }
+
+  public CommandEnqueueResult interpret(String sessionId, TextCommand command, boolean requiresSoloTick) {
     if (command.type() == TextCommandType.UNKNOWN) {
       return CommandEnqueueResult.failure("UNKNOWN_COMMAND", command.rawLine());
     }
