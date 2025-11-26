@@ -1,6 +1,7 @@
 package net.firedevops.firemud.telnet;
 
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.netty.buffer.ByteBuf;
@@ -23,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import org.slf4j.Logger;
@@ -49,6 +51,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Timer commandTimer;
   private final Timer heartbeatTimer;
   private final Timer idleCloseTimer;
+  private final Timer reconnectTimer;
+  private final Counter reconnectCounter;
+  private final AtomicInteger bufferDepth;
   private final WebSocketConnector webSocketConnector;
   private final TcpProxyEventService eventService;
   private final TelnetSessionContext sessionContext = new TelnetSessionContext();
@@ -59,6 +64,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile ScheduledFuture<?> heartbeatFuture;
   private volatile ScheduledFuture<?> idleFuture;
   private volatile long lastActivityNanos;
+  private volatile long connectionStartNanos;
   private volatile boolean mcpNegotiated;
   private WebSocket webSocket;
   private volatile boolean connectedOnce;
@@ -67,6 +73,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       ConcurrentHashMap.newKeySet();
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
+  private boolean connectEventRecorded;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -77,7 +84,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       io.micrometer.core.instrument.Counter discardedCommandCounter,
       boolean advertiseMcp,
       MeterRegistry meterRegistry,
-      TcpProxyEventService eventService) {
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth) {
     this(
         gatewayWsUrl,
         logOnly,
@@ -88,7 +96,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         advertiseMcp,
         meterRegistry,
         TelnetServerHandler::createWebSocket,
-        eventService);
+        eventService,
+        bufferDepth);
   }
 
   TelnetServerHandler(
@@ -101,7 +110,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       boolean advertiseMcp,
       MeterRegistry meterRegistry,
       WebSocketConnector webSocketConnector,
-      TcpProxyEventService eventService) {
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.logOnly = logOnly;
     this.onConnect = onConnect;
@@ -112,9 +122,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.meterRegistry = meterRegistry;
     this.webSocketConnector = webSocketConnector;
     this.eventService = eventService;
+    this.bufferDepth = bufferDepth;
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
     this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
+    this.reconnectTimer = meterRegistry.timer("tcpproxy.websocket.reconnect.delay");
+    this.reconnectCounter = meterRegistry.counter("tcpproxy.websocket.reconnects");
+    this.reconnectCounter.increment(0.0);
+    updateBufferDepthGauge();
   }
 
   @FunctionalInterface
@@ -264,6 +279,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             logger.warn("Gateway send failed; scheduling reconnect", error);
             handleGatewayDisconnect();
           }
+          updateBufferDepthGauge();
           drainBuffer();
         });
   }
@@ -274,7 +290,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     touchActivity();
     var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
     clientIp = extractIp(remote);
+    connectionStartNanos = System.nanoTime();
     connectionCounter.increment();
+    updateBufferDepthGauge();
     onConnect.run();
     logger.info(
         "Telnet client connected from {} targeting {}", clientIp != null ? clientIp : remote, gatewayWsUrl);
@@ -305,6 +323,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           logger.warn("Ignoring Telnet input before session envelope: {}", sanitized);
           return;
         }
+        notifyConnectIfReady();
         ensureGatewayConnected();
         return;
       }
@@ -316,6 +335,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       }
 
       buffer.add(sanitized);
+      updateBufferDepthGauge();
       drainBuffer();
     } finally {
       sample.stop(commandTimer);
@@ -329,13 +349,21 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     cancelIdleCheck();
     closeGatewayWebSocket();
     onDisconnect.run();
+    Duration connectionDuration = null;
+    if (connectionStartNanos > 0) {
+      connectionDuration = Duration.ofNanos(System.nanoTime() - connectionStartNanos);
+    }
+    eventService.recordDisconnectEvent(
+        sessionContext.sessionId(), sessionContext.tenantId(), clientIp, connectionDuration);
     notifyDisconnectAsync();
     buffer.clear();
     cancelOutstandingSends();
+    updateBufferDepthGauge();
   }
 
   private boolean canBufferMore() {
     int depth = buffer.size() + outstandingSends.size();
+    bufferDepth.set(depth);
     if (depth >= MAX_BUFFER_DEPTH) {
       if (!closing) {
         closing = true;
@@ -354,7 +382,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private boolean captureSessionContext(String sanitized) {
-    return sessionContext.captureFromEnvelope(sanitized);
+    boolean captured = sessionContext.captureFromEnvelope(sanitized);
+    if (captured) {
+      notifyConnectIfReady();
+    }
+    return captured;
   }
 
   private void cancelIdleCheck() {
@@ -421,8 +453,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       return;
     }
     reconnecting = true;
+    reconnectCounter.increment();
     long delayMillis = backoffDelayMillis();
     context.executor().schedule(this::connectToGateway, delayMillis, TimeUnit.MILLISECONDS);
+    reconnectTimer.record(Duration.ofMillis(delayMillis));
   }
 
   private void cancelOutstandingSends() {
@@ -433,6 +467,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     outstandingSends.forEach(future -> future.cancel(true));
     outstandingSends.clear();
+    updateBufferDepthGauge();
   }
 
   private long backoffDelayMillis() {
@@ -448,6 +483,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     while ((next = buffer.poll()) != null) {
       drained.add(next);
     }
+    updateBufferDepthGauge();
     return drained;
   }
 
@@ -469,6 +505,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
                     sessionContext.sessionId(),
                     code);
                 buffer.addAll(buffered);
+                updateBufferDepthGauge();
                 drainBuffer();
               }
             })
@@ -479,6 +516,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
                   sessionContext.sessionId(),
                   error);
               buffer.addAll(buffered);
+              updateBufferDepthGauge();
               drainBuffer();
               return null;
             });
@@ -492,6 +530,18 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       return true;
     }
     return OK.equals(response.getError().getCode());
+  }
+
+  private void updateBufferDepthGauge() {
+    bufferDepth.set(buffer.size() + outstandingSends.size());
+  }
+
+  private void notifyConnectIfReady() {
+    if (connectEventRecorded || !sessionContext.isReady()) {
+      return;
+    }
+    eventService.recordConnectEvent(sessionContext.sessionId(), sessionContext.tenantId(), clientIp);
+    connectEventRecorded = true;
   }
 
   private void notifyDisconnectAsync() {
