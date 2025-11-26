@@ -83,13 +83,13 @@ Redis keys follow strict naming conventions to ensure:
 
 ### Key Format Examples
 
-| Redis Key                      | Description                              |
-|-------------------------------|------------------------------------------|
-| `tick:lock:{tenantId}:{entityId}` | Lock for entity during tick execution    |
-| `tick:pending:{tenantId}:{regionId}` | Staged results for a tick region         |
-| `room:{tenantId}:{roomId}`               | Hot room cache as JSON (occupants and metadata)                  |
-| `retry:{tenantId}:{regionId}`            | Retry queue for failed actions           |
-| `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms)   |
+| Redis Key | Description |
+| --- | --- |
+| `tick:lock:{tenantId}:{entityId}` | Lock for entity during tick execution |
+| `tick:pending:{tenantId}:{regionId}` | Staged results for a tick region |
+| `room:{tenantId}:{roomId}` | Hot room cache as JSON (occupants and metadata) |
+| `retry:{tenantId}:{regionId}` | Retry queue for failed actions |
+| `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms) |
 | `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
 
 > 🔗 `remote:{tenantId}:{entityId}` keys route cross-region commands. See [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)

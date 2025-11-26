@@ -131,9 +131,9 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 ## 🔄 Restore Workflow Summary
 
-| Environment      | Steps |
-|------------------|-------------------------------------------------------------|
-| **Kubernetes**   | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → allow Redis to repopulate |
+| Environment | Steps |
+| --- | --- |
+| **Kubernetes** | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → allow Redis to repopulate |
 | **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot → restart containers → Redis repopulates automatically |
 
 Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. Gameplay resumes after services restart and Redis repopulates from PostgreSQL.

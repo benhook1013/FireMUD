@@ -255,13 +255,13 @@ may be notified that the chain was halted.
 
 ## 🧠 Service Responsibilities
 
-| Service                   | Role                                                                 |
-|---------------------------|----------------------------------------------------------------------|
-| **Game Session Service**          | Orchestrates tick regions, lock acquisition, retries, commit flow    |
-| **Game Logic Service**            | Resolves each queued action deterministically, including movement/travel cost computation from World geometry and region metadata |
-| **Automation & Scripting**| Injects AI or scripted commands into queues                          |
-| **World Management**      | Defines tick region layout and room segmentation                     |
-| **Redis**                 | Stores locks, timers, staged changes, retry metadata; executes Lua   |
+| Service | Role |
+| --- | --- |
+| **Game Session Service** | Orchestrates tick regions, lock acquisition, retries, and commit flow |
+| **Game Logic Service** | Resolves each queued action deterministically, including movement/travel cost computation from World geometry and region metadata |
+| **Automation & Scripting** | Injects AI or scripted commands into queues |
+| **World Management** | Defines tick region layout and room segmentation |
+| **Redis** | Stores locks, timers, staged changes, retry metadata; executes Lua |
 
 > Game Session Service manages all tick lifecycle logic and delegates atomic operations to Redis via Lua.
 

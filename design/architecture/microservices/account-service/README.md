@@ -92,8 +92,8 @@ resolved during authentication.
 ### REST APIs
 
 | Method | Path | Description |
-| ------ | ---- | ----------- |
-| `GET`  | `/ping` | Simple health check |
+| --- | --- | --- |
+| `GET` | `/ping` | Simple health check |
 | `POST` | `/auth/login` | Authenticate and establish a session; JWT is kept server-side |
 | `POST` | `/auth/request-password-reset` | Request password reset |
 | `POST` | `/auth/complete-password-reset` | Complete password reset |
@@ -101,12 +101,12 @@ resolved during authentication.
 | `POST` | `/auth/verify-email` | Verify email token |
 | `POST` | `/auth/recover-username` | Send username reminder |
 | `POST` | `/accounts` | Create a new user account |
-| `GET`  | `/accounts/{accountId}/export` | Export account data |
+| `GET` | `/accounts/{accountId}/export` | Export account data |
 | `DELETE` | `/accounts/{accountId}` | Delete an account |
 | `POST` | `/accounts/{accountId}/external` | Link external account |
-| `GET`  | `/profiles/{accountId}` | Retrieve profile information |
-| `PUT`  | `/profiles/{accountId}` | Update profile information |
-| `GET`  | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
+| `GET` | `/profiles/{accountId}` | Retrieve profile information |
+| `PUT` | `/profiles/{accountId}` | Update profile information |
+| `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
 
 ## Dependencies
 

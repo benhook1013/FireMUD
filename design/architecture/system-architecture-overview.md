@@ -30,11 +30,11 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 FireMUD supports seamless gameplay recovery through a layered reconnection model:
 
-| Layer               | Responsibility                                               |
-|--------------------|---------------------------------------------------------------|
-| TCP Proxy Service          | Buffers Telnet input; clears on disconnect                    |
-| Spring Cloud Gateway     | Stateless; re-establishes backend connections on reconnect    |
-| Game Session Service | Restores gameplay session using Redis                         |
+| Layer | Responsibility |
+| --- | --- |
+| TCP Proxy Service | Buffers Telnet input; clears on disconnect |
+| Spring Cloud Gateway | Stateless; re-establishes backend connections on reconnect |
+| Game Session Service | Restores gameplay session using Redis |
 
 > 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for full details on session resumption, reauthentication, and failure handling.
 
@@ -42,34 +42,34 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 
 ## 🔗 Major Components and Their Roles
 
-| Component                          | Purpose                                                                 |
-|-----------------------------------|-------------------------------------------------------------------------|
-| **Web Clients**                   | Modern browser clients using WebSocket or HTTP to access the platform  |
-| **MUD Clients**                   | Traditional Telnet clients connecting via TCP, proxied into the system |
-| **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)**             | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS secures the link     |
-| **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)**          | Handles WebSocket termination, routing, auth, monitoring                |
-| **[Game Session Service](./microservices/game-session-service/README.md)**          | Manages player sessions, tick orchestration, stores runtime flags, input validation |
-| **[Account Service](./microservices/account-service/README.md)**               | Manages player accounts, login, auth, subscription status; ban workflows are available |
-| **[Entity Management Service](./microservices/entity-management-service/README.md)**     | Handles all entity data: players, NPCs, items, stats, inventories      |
-| **[World Management Service](./microservices/world-management-service/README.md)**      | Owns maps, rooms, and tick region structure; provides geometry and world snapshots |
-| **[Game Logic Service](./microservices/game-logic-service/README.md)**            | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
-| **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)**| Triggers AI and scripted behaviors                                     |
-| **[Social & Groups Service](./microservices/social-groups-service/README.md)**     | Manages chat, mail, guilds, and social features                        |
-| **[Logging & Admin Service](./microservices/logging-admin-service/README.md)**       | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service |
-| **[Game Design Service](./microservices/game-design-service/README.md)**           | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services |
+| Component | Purpose |
+| --- | --- |
+| **Web Clients** | Modern browser clients using WebSocket or HTTP to access the platform |
+| **MUD Clients** | Traditional Telnet clients connecting via TCP, proxied into the system |
+| **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS secures the link |
+| **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, auth, monitoring |
+| **[Game Session Service](./microservices/game-session-service/README.md)** | Manages player sessions, tick orchestration, stores runtime flags, input validation |
+| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, login, auth, subscription status; ban workflows are available |
+| **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all entity data: players, NPCs, items, stats, inventories |
+| **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides geometry and world snapshots |
+| **[Game Logic Service](./microservices/game-logic-service/README.md)** | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
+| **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** | Triggers AI and scripted behaviors |
+| **[Social & Groups Service](./microservices/social-groups-service/README.md)** | Manages chat, mail, guilds, and social features |
+| **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service |
+| **[Game Design Service](./microservices/game-design-service/README.md)** | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services |
 
 ---
 For a full list of responsibilities and APIs, refer to the [Microservices Documentation](./microservices/README.md).
 
 ## 🌐 Communication Flows
 
-| Flow                                        | Protocol                       |
-|---------------------------------------------|--------------------------------|
-| Web Clients → Spring Cloud Gateway          | WebSocket (wss) / HTTP (https) |
-| MUD Clients → TCP Proxy Service             | Raw TCP (Telnet)               |
-| TCP Proxy Service → Spring Cloud Gateway    | WebSocket (wss)                |
-| Spring Cloud Gateway → Game Session Service | WebSocket (wss)                |
-| Game Session Service → Other Microservices  | gRPC (internal)                |
+| Flow | Protocol |
+| --- | --- |
+| Web Clients → Spring Cloud Gateway | WebSocket (wss) / HTTP (https) |
+| MUD Clients → TCP Proxy Service | Raw TCP (Telnet) |
+| TCP Proxy Service → Spring Cloud Gateway | WebSocket (wss) |
+| Spring Cloud Gateway → Game Session Service | WebSocket (wss) |
+| Game Session Service → Other Microservices | gRPC (internal) |
 
 ✅ All internal communication from the Game Session Service onward uses **gRPC** with strict schema enforcement.
 
@@ -118,14 +118,14 @@ See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the 
 
 ## 🗂️ Deployment Layers
 
-| Layer                  | Technology                                                   |
-|------------------------|--------------------------------------------------------------|
-| Client Layer           | Browser, Telnet MUD Clients                                  |
-| Proxy Layer            | TCP Proxy Service (LoadBalancer Service)                     |
-| API Gateway Layer      | Spring Cloud Gateway (LoadBalancer Service)                  |
-| Gameplay Session Layer | Game Session Service                                         |
-| Service Layer          | Microservices (Account, Entity, World, Logic, etc.)          |
-| Infrastructure Layer   | Kubernetes with IPVS, Docker Compose (for local development) |
+| Layer | Technology |
+| --- | --- |
+| Client Layer | Browser, Telnet MUD Clients |
+| Proxy Layer | TCP Proxy Service (LoadBalancer Service) |
+| API Gateway Layer | Spring Cloud Gateway (LoadBalancer Service) |
+| Gameplay Session Layer | Game Session Service |
+| Service Layer | Microservices (Account, Entity, World, Logic, etc.) |
+| Infrastructure Layer | Kubernetes with IPVS, Docker Compose (for local development) |
 
 Deployment health checks (readiness and liveness probes) for these layers are
 described in detail in

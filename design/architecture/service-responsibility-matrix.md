@@ -1,47 +1,47 @@
 # 🧭 Microservices Responsibility Matrix
 
-| Function                                      | Game Design Service | World Management Service | Account Service | Game Session Service | Entity Management Service | Game Logic Service | Automation & Scripting Service | Social & Groups Service | Logging & Admin Service | TCP Proxy Service | Spring Cloud Gateway |
-|-----------------------------------------------|---------------------|--------------------------|-----------------|----------------------|---------------------------|--------------------|--------------------------------|---------------------------|-------------------------|-------------------|----------------------|
-| Game configuration authoring                  | ✔                   |                          |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| Custom in-game scripting authoring            | ✔                   |                          |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| Game version publishing                       | ✔                   |                          |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| Design-time feature flag definitions | ✔                   |                          |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| Room and zone editing                         |                     | ✔                        |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| World map region layout                       |                     | ✔                        |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| Room state persistence                        |                     | ✔                        |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| Pathfinding algorithms and navmesh data       |                     | ✔                        |                 |                      |                           |                    |                                |                           |                         |                   |                      |
-| Account authentication, credential verification, and JWT issuance (JWKS) |                     |                          | ✔               |          |                           |                    |                                |                           |                  |                   |                      |
-| Gameplay login command handling and session binding (Redis) |                     |                          |                 | ✔         |                           |                    |                                |                           |                  |                   |                      |
-| Email and system notifications                |                     |                          | ✔               |                      |                           |                    |                                |                           |                         |                   |                      |
-| Payment, subscriptions, and bans              |                     |                          | ✔               |                      |                           |                    |                                |                           |                         |                   |                      |
-| WebSocket connection/session lifecycle        |                     |                          |                | ✔                    |                           |                    |                               |                           |                         |                   |                       |
-| Reconnection handling (resume gameplay)       |                     |                          |                | ✔                    |                           |                    |                               |                           |                         |                   |                       |
-| Command queuing and dispatch                  |                     |                          |                | ✔                    |                           |                    |                               |                           |                         |                   |                       |
-| Session state storage (volatile, Redis)       |                     |                          |                | ✔                    |                           |                    |                               |                           |                         |                   |                       |
-| Game version activation at runtime            |                     |                          |                | ✔                    |                           |                    |                               |                           |                         |                   |                       |
-| Runtime feature flag overrides                |                     |                          |                | ✔                    |                           |                    |                               |                           |                         |                   |                       |
-| Entity definition and persistence             |                     |                          |                |                      | ✔                         |                    |                               |                           |                         |                   |                       |
-| NPC state, inventory, and stats               |                     |                          |                |                      | ✔                         |                    |                               |                           |                         |                   |                       |
-| Player inventory and stats                    |                     |                          |                |                      | ✔                         |                    |                               |                           |                         |                   |                       |
-| Item definitions and crafting data            |                     |                          |                |                      | ✔                         |                    |                               |                           |                         |                   |                       |
-| Game mechanics and combat resolution          |                     |                          |                |                      |                           | ✔                  |                               |                           |                         |                   |                       |
-| Command parsing and alias resolution          |                     |                          |                |                      |                           | ✔                  |                               |                           |                         |                   |                       |
-| Action execution (movement, attack, etc.)     |                     |                          |                |                      |                           | ✔                  |                               |                           |                         |                   |                       |
-| Progression logic (XP, levels, effects)       |                     |                          |                |                      |                           | ✔                  |                               |                           |                         |                   |                       |
-| Environmental effects (weather, etc.)         |                     |                          |                |                      |                           | ✔                  |                               |                           |                         |                   |                       |
-| Economy logic (trading, shops, pricing)       |                     |                          |                |                      |                           | ✔                  |                               |                           |                         |                   |                       |
-| AI-driven actions and behaviors               |                     |                          |                |                      |                           |                    | ✔                             |                           |                         |                   |                       |
-| Triggered script execution                    |                     |                          |                |                      |                           |                    | ✔                             |                           |                         |                   |                       |
-| Chat and private messaging                    |                     |                          |                |                      |                           |                    |                               | ✔                         |                         |                   |                       |
-| Guilds and group discovery                    |                     |                          |                |                      |                           |                    |                               | ✔                         |                         |                   |                       |
-| Social network graph (friends/blocks/etc.)    |                     |                          |                |                      |                           |                    |                               | ✔                         |                         |                   |                       |
-| Logging and metrics collection                |                     |                          |                |                      |                           |                    |                               |                           | ✔                       |                   |                       |
-| Admin panel and feature flag toggling         |                     |                          |                |                      |                           |                    |                               |                           | ✔                       |                   |                       |
-| Game moderation tools                         |                     |                          |                |                      |                           |                    |                               |                           | ✔                       |                   |                       |
-| Game moderation policy definition             |                     |                          |                |                      |                           |                    |                               |                           | ✔                       |                   |                       |
-| TCP/Telnet socket handling                    |                     |                          |                |                      |                           |                    |                               |                           |                         | ✔                 |                       |
-| Telnet → WebSocket bridging                   |                     |                          |                |                      |                           |                    |                               |                           |                         | ✔                 |                       |
-| WebSocket upgrade, routing, and auth gateway  |                     |                          |                |                      |                           |                    |                               |                           |                         |                   | ✔                     |
+| Function | Game Design Service | World Management Service | Account Service | Game Session Service | Entity Management Service | Game Logic Service | Automation & Scripting Service | Social & Groups Service | Logging & Admin Service | TCP Proxy Service | Spring Cloud Gateway |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Game configuration authoring | ✔ | | | | | | | | | | |
+| Custom in-game scripting authoring | ✔ | | | | | | | | | | |
+| Game version publishing | ✔ | | | | | | | | | | |
+| Design-time feature flag definitions | ✔ | | | | | | | | | | |
+| Room and zone editing | | ✔ | | | | | | | | | |
+| World map region layout | | ✔ | | | | | | | | | |
+| Room state persistence | | ✔ | | | | | | | | | |
+| Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
+| Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
+| Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
+| Email and system notifications | | | ✔ | | | | | | | | |
+| Payment, subscriptions, and bans | | | ✔ | | | | | | | | |
+| WebSocket connection/session lifecycle | | | | ✔ | | | | | | | |
+| Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
+| Command queuing and dispatch | | | | ✔ | | | | | | | |
+| Session state storage (volatile, Redis) | | | | ✔ | | | | | | | |
+| Game version activation at runtime | | | | ✔ | | | | | | | |
+| Runtime feature flag overrides | | | | ✔ | | | | | | | |
+| Entity definition and persistence | | | | | ✔ | | | | | | |
+| NPC state, inventory, and stats | | | | | ✔ | | | | | | |
+| Player inventory and stats | | | | | ✔ | | | | | | |
+| Item definitions and crafting data | | | | | ✔ | | | | | | |
+| Game mechanics and combat resolution | | | | | | ✔ | | | | | |
+| Command parsing and alias resolution | | | | | | ✔ | | | | | |
+| Action execution (movement, attack, etc.) | | | | | | ✔ | | | | | |
+| Progression logic (XP, levels, effects) | | | | | | ✔ | | | | | |
+| Environmental effects (weather, etc.) | | | | | | ✔ | | | | | |
+| Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
+| AI-driven actions and behaviors | | | | | | | ✔ | | | | |
+| Triggered script execution | | | | | | | ✔ | | | | |
+| Chat and private messaging | | | | | | | | ✔ | | | |
+| Guilds and group discovery | | | | | | | | ✔ | | | |
+| Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |
+| Logging and metrics collection | | | | | | | | | ✔ | | |
+| Admin panel and feature flag toggling | | | | | | | | | ✔ | | |
+| Game moderation tools | | | | | | | | | ✔ | | |
+| Game moderation policy definition | | | | | | | | | ✔ | | |
+| TCP/Telnet socket handling | | | | | | | | | | ✔ | |
+| Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
+| WebSocket upgrade, routing, and auth gateway | | | | | | | | | | | ✔ |
 
 ## 📚 Related Documentation
 

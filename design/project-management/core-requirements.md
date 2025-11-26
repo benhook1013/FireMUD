@@ -175,7 +175,7 @@ See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnectio
 ## 4. Non-Functional Requirements
 
 | **Category** | **Requirement** |
-|-------------|----------------|
+| --- | --- |
 | **Performance** | Must support **hundreds to thousands of concurrent players** per game instance. |
 | **Scalability** | Must support **horizontal scaling of services independently**. |
 | **Reliability** | **Automated failover and redundancy** for high availability. |

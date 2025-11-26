@@ -30,8 +30,8 @@
 ### REST APIs
 
 | Method | Path | Description |
-| ------ | ---- | ----------- |
-| `GET`  | `/ping` | Health check |
+| --- | --- | --- |
+| `GET` | `/ping` | Health check |
 
 ## Dependencies
 
