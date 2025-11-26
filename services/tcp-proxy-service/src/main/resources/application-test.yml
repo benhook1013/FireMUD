@@ -1,4 +1,4 @@
-# Development overrides for tcp-proxy-service
+# Test overrides for tcp-proxy-service
 spring:
   application:
     name: tcp-proxy-service

@@ -1,11 +1,20 @@
 spring:
+  datasource:
+    url: jdbc:h2:mem:${spring.application.name:firemud}-dev;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ''
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
   flyway:
     enabled: false
+  sql:
+    init:
+      mode: never
   autoconfigure:
     exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
-      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
   data:
     redis:
@@ -16,7 +25,9 @@ firemud:
   database:
     enabled: false
 
-# Disable external stateful dependencies in local development.
+# Disable external stateful dependencies in local/testing profile.
 game-session:
   log-only: true
+
+# Keep this "env-style" key around as a placeholder for now.
 GAME_SESSION_LOG_ONLY: true
