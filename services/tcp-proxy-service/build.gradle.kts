@@ -25,6 +25,7 @@ dependencies {
     testImplementation(libs.micrometer.registry.prometheus)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     testImplementation(libs.spring.boot.starter.webflux)
+    testImplementation(project(":spring-cloud-gateway"))
 }
 
 tasks.named<BootRun>("bootRun") {
