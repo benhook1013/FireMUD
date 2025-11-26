@@ -6,12 +6,12 @@ This document explains how FireMUD coordinates data consistency across its indep
 
 ## 🧠 Terminology Clarification
 
-| Term         | Meaning |
-|--------------|---------|
-| **Command**  | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained transaction**, backed by Redis. |
+| Term | Meaning |
+| --- | --- |
+| **Command** | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained transaction**, backed by Redis. |
 | **Transaction** | A unit of work that must either fully succeed or be rolled back. Each in-game command is treated as an atomic transaction. |
-| **Tick**     | A scheduled gameplay loop slice. Each tick processes one command per entity and uses Redis for coordination, rollback, and fairness. Ticks are not atomic across all commands — each command is executed as an independent transaction. |
-| **Saga**     | A long-running, cross-service workflow composed of multiple local transactions. Used only for **non-gameplay**, out-of-band operations (e.g., account creation, game publishing). Sagas rely on compensating actions for rollback and eventual consistency. |
+| **Tick** | A scheduled gameplay loop slice. Each tick processes one command per entity and uses Redis for coordination, rollback, and fairness. Ticks are not atomic across all commands — each command is executed as an independent transaction. |
+| **Saga** | A long-running, cross-service workflow composed of multiple local transactions. Used only for **non-gameplay**, out-of-band operations (e.g., account creation, game publishing). Sagas rely on compensating actions for rollback and eventual consistency. |
 
 ---
 
@@ -40,11 +40,11 @@ This model provides:
 
 Sagas are only used for **non-tick, multi-service workflows** involving persistent state changes that cannot be coordinated via Redis. These include:
 
-| Use Case              | Description |
-|-----------------------|-------------|
-| **Account Creation**  | Create account → provision default character → initialize world state |
-| **Game Publishing**   | Validate and persist design → push to World Service → toggle publish flags |
-| **Admin Operations**  | Issue bans, content revocation, or entity cleanup with audit logging |
+| Use Case | Description |
+| --- | --- |
+| **Account Creation** | Create account → provision default character → initialize world state |
+| **Game Publishing** | Validate and persist design → push to World Service → toggle publish flags |
+| **Admin Operations** | Issue bans, content revocation, or entity cleanup with audit logging |
 | **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
 
 These workflows:

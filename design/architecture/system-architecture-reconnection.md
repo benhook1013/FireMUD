@@ -6,11 +6,11 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 ## 🧩 Reconnection Layers
 
-| Layer              | Responsibility                                                               |
-|-------------------|-------------------------------------------------------------------------------|
-| **TCP Proxy Service**      | Parses Telnet input and clears buffered commands; exposes gRPC hooks for session recovery |
+| Layer | Responsibility |
+| --- | --- |
+| **TCP Proxy Service** | Parses Telnet input and clears buffered commands; exposes gRPC hooks for session recovery |
 | **Spring Cloud Gateway** | Stateless WebSocket passthrough; reconnects backend automatically |
-| **Game Session Service**   | Restores session from Redis; rebinds socket, region, and timers |
+| **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers |
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.**
@@ -78,15 +78,15 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 ## 🔄 Resume vs Reload Scenarios
 
-| Event                                           | Result                                         |
-|------------------------------------------------|------------------------------------------------|
-| Client disconnect (TCP/WebSocket)              | Requires new `LOGIN`; may resume via Redis     |
-| TCP Proxy Service restart                              | Telnet clients disconnected; new `LOGIN` required       |
-| Spring Cloud Gateway restart                           | Web clients disconnected; Telnet clients stay connected |
-| Game Session Service restart                          | Transparent if client remains connected         |
-| Manual re-`LOGIN` from same character          | Treated as reconnect; resumes if Redis intact |
-| Redis session expired/missing                  | Treated as fresh login; gameplay starts anew   |
-| New client logs in as same character           | Old session terminated; new one resumes control |
+| Event | Result |
+| --- | --- |
+| Client disconnect (TCP/WebSocket) | Requires new `LOGIN`; may resume via Redis |
+| TCP Proxy Service restart | Telnet clients disconnected; new `LOGIN` required |
+| Spring Cloud Gateway restart | Web clients disconnected; Telnet clients stay connected |
+| Game Session Service restart | Transparent if client remains connected |
+| Manual re-`LOGIN` from same character | Treated as reconnect; resumes if Redis intact |
+| Redis session expired/missing | Treated as fresh login; gameplay starts anew |
+| New client logs in as same character | Old session terminated; new one resumes control |
 
 > 🔑 Only **client disconnection** requires `LOGIN`. Game Session Service restarts are invisible if the socket stays open. TCP Proxy restarts drop Telnet clients, while Gateway restarts disconnect Web clients; Telnet clients proxied through the Gateway remain connected.
 

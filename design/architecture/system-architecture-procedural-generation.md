@@ -54,17 +54,17 @@ Generates biome-aware terrain maps with elevation, water features, forest densit
 
 #### Generation Pipeline:
 
-| Step                     | Purpose                                     | Common Techniques                          |
-|--------------------------|---------------------------------------------|--------------------------------------------|
-| **Elevation Map**        | Define height (mountains, valleys)          | `Perlin Noise`, `Diamond-Square`           |
-| **Moisture Map**         | Define biome type (desert, swamp, forest)   | Gradient sampling, additional noise layer  |
-| **Biome Assignment**     | Use height + moisture to classify terrain   | Threshold tables or biome rulesets         |
-| **Region Partitioning**  | Divide into zones/factions                  | `Voronoi`, seeded points + expansion       |
-| **River/Lake Simulation**| Carve out natural water features            | Flow fields, downhill tracing              |
-| **Forest/Cave Generation** | Place dense blobs of trees or underground | Cellular automata                          |
-| **Feature Placement**    | Place towns, dungeons, landmarks            | `Poisson Disk Sampling`, seeded rules      |
-| **Connectivity Graph**   | Generate roads, rivers, and path exits      | A*, flow maps, elevation-aware routing     |
-| **Room Graph Export**    | Convert terrain grid into room data         | Either sparse (POIs and path nodes only) or full (1:1 room per map cell) |
+| Step | Purpose | Common Techniques |
+| --- | --- | --- |
+| **Elevation Map** | Define height (mountains, valleys) | `Perlin Noise`, `Diamond-Square` |
+| **Moisture Map** | Define biome type (desert, swamp, forest) | Gradient sampling, additional noise layer |
+| **Biome Assignment** | Use height + moisture to classify terrain | Threshold tables or biome rulesets |
+| **Region Partitioning** | Divide into zones/factions | `Voronoi`, seeded points + expansion |
+| **River/Lake Simulation** | Carve out natural water features | Flow fields, downhill tracing |
+| **Forest/Cave Generation** | Place dense blobs of trees or underground | Cellular automata |
+| **Feature Placement** | Place towns, dungeons, landmarks | `Poisson Disk Sampling`, seeded rules |
+| **Connectivity Graph** | Generate roads, rivers, and path exits | A*, flow maps, elevation-aware routing |
+| **Room Graph Export** | Convert terrain grid into room data | Either sparse (POIs and path nodes only) or full (1:1 room per map cell) |
 
 > The room generation mode (sparse vs full) is selectable per generation request, depending on the game’s desired level of detail and exploration density.
 
@@ -74,15 +74,15 @@ Generates biome-aware terrain maps with elevation, water features, forest densit
 
 All generators emit a normalized structure:
 
-| Field         | Description                                         |
-|---------------|-----------------------------------------------------|
-| `roomId`      | Unique identifier                                   |
+| Field | Description |
+| --- | --- |
+| `roomId` | Unique identifier |
 | `coordinates` | Grid location (used for spatial logic and editing) |
-| `exitMap`     | Map of direction → `roomId`                         |
-| `tags`        | Optional labels like `"start"`, `"town"`, etc.     |
-| `biome`       | Biome or terrain type (if applicable)              |
-| `elevation`   | Numeric terrain height (used for visuals or logic) |
-| `regionId`    | Optional grouping for partitioned maps             |
+| `exitMap` | Map of direction → `roomId` |
+| `tags` | Optional labels like `"start"`, `"town"`, etc. |
+| `biome` | Biome or terrain type (if applicable) |
+| `elevation` | Numeric terrain height (used for visuals or logic) |
+| `regionId` | Optional grouping for partitioned maps |
 
 `spacingMultiplier` is stored on the containing region (World Management) and can globally scale movement speed across the map. In sparse layouts Game Logic uses room coordinates and this `spacingMultiplier` to derive movement/travel cost, so nearby rooms are quick to traverse while large gaps produce longer travel times.
 
@@ -137,11 +137,11 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ## ✅ Feature Overview
 
-| Area                     | Status                                      |
-|--------------------------|---------------------------------------------|
-| Biome-based gameplay     | Movement cost and visibility adjustments     |
-| Terrain traversal rules  | Rules defined per biome and elevation delta  |
-| Region-specific scripting| Integrated with spawn rules and lore         |
+| Area | Status |
+| --- | --- |
+| Biome-based gameplay | Movement cost and visibility adjustments |
+| Terrain traversal rules | Rules defined per biome and elevation delta |
+| Region-specific scripting | Integrated with spawn rules and lore |
 
 Additional capabilities:
 

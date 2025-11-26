@@ -8,10 +8,10 @@ This document describes how FireMUD supports **both modern and traditional MUD c
 
 FireMUD enables real-time interaction through two types of client connections:
 
-| Client Type             | Protocol       | Entry Point                     |
-|-------------------------|----------------|----------------------------------|
-| Web-based clients       | WebSocket      | Spring Cloud Gateway (`/ws/game/**`) |
-| Traditional MUD clients | TCP (Telnet)   | TCP Proxy Service (custom)      |
+| Client Type | Protocol | Entry Point |
+| --- | --- | --- |
+| Web-based clients | WebSocket | Spring Cloud Gateway (`/ws/game/**`) |
+| Traditional MUD clients | TCP (Telnet) | TCP Proxy Service (custom) |
 
 Despite their differences, both protocols are normalized into the same internal architecture using a **WebSocket-based session layer**.
 

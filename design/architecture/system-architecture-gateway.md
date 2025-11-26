@@ -114,10 +114,10 @@ This approach minimizes latency and matches the protocol table in the
 
 ## Dev vs. Prod Configuration
 
-| Environment | Route Target Format      | Discovery Mechanism        |
-|-------------|---------------------------|-----------------------------|
-| Dev         | `http://service:8080`     | Docker Compose DNS          |
-| Prod        | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
+| Environment | Route Target Format | Discovery Mechanism |
+| --- | --- | --- |
+| Dev | `http://service:8080` | Docker Compose DNS |
+| Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
 Spring profiles defined in `application.yml` and selected via
 `SPRING_PROFILES_ACTIVE` configure routing targets based on environment.

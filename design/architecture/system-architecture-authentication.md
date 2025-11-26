@@ -7,7 +7,7 @@ session state is managed server-side in Redis and restored via the Game Session
 Service. The service delegates credential verification to the Account Service's `/auth/login` endpoint. Accounts may also authenticate
 using linked external providers such as Google, Discord, or Steam.
 
-**Responsibility split**
+## Responsibility Split
 
 - **Account Service** – Verifies credentials (including OTP), issues JWTs, and publishes JWKS for validation.
 - **Game Session Service** – Fronts the `LOGIN` command, stores session context in Redis, and rebinds sockets on reconnect.
@@ -74,10 +74,10 @@ tokens without validating them, and the Game Session Service forwards tokens on 
 
 ### 🧠 Claims
 
-| Field         | Description                                                             |
-|---------------|-------------------------------------------------------------------------|
-| `accountId`   | Identity of the authenticated account                                   |
-| `globalRoles` | Cross-game privileges (e.g., `platformAdmin`, `moderator`)              |
+| Field | Description |
+| --- | --- |
+| `accountId` | Identity of the authenticated account |
+| `globalRoles` | Cross-game privileges (e.g., `platformAdmin`, `moderator`) |
 | `scopedRoles` | Map of `tenantId` → roles (e.g., `"tenant-abc": ["admin", "designer"]`) |
 
 ### 🧾 Example JWT Payload
@@ -97,10 +97,10 @@ tokens without validating them, and the Game Session Service forwards tokens on 
 
 Access to services is governed by roles from the JWT:
 
-| Context        | Description                                                         |
-|----------------|---------------------------------------------------------------------|
-| `globalRoles`  | Platform-wide access (e.g., moderation, admin dashboards)           |
-| `scopedRoles`  | Per-game access (e.g., designer tools, admin features for a game)   |
+| Context | Description |
+| --- | --- |
+| `globalRoles` | Platform-wide access (e.g., moderation, admin dashboards) |
+| `scopedRoles` | Per-game access (e.g., designer tools, admin features for a game) |
 
 ### JWT Usage Scope
 
@@ -149,18 +149,18 @@ occurs automatically during role updates.
 
 ## ✅ Summary
 
-| Topic                 | Description                                                      |
-|-----------------------|------------------------------------------------------------------|
-| Auth Command          | `LOGIN` (or `LOGON`) — supports prompt or argument input |
-| JWT Usage             | Internal-only for backend gRPC auth                             |
-| Claims                | `accountId`, `globalRoles[]`, `scopedRoles{}` |
-| Session State         | Stored in Redis; bound to socket by Game Session Service |
-| Session TTL           | Controlled by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`             |
-| Reauthentication      | Required after disconnect; resumes via Redis if valid |
-| Role Enforcement      | Meta/control services only; gameplay services trust Game Session Service |
-| Role Updates          | Refreshed in-session; no client interaction needed |
+| Topic | Description |
+| --- | --- |
+| Auth Command | `LOGIN` (or `LOGON`) — supports prompt or argument input |
+| JWT Usage | Internal-only for backend gRPC auth |
+| Claims | `accountId`, `globalRoles[]`, `scopedRoles{}` |
+| Session State | Stored in Redis; bound to socket by Game Session Service |
+| Session TTL | Controlled by `FIREMUD_AUTH_SESSION_EXPIRATION_MS` |
+| Reauthentication | Required after disconnect; resumes via Redis if valid |
+| Role Enforcement | Meta/control services only; gameplay services trust Game Session Service |
+| Role Updates | Refreshed in-session; no client interaction needed |
 | Multi-Client Behavior | One session per character; new login replaces old session |
-| Two-Factor Auth       | Optional TOTP for admin and moderator accounts via `/auth/login` |
+| Two-Factor Auth | Optional TOTP for admin and moderator accounts via `/auth/login` |
 
 ---
 

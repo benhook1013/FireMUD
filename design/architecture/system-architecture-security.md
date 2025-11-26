@@ -96,19 +96,19 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ## ✅ Summary
 
-| Topic                     | Strategy                                                                 |
-|---------------------------|--------------------------------------------------------------------------|
-| JWT Secret Storage        | Kubernetes Secrets with hot reload via `JwtSecretWatcher`; rotation can be manual or automated via cert-manager |
-| Key & Cert Rotation       | Hot reload via `TlsCertificateWatcher`; automatic JWKS rotation with credential caching |
-| TLS Termination           | Load balancer                                                 |
-| Internal Encryption       | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
-| Trust Enforcement         | JWT + mTLS + Kubernetes NetworkPolicies                                  |
-| Brute-Force Defense       | Game Session Service enforces per-IP connection and command rate limits; Gateway applies Redis rate limiting |
-| Abuse Detection           | Login tracking and command-level heuristics enforce usage patterns |
-| Telnet Controls           | Telnet protocol command whitelist + sanitization implemented |
-| Admin Role Access         | JWT-only; no special network-level restrictions |
-| Zero Trust                | Enforced via mTLS and JWT-based validation |
-| 2FA                       | Available for admin and moderator accounts via TOTP codes               |
+| Topic | Strategy |
+| --- | --- |
+| JWT Secret Storage | Kubernetes Secrets with hot reload via `JwtSecretWatcher`; rotation can be manual or automated via cert-manager |
+| Key & Cert Rotation | Hot reload via `TlsCertificateWatcher`; automatic JWKS rotation with credential caching |
+| TLS Termination | Load balancer |
+| Internal Encryption | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
+| Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
+| Brute-Force Defense | Game Session Service enforces per-IP connection and command rate limits; Gateway applies Redis rate limiting |
+| Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
+| Telnet Controls | Telnet protocol command whitelist + sanitization implemented |
+| Admin Role Access | JWT-only; no special network-level restrictions |
+| Zero Trust | Enforced via mTLS and JWT-based validation |
+| 2FA | Available for admin and moderator accounts via TOTP codes |
 
 ---
 
