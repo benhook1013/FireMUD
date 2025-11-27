@@ -2,11 +2,9 @@ package net.firedevops.firemud.command.text;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
-import net.firedevops.firemud.command.text.LoginCommandConstants;
-import net.firedevops.firemud.command.text.LoginCommandHandlingResult;
-import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
@@ -68,16 +66,18 @@ public final class LoginCommandHandler {
           CommandEnqueueResult.failure(error.getCode(), error.getMessage()), null);
     }
 
+    Optional<LoginResult> loginResult = buildLoginResult(sessionId, authResponse.getAuthToken());
+
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (enqueueResult.accepted()) {
-      storeSessionContext(sessionId);
+      loginResult.ifPresent(result -> storeSessionContext(sessionId, result));
     }
     return new LoginCommandHandlingResult(enqueueResult, null);
   }
 
-  private void storeSessionContext(String sessionIdText) {
-    if (sessionContextService == null || gameInstanceRepository == null) {
+  private void storeSessionContext(String sessionIdText, LoginResult result) {
+    if (sessionContextService == null || result == null) {
       return;
     }
 
@@ -86,21 +86,33 @@ public final class LoginCommandHandler {
       return;
     }
 
-    gameInstanceRepository
-        .findById(sessionId)
-        .map(this::buildContextFromInstance)
-        .ifPresent(
-            context -> {
-              sessionContextService.save(context);
-              logger.debug("Updated session context for {}:{}", context.tenantId(), context.sessionId());
-            });
+    SessionContext context =
+        new SessionContext(
+            sessionId,
+            result.tenantId(),
+            result.accountId(),
+            result.playerId(),
+            result.gameInstanceId(),
+            result.jwt());
+    sessionContextService.save(context);
+    logger.debug("Updated session context for {}:{}", context.tenantId(), context.sessionId());
   }
 
-  private SessionContext buildContextFromInstance(GameInstance instance) {
-    long tenantId = instance.getTenantId();
-    long accountId = instance.getOwnerAccountId();
-    long playerId = accountId; // placeholder until character selection exists
-    return new SessionContext(instance.getId(), tenantId, accountId, playerId, instance.getId());
+  private Optional<LoginResult> buildLoginResult(String sessionIdText, String jwt) {
+    Long sessionId = parseSessionId(sessionIdText);
+    if (sessionId == null) {
+      return Optional.empty();
+    }
+    return gameInstanceRepository
+        .findById(sessionId)
+        .map(
+            instance ->
+                new LoginResult(
+                    instance.getOwnerAccountId(),
+                    instance.getTenantId(),
+                    instance.getOwnerAccountId(),
+                    instance.getId(),
+                    jwt));
   }
 
   private Long parseSessionId(String sessionIdText) {
