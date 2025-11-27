@@ -1,6 +1,7 @@
 import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
 import org.gradle.api.plugins.quality.Checkstyle
+import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
 import org.springframework.boot.gradle.tasks.run.BootRun
 
@@ -62,6 +63,10 @@ subprojects {
         the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
+            if (name.contains("Test")) {
+                // Ignore the current @MockBean removal warnings until Spring 4.0 lands so tests stay clean.
+                options.compilerArgs.add("-Xlint:-removal")
+            }
         }
     }
 
