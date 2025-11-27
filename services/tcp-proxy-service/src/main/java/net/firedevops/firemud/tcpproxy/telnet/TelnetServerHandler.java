@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -39,6 +40,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final int MAX_BUFFER_DEPTH = 512;
   private static final String OK = "OK";
+  private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN");
 
   private final String gatewayWsUrl;
   private final boolean logOnly;
@@ -311,7 +313,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         return;
       }
 
-      logger.info("Received Telnet input: {}", sanitized);
+      logTelnetInput(sanitized);
       touchActivity();
 
       if (logOnly) {
@@ -552,6 +554,32 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         () ->
             eventService.notifyDisconnect(
                 sessionContext.sessionId(), sessionContext.tenantId()));
+  }
+
+  private void logTelnetInput(String sanitized) {
+    if (!logger.isDebugEnabled()) {
+      return;
+    }
+    String trimmed = sanitized.strip();
+    if (trimmed.isEmpty()) {
+      return;
+    }
+    String commandName = extractCommandName(trimmed);
+    if (SENSITIVE_COMMANDS.contains(commandName)) {
+      logger.debug("Received Telnet command: {} (arguments redacted)", commandName);
+    } else {
+      logger.debug("Received Telnet command: {}", trimmed);
+    }
+  }
+
+  private static String extractCommandName(String sanitizedLine) {
+    String trimmed = sanitizedLine.stripLeading();
+    if (trimmed.isEmpty()) {
+      return "";
+    }
+    int firstSpaceIndex = trimmed.indexOf(' ');
+    String token = firstSpaceIndex == -1 ? trimmed : trimmed.substring(0, firstSpaceIndex);
+    return token.toUpperCase(Locale.ROOT);
   }
 
   private String extractIp(Object remote) {
