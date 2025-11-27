@@ -44,7 +44,7 @@ tasks.named<BootRun>("bootRun") {
 tasks.register<BootRun>("bootRunLogOnly") {
     group = "application"
     description = "Start the TCP proxy in dev with log-only Telnet handling"
-    mainClass.set("net.firedevops.firemud.TcpProxyServiceApplication")
+    mainClass.set("net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
     environment("TCP_PROXY_LOG_ONLY", "true")
