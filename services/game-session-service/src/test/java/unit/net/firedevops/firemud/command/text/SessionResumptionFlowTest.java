@@ -1,6 +1,7 @@
 package unit.net.firedevops.firemud.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -53,7 +54,16 @@ class SessionResumptionFlowTest {
     instance.setId(1L);
     instance.setTenantId(22L);
     instance.setOwnerAccountId(77L);
-    when(instanceRepository.findById(Mockito.anyLong())).thenReturn(Optional.of(instance));
+    when(instanceRepository.findById(Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              long sessionId = invocation.getArgument(0);
+              GameInstance perCall = new GameInstance();
+              perCall.setId(sessionId);
+              perCall.setTenantId(22L);
+              perCall.setOwnerAccountId(77L);
+              return Optional.of(perCall);
+            });
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     when(accountClient.authenticate(
@@ -97,6 +107,32 @@ class SessionResumptionFlowTest {
 
     assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
+  }
+
+  @Test
+  void secondConnectionTakesOverAndFirstConnectionIsUnauthenticated() {
+    TextCommandInterpretationResult firstLogin =
+        interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertTrue(firstLogin.commandResult().accepted());
+    TextCommandInterpretationResult firstLook =
+        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertTrue(firstLook.commandResult().accepted());
+
+    TextCommandInterpretationResult secondLogin =
+        interpreter.interpret("2", LOGIN_PAYLOAD, false);
+    assertTrue(secondLogin.commandResult().accepted());
+    TextCommandInterpretationResult secondLook =
+        interpreter.interpret("2", LOOK_PAYLOAD, false);
+    assertTrue(secondLook.commandResult().accepted());
+    assertEquals(LookCommandHandler.DEFAULT_ROOM_DESCRIPTION, secondLook.responseText());
+
+    TextCommandInterpretationResult firstLookAfterTakeover =
+        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertFalse(firstLookAfterTakeover.commandResult().accepted());
+    assertEquals("NOT_AUTHENTICATED", firstLookAfterTakeover.commandResult().errorCode());
+
+    assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
+    assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

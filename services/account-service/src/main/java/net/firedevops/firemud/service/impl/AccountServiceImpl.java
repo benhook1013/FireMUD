@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.config.MailProperties;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.dto.AccountDataExportDto;
 import net.firedevops.firemud.dto.AccountDto;
 import net.firedevops.firemud.dto.CompletePasswordResetRequest;
@@ -38,6 +39,7 @@ import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.EmailService;
 import net.firedevops.firemud.service.NotificationService;
+import net.firedevops.firemud.service.exception.AuthenticationException;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -149,15 +151,20 @@ public class AccountServiceImpl implements AccountService {
       Long tenantId, String username, String password, String otp) {
     Optional<Account> accountOpt = accountRepository.findByTenantIdAndUsername(tenantId, username);
     Account account =
-        accountOpt.orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
+        accountOpt.orElseThrow(
+            () ->
+                new AuthenticationException(
+                    AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
     if (!verifyPassword(password, account.getPasswordHash())) {
-      throw new IllegalArgumentException("Invalid credentials");
+      throw new AuthenticationException(
+          AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials");
     }
     if (account.getTwoFactorSecret() != null
         && ("admin".equals(account.getRole()) || "moderator".equals(account.getRole()))) {
       TOTPGenerator generator = new TOTPGenerator.Builder(account.getTwoFactorSecret()).build();
       if (otp == null || !generator.verify(otp)) {
-        throw new IllegalArgumentException("Invalid 2FA code");
+        throw new AuthenticationException(
+            AuthenticationErrorCodes.OTP_REQUIRED, "Invalid 2FA code");
       }
     }
     String token =

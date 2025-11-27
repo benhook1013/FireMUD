@@ -3,8 +3,10 @@ package net.firedevops.firemud.command.text;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
 import net.firedevops.firemud.config.LogOnlyProperties;
@@ -84,7 +86,9 @@ public final class LoginCommandHandler {
         accountClient.authenticate(
             String.valueOf(instance.getTenantId()), args.get(0), args.get(1), otp);
     var error = authResponse.getError();
-    if (error != null && !error.getCode().isBlank()) {
+    if (error != null
+        && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
+            || !Optional.ofNullable(error.getMessage()).orElse("").isBlank())) {
       return new LoginCommandHandlingResult(
           CommandEnqueueResult.failure(mapErrorCode(error), error.getMessage()), null);
     }
@@ -184,7 +188,24 @@ public final class LoginCommandHandler {
             jwt));
   }
 
+  private static final Map<String, String> CANONICAL_ERROR_MAP =
+      Map.of(
+          AuthenticationErrorCodes.INVALID_CREDENTIALS,
+          "INVALID_CREDENTIALS",
+          AuthenticationErrorCodes.OTP_REQUIRED,
+          "OTP_REQUIRED",
+          AuthenticationErrorCodes.ACCOUNT_LOCKED,
+          "ACCOUNT_LOCKED");
+
   private String mapErrorCode(ErrorDetail error) {
+    if (error == null) {
+      return "UPSTREAM_FAILURE";
+    }
+    String rawCode = Optional.ofNullable(error.getCode()).orElse("");
+    String upperCode = rawCode.toUpperCase();
+    if (CANONICAL_ERROR_MAP.containsKey(upperCode)) {
+      return CANONICAL_ERROR_MAP.get(upperCode);
+    }
     String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
     if (message.contains("invalid credentials")) {
       return "INVALID_CREDENTIALS";
@@ -195,8 +216,7 @@ public final class LoginCommandHandler {
     if (message.contains("locked")) {
       return "ACCOUNT_LOCKED";
     }
-    String code = error.getCode();
-    return code == null || code.isBlank() ? "UPSTREAM_FAILURE" : code;
+    return upperCode.isBlank() ? "UPSTREAM_FAILURE" : upperCode;
   }
 
   private Long parseSessionId(String sessionIdText) {

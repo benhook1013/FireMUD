@@ -20,8 +20,10 @@ import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.exception.AuthenticationException;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -59,12 +61,19 @@ class AccountGrpcServiceTest {
     Mockito.when(
             accountService.authenticate(
                 Mockito.eq(1L), Mockito.eq("demo"), Mockito.eq("bad"), Mockito.any()))
-        .thenThrow(new IllegalArgumentException("invalid"));
+        .thenThrow(
+            new AuthenticationException(
+                AuthenticationErrorCodes.INVALID_CREDENTIALS, "Invalid credentials"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<AuthenticateResponse> ref = new AtomicReference<>();
     service.authenticate(
-        AuthenticateRequest.newBuilder().setUsername("demo").setPassword("bad").setOtp("").build(),
+        AuthenticateRequest.newBuilder()
+            .setTenantId("1")
+            .setUsername("demo")
+            .setPassword("bad")
+            .setOtp("")
+            .build(),
         new StreamObserver<AuthenticateResponse>() {
           @Override
           public void onNext(AuthenticateResponse value) {
@@ -79,7 +88,7 @@ class AccountGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("UNAUTHENTICATED", ref.get().getError().getCode());
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, ref.get().getError().getCode());
   }
 
   @Test

@@ -17,6 +17,7 @@ import static org.mockito.Mockito.times;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
 import net.firedevops.firemud.config.LogOnlyProperties;
@@ -202,12 +203,35 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void accountErrorMapsToErrorDetailCode() {
+  void accountErrorUsesCanonicalCode() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
             .setError(
                 ErrorDetail.newBuilder()
-                    .setCode("UNAUTHENTICATED")
+                    .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
+                    .setMessage("Invalid credentials")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_CREDENTIALS", result.commandResult().errorCode());
+  }
+
+  @Test
+  void accountErrorFallbacksToMessageHeuristic() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("")
                     .setMessage("Invalid 2FA code")
                     .build())
             .build();
