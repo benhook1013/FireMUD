@@ -94,4 +94,3 @@ This document lists recurring problem domains and testing focus areas for FireMU
 - Bug capture: every significant bug gets a short note added to the relevant section here with a link to a regression test.
 - Regression tests: when fixing a bug, add or update tests so the failure mode is covered permanently.
 - Periodic reviews: revisit this document regularly to add new domains or refine existing ones as FireMUD evolves.
-

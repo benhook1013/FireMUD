@@ -13,10 +13,12 @@ import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -26,7 +28,8 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = GameSessionCrossServiceIntegrationTest.TestApp.class)
+    classes = GameSessionCrossServiceIntegrationTest.TestApp.class,
+    properties = "game-session.require-authenticated-commands=false")
 class GameSessionCrossServiceIntegrationTest {
 
   private static GenericContainer<?> gameLogicService =
@@ -57,6 +60,8 @@ class GameSessionCrossServiceIntegrationTest {
   @LocalServerPort private int port;
 
   @Autowired private TestRestTemplate restTemplate;
+
+  @MockBean private RedisTemplate<String, Object> redisTemplate;
 
   @Test
   void gameSessionRunsAlongsideGameLogicService() {

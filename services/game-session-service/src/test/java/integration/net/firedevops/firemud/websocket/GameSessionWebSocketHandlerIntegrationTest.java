@@ -22,6 +22,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.WebSocketHttpHeaders;
@@ -34,6 +35,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
     properties = {
       "spring.profiles.active=test",
       "game-session.log-only=true",
+      "game-session.require-authenticated-commands=false",
       "firemud.database.enabled=false",
       "spring.application.name=game-session-service",
       "grpc.server.port=0",
@@ -59,6 +61,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockBean private GRpcServerRunner grpcServerRunner;
 
   @MockBean private CommandService commandService;
+
+  @MockBean private RedisTemplate<String, Object> redisTemplate;
 
   @Test
   void websocketCommandIsEnqueuedAndClientGetsAck() throws Exception {

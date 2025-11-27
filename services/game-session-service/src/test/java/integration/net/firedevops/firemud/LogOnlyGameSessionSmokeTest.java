@@ -25,6 +25,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -39,6 +40,7 @@ import org.springframework.http.ResponseEntity;
       "spring.application.name=game-session-service",
       "spring.profiles.active=dev",
       "game-session.log-only=true",
+      "game-session.require-authenticated-commands=false",
       "grpc.server.enabled=false",
       "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration"
     })
@@ -48,6 +50,8 @@ class LogOnlyGameSessionSmokeTest {
   @LocalServerPort private int port;
 
   @Autowired private TestRestTemplate restTemplate;
+
+  @MockBean private RedisTemplate<String, Object> redisTemplate;
 
   @Test
   void startSessionIsAcceptedAndLogged(CapturedOutput output) {

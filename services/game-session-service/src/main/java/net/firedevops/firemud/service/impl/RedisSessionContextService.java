@@ -15,7 +15,6 @@ public final class RedisSessionContextService implements SessionContextService {
   private final Duration sessionTtl;
 
   private static final String CONTEXT_KEY_TEMPLATE = "session:%d:%d:context";
-  private static final String SESSION_KEY_TEMPLATE = "session-id:%d:context";
 
   public RedisSessionContextService(
       RedisTemplate<String, Object> redisTemplate,
@@ -30,21 +29,15 @@ public final class RedisSessionContextService implements SessionContextService {
     redisTemplate
         .opsForValue()
         .set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
-    redisTemplate
-        .opsForValue()
-        .set(sessionKey(context.sessionId()), context, sessionTtl);
   }
 
   @Override
-  public Optional<SessionContext> findBySessionId(long sessionId) {
-    return Optional.ofNullable((SessionContext) redisTemplate.opsForValue().get(sessionKey(sessionId)));
+  public Optional<SessionContext> findBySessionId(long tenantId, long sessionId) {
+    return Optional.ofNullable(
+        (SessionContext) redisTemplate.opsForValue().get(contextKey(tenantId, sessionId)));
   }
 
   private String contextKey(long tenantId, long sessionId) {
     return String.format(CONTEXT_KEY_TEMPLATE, tenantId, sessionId);
-  }
-
-  private String sessionKey(long sessionId) {
-    return String.format(SESSION_KEY_TEMPLATE, sessionId);
   }
 }

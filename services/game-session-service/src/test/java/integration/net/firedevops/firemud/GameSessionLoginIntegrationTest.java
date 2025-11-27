@@ -25,6 +25,7 @@ import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -38,7 +39,14 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"game-session.log-only=true", "game-session.require-authenticated-commands=false"})
+    properties = {
+      "game-session.log-only=true",
+      "game-session.require-authenticated-commands=false",
+      "firemud.database.enabled=false",
+      "spring.application.name=game-session-service",
+      "grpc.server.port=0",
+      "grpc.server.enabled=false"
+    })
 class GameSessionLoginIntegrationTest {
   @LocalServerPort private int port;
 
@@ -47,6 +55,7 @@ class GameSessionLoginIntegrationTest {
   @MockBean private SessionContextService sessionContextService;
   @MockBean private SessionAuthenticationService sessionAuthenticationService;
   @MockBean private CommandService commandService;
+  @MockBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
 
   @BeforeEach
   void setUp() {
