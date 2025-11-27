@@ -1,19 +1,23 @@
-package net.firedevops.firemud.controller;
+package net.firedevops.firemud.tcpproxy.controller;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.telnet.TelnetServer;
+import net.firedevops.firemud.tcpproxy.service.PingService;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(PingController.class)
+@ContextConfiguration(classes = PingControllerTest.TestConfig.class)
 class PingControllerTest {
 
   @Autowired private MockMvc mockMvc;
@@ -31,4 +35,8 @@ class PingControllerTest {
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data").value("pong"));
   }
+
+  @SpringBootConfiguration
+  @ComponentScan(basePackageClasses = PingController.class)
+  static class TestConfig {}
 }

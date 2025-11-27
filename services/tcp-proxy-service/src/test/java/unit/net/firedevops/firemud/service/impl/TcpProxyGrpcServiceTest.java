@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service.impl;
+package net.firedevops.firemud.tcpproxy.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -7,8 +7,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.service.PingService;
-import net.firedevops.firemud.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.service.PingService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.PingRequest;
 import net.firedevops.firemud.tcpproxy.v1.PingResponse;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;

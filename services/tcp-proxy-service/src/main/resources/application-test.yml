@@ -14,7 +14,7 @@ grpc:
       trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
       clientAuth: ${GRPC_SERVER_CLIENT_AUTH:NONE}
 
-GATEWAY_WS_URL: ${GATEWAY_WS_URL:ws://localhost:8080/dev/echo}
+GATEWAY_WS_URL: ${TCP_PROXY_GATEWAY_WS_URL_TEST:ws://localhost:8080/dev/echo}
 
 firemud:
   grpc:

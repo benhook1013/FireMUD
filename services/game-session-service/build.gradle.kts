@@ -19,6 +19,7 @@ dependencies {
     implementation(libs.mapstruct)
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
+    implementation(libs.spring.boot.starter.websocket)
     implementation(libs.spring.boot.starter.data.jpa)
     implementation(libs.spring.boot.starter.data.redis)
     implementation(project(":common-library"))
@@ -54,4 +55,3 @@ tasks.register<BootRun>("bootRunLogOnly") {
     environment("GAME_SESSION_LOG_ONLY", "true")
     systemProperty("game-session.log-only", "true")
 }
-

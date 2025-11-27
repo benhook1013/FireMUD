@@ -53,7 +53,7 @@ Gradle project paths map directly to the names defined in `settings.gradle.kts`,
 
 Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will fail because no such project path exists in the Gradle settings.
 
-### Spring Profiles and Databases
+### Spring Profiles for Testing
 
 Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
 

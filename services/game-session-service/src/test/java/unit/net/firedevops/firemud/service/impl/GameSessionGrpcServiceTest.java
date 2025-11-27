@@ -18,12 +18,13 @@ import net.firedevops.firemud.gamesession.v1.ResumeTicksResponse;
 import net.firedevops.firemud.gamesession.v1.StartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
-import net.firedevops.firemud.service.CommandService;
+import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.TickService;
+import net.firedevops.firemud.dto.CommandEnqueueResult;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -34,7 +35,7 @@ class GameSessionGrpcServiceTest {
     Mockito.when(pingService.ping()).thenReturn("pong");
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    CommandService commandService = Mockito.mock(CommandService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
@@ -44,7 +45,7 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
-            commandService,
+            textCommandInterpreter,
             tickService,
             meterRegistry,
             ipLimiter);
@@ -77,7 +78,7 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    CommandService commandService = Mockito.mock(CommandService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
@@ -91,7 +92,7 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
-            commandService,
+            textCommandInterpreter,
             tickService,
             meterRegistry,
             ipLimiter);
@@ -127,7 +128,7 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    CommandService commandService = Mockito.mock(CommandService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
@@ -137,7 +138,7 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
-            commandService,
+            textCommandInterpreter,
             tickService,
             meterRegistry,
             ipLimiter);
@@ -204,7 +205,7 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    CommandService commandService = Mockito.mock(CommandService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     Mockito.when(ipLimiter.canAccept("1.2.3.4")).thenReturn(false);
@@ -214,7 +215,7 @@ class GameSessionGrpcServiceTest {
             pingService,
             gameInstanceService,
             featureFlagService,
-            commandService,
+            textCommandInterpreter,
             tickService,
             meterRegistry,
             ipLimiter);
@@ -249,23 +250,21 @@ class GameSessionGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
-    CommandService commandService = Mockito.mock(CommandService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     Mockito.when(ipLimiter.canAccept(Mockito.anyString())).thenReturn(true);
     Mockito.when(
-            commandService.enqueue(
+            textCommandInterpreter.interpret(
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean()))
-        .thenReturn(
-            net.firedevops.firemud.dto.CommandEnqueueResult.failure(
-                "RATE_LIMIT", "Command rate limit exceeded"));
+        .thenReturn(CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded"));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
             gameInstanceService,
             featureFlagService,
-            commandService,
+            textCommandInterpreter,
             tickService,
             meterRegistry,
             ipLimiter);

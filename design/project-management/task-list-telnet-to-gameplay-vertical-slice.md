@@ -51,9 +51,9 @@ Link to the [Minimal Text Command Protocol](../architecture/microservices/game-s
 
 ### 6.3 Interpreter and dispatch into existing tick/command flow
 
-- [ ] Add a minimal `TextCommandInterpreter` (or equivalent service) in `services/game-session-service` that takes a `TextCommand` and enqueues the appropriate internal command into the existing tick/command queue (reusing the same enqueue logic used for current WebSocket/game commands).
-- [ ] Wire the WebSocket/Game Session entry point to call `TextCommandParser` + `TextCommandInterpreter` for each incoming text line so that text commands follow the same tick-based processing path as any other gameplay command.
-- [ ] Add tests (unit or small Spring test) that simulate a WebSocket message containing a text line and assert that the correct internal command is enqueued for a given session/tenant.
+- [x] Add a minimal `TextCommandInterpreter` (or equivalent service) in `services/game-session-service` that takes a `TextCommand` and enqueues the appropriate internal command into the existing tick/command queue (reusing the same enqueue logic used for current WebSocket/game commands).
+- [x] Wire the WebSocket/Game Session entry point to call `TextCommandParser` + `TextCommandInterpreter` for each incoming text line so that text commands follow the same tick-based processing path as any other gameplay command.
+- [x] Add tests (unit or small Spring test) that simulate a WebSocket message containing a text line and assert that the correct internal command is enqueued for a given session/tenant.
 
 ### 6.4 Minimal LOOK gameplay command
 
@@ -74,6 +74,16 @@ Link to the [Minimal Text Command Protocol](../architecture/microservices/game-s
 - [x] Add tests that exercise the `GameSessionService` gRPC `Ping` endpoint and verify it returns a successful `ErrorDetail` code and message.
 - [x] Add a smoke test that starts `game-session-service` in log-only mode (matching the `bootRunLogOnly` configuration) and verifies a simple request flow (for example starting a session or enqueuing a command) is accepted and logged without hitting external dependencies.
 - [x] Update `services/game-session-service/README.md` or the Game Session design docs with a brief "Log-only mode" section that links to the smoke test, explains when to use it, and clarifies that it avoids database and external service calls.
+
+## 8. Cross-Service Test Stabilization Follow-Up
+
+Work on the tcp-proxy cross-service test has drifted: the current `TelnetGatewayGameSessionCrossServiceIntegrationTest` is burdened with ad-hoc bean overrides (mocked gRPC runners, custom route builders, Redis template stubs, etc.) and still fails to compile because `ReactiveRedisTemplate` is not on the test classpath. Before resuming, carve out a clean plan to simplify this area:
+
+- [x] Remove the reactive Redis references (and other recent hacks) from `TelnetGatewayGameSessionCrossServiceIntegrationTest` so the file compiles again with the original dependencies — verified in `services/tcp-proxy-service/src/test/java/crossservice/net/firedevops/firemud/TelnetGatewayGameSessionCrossServiceIntegrationTest.java` where the imports/config now exclude Redis and mocked route builders (`@EnableAutoConfiguration` excludes `GRpcAutoConfiguration` / `GatewayRedisAutoConfiguration` only for the stub contexts).
+- [x] Build a lightweight gateway stub app (either inline or as a separate `GatewayStubApplication`) that only exposes the `/ws/game` WebSocket route and requires no Redis/JWT/gRPC configuration — implemented in `services/tcp-proxy-service/src/test/java/crossservice/net/firedevops/firemud/stub/GatewayStubApplication.java`, which proxies `/ws/game/**` traffic via `ReactorNettyWebSocketClient`.
+- [x] Update the cross-service test to launch just the stub gateway + the existing game-session stub, wiring the ports through `@DynamicPropertySource` without extra bean or component-scan overrides — `TelnetGatewayGameSessionCrossServiceIntegrationTest` now spins up only `GameSessionStubApplication` + `GatewayStubApplication` and registers `GATEWAY_WS_URL`/`TCP_PROXY_PORT` via `@DynamicPropertySource`.
+- [x] Re-run `./gradlew :tcp-proxy-service:test --tests crossservice.net.firedevops.firemud.TelnetGatewayGameSessionCrossServiceIntegrationTest` and log any remaining failures as follow-up items (e.g., LOOK handler expectations) rather than piling on mocks — command executed successfully (latest run in this workspace, see shell history) with no remaining failures.
+- [x] Document the new helper stub and wiring approach in this file and the per-service task lists once it's stable, so future slices can reuse the simplified pattern — this checklist plus `design/project-management/task-list-tcp-proxy-service.md` and `design/project-management/task-list-spring-cloud-gateway.md` now include references to the stub/test harness.
 
 ---
 

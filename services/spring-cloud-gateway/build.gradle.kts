@@ -27,6 +27,15 @@ dependencies {
     testRuntimeOnly("io.grpc:grpc-netty:1.77.0")
 }
 
+tasks.named<BootRun>("bootRun") {
+    val activeProfile =
+        System.getProperty("spring.profiles.active") ?: System.getenv("SPRING_PROFILES_ACTIVE")
+
+    if (activeProfile.isNullOrBlank()) {
+        systemProperty("spring.profiles.active", "dev")
+    }
+}
+
 tasks.register<BootRun>("bootRunLogOnly") {
     group = "application"
     description = "Start the gateway in dev with log-only WebSocket handling"
@@ -35,6 +44,5 @@ tasks.register<BootRun>("bootRunLogOnly") {
     systemProperty("spring.profiles.active", "dev")
     environment("TCP_PROXY_LOG_ONLY", "true")
 }
-
 
 
