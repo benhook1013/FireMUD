@@ -218,7 +218,9 @@ public final class LoginCommandHandler {
           AuthenticationErrorCodes.OTP_REQUIRED,
           "OTP_REQUIRED",
           AuthenticationErrorCodes.ACCOUNT_LOCKED,
-          "ACCOUNT_LOCKED");
+          "ACCOUNT_LOCKED",
+          AuthenticationErrorCodes.UPSTREAM_FAILURE,
+          "UPSTREAM_FAILURE");
 
   private String mapErrorCode(ErrorDetail error) {
     if (error == null) {

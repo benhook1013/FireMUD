@@ -22,6 +22,7 @@ import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
+import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -63,7 +64,12 @@ class TextCommandInterpreterTest {
             accountClient,
             logOnlyProperties,
             meterRegistry);
-    when(gameInstanceRepository.findById(Mockito.anyLong())).thenReturn(Optional.empty());
+    GameInstance demoInstance = new GameInstance();
+    demoInstance.setId(1L);
+    demoInstance.setTenantId(22L);
+    demoInstance.setOwnerAccountId(123L);
+    when(gameInstanceRepository.findById(Mockito.anyLong()))
+        .thenReturn(Optional.of(demoInstance));
     when(sessionAuthenticationService.isAuthenticated(Mockito.anyString())).thenReturn(true);
     interpreter =
         new TextCommandInterpreter(
