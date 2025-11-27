@@ -319,6 +319,11 @@ More details on deployment environments and gateway routing can be found in the 
 
 These documents explain how the compose setup differs from production and provide examples of the configuration files.
 
+### Log-only stubbed services
+
+- When `game-session.log-only` (or `GAME_SESSION_LOG_ONLY`) is `true`, the Game Session Service (and dependent tests) uses in-memory replacements (`LogOnlySessionContextService`, `LogOnlyGameInstanceService`, and `LogOnlyGameInstanceRegistry`) instead of hitting Redis/JPA. This keeps LOGIN + LOOK flows runnable on a developer laptop that lacks PostgreSQL/Redis/Account Service dependencies.
+- Revisit the log-only smoke/integration tests (`LogOnlyGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, etc.) once the real infrastructure is wired: either limit them to the `log-only` profile, run them against the real services, or temporarily disable them with a TODO that points at the missing dependency, so the suite continues to reflect production behavior without silent failures.
+
 ---
 
 You are now ready to explore the codebase and contribute!
