@@ -7,4 +7,8 @@ public interface SessionContextService {
   void save(SessionContext context);
 
   Optional<SessionContext> findBySessionId(long tenantId, long sessionId);
+
+  Optional<SessionContext> findByAccountAndPlayer(long tenantId, long accountId, long playerId);
+
+  void deleteBySessionId(long tenantId, long sessionId);
 }

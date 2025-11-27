@@ -26,6 +26,7 @@ import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContextService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -41,11 +42,13 @@ class TextCommandInterpreterTest {
       Mockito.mock(SessionAuthenticationService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private LoginCommandHandler loginHandler;
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
   void setUp() {
+    meterRegistry.clear();
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(net.firedevops.firemud.account.v1.AuthenticateResponse.newBuilder().build());
     loginHandler =
@@ -54,7 +57,8 @@ class TextCommandInterpreterTest {
             gameInstanceRepository,
             sessionContextService,
             accountClient,
-            properties);
+            properties,
+            meterRegistry);
     when(gameInstanceRepository.findById(Mockito.anyLong())).thenReturn(Optional.empty());
     when(sessionAuthenticationService.isAuthenticated(Mockito.anyString())).thenReturn(true);
     interpreter =

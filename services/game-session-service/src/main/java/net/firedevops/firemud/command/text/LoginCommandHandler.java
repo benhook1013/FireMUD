@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
+import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -28,6 +29,7 @@ public final class LoginCommandHandler {
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
+  private final GameSessionProperties properties;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -37,6 +39,7 @@ public final class LoginCommandHandler {
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService,
       AccountClient accountClient,
+      GameSessionProperties properties,
       MeterRegistry meterRegistry) {
     this.commandService =
         Objects.requireNonNull(commandService, "commandService must not be null");
@@ -45,6 +48,7 @@ public final class LoginCommandHandler {
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
+    this.properties = Objects.requireNonNull(properties, "properties must not be null");
     Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = meterRegistry.counter("gamesession.session.takeover");
     this.resumeCounter = meterRegistry.counter("gamesession.session.resume");
@@ -63,14 +67,14 @@ public final class LoginCommandHandler {
 
     Long numericSessionId = parseSessionId(sessionId);
     if (numericSessionId == null) {
-      return new LoginCommandHandlingResult(
-          CommandEnqueueResult.failure("INVALID_ARGUMENT", "sessionId must be numeric"), null);
+      return invalidSessionFailure();
     }
 
     Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(numericSessionId);
     if (maybeInstance.isEmpty()) {
-      return new LoginCommandHandlingResult(
-          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found"), null);
+      CommandEnqueueResult failure =
+          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");
+      return new LoginCommandHandlingResult(failure, null);
     }
     GameInstance instance = maybeInstance.get();
 
@@ -84,19 +88,29 @@ public final class LoginCommandHandler {
           CommandEnqueueResult.failure(mapErrorCode(error), error.getMessage()), null);
     }
 
-    LoginResult loginResult =
-        buildLoginResult(instance, authResponse.getAuthToken()).orElse(null);
+    Optional<LoginResult> loginResult =
+        buildLoginResult(instance, authResponse.getAuthToken());
+    if (loginResult.isEmpty()) {
+      CommandEnqueueResult failure =
+          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");
+      return new LoginCommandHandlingResult(failure, null);
+    }
 
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (enqueueResult.accepted()) {
-      persistSessionContext(numericSessionId, loginResult);
+      loginResult.ifPresent(result -> persistSessionContext(sessionId, result));
     }
     return new LoginCommandHandlingResult(enqueueResult, null);
   }
 
-  private void persistSessionContext(long sessionId, LoginResult result) {
+  private void persistSessionContext(String sessionIdText, LoginResult result) {
     if (sessionContextService == null || result == null) {
+      return;
+    }
+
+    Long sessionId = parseSessionId(sessionIdText);
+    if (sessionId == null) {
       return;
     }
 
@@ -188,5 +202,10 @@ public final class LoginCommandHandler {
     } catch (NumberFormatException ex) {
       return null;
     }
+  }
+
+  private LoginCommandHandlingResult invalidSessionFailure() {
+    return new LoginCommandHandlingResult(
+        CommandEnqueueResult.failure("INVALID_ARGUMENT", "sessionId must be numeric"), null);
   }
 }

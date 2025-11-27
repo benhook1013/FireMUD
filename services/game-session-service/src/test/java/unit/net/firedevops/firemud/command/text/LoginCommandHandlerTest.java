@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
+import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.command.text.LoginCommandConstants;
@@ -46,6 +47,7 @@ class LoginCommandHandlerTest {
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final GameSessionProperties properties = new GameSessionProperties();
   private LoginCommandHandler handler;
 
   @BeforeEach
@@ -60,6 +62,7 @@ class LoginCommandHandlerTest {
             gameInstanceRepository,
             sessionContextService,
             accountClient,
+            properties,
             meterRegistry);
   }
 
