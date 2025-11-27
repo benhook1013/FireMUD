@@ -10,7 +10,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.GameSessionServiceApplication;
-import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.service.CommandService;
 import org.junit.jupiter.api.Test;
@@ -96,8 +96,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     verify(commandService).enqueue("42", "LOOK", false);
-    String expectedResponse =
-        "OK LOOK\n" + LookCommandHandler.DEFAULT_ROOM_DESCRIPTION + "\n\n";
-    assertThat(responsePayload.get()).isEqualTo(expectedResponse);
+    assertThat(responsePayload.get()).isEqualTo(LookCommandConstants.LOOK_RESPONSE);
   }
 }

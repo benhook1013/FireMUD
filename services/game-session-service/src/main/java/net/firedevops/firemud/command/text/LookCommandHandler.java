@@ -6,8 +6,7 @@ import org.springframework.stereotype.Component;
 /** Handles the minimal LOOK gameplay command by returning a deterministic room description. */
 @Component
 public final class LookCommandHandler {
-  public static final String DEFAULT_ROOM_DESCRIPTION =
-      "You are in a candle-lit antechamber carved into basalt.\nExits: NORTH EAST";
+  public static final String DEFAULT_ROOM_DESCRIPTION = LookCommandConstants.ROOM_DESCRIPTION;
 
   private final String roomDescription;
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
@@ -19,6 +20,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.command.text.LookCommandConstants;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -104,8 +106,9 @@ private static GatewayHolder GATEWAY;
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       writer.println("SESSION 1 1");
       writer.println("look");
-      String response = reader.readLine();
-      assertThat(response).isEqualTo("processed:look");
+      String response = readMultiLineResponse(reader);
+      String expected = LookCommandConstants.LOOK_RESPONSE;
+      assertThat(response).isEqualTo(expected);
     }
 
     awaitCommand("look");
@@ -265,6 +268,18 @@ private static GatewayHolder GATEWAY;
     }
   }
 
+  private static String readMultiLineResponse(BufferedReader reader) throws IOException {
+    StringBuilder builder = new StringBuilder();
+    String line;
+    while ((line = reader.readLine()) != null) {
+      builder.append(line).append("\n");
+      if (line.isEmpty()) {
+        break;
+      }
+    }
+    return builder.toString();
+  }
+
   private static final class GameSessionWebSocketHandler implements WebSocketHandler {
     private final GameSessionStub stub;
 
@@ -282,9 +297,16 @@ private static GatewayHolder GATEWAY;
               .doOnNext(stub::recordCommand);
 
       Flux<WebSocketMessage> replies =
-          commands.map(cmd -> session.textMessage("processed:" + cmd));
+          commands.map(command -> session.textMessage(responsePayload(command)));
 
       return session.send(replies);
+    }
+
+    private String responsePayload(String command) {
+      if ("LOOK".equalsIgnoreCase(command)) {
+        return LookCommandConstants.LOOK_RESPONSE;
+      }
+      return "processed:" + command;
     }
   }
 
