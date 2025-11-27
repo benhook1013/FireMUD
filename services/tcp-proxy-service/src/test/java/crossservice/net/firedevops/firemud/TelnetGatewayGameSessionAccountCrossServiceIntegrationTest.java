@@ -25,13 +25,18 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
-import net.firedevops.firemud.GameSessionServiceApplication;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
+import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.dto.GameInstanceDto;
+import net.firedevops.firemud.dto.StartSessionRequest;
+import net.firedevops.firemud.service.GatewayRoute;
+import net.firedevops.firemud.service.GatewayRouteService;
+import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
-import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
@@ -45,6 +50,24 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.TestSocketUtils;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import net.firedevops.firemud.common.config.CommonAutoConfiguration;
+import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
+import net.firedevops.firemud.config.GameSessionProperties;
+import net.firedevops.firemud.config.GrpcClientProperties;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
+import org.springframework.context.annotation.Import;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -168,6 +191,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("game-session.log-only", "false");
     props.put("game-session.require-authenticated-commands", "true");
     props.put("firemud.services.accountService", "localhost:" + accountPort);
+    props.put("firemud.services.gameLogicService", "localhost:0");
+    props.put("firemud.services.worldManagementService", "localhost:0");
+    props.put("firemud.services.entityManagementService", "localhost:0");
     props.put("firemud.grpc.plaintext", "true");
     props.put("firemud.postgres.host", POSTGRES.getHost());
     props.put("firemud.postgres.port", String.valueOf(POSTGRES.getMappedPort(5432)));
@@ -177,8 +203,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("firemud.redis.host", REDIS.getHost());
     props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
     props.put("firemud.database.enabled", "true");
+    props.put("spring.main.allow-bean-definition-overriding", "true");
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GameSessionServiceApplication.class)
+        new SpringApplicationBuilder(GameSessionTestApplication.class)
             .properties(props)
             .run();
 
@@ -338,6 +365,109 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     void close() {
       context.close();
+    }
+  }
+
+  @SpringBootConfiguration
+  @EnableAutoConfiguration
+  @EnableScheduling
+  @EnableConfigurationProperties({GrpcClientProperties.class, GameSessionProperties.class})
+  @EntityScan(basePackages = "net.firedevops.firemud.entity")
+  @EnableJpaRepositories(basePackages = "net.firedevops.firemud.repository")
+  @ComponentScan(
+      basePackages = {
+        "net.firedevops.firemud.client",
+        "net.firedevops.firemud.command",
+        "net.firedevops.firemud.config",
+        "net.firedevops.firemud.data",
+        "net.firedevops.firemud.dto",
+        "net.firedevops.firemud.entity",
+        "net.firedevops.firemud.health",
+        "net.firedevops.firemud.mapper",
+        "net.firedevops.firemud.repository",
+        "net.firedevops.firemud.service",
+        "net.firedevops.firemud.text",
+        "net.firedevops.firemud.websocket"
+      },
+      excludeFilters = {
+        @ComponentScan.Filter(
+            type = FilterType.ASSIGNABLE_TYPE,
+            classes = net.firedevops.firemud.service.impl.GameInstanceServiceImpl.class),
+        @ComponentScan.Filter(
+            type = FilterType.ASSIGNABLE_TYPE,
+            classes = net.firedevops.firemud.service.impl.GatewayRouteServiceImpl.class)
+      })
+  @Import({DatabaseAutoConfiguration.class, CommonAutoConfiguration.class})
+  static class GameSessionTestApplication {
+
+    @Bean
+    RedisConnectionFactory redisConnectionFactory() {
+      LettuceConnectionFactory factory =
+          new LettuceConnectionFactory(REDIS.getHost(), REDIS.getMappedPort(6379));
+      factory.afterPropertiesSet();
+      return factory;
+    }
+
+    @Bean
+    RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory factory) {
+      RedisTemplate<String, Object> template = new RedisTemplate<>();
+      template.setConnectionFactory(factory);
+      template.afterPropertiesSet();
+      return template;
+    }
+
+    @Bean
+    StringRedisTemplate stringRedisTemplate(RedisConnectionFactory factory) {
+      StringRedisTemplate template = new StringRedisTemplate();
+      template.setConnectionFactory(factory);
+      template.afterPropertiesSet();
+      return template;
+    }
+
+    @Bean
+    ConflictTracker conflictTracker() {
+      return key -> {};
+    }
+
+    @Bean
+    GameInstanceService stubGameInstanceService() {
+      return new GameInstanceService() {
+        @Override
+        public GameInstanceDto startSession(StartSessionRequest request) {
+          return new GameInstanceDto(
+              request.ownerAccountId(),
+              request.tenantId(),
+              request.runtimeVersion(),
+              request.scriptPatchVersion(),
+              request.ownerAccountId(),
+              "RUNNING");
+        }
+
+        @Override
+        public GameInstanceDto stopSession(long sessionId) {
+          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "STOPPED");
+        }
+
+        @Override
+        public GameInstanceDto restartSession(long sessionId) {
+          return new GameInstanceDto(sessionId, 0L, "stub", null, 0L, "RUNNING");
+        }
+      };
+    }
+
+    @Bean
+    GatewayRouteService gatewayRouteService() {
+      return new GatewayRouteService() {
+        @Override
+        public GatewayRoute upsert(GatewayRoute route) {
+          return route;
+        }
+
+        @Override
+        public boolean remove(String routeId) {
+          return true;
+        }
+      };
     }
   }
 }

@@ -40,7 +40,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final int MAX_BUFFER_DEPTH = 512;
   private static final String OK = "OK";
-  private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN");
+  private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN", "LOGON");
 
   private final String gatewayWsUrl;
   private final boolean logOnly;

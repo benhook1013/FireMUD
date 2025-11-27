@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.config.MailProperties;
 import net.firedevops.firemud.dto.AccountDto;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.dto.AuthenticationResult;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.EmailService;
 import net.firedevops.firemud.service.NotificationService;
 import net.firedevops.firemud.service.session.SessionService;
+import net.firedevops.firemud.service.exception.AuthenticationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -125,8 +127,11 @@ class AccountServiceImplTest {
   @Test
   void authenticateThrowsWhenInvalid() {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
-    assertThrows(
-        IllegalArgumentException.class, () -> service.authenticate(1L, "demo", "bad", null));
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.authenticate(1L, "demo", "bad", null));
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 
   @Test
