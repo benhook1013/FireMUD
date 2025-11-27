@@ -150,7 +150,8 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish` |
+| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
+| `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `LOOK` | Requests the current room description plus exits. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 
@@ -158,7 +159,7 @@ This small command table defines the initial MVP gameplay command set delivered 
 
 ### Login / Logon semantics
 
-Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments starts the prompt flow, whereas `LOGIN <username> <password>` (optionally followed by an OTP for accounts with two-factor enabled) performs an immediate authentication attempt. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently.
+Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments starts the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. OTP values are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
 
 Telnet success (prompt-based):
 
@@ -178,7 +179,7 @@ LOGIN demo@example.com wrongpass
 ERROR INVALID_CREDENTIALS Invalid username or password
 ```
 
-WebSocket success (parameterized command):
+WebSocket success (parameterized command with optional OTP omitted):
 
 ```text
 LOGIN demo@example.com swordfish
@@ -200,7 +201,7 @@ For the current Telnet-to-gameplay vertical slice, the implementation intentiona
 - `LOOK` is implemented as a minimal, deterministic room description inside the Game Session Service via a `LookCommandHandler`. This is a temporary gameplay stub used to validate the end-to-end text command flow and tests; future slices will route LOOK and other gameplay commands through the world/logic/scripting stack so that room descriptions and exits are fully data-driven.
 - `SAY` and additional gameplay commands will follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
 
-The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic.
+The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic. Once this login slice lands, gameplay commands such as `LOOK` and `SAY` only execute for authenticated sessions (outside of explicitly documented dev/test bypasses), so the interpreter rejects untrusted text with `ERROR NOT_AUTHENTICATED` before the command queue ever sees it.
 
 ### Response format
 

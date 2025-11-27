@@ -33,9 +33,14 @@ All clients — whether connecting via Telnet or WebSocket — authenticate usin
 
 ### Mapping to the Account Service
 
-The Game Session Service turns every plain-text `LOGIN`/`LOGON` command into a call to the Account Service `/auth/login` REST endpoint (or the equivalent `Authenticate` gRPC method) so credential verification remains centralized. The request payload carries `username`, `password`, and, when supplied, the `otp` field so two-factor verification executes in the Account Service. The resulting JWT, account identity, and role claims flow back through the Game Session Service, which stores them in Redis and binds the socket to the authenticated session.
+#### Plain-text `LOGIN`/`LOGON` command mapping
 
-Gameplay commands such as `LOOK` and `SAY` are gated by this authentication handshake. Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, except in explicitly documented development/test bypass modes that grant temporary access.
+1. The Telnet/WebSocket client emits `LOGIN <username> <password> [otp]` (or the `LOGON` alias).
+2. The Game Session Service parses the line, normalizes casing, and issues a synchronous call to the Account Service `/auth/login` REST endpoint or the `Authenticate` gRPC method with a payload containing `username`, `password`, and the optional `otp`.
+3. The Account Service validates credentials (including the OTP when present) and returns either a JWT + account metadata or a logical error code such as `INVALID_CREDENTIALS` or `ACCOUNT_LOCKED`.
+4. Success responses cause the Game Session Service to store the JWT and claims in Redis, bind the socket to the authenticated session, and emit `OK LOGIN Logged in as <username>` on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
+
+Gameplay commands such as `LOOK` and `SAY` are gated by this authentication handshake. Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, except in explicitly documented development/test bypass modes that grant temporary access. Once the login-and-session vertical slice ships, these commands are no longer processed for anonymous sessions, keeping the gameplay queue free of unauthenticated traffic.
 
 Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and
 not tied to a single game or tenant; the same account is used across all worlds. Tenant context is
