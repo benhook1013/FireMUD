@@ -2,9 +2,12 @@ package net.firedevops.firemud.command.text;
 
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.client.AccountClient;
 import net.firedevops.firemud.command.text.LoginCommandConstants;
 import net.firedevops.firemud.command.text.LoginCommandHandlingResult;
 import net.firedevops.firemud.command.text.TextCommand;
+import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -24,18 +27,24 @@ public final class LoginCommandHandler {
   private final CommandService commandService;
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
+  private final AccountClient accountClient;
+  private final GameSessionProperties properties;
 
   @Autowired
   public LoginCommandHandler(
       CommandService commandService,
       GameInstanceRepository gameInstanceRepository,
-      SessionContextService sessionContextService) {
+      SessionContextService sessionContextService,
+      AccountClient accountClient,
+      GameSessionProperties properties) {
     this.commandService =
         Objects.requireNonNull(commandService, "commandService must not be null");
     this.gameInstanceRepository =
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
+    this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
+    this.properties = Objects.requireNonNull(properties, "properties must not be null");
   }
 
   public LoginCommandHandlingResult handle(
@@ -47,6 +56,16 @@ public final class LoginCommandHandler {
               LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
               LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
       return new LoginCommandHandlingResult(failure, null);
+    }
+
+    String otp = args.size() > 2 ? args.get(2) : "";
+    AuthenticateResponse authResponse =
+        accountClient.authenticate(
+            properties.getDefaultTenantId(), args.get(0), args.get(1), otp);
+    var error = authResponse.getError();
+    if (!error.getCode().isBlank()) {
+      return new LoginCommandHandlingResult(
+          CommandEnqueueResult.failure(error.getCode(), error.getMessage()), null);
     }
 
     CommandEnqueueResult enqueueResult =

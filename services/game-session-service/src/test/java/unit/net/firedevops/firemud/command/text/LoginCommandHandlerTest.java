@@ -14,11 +14,15 @@ import static org.mockito.Mockito.times;
 
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.client.AccountClient;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.command.text.LoginCommandConstants;
 import net.firedevops.firemud.command.text.LoginCommandHandler;
 import net.firedevops.firemud.command.text.LoginCommandHandlingResult;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandType;
+import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -35,12 +39,22 @@ class LoginCommandHandlerTest {
       Mockito.mock(GameInstanceRepository.class);
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
+  private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final GameSessionProperties properties = new GameSessionProperties();
   private LoginCommandHandler handler;
 
   @BeforeEach
   void setUp() {
+    when(accountClient.authenticate(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(AuthenticateResponse.newBuilder().build());
     handler =
-        new LoginCommandHandler(commandService, gameInstanceRepository, sessionContextService);
+        new LoginCommandHandler(
+            commandService,
+            gameInstanceRepository,
+            sessionContextService,
+            accountClient,
+            properties);
   }
 
   @Test
@@ -101,10 +115,14 @@ class LoginCommandHandlerTest {
 
   @Test
   void invalidCredentialsDoesNotSaveContext() {
-    CommandEnqueueResult failure = CommandEnqueueResult.failure("INVALID_CREDENTIALS", "bad");
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(ErrorDetail.newBuilder().setCode("INVALID_CREDENTIALS").setMessage("bad").build())
+            .build();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(failure);
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(authError);
 
     LoginCommandHandlingResult result = handler.handle("session-1", command, false);
 
@@ -129,5 +147,7 @@ class LoginCommandHandlerTest {
     handler.handle("1", command, false);
 
     verify(sessionContextService, times(2)).save(any());
+    verify(accountClient, times(2))
+        .authenticate(anyString(), anyString(), anyString(), anyString());
   }
 }

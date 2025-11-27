@@ -9,4 +9,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class GameSessionProperties {
   /** Require authentication before processing gameplay commands. */
   private boolean requireAuthenticatedCommands = true;
+
+  /** Tenant identifier used for initial account logins. */
+  private String defaultTenantId = "demo";
 }
