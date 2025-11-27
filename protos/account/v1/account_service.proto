@@ -60,7 +60,8 @@ message AuthenticateRequest {
 
 message AuthenticateResponse {
   string auth_token = 1;
-  shared.v1.ErrorDetail error = 2;
+  string account_id = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 message GetProfileRequest {

@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.config.MailProperties;
 import net.firedevops.firemud.dto.AccountDto;
+import net.firedevops.firemud.dto.AuthenticationResult;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.entity.Account;
@@ -114,10 +115,11 @@ class AccountServiceImplTest {
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.of(account));
 
-    String token = service.authenticate(1L, "demo", "password", null);
+    AuthenticationResult result = service.authenticate(1L, "demo", "password", null);
 
-    assertNotNull(token);
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, token);
+    assertNotNull(result.token());
+    assertEquals(1L, result.accountId());
+    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.token());
   }
 
   @Test

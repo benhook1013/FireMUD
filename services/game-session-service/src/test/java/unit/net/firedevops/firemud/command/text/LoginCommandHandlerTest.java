@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
-import net.firedevops.firemud.config.GameSessionProperties;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.command.text.LoginCommandConstants;
@@ -46,8 +46,8 @@ class LoginCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final LogOnlyProperties logOnlyProperties = new LogOnlyProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-  private final GameSessionProperties properties = new GameSessionProperties();
   private LoginCommandHandler handler;
 
   @BeforeEach
@@ -55,14 +55,18 @@ class LoginCommandHandlerTest {
     meterRegistry.clear();
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).build());
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId("77")
+                .build());
     handler =
         new LoginCommandHandler(
             commandService,
             gameInstanceRepository,
             sessionContextService,
             accountClient,
-            properties,
+            logOnlyProperties,
             meterRegistry);
   }
 
@@ -172,6 +176,28 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
+    verify(sessionContextService, never()).save(any());
+  }
+
+  @Test
+  void accountMismatchReturnsFailure() {
+    CommandEnqueueResult success = CommandEnqueueResult.success();
+    TextCommand command =
+        new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
+    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(AUTH_TOKEN)
+                .setAccountId("99")
+                .build());
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("ACCOUNT_MISMATCH", result.commandResult().errorCode());
     verify(sessionContextService, never()).save(any());
   }
 

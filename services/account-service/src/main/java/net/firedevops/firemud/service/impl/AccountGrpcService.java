@@ -80,13 +80,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
-      String token =
+      net.firedevops.firemud.dto.AuthenticationResult result =
           accountService.authenticate(
               Long.valueOf(request.getTenantId()),
               request.getUsername(),
               request.getPassword(),
               request.getOtp());
-      AuthenticateResponse response = AuthenticateResponse.newBuilder().setAuthToken(token).build();
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setAuthToken(result.token())
+              .setAccountId(String.valueOf(result.accountId()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {

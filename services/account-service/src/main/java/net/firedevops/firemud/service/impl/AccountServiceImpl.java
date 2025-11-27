@@ -145,7 +145,8 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "account.authenticate")
-  public String authenticate(Long tenantId, String username, String password, String otp) {
+  public net.firedevops.firemud.dto.AuthenticationResult authenticate(
+      Long tenantId, String username, String password, String otp) {
     Optional<Account> accountOpt = accountRepository.findByTenantIdAndUsername(tenantId, username);
     Account account =
         accountOpt.orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
@@ -165,7 +166,7 @@ public class AccountServiceImpl implements AccountService {
             Map.of(
                 "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
     sessionService.storeSession(tenantId, account.getId(), token);
-    return token;
+    return new net.firedevops.firemud.dto.AuthenticationResult(account.getId(), token);
   }
 
   @Override

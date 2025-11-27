@@ -60,7 +60,8 @@ class GameSessionLoginIntegrationTest {
   @BeforeEach
   void setUp() {
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(AuthenticateResponse.newBuilder().setAuthToken("stub-token").build());
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken("stub-token").setAccountId("7").build());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     GameInstance instance = new GameInstance();

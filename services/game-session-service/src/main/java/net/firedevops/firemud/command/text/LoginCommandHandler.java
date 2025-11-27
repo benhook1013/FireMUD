@@ -7,7 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
-import net.firedevops.firemud.config.GameSessionProperties;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -29,7 +29,7 @@ public final class LoginCommandHandler {
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
-  private final GameSessionProperties properties;
+  private final LogOnlyProperties logOnlyProperties;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -39,7 +39,7 @@ public final class LoginCommandHandler {
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService,
       AccountClient accountClient,
-      GameSessionProperties properties,
+      LogOnlyProperties logOnlyProperties,
       MeterRegistry meterRegistry) {
     this.commandService =
         Objects.requireNonNull(commandService, "commandService must not be null");
@@ -48,7 +48,8 @@ public final class LoginCommandHandler {
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
-    this.properties = Objects.requireNonNull(properties, "properties must not be null");
+    this.logOnlyProperties =
+        Objects.requireNonNull(logOnlyProperties, "logOnlyProperties must not be null");
     Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = meterRegistry.counter("gamesession.session.takeover");
     this.resumeCounter = meterRegistry.counter("gamesession.session.resume");
@@ -88,29 +89,31 @@ public final class LoginCommandHandler {
           CommandEnqueueResult.failure(mapErrorCode(error), error.getMessage()), null);
     }
 
-    Optional<LoginResult> loginResult =
-        buildLoginResult(instance, authResponse.getAuthToken());
-    if (loginResult.isEmpty()) {
-      CommandEnqueueResult failure =
-          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");
-      return new LoginCommandHandlingResult(failure, null);
+    Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
+    if (authenticatedAccountId == null || authenticatedAccountId <= 0) {
+      if (logOnlyProperties.isLogOnly()) {
+        authenticatedAccountId = instance.getOwnerAccountId();
+      } else {
+        return invalidAccountFailure();
+      }
     }
+    if (authenticatedAccountId != instance.getOwnerAccountId()) {
+      return accountMismatchFailure();
+    }
+
+    Optional<LoginResult> loginResult =
+        buildLoginResult(instance, authenticatedAccountId, authResponse.getAuthToken());
 
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (enqueueResult.accepted()) {
-      loginResult.ifPresent(result -> persistSessionContext(sessionId, result));
+      loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
     }
     return new LoginCommandHandlingResult(enqueueResult, null);
   }
 
-  private void persistSessionContext(String sessionIdText, LoginResult result) {
+  private void persistSessionContext(long sessionId, LoginResult result) {
     if (sessionContextService == null || result == null) {
-      return;
-    }
-
-    Long sessionId = parseSessionId(sessionIdText);
-    if (sessionId == null) {
       return;
     }
 
@@ -168,15 +171,15 @@ public final class LoginCommandHandler {
     }
   }
 
-  private Optional<LoginResult> buildLoginResult(GameInstance instance, String jwt) {
+  private Optional<LoginResult> buildLoginResult(GameInstance instance, long accountId, String jwt) {
     if (instance == null) {
       return Optional.empty();
     }
     return Optional.of(
         new LoginResult(
-            instance.getOwnerAccountId(),
+            accountId,
             instance.getTenantId(),
-            instance.getOwnerAccountId(),
+            accountId,
             instance.getId(),
             jwt));
   }
@@ -204,8 +207,30 @@ public final class LoginCommandHandler {
     }
   }
 
+  private Long parseAccountId(String accountIdText) {
+    try {
+      return Long.parseLong(accountIdText);
+    } catch (NumberFormatException | NullPointerException ex) {
+      return null;
+    }
+  }
+
   private LoginCommandHandlingResult invalidSessionFailure() {
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.failure("INVALID_ARGUMENT", "sessionId must be numeric"), null);
+  }
+
+  private LoginCommandHandlingResult invalidAccountFailure() {
+    return new LoginCommandHandlingResult(
+        CommandEnqueueResult.failure(
+            LoginCommandConstants.INVALID_ACCOUNT_CODE, LoginCommandConstants.INVALID_ACCOUNT_MESSAGE),
+        null);
+  }
+
+  private LoginCommandHandlingResult accountMismatchFailure() {
+    return new LoginCommandHandlingResult(
+        CommandEnqueueResult.failure(
+            LoginCommandConstants.ACCOUNT_MISMATCH_CODE, LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE),
+        null);
   }
 }

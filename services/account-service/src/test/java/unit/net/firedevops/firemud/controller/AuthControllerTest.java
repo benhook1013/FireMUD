@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.firedevops.firemud.dto.AuthenticationResult;
 import net.firedevops.firemud.dto.LoginRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.service.AccountService;
@@ -27,7 +28,8 @@ class AuthControllerTest {
   @Test
   void loginDoesNotExposeToken() throws Exception {
     LoginRequest request = new LoginRequest(1L, "demo", "password", null);
-    when(accountService.authenticate(1L, "demo", "password", null)).thenReturn("tok123");
+    when(accountService.authenticate(1L, "demo", "password", null))
+        .thenReturn(new AuthenticationResult(1L, "tok123"));
 
     mockMvc
         .perform(

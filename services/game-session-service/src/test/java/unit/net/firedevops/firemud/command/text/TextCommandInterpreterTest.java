@@ -20,7 +20,7 @@ import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.command.text.TextCommandType;
-import net.firedevops.firemud.config.GameSessionProperties;
+import net.firedevops.firemud.config.LogOnlyProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
@@ -41,7 +41,7 @@ class TextCommandInterpreterTest {
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
-  private final GameSessionProperties properties = new GameSessionProperties();
+  private final LogOnlyProperties logOnlyProperties = new LogOnlyProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private LoginCommandHandler loginHandler;
   private TextCommandInterpreter interpreter;
@@ -50,14 +50,18 @@ class TextCommandInterpreterTest {
   void setUp() {
     meterRegistry.clear();
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(net.firedevops.firemud.account.v1.AuthenticateResponse.newBuilder().build());
+        .thenReturn(
+            net.firedevops.firemud.account.v1.AuthenticateResponse.newBuilder()
+                .setAuthToken("auth")
+                .setAccountId("123")
+                .build());
     loginHandler =
         new LoginCommandHandler(
             commandService,
             gameInstanceRepository,
             sessionContextService,
             accountClient,
-            properties,
+            logOnlyProperties,
             meterRegistry);
     when(gameInstanceRepository.findById(Mockito.anyLong())).thenReturn(Optional.empty());
     when(sessionAuthenticationService.isAuthenticated(Mockito.anyString())).thenReturn(true);
