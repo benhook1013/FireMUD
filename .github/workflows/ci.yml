@@ -170,6 +170,13 @@ jobs:
       - name: Install Chrome
         run: sudo apt install -y --allow-downgrades ./google-chrome-stable_current_amd64.deb
 
+      - name: Install ChromeDriver for axe
+        run: |
+          cd web-client
+          npx browser-driver-manager install chrome
+          driver_path=$(npx browser-driver-manager which | grep CHROMEDRIVER_TEST_PATH | cut -d'"' -f2)
+          echo "$(dirname \"$driver_path\")" >> $GITHUB_PATH
+
       - name: ♿ Run Accessibility Audit
         run: |
           cd web-client
