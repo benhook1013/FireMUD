@@ -57,9 +57,9 @@ Link to the [Minimal Text Command Protocol](../architecture/microservices/game-s
 
 ### 6.4 Minimal LOOK gameplay command
 
-- [ ] Implement a minimal `LOOK` command handler in `services/game-session-service` that produces a static or test-seeded room description string (it can ignore real world state for this slice as long as the output is deterministic).
-- [ ] Connect the `LOOK` handler into the interpreter so that a parsed `LOOK` `TextCommand` results in the handler being invoked and its output being sent back to the client via the existing outbound messaging mechanism.
-- [ ] Add tests within `services/game-session-service` that exercise the `LOOK` command end-to-end inside the service (without Telnet or Gateway), asserting that a `LOOK` input results in the expected response text being produced.
+- [x] Implement a minimal `LOOK` command handler in `services/game-session-service` that produces a static or test-seeded room description string (it can ignore real world state for this slice as long as the output is deterministic).
+- [x] Connect the `LOOK` handler into the interpreter so that a parsed `LOOK` `TextCommand` results in the handler being invoked and its output being sent back to the client via the existing outbound messaging mechanism.
+- [x] Add tests within `services/game-session-service` that exercise the `LOOK` command end-to-end inside the service (without Telnet or Gateway), asserting that a `LOOK` input results in the expected response text being produced.
 
 ### 6.5 Telnet and WebSocket parity for LOOK
 
