@@ -45,6 +45,12 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 - Incoming bytes are queued and forwarded to the gateway in order.
 - If the connection is lost, the queue is flushed, and reconnection hooks
   automatically restore buffered input.
+- Both Telnet `SESSION <sessionId> <tenantId>` envelopes and subsequent
+gameplay commands (including `LOGIN`) are forwarded verbatim over that WebSocket
+bridge, so the gateway and Game Session Service see the exact same protocol lines
+as native WebSocket clients.  Tectically, Telnet handlers only parse the initial
+session envelope; everything after that streams through `/ws/game/**` and hits
+the shared login/resume pipeline without Telnet-specific translations.
 
 ### Service Interactions
 
