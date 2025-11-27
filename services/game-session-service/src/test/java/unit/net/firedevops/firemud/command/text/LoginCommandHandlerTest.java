@@ -226,6 +226,59 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void accountLockedUsesCanonicalCode() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode(AuthenticationErrorCodes.ACCOUNT_LOCKED)
+                    .setMessage("Locked out")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("ACCOUNT_LOCKED", result.commandResult().errorCode());
+  }
+
+  @Test
+  void upstreamFailureReturnsUpstreamFailureCode() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                    .setMessage("Backend unreachable")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
+    assertEquals("Backend unreachable", result.commandResult().errorMessage());
+  }
+
+  @Test
   void accountErrorFallbacksToMessageHeuristic() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()

@@ -82,12 +82,12 @@ public final class AccountClient implements AutoCloseable {
     try {
       return stub.authenticate(request);
     } catch (Exception ex) {
+      logger.warn("Failed to call Account Service authenticate endpoint", ex);
       return AuthenticateResponse.newBuilder()
           .setError(
-              net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                  .setCode("UPSTREAM_FAILURE")
-                  .setMessage(ex.getMessage())
-                  .build())
+              ErrorDetail.newBuilder()
+                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                  .setMessage("Authentication service unavailable"))
           .build();
     }
   }
