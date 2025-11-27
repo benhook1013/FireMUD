@@ -4,10 +4,10 @@ This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` 
 
 ## 1. Minimal LOGIN Protocol Behaviour and Docs
 
-- [ ] Review the [Minimal Text Command Protocol](../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) and the [Authentication & Authorization](../architecture/system-architecture-authentication.md#login-and-session-flow) docs to confirm the intended `LOGIN` / `LOGON` semantics (prompt-based vs parameterized logins, optional OTP argument, error codes such as `INVALID_CREDENTIALS` and `ACCOUNT_LOCKED`).
-- [ ] Update the Game Session Service design doc so the `Minimal Text Command Protocol` section explicitly documents `LOGIN` and `LOGON` behaviour for both Telnet and WebSocket clients, including at least one success and one failure transcript that show the `OK LOGIN` / `ERROR <CODE>` response format.
-- [ ] Add a short subsection under the Authentication & Authorization doc describing how plain-text `LOGIN` commands map onto the Account Service `/auth/login` API (or gRPC equivalent), including how OTP values are forwarded when present.
-- [ ] Ensure docs clearly state that once this slice is complete, gameplay commands such as `LOOK` and `SAY` require an authenticated session, except in explicitly documented dev/test bypass modes.
+- [x] Review the [Minimal Text Command Protocol](../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) and the [Authentication & Authorization](../architecture/system-architecture-authentication.md#login-and-session-flow) docs to confirm the intended `LOGIN` / `LOGON` semantics (prompt-based vs parameterized logins, optional OTP argument, error codes such as `INVALID_CREDENTIALS` and `ACCOUNT_LOCKED`).
+- [x] Update the Game Session Service design doc so the `Minimal Text Command Protocol` section explicitly documents `LOGIN` and `LOGON` behaviour for both Telnet and WebSocket clients, including at least one success and one failure transcript that show the `OK LOGIN` / `ERROR <CODE>` response format.
+- [x] Add a short subsection under the Authentication & Authorization doc describing how plain-text `LOGIN` commands map onto the Account Service `/auth/login` API (or gRPC equivalent), including how OTP values are forwarded when present.
+- [x] Ensure docs clearly state that once this slice is complete, gameplay commands such as `LOOK` and `SAY` require an authenticated session, except in explicitly documented dev/test bypass modes.
 
 ## 2. Game Session LOGIN Command Handling
 
