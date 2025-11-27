@@ -46,7 +46,7 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 - [ ] Keep the textual `LOOK` output compatible with the existing smoke tests (same `OK LOOK` framing) while expanding the body to include the new data-driven content.
 - [ ] Map Game Logic `LookResult` and error codes into the text protocol response format so clients see a consistent `LOOK` description or `ERROR <CODE> <message>` when the call fails (for example, `ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`).
 - [ ] Add Micrometer metrics and structured logs in Game Session for `LOOK` commands (for example `gamesession.command.look.invocations`, `gamesession.command.look.failures`) including tags for `tenantId` and high-level error codes.
-- [ ] Add unit and/or integration tests in `services/game-session-service` that exercise the text `LOOK` path end-to-end against a stubbed Game Logic client, verifying success, room-not-found, unauthenticated-session handling, and downstream failure scenarios.
+- [ ] Add unit and/or integration tests in `services/game-session-service` that exercise the text `LOOK` path end-to-end against a stubbed Game Logic client, verifying correct handling of success, room-not-found, and downstream failure scenarios.
 - [ ] Replace the temporary Redis stub used by `services/tcp-proxy-service/src/test/java/crossservice/net/firedevops/firemud/TelnetGatewayGameSessionAccountCrossServiceIntegrationTest.java` with shared Redis test utilities (or direct Testcontainers wiring) so the slice exercises the same Redis configuration used in production.
 
 ## 6. Cross-Service End-to-End Tests (Telnet and WebSocket)
