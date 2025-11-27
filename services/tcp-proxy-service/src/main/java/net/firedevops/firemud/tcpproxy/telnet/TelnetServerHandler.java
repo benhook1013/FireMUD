@@ -557,17 +557,22 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void logTelnetInput(String sanitized) {
-    if (!logger.isDebugEnabled()) {
-      return;
-    }
     String trimmed = sanitized.strip();
     if (trimmed.isEmpty()) {
       return;
     }
     String commandName = extractCommandName(trimmed);
     if (SENSITIVE_COMMANDS.contains(commandName)) {
-      logger.debug("Received Telnet command: {} (arguments redacted)", commandName);
-    } else {
+      if (logger.isInfoEnabled()) {
+        logger.info("Received Telnet command: {} (arguments redacted)", commandName);
+      } else if (logger.isDebugEnabled()) {
+        logger.debug("Received Telnet command: {} (arguments redacted)", commandName);
+      }
+      return;
+    }
+    if (logger.isInfoEnabled()) {
+      logger.info("Received Telnet command: {}", trimmed);
+    } else if (logger.isDebugEnabled()) {
       logger.debug("Received Telnet command: {}", trimmed);
     }
   }

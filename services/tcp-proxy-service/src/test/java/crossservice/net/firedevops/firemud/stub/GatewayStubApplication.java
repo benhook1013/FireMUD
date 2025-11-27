@@ -1,13 +1,14 @@
 package crossservice.net.firedevops.firemud.stub;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -54,6 +55,9 @@ public class GatewayStubApplication {
     return new WebSocketHandlerAdapter();
   }
 
+  private static final List<String> FORWARDED_HEADER_NAMES =
+      List.of("X-Session-Id", "X-Tenant-Id", "X-Client-IP");
+
   private static final class ProxyingWebSocketHandler implements WebSocketHandler {
     private final WebSocketClient client;
     private final URI targetUri;
@@ -66,7 +70,14 @@ public class GatewayStubApplication {
     @Override
     public Mono<Void> handle(WebSocketSession inbound) {
       HttpHeaders outboundHeaders = new HttpHeaders();
-      outboundHeaders.addAll(inbound.getHandshakeInfo().getHeaders());
+      HttpHeaders inboundHeaders = inbound.getHandshakeInfo().getHeaders();
+      FORWARDED_HEADER_NAMES.forEach(
+          headerName -> {
+            var values = inboundHeaders.get(headerName);
+            if (values != null) {
+              values.forEach(value -> outboundHeaders.add(headerName, value));
+            }
+          });
 
       return client.execute(
           targetUri,
