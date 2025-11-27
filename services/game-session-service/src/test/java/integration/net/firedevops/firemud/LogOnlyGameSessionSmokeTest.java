@@ -8,13 +8,22 @@ import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.lognet.springboot.grpc.GRpcServerRunner;
+import org.lognet.springboot.grpc.GRpcServicesRegistry;
+import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
+import org.lognet.springboot.grpc.autoconfigure.GRpcServerProperties;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -27,9 +36,13 @@ import org.springframework.http.ResponseEntity;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = GameSessionServiceApplication.class,
     properties = {
+      "spring.application.name=game-session-service",
       "spring.profiles.active=dev",
-      "game-session.log-only=true"
+      "game-session.log-only=true",
+      "grpc.server.enabled=false",
+      "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration"
     })
+@Import(LogOnlyGameSessionSmokeTest.DisabledGrpcTestConfig.class)
 class LogOnlyGameSessionSmokeTest {
 
   @LocalServerPort private int port;
@@ -68,5 +81,28 @@ class LogOnlyGameSessionSmokeTest {
     assertThat(output.getOut())
         .contains(
             "Log-only mode enabled; acknowledging start for tenant 42 version 1.0.0 patch patch-1");
+  }
+
+  @Configuration
+  static class DisabledGrpcTestConfig {
+    @Bean
+    GRpcServerRunner grpcServerRunner() {
+      return Mockito.mock(GRpcServerRunner.class);
+    }
+
+    @Bean
+    GRpcServicesRegistry grpcServicesRegistry() {
+      return Mockito.mock(GRpcServicesRegistry.class);
+    }
+
+    @Bean
+    GRpcServerProperties grpcServerProperties() {
+      return new GRpcServerProperties();
+    }
+
+    @Bean
+    ManagedHealthStatusService managedHealthStatusService() {
+      return Mockito.mock(ManagedHealthStatusService.class);
+    }
   }
 }

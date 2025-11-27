@@ -10,6 +10,7 @@
 - [ ] Terminate TLS and forward traffic to internal services using mTLS
 - [x] Collect connection metrics and throttle abusive clients
 - [x] Add baseline route configuration for Spring Cloud Gateway
+- [x] Provide a lightweight `/ws/game/**` proxy stub (`services/tcp-proxy-service/src/test/.../stub/GatewayStubApplication.java`) for tcp-proxy cross-service tests so developers can exercise the gateway hop without starting the full production app.
 - [ ] Automatically re-establish WebSocket tunnels on restart
 - [ ] Trace WebSocket requests and responses for observability
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime

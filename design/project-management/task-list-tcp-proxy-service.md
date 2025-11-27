@@ -10,6 +10,7 @@
 - [ ] Handle Telnet option negotiation and character encoding quirks
 - [ ] Negotiate the Mud Client Protocol (MCP) when supported
 - [ ] Add a developer-local WebSocket echo target and console logging path so Telnet/MUD clients can validate stubbed traffic without a full gateway stack
+- [x] Document the lightweight cross-service harness (`TelnetGatewayGameSessionCrossServiceIntegrationTest` + `stub/GatewayStubApplication`) so developers can quickly spin up the Telnet → Gateway → Game Session flow without the full gateway stack.
 
 ## Connection Management
 

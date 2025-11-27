@@ -1,7 +1,8 @@
-package net.firedevops.firemud.tcpproxy;
+package crossservice.net.firedevops.firemud;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -16,18 +17,14 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
-import net.firedevops.firemud.SpringCloudGatewayApplication;
+import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
-import org.lognet.springboot.grpc.GRpcServicesRegistry;
-import org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration;
-import org.lognet.springboot.grpc.autoconfigure.GRpcServerProperties;
-import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
-import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -49,9 +46,6 @@ import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -143,36 +137,38 @@ private static GatewayHolder GATEWAY;
 
   private static GameSessionStubHolder startGameSessionStub() {
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GameSessionStubApplication.class)
-            .properties(
-                "server.port=0",
-                "spring.main.web-application-type=reactive",
-                "grpc.server.enabled=false",
-                "grpc.server.security.enabled=false",
-                "grpc.server.port=" + grpcPort,
-                "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration")
-            .run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-    return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
+    try {
+      ConfigurableApplicationContext context =
+          new SpringApplicationBuilder(GameSessionStubApplication.class)
+              .properties(
+                  "server.port=0",
+                  "spring.main.web-application-type=reactive",
+                  "grpc.server.enabled=false",
+                  "grpc.server.security.enabled=false",
+                  "grpc.server.port=" + grpcPort)
+              .run();
+      int port = ((WebServerApplicationContext) context).getWebServer().getPort();
+      return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("Failed to start game session stub (grpcPort=" + grpcPort + ")", ex);
+    }
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {
-    int grpcPort = TestSocketUtils.findAvailableTcpPort();
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GatewayTestApplication.class)
-            .properties(
-                "server.port=0",
-                "spring.profiles.active=dev",
-                "grpc.server.enabled=false",
-                "grpc.server.security.enabled=false",
-                "grpc.server.port=" + grpcPort,
-                "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration",
-                "spring.cloud.gateway.enabled=true",
-                "spring.cloud.gateway.routes[0].uri=ws://localhost:" + gameSessionPort)
-            .run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-    return new GatewayHolder(context, port);
+    try {
+      ConfigurableApplicationContext context =
+          new SpringApplicationBuilder(GatewayStubApplication.class)
+              .properties(
+                  "server.port=0",
+                  "spring.main.web-application-type=reactive",
+                  "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game")
+              .run();
+      int port = ((WebServerApplicationContext) context).getWebServer().getPort();
+      return new GatewayHolder(context, port);
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException(
+          "Failed to start gateway (gameSessionPort=" + gameSessionPort + ")", ex);
+    }
   }
 
   private static final class GameSessionStubHolder {
@@ -214,13 +210,14 @@ private static GatewayHolder GATEWAY;
     }
   }
 
-  @SpringBootApplication(exclude = GRpcAutoConfiguration.class)
-  @Import({GameSessionStubConfiguration.class, DisabledGrpcConfig.class})
+  @SpringBootConfiguration
+  @EnableAutoConfiguration(
+      excludeName = {
+        "org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration",
+        "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration"
+      })
+  @Import(GameSessionStubConfiguration.class)
   static class GameSessionStubApplication {}
-
-  @SpringBootApplication(exclude = GRpcAutoConfiguration.class)
-  @Import({SpringCloudGatewayApplication.class, DisabledGrpcConfig.class})
-  static class GatewayTestApplication {}
 
   @Configuration
   static class GameSessionStubConfiguration {
@@ -250,28 +247,8 @@ private static GatewayHolder GATEWAY;
     }
   }
 
-  @Configuration
-  static class DisabledGrpcConfig {
-    @Bean
-    GRpcServerRunner grpcServerRunner() {
-      return Mockito.mock(GRpcServerRunner.class);
-    }
-
-    @Bean
-    GRpcServerProperties grpcServerProperties() {
-      return new GRpcServerProperties();
-    }
-
-    @Bean
-    GRpcServicesRegistry grpcServicesRegistry() {
-      return Mockito.mock(GRpcServicesRegistry.class);
-    }
-
-    @Bean
-    ManagedHealthStatusService managedHealthStatusService() {
-      return Mockito.mock(ManagedHealthStatusService.class);
-    }
-  }
+  // No additional configuration is required for the gateway stub because it is provided by
+  // GatewayStubApplication.
 
   private static final class GameSessionStub {
     private final Queue<String> commands = new ConcurrentLinkedQueue<>();
