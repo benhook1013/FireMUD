@@ -17,9 +17,11 @@ import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +35,7 @@ public final class LoginCommandHandler {
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
   private final LogOnlyProperties logOnlyProperties;
+  private final LogOnlyGameInstanceRegistry logOnlyGameInstanceRegistry;
   private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
@@ -44,6 +47,7 @@ public final class LoginCommandHandler {
       SessionContextService sessionContextService,
       AccountClient accountClient,
       LogOnlyProperties logOnlyProperties,
+      ObjectProvider<LogOnlyGameInstanceRegistry> logOnlyGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
     this.commandService =
         Objects.requireNonNull(commandService, "commandService must not be null");
@@ -54,6 +58,7 @@ public final class LoginCommandHandler {
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.logOnlyProperties =
         Objects.requireNonNull(logOnlyProperties, "logOnlyProperties must not be null");
+    this.logOnlyGameInstanceRegistry = logOnlyGameInstanceRegistryProvider.getIfAvailable();
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter("gamesession.session.takeover");
     this.resumeCounter = this.meterRegistry.counter("gamesession.session.resume");
@@ -76,6 +81,11 @@ public final class LoginCommandHandler {
     }
 
     Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(numericSessionId);
+    if (maybeInstance.isEmpty()
+        && logOnlyProperties.isLogOnly()
+        && logOnlyGameInstanceRegistry != null) {
+      maybeInstance = logOnlyGameInstanceRegistry.findById(numericSessionId);
+    }
     if (maybeInstance.isEmpty()) {
       CommandEnqueueResult failure =
           CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");

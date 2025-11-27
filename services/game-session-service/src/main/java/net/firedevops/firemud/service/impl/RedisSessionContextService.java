@@ -5,11 +5,13 @@ import java.util.Optional;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 /** Persists session context metadata in Redis keys scoped by tenant/session. */
 @Service
+@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = true)
 public final class RedisSessionContextService implements SessionContextService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration sessionTtl;

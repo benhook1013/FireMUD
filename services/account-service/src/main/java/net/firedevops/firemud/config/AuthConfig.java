@@ -31,8 +31,11 @@ public class AuthConfig {
   public JwtUtil jwtUtil(AuthProperties props) throws IOException {
     String secret = props.getJwtSecret();
     if (secret == null || secret.isBlank()) {
-      boolean dev = Arrays.asList(environment.getActiveProfiles()).contains("dev");
-      if (dev) {
+      boolean devLike =
+          Arrays.stream(environment.getActiveProfiles())
+              .map(String::toLowerCase)
+              .anyMatch(profile -> profile.equals("dev") || profile.equals("test"));
+      if (devLike) {
         secret =
             UUID.randomUUID().toString().replace("-", "")
                 + UUID.randomUUID().toString().replace("-", "");
