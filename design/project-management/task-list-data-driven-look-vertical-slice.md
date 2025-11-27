@@ -41,16 +41,19 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 
 - [ ] Before changing this service for the slice, run `./gradlew :game-session-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable.
 - [ ] Replace the current hard-coded `LookCommandHandler` (or equivalent) in Game Session with a flow that calls Game Logic’s `LOOK`/`ResolveLook` gRPC method, passing along `tenantId`, `sessionId`, and `playerId` from the Redis session context.
+- [ ] Add a dedicated Spring client/component that encapsulates the World and Entity service calls, captures Micrometer timers for the remote invocations, and can fall back to the existing log-only stub when `game-session.log-only=true` so developers can run without dependencies.
 - [ ] Ensure that the text command interpreter continues to enforce authentication before invoking the `LOOK` gRPC call and that unauthenticated requests still return `ERROR NOT_AUTHENTICATED` without hitting downstream services.
+- [ ] Keep the textual `LOOK` output compatible with the existing smoke tests (same `OK LOOK` framing) while expanding the body to include the new data-driven content.
 - [ ] Map Game Logic `LookResult` and error codes into the text protocol response format so clients see a consistent `LOOK` description or `ERROR <CODE> <message>` when the call fails (for example, `ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`).
 - [ ] Add Micrometer metrics and structured logs in Game Session for `LOOK` commands (for example `gamesession.command.look.invocations`, `gamesession.command.look.failures`) including tags for `tenantId` and high-level error codes.
-- [ ] Add unit and/or integration tests in `services/game-session-service` that exercise the text `LOOK` path end-to-end against a stubbed Game Logic client, verifying correct handling of success, room-not-found, and downstream failure scenarios.
+- [ ] Add unit and/or integration tests in `services/game-session-service` that exercise the text `LOOK` path end-to-end against a stubbed Game Logic client, verifying success, room-not-found, unauthenticated-session handling, and downstream failure scenarios.
 
 ## 6. Cross-Service End-to-End Tests (Telnet and WebSocket)
 
 - [ ] Extend or add a cross-service integration test that starts Game Session, Game Logic, World Management, and Entity Management together (using Testcontainers or in-memory stubs where appropriate) and runs a `LOGIN` + `LOOK` flow over WebSocket, asserting that the response lines match the expected data-driven room description.
 - [ ] Add a Telnet-focused cross-service test that reuses the existing TCP Proxy + Gateway harness to perform `SESSION` + `LOGIN` + `LOOK` and confirms that the Telnet transcript matches the WebSocket `LOOK` output aside from transport-specific framing.
-- [ ] Ensure the cross-service tests cover at least one happy-path room and one error path (for example, attempting `LOOK` in an invalid or uninitialized room and receiving an appropriate `ERROR` code).
+- [ ] Ensure the cross-service tests cover at least one happy-path room and one error path (for example, attempting `LOOK` in an invalid or uninitialized room and receiving an appropriate `ERROR` code) without dropping Telnet/WebSocket connections on failures.
+- [ ] Assert (via logs, metrics, or mocks) that the `LOOK` command is enqueued/processed through the shared pipeline and that downstream call instrumentation fires for both success and failure paths.
 - [ ] Wire the new cross-service tests into Gradle so they can be run explicitly (for example, via a `crossServiceTest` naming convention) without slowing down the default unit test suite.
 - [ ] Add a short note in `design/project-management/testing-focus-areas.md` under the command parsing / game logic sections pointing to these data-driven `LOOK` cross-service tests as examples.
 
@@ -59,8 +62,13 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 - [ ] Add or update a smoke test script (or documented curl/WebSocket sequence) that demonstrates `LOGIN` + `LOOK` against the sample world over WebSocket, including the expected room description in the script output or comments.
 - [ ] Add a second smoke test or example transcript that demonstrates `SESSION` + `LOGIN` + `LOOK` via Telnet through TCP Proxy and Gateway, verifying that the same room description is returned.
 - [ ] Update the Game Session, Game Logic, World Management, and Entity Management design docs to include a short "Implementation status" note for the `LOOK` slice, clarifying what is live, what is stubbed, and what is deferred to future slices (for example, dynamic lighting, line-of-sight, or script-driven room text).
+- [ ] Expand the World Management Service design doc to describe the `/ws/game/**` `LOOK` contract fields, how Game Session aggregates entity/world context before replying to WebSocket/Telnet clients, and what configuration toggles (such as `WORLD_SERVICE_ENDPOINT`) developers can use locally.
 - [ ] Revisit the `Minimal Text Command Protocol` and any existing gameplay examples to ensure they reference the data-driven `LOOK` behavior instead of the original hard-coded room stub, updating examples where necessary.
 - [ ] Ensure logging and monitoring docs (including relevant sections under Logging & Admin) mention the new `LOOK`-related metrics and logs so operators know how to debug issues in this path.
+
+## 8. Optional Follow-up: Reconnection Experience
+
+- [ ] (If time permits) Cache the most recent `LOOK` response in Redis (or the existing session context) and replay it automatically to reconnecting clients before buffered commands, so bridges can redraw the room even when the original `LOOK` happened pre-reconnect.
 
 ---
 
