@@ -165,7 +165,7 @@ This small command table defines the initial MVP gameplay command set delivered 
 
 Examples:
 
-```
+```text
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 

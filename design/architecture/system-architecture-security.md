@@ -82,7 +82,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 ## 🔌 Telnet Command Handling and Controls
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ and **never contacts internal services directly**.
-- The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences. See [`TelnetServerHandler`](../../services/tcp-proxy-service/src/main/java/net/firedevops/firemud/telnet/TelnetServerHandler.java) for the implementation.
+- The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences. See [`TelnetServerHandler`](../../services/tcp-proxy-service/src/main/java/net/firedevops/firemud/tcpproxy/telnet/TelnetServerHandler.java) for the implementation.
 
 ---
 
