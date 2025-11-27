@@ -21,9 +21,6 @@ import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.web.reactive.WebFluxProperties;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -31,11 +28,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.codec.ServerCodecConfigurer;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 import org.springframework.web.socket.TextMessage;
@@ -46,17 +43,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-@SpringBootTest(
-    webEnvironment = WebEnvironment.RANDOM_PORT,
-    properties = {
-      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration",
-      "spring.main.allow-bean-definition-overriding=true"
-    })
-@ActiveProfiles("test")
 class GatewayLookCommandIntegrationTest {
   private static GatewayHolder GATEWAY;
-
-  @LocalServerPort private int port;
 
   @AfterAll
   static void stopGateway() {
@@ -73,6 +61,8 @@ class GatewayLookCommandIntegrationTest {
     StandardWebSocketClient client = new StandardWebSocketClient();
     AtomicReference<String> response = new AtomicReference<>();
     CountDownLatch latch = new CountDownLatch(1);
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Session-Id", "42");
     client
         .doHandshake(
             new TextWebSocketHandler() {
@@ -87,7 +77,7 @@ class GatewayLookCommandIntegrationTest {
                 latch.countDown();
               }
             },
-            new WebSocketHttpHeaders(),
+            headers,
             URI.create(GATEWAY.websocketUrl()))
         .get(5, TimeUnit.SECONDS);
 
@@ -185,6 +175,15 @@ class GatewayLookCommandIntegrationTest {
 
     @Override
     public Mono<Void> handle(org.springframework.web.reactive.socket.WebSocketSession session) {
+      String sessionId = session.getHandshakeInfo().getHeaders().getFirst("X-Session-Id");
+      if (!StringUtils.hasText(sessionId)) {
+        WebSocketMessage errorMessage =
+            session.textMessage("ERROR INVALID_ARGUMENT sessionId header required");
+        return session
+            .send(Mono.just(errorMessage))
+            .then(Mono.defer(() -> session.close(CloseStatus.BAD_DATA)));
+      }
+
       Flux<String> commands =
           session.receive()
               .map(WebSocketMessage::getPayloadAsText)
