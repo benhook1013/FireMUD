@@ -51,6 +51,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /** Cross-service integration test verifying the full Telnet → Gateway → Game Session path. */
+@Testcontainers
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class)
@@ -83,6 +84,9 @@ private static GatewayHolder GATEWAY;
     if (GAME_SESSION_STUB != null) {
       GAME_SESSION_STUB.close();
       GAME_SESSION_STUB = null;
+    }
+    if (REDIS != null) {
+      REDIS.stop();
     }
   }
 
