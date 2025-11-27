@@ -12,6 +12,7 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 
 ## 2. World Management Service: Minimal Room Data for the Slice
 
+- [ ] Before changing this service for the slice, run `./gradlew :world-management-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable.
 - [ ] Define or refine a minimal gRPC API in the World Management Service that can return room metadata needed for `LOOK` (e.g., `GetRoomSnapshot` or equivalent) including room id, name, descriptions, and exits for a given `tenantId` and `roomId`.
 - [ ] Add or update the World Management proto files so the room snapshot response includes everything the vertical slice needs but nothing extra (for example, omit combat or scripting hooks that are not yet used by LOOK).
 - [ ] Seed a tiny test world in World Management (for example, 3–5 rooms connected in a simple loop) via Flyway migrations, a test-only data initializer, or fixtures referenced by integration tests.
@@ -20,6 +21,7 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 
 ## 3. Entity Management Service: Visible Entity Listings
 
+- [ ] Before changing this service for the slice, run `./gradlew :entity-management-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable.
 - [ ] Define or refine a minimal gRPC API in the Entity Management Service that can list entities visible in a room for `LOOK` (players, NPCs, key items), keyed by `tenantId` and `roomId` at minimum.
 - [ ] Ensure the entity listing response is structured for gameplay text rendering (e.g., includes stable display names and simple flags like `isPlayer` / `isNpc` / `isItem` instead of eagerly exposing internal stats).
 - [ ] Seed a minimal set of entities in the rooms used by the test world (e.g., one demo player character, one NPC, and one visible item) with deterministic IDs and names to keep transcripts stable.
@@ -28,6 +30,7 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 
 ## 4. Game Logic Service: LOOK Aggregation and Formatting
 
+- [ ] Before changing this service for the slice, run `./gradlew :game-logic-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable.
 - [ ] Introduce or refine a `LOOK`-oriented gRPC method in the Game Logic Service (for example `ResolveLook` or `GetLookDescription`) that accepts identity context (`tenantId`, `sessionId`, `playerId`, and `roomId`) and returns a high-level `LookResult` DTO.
 - [ ] Implement the Game Logic `LOOK` handler so it orchestrates calls to World Management (room snapshot) and Entity Management (visible entities), applies any simple rules needed for this slice (for example, hiding entities the player should not see), and produces a structured `LookResult`.
 - [ ] Implement a straightforward text rendering routine in Game Logic that converts `LookResult` into a minimal but pleasant textual description (room name, blank line, room long description, exits line, then entity list), leaving hooks for richer formatting in future slices.
@@ -36,6 +39,7 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 
 ## 5. Game Session Service: Wiring Text LOOK to Game Logic
 
+- [ ] Before changing this service for the slice, run `./gradlew :game-session-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable.
 - [ ] Replace the current hard-coded `LookCommandHandler` (or equivalent) in Game Session with a flow that calls Game Logic’s `LOOK`/`ResolveLook` gRPC method, passing along `tenantId`, `sessionId`, and `playerId` from the Redis session context.
 - [ ] Ensure that the text command interpreter continues to enforce authentication before invoking the `LOOK` gRPC call and that unauthenticated requests still return `ERROR NOT_AUTHENTICATED` without hitting downstream services.
 - [ ] Map Game Logic `LookResult` and error codes into the text protocol response format so clients see a consistent `LOOK` description or `ERROR <CODE> <message>` when the call fails (for example, `ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`).

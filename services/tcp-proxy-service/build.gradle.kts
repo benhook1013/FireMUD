@@ -25,10 +25,13 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation(libs.testcontainers.junit.jupiter)
+    testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.micrometer.registry.prometheus)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     testImplementation(libs.spring.boot.starter.webflux)
     testImplementation(libs.spring.cloud.gateway)
+    testImplementation(libs.spring.boot.starter.jdbc)
+    testImplementation(project(":game-session-service"))
     testImplementation(project(":spring-cloud-gateway"))
 }
 
