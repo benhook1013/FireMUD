@@ -6,23 +6,26 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.times;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
+import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.command.text.LoginCommandConstants;
 import net.firedevops.firemud.command.text.LoginCommandHandler;
 import net.firedevops.firemud.command.text.LoginCommandHandlingResult;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandType;
-import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -42,11 +45,12 @@ class LoginCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
-  private final GameSessionProperties properties = new GameSessionProperties();
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private LoginCommandHandler handler;
 
   @BeforeEach
   void setUp() {
+    meterRegistry.clear();
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).build());
@@ -56,7 +60,7 @@ class LoginCommandHandlerTest {
             gameInstanceRepository,
             sessionContextService,
             accountClient,
-            properties);
+            meterRegistry);
   }
 
   @Test
@@ -65,12 +69,44 @@ class LoginCommandHandlerTest {
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
     when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
-    LoginCommandHandlingResult result = handler.handle("session-1", command, false);
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
     assertNull(result.responseText());
-    verify(commandService).enqueue("session-1", command.rawLine(), false);
+    verify(commandService).enqueue("1", command.rawLine(), false);
+    verify(accountClient)
+        .authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"), eq(""));
+  }
+
+  @Test
+  void invalidSessionIdReturnsInvalidArgument() {
+    CommandEnqueueResult success = CommandEnqueueResult.success();
+    TextCommand command =
+        new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
+    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
+
+    LoginCommandHandlingResult result = handler.handle("session-1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void missingGameInstanceReturnsSessionNotFound() {
+    TextCommand command =
+        new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.empty());
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("SESSION_NOT_FOUND", result.commandResult().errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -96,10 +132,7 @@ class LoginCommandHandlerTest {
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
     when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
 
-    GameInstance instance = new GameInstance();
-    instance.setId(1L);
-    instance.setTenantId(22L);
-    instance.setOwnerAccountId(77L);
+    GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     handler.handle("1", command, false);
@@ -128,10 +161,12 @@ class LoginCommandHandlerTest {
             .build();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(authError);
 
-    LoginCommandHandlingResult result = handler.handle("session-1", command, false);
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
     verify(sessionContextService, never()).save(any());
@@ -149,10 +184,12 @@ class LoginCommandHandlerTest {
             .build();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(authError);
 
-    LoginCommandHandlingResult result = handler.handle("session-1", command, false);
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
     assertEquals("OTP_REQUIRED", result.commandResult().errorCode());
@@ -177,5 +214,65 @@ class LoginCommandHandlerTest {
     verify(sessionContextService, times(2)).save(any());
     verify(accountClient, times(2))
         .authenticate(anyString(), anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void sessionTakeoverDeletesPreviousContextAndTracksMetric() {
+    CommandEnqueueResult success = CommandEnqueueResult.success();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
+
+    GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(22L);
+    instance.setOwnerAccountId(77L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    SessionContext existing =
+        new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
+    when(sessionContextService.findByAccountAndPlayer(22L, 77L, 77L))
+        .thenReturn(Optional.of(existing));
+
+    handler.handle("2", command, false);
+
+    verify(sessionContextService).deleteBySessionId(22L, 1L);
+    assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
+  }
+
+  @Test
+  void sessionResumeIncrementsMetricWhenReusingSameSession() {
+    CommandEnqueueResult success = CommandEnqueueResult.success();
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
+
+    GameInstance instance = new GameInstance();
+    instance.setId(1L);
+    instance.setTenantId(22L);
+    instance.setOwnerAccountId(77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    SessionContext existing =
+        new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
+    when(sessionContextService.findByAccountAndPlayer(22L, 77L, 77L))
+        .thenReturn(Optional.of(existing));
+
+    handler.handle("1", command, false);
+
+    verify(sessionContextService, never()).deleteBySessionId(22L, 1L);
+    assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
+  }
+
+  private GameInstance buildInstance(long id, long tenantId, long ownerAccountId) {
+    GameInstance instance = new GameInstance();
+    instance.setId(id);
+    instance.setTenantId(tenantId);
+    instance.setOwnerAccountId(ownerAccountId);
+    return instance;
   }
 }

@@ -106,6 +106,6 @@ class GameSessionLoginIntegrationTest {
             eq("demo@example.com"),
             eq("swordfish"),
             eq(""));
-    assertThat(tenantCaptor.getValue()).isEqualTo("demo");
+    assertThat(tenantCaptor.getValue()).isEqualTo("42");
   }
 }
