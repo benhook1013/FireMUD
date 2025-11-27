@@ -2,6 +2,8 @@
 
 ## Session Lifecycle
 
+> **Note:** Login, session resumption, and reconnect details are now tracked in [design/project-management/task-list-login-and-session-vertical-slice.md](task-list-login-and-session-vertical-slice.md). Use that checklist for the active vertical slice instead of duplicating items here.
+
 - [x] Implement game instance lifecycle (start, stop, restart)
 - [x] Support multi-tenancy for hosted games
 - [x] Persist session state in Redis for reconnect recovery
