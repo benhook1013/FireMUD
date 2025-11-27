@@ -4,6 +4,7 @@ import java.io.IOException;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandParser;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import org.slf4j.Logger;
@@ -47,8 +48,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (command.type() == TextCommandType.NOOP) {
       return;
     }
-    CommandEnqueueResult result = interpreter.interpret(sessionId, command, requiresSoloTick);
-    session.sendMessage(new TextMessage(formatResponse(command, result)));
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret(sessionId, command, requiresSoloTick);
+    session.sendMessage(new TextMessage(formatResponse(command, interpretation)));
   }
 
   private boolean parseSoloTick(WebSocketSession session) {
@@ -60,9 +62,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return session.getHandshakeHeaders().getFirst(SESSION_HEADER);
   }
 
-  private String formatResponse(TextCommand command, CommandEnqueueResult result) {
+  private String formatResponse(TextCommand command, TextCommandInterpretationResult interpretation) {
+    CommandEnqueueResult result = interpretation.commandResult();
     if (result.accepted()) {
-      return "OK " + command.type().name();
+      String base = "OK " + command.type().name();
+      if (interpretation.hasResponse()) {
+        return base + "\n" + interpretation.responseText() + "\n\n";
+      }
+      return base;
     }
     String message = result.errorMessage() == null ? "" : result.errorMessage();
     return "ERROR " + result.errorCode() + " " + message;
