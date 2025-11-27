@@ -83,7 +83,7 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertNull(result.responseText());
+    assertEquals("Logged in as demo@example.com", result.responseText());
     verify(commandService).enqueue("1", command.rawLine(), false);
     verify(accountClient)
         .authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"), eq(""));

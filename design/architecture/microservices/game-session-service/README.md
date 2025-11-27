@@ -165,6 +165,14 @@ Telnet and WebSocket clients share this line-based syntax, but Telnet sessions f
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
+Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
+
+- `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet, so clients must send `LOGIN <username> <password>`.
+- `INVALID_ACCOUNT` – the Account Service returned an account identifier that could not be parsed into a long.
+- `ACCOUNT_MISMATCH` – the authenticated account does not own the requested game session.
+- `SESSION_NOT_FOUND` – the supplied session identifier has no corresponding `GameInstance`.
+- `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
+
 Telnet success (prompt-based):
 
 ```text

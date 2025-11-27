@@ -1,6 +1,7 @@
 package net.firedevops.firemud.client;
 
 import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
@@ -52,18 +53,28 @@ public final class AccountClient implements AutoCloseable {
     String[] parts = target.split(":");
     String host = parts[0];
     int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
-    var sslContext =
-        GrpcSslContexts.forClient()
-            .trustManager(new File(tlsProps.getCaCert()))
-            .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
-            .build();
-    channel =
-        NettyChannelBuilder.forAddress(host, port)
-            .sslContext(sslContext)
-            .keepAliveTime(30, TimeUnit.SECONDS)
-            .keepAliveTimeout(5, TimeUnit.SECONDS)
-            .keepAliveWithoutCalls(true)
-            .build();
+    if (tlsProps.isPlaintext()) {
+      channel =
+          ManagedChannelBuilder.forAddress(host, port)
+              .keepAliveTime(30, TimeUnit.SECONDS)
+              .keepAliveTimeout(5, TimeUnit.SECONDS)
+              .keepAliveWithoutCalls(true)
+              .usePlaintext()
+              .build();
+    } else {
+      var sslContext =
+          GrpcSslContexts.forClient()
+              .trustManager(new File(tlsProps.getCaCert()))
+              .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
+              .build();
+      channel =
+          NettyChannelBuilder.forAddress(host, port)
+              .sslContext(sslContext)
+              .keepAliveTime(30, TimeUnit.SECONDS)
+              .keepAliveTimeout(5, TimeUnit.SECONDS)
+              .keepAliveWithoutCalls(true)
+              .build();
+    }
     stub = AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 

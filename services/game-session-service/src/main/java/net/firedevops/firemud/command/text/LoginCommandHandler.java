@@ -112,10 +112,12 @@ public final class LoginCommandHandler {
 
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
+    String responseText = null;
     if (enqueueResult.accepted()) {
       loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
+      responseText = "Logged in as " + args.get(0);
     }
-    return new LoginCommandHandlingResult(enqueueResult, null);
+    return new LoginCommandHandlingResult(enqueueResult, responseText);
   }
 
   private void persistSessionContext(long sessionId, LoginResult result) {
@@ -226,10 +228,9 @@ public final class LoginCommandHandler {
     if (error == null) {
       return "UPSTREAM_FAILURE";
     }
-    String rawCode = Optional.ofNullable(error.getCode()).orElse("");
-    String upperCode = rawCode.toUpperCase();
-    if (CANONICAL_ERROR_MAP.containsKey(upperCode)) {
-      return CANONICAL_ERROR_MAP.get(upperCode);
+    String rawCode = Optional.ofNullable(error.getCode()).orElse("").toUpperCase();
+    if (CANONICAL_ERROR_MAP.containsKey(rawCode)) {
+      return CANONICAL_ERROR_MAP.get(rawCode);
     }
     String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
     if (message.contains("invalid credentials")) {
@@ -241,7 +242,7 @@ public final class LoginCommandHandler {
     if (message.contains("locked")) {
       return "ACCOUNT_LOCKED";
     }
-    return upperCode.isBlank() ? "UPSTREAM_FAILURE" : upperCode;
+    return "UPSTREAM_FAILURE";
   }
 
   private Long parseSessionId(String sessionIdText) {

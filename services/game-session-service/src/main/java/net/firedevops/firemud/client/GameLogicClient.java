@@ -2,6 +2,7 @@ package net.firedevops.firemud.client;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
@@ -37,6 +38,8 @@ public final class GameLogicClient implements AutoCloseable {
   private ManagedChannel channel;
   private GameLogicServiceGrpc.GameLogicServiceBlockingStub stub;
   private TlsCertificateWatcher watcher;
+  private String targetHost;
+  private int targetPort;
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
@@ -53,14 +56,29 @@ public final class GameLogicClient implements AutoCloseable {
       logger.info("Log-only mode enabled; skipping GameLogicClient channel initialization");
       return;
     }
-    reloadChannel();
-    watcher =
-        TlsCertificateWatcher.createAndStart(
-            List.of(
-                Path.of(tlsProps.getCertChain()),
-                Path.of(tlsProps.getPrivateKey()),
-                Path.of(tlsProps.getCaCert())),
-            this::safeReload);
+    String target = endpoints.getGameLogicService();
+    String[] parts = target.split(":");
+    targetHost = parts[0];
+    targetPort = Integer.parseInt(parts[1]);
+    if (tlsProps.isPlaintext()) {
+      channel =
+          ManagedChannelBuilder.forAddress(targetHost, targetPort)
+              .keepAliveTime(30, TimeUnit.SECONDS)
+              .keepAliveTimeout(5, TimeUnit.SECONDS)
+              .keepAliveWithoutCalls(true)
+              .usePlaintext()
+              .build();
+      stub = GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    } else {
+      reloadChannel();
+      watcher =
+          TlsCertificateWatcher.createAndStart(
+              List.of(
+                  Path.of(tlsProps.getCertChain()),
+                  Path.of(tlsProps.getPrivateKey()),
+                  Path.of(tlsProps.getCaCert())),
+              this::safeReload);
+    }
   }
 
   private synchronized void safeReload() {
@@ -74,16 +92,13 @@ public final class GameLogicClient implements AutoCloseable {
   }
 
   private void reloadChannel() throws SSLException {
-    String target = endpoints.getGameLogicService();
-    String host = target.split(":")[0];
-    int port = Integer.parseInt(target.split(":")[1]);
     var sslContext =
         GrpcSslContexts.forClient()
             .trustManager(new File(tlsProps.getCaCert()))
             .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
             .build();
     ManagedChannel newChannel =
-        NettyChannelBuilder.forAddress(host, port)
+        NettyChannelBuilder.forAddress(targetHost, targetPort)
             .sslContext(sslContext)
             .keepAliveTime(30, TimeUnit.SECONDS)
             .keepAliveTimeout(5, TimeUnit.SECONDS)
