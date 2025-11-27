@@ -40,10 +40,10 @@ This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` 
 - [x] Verify that `TelnetServerHandler` continues to redact `LOGIN` arguments in logs while still forwarding the full command to Game Session, and add tests that assert logging behaviour for sensitive vs non-sensitive commands.
 - [x] Document the Telnet `LOGIN` flow in both the TCP Proxy Service design doc and the Spring Cloud Gateway design doc, making it clear that Telnet and WebSocket clients share the same authentication path and that the gateway route (`/ws/game/**`) is the single entry point for gameplay login.
 
-## 6. Developer Workflows and Smoke Tests
+-## 6. Developer Workflows and Smoke Tests
 
-- [ ] Add or update a smoke test script (alongside existing ones) that demonstrates a full `LOGIN` + `LOOK` flow over a direct WebSocket connection to Game Session Service, using sample credentials and clearly marking any required Account Service/dev environment setup.
-- [ ] Add a second smoke test or documented telnet/curl sequence that exercises `SESSION` + `LOGIN` + `LOOK` through TCP Proxy Service and Spring Cloud Gateway, using the same credentials and asserting that the responses match the direct WebSocket flow.
+- [x] Add or update a smoke test script (alongside existing ones) that demonstrates a full `LOGIN` + `LOOK` flow over a direct WebSocket connection to Game Session Service, using sample credentials and clearly marking any required Account Service/dev environment setup.
+- [x] Add a second smoke test or documented telnet/curl sequence that exercises `SESSION` + `LOGIN` + `LOOK` through TCP Proxy Service and Spring Cloud Gateway, using the same credentials and asserting that the responses match the direct WebSocket flow.
 - [ ] Update `design/project-management/task-list-game-session-service.md`, `design/project-management/task-list-account-service.md`, `design/project-management/task-list-tcp-proxy-service.md`, and `design/project-management/task-list-spring-cloud-gateway.md` to reconcile tasks related to `LOGIN`, session resumption, and reconnection so those lists reference this vertical slice where appropriate rather than duplicating details.
 
 ---
