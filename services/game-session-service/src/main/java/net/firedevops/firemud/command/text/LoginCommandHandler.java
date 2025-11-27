@@ -185,7 +185,7 @@ public final class LoginCommandHandler {
   }
 
   private String mapErrorCode(ErrorDetail error) {
-    String message = error.getMessage().toLowerCase();
+    String message = Optional.ofNullable(error.getMessage()).orElse("").toLowerCase();
     if (message.contains("invalid credentials")) {
       return "INVALID_CREDENTIALS";
     }

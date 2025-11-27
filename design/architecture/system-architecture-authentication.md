@@ -51,6 +51,8 @@ Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss).
 If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes
 gameplay seamlessly.
 
+**Note:** This slice treats `playerId` as the authenticated `accountId` because explicit character selection is not yet implemented. Once characters land, the service will map `playerId` to the selected avatar instead of the raw account identifier so session resumption aligns with actual player context.
+
 > 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
 ---
