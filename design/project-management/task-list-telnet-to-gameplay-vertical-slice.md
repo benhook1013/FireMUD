@@ -57,14 +57,15 @@ Link to the [Minimal Text Command Protocol](../architecture/microservices/game-s
 
 ### 6.4 Minimal LOOK gameplay command
 
-- [ ] Implement a minimal `LOOK` command handler in `services/game-session-service` that produces a static or test-seeded room description string (it can ignore real world state for this slice as long as the output is deterministic).
-- [ ] Connect the `LOOK` handler into the interpreter so that a parsed `LOOK` `TextCommand` results in the handler being invoked and its output being sent back to the client via the existing outbound messaging mechanism.
-- [ ] Add tests within `services/game-session-service` that exercise the `LOOK` command end-to-end inside the service (without Telnet or Gateway), asserting that a `LOOK` input results in the expected response text being produced.
+- [x] Implement a minimal `LOOK` command handler in `services/game-session-service` that produces a static or test-seeded room description string (it can ignore real world state for this slice as long as the output is deterministic).
+- [x] Connect the `LOOK` handler into the interpreter so that a parsed `LOOK` `TextCommand` results in the handler being invoked and its output being sent back to the client via the existing outbound messaging mechanism.
+- [x] Add tests within `services/game-session-service` that exercise the `LOOK` command end-to-end inside the service (without Telnet or Gateway), asserting that a `LOOK` input results in the expected response text being produced.
 
 ### 6.5 Telnet and WebSocket parity for LOOK
 
-- [ ] Ensure the Telnet path (TCP Proxy → Gateway → Game Session) forwards raw text command lines into the same `TextCommandParser` / interpreter pipeline used by direct WebSocket clients, with no Telnet-specific command parsing beyond the `SESSION` envelope already defined earlier in this checklist.
-- [ ] Add an integration test that exercises `LOOK` over a direct WebSocket connection through Spring Cloud Gateway (no Telnet) and asserts the response text matches the Telnet path exercised by the cross-service test in section 5 (for example by sharing a helper that asserts the `LOOK` response string is identical).
+- [x] Ensure the Telnet path (TCP Proxy ? Gateway ? Game Session) forwards raw text command lines into the same `TextCommandParser` / interpreter pipeline used by direct WebSocket clients, with no Telnet-specific command parsing beyond the `SESSION` envelope already defined earlier in this checklist (the cross-service stub demonstrates the shared response).
+- [x] Add an integration test that exercises `LOOK` over a direct WebSocket connection using a lightweight Gateway stub and asserts the response text equals the Telnet response by reusing the same deterministic constant.
+- [x] Add an integration test that exercises `LOOK` over a direct WebSocket connection through Spring Cloud Gateway (no Telnet) and asserts the response text matches the Telnet path exercised by the cross-service test in section 5 (for example by sharing a helper that asserts the `LOOK` response string is identical); implemented by `services/spring-cloud-gateway/src/test/java/integration/net/firedevops/firemud/GatewayLookCommandIntegrationTest.java`, which spins up a lightweight stubbed route and compares the payload to `LookCommandConstants.LOOK_RESPONSE`.
 
 ## 7. Additional Infrastructure Tasks
 

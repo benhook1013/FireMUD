@@ -156,6 +156,16 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 
 This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature.
 
+### Implementation status (vertical slice)
+
+For the current Telnet-to-gameplay vertical slice, the implementation intentionally separates "system" commands (session and login related) from gameplay commands:
+
+- `LOGIN` / `LOGON` are treated as system commands owned by the Game Session Service and will be wired into the authentication and world-selection flow described in [Authentication & Authorization](../../system-architecture-authentication.md). At this stage they are defined in the protocol and parser, but the full login flow is still being implemented under `design/project-management/task-list-game-session-service.md`.
+- `LOOK` is implemented as a minimal, deterministic room description inside the Game Session Service via a `LookCommandHandler`. This is a temporary gameplay stub used to validate the end-to-end text command flow and tests; future slices will route LOOK and other gameplay commands through the world/logic/scripting stack so that room descriptions and exits are fully data-driven.
+- `SAY` and additional gameplay commands will follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
+
+The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic.
+
 ### Response format
 
 - Every response is plain text. The first line is either `OK <COMMAND>` or `ERROR <CODE> <message>`.

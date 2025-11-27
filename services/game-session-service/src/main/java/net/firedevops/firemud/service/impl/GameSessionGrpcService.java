@@ -31,6 +31,7 @@ import net.firedevops.firemud.service.FeatureFlagService;
 import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.service.TickService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -179,13 +180,14 @@ public final class GameSessionGrpcService
   @Timed(value = "gamesessionGrpc.enqueueCommand")
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
-    var result =
+    TextCommandInterpretationResult interpretation =
         textCommandInterpreter.interpret(
             request.getSessionId(), request.getCommand(), request.getRequiresSoloTick());
+    var commandResult = interpretation.commandResult();
     EnqueueCommandResponse.Builder builder =
-        EnqueueCommandResponse.newBuilder().setAccepted(result.accepted());
-    if (result.hasError()) {
-      builder.setError(error(result.errorCode(), result.errorMessage()));
+        EnqueueCommandResponse.newBuilder().setAccepted(commandResult.accepted());
+    if (commandResult.hasError()) {
+      builder.setError(error(commandResult.errorCode(), commandResult.errorMessage()));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();

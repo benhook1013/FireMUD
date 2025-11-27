@@ -24,6 +24,7 @@ import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.TickService;
+import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -257,7 +258,9 @@ class GameSessionGrpcServiceTest {
     Mockito.when(
             textCommandInterpreter.interpret(
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean()))
-        .thenReturn(CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded"));
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded"), null));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
         new GameSessionGrpcService(

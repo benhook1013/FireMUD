@@ -24,6 +24,9 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation("io.projectreactor:reactor-test:3.8.0")
+    testImplementation(libs.spring.boot.starter.websocket)
+    testImplementation(libs.spring.boot.starter.webflux)
+    testImplementation("com.h2database:h2:2.2.220")
     testRuntimeOnly("io.grpc:grpc-netty:1.77.0")
 }
 
@@ -44,5 +47,3 @@ tasks.register<BootRun>("bootRunLogOnly") {
     systemProperty("spring.profiles.active", "dev")
     environment("TCP_PROXY_LOG_ONLY", "true")
 }
-
-
