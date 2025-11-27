@@ -150,11 +150,47 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <password>` | Authenticates a session and binds it to an account. | `LOGIN demo@example.com swordfish` |
+| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish` |
 | `LOOK` | Requests the current room description plus exits. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 
 This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature.
+
+### Login / Logon semantics
+
+Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments starts the prompt flow, whereas `LOGIN <username> <password>` (optionally followed by an OTP for accounts with two-factor enabled) performs an immediate authentication attempt. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently.
+
+Telnet success (prompt-based):
+
+```text
+LOGIN
+OK LOGIN Enter username:
+demo@example.com
+OK LOGIN Enter password:
+swordfish
+OK LOGIN Logged in as demo@example.com
+```
+
+Telnet failure (wrong password):
+
+```text
+LOGIN demo@example.com wrongpass
+ERROR INVALID_CREDENTIALS Invalid username or password
+```
+
+WebSocket success (parameterized command):
+
+```text
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
+```
+
+WebSocket failure (account locked):
+
+```text
+LOGIN demo@example.com swordfish
+ERROR ACCOUNT_LOCKED Account locked after repeated failures
+```
 
 ### Implementation status (vertical slice)
 

@@ -31,6 +31,12 @@ All clients — whether connecting via Telnet or WebSocket — authenticate usin
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
+### Mapping to the Account Service
+
+The Game Session Service turns every plain-text `LOGIN`/`LOGON` command into a call to the Account Service `/auth/login` REST endpoint (or the equivalent `Authenticate` gRPC method) so credential verification remains centralized. The request payload carries `username`, `password`, and, when supplied, the `otp` field so two-factor verification executes in the Account Service. The resulting JWT, account identity, and role claims flow back through the Game Session Service, which stores them in Redis and binds the socket to the authenticated session.
+
+Gameplay commands such as `LOOK` and `SAY` are gated by this authentication handshake. Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, except in explicitly documented development/test bypass modes that grant temporary access.
+
 Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and
 not tied to a single game or tenant; the same account is used across all worlds. Tenant context is
 bound later when the client selects a world, and the Game Session Service derives the `tenantId`
