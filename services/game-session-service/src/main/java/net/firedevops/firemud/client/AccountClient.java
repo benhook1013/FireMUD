@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.config.GrpcClientProperties;
 import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 
@@ -78,7 +79,17 @@ public final class AccountClient implements AutoCloseable {
             .setPassword(password)
             .setOtp(otp == null ? "" : otp)
             .build();
-    return stub.authenticate(request);
+    try {
+      return stub.authenticate(request);
+    } catch (Exception ex) {
+      return AuthenticateResponse.newBuilder()
+          .setError(
+              net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                  .setCode("UPSTREAM_FAILURE")
+                  .setMessage(ex.getMessage())
+                  .build())
+          .build();
+    }
   }
 
   @Override

@@ -34,6 +34,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class LoginCommandHandlerTest {
+  private static final String AUTH_TOKEN = "mock-jwt";
+
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
@@ -47,7 +49,7 @@ class LoginCommandHandlerTest {
   void setUp() {
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(AuthenticateResponse.newBuilder().build());
+        .thenReturn(AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).build());
     handler =
         new LoginCommandHandler(
             commandService,
@@ -111,13 +113,18 @@ class LoginCommandHandlerTest {
     assertEquals(77L, context.accountId());
     assertEquals(77L, context.playerId());
     assertEquals(1L, context.gameInstanceId());
+    assertEquals(AUTH_TOKEN, context.jwt());
   }
 
   @Test
   void invalidCredentialsDoesNotSaveContext() {
     AuthenticateResponse authError =
         AuthenticateResponse.newBuilder()
-            .setError(ErrorDetail.newBuilder().setCode("INVALID_CREDENTIALS").setMessage("bad").build())
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("UNAUTHENTICATED")
+                    .setMessage("Invalid credentials")
+                    .build())
             .build();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
@@ -128,6 +135,27 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     verify(sessionContextService, never()).save(any());
+  }
+
+  @Test
+  void accountErrorMapsToErrorDetailCode() {
+    AuthenticateResponse authError =
+        AuthenticateResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("UNAUTHENTICATED")
+                    .setMessage("Invalid 2FA code")
+                    .build())
+            .build();
+    TextCommand command =
+        new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(authError);
+
+    LoginCommandHandlingResult result = handler.handle("session-1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("OTP_REQUIRED", result.commandResult().errorCode());
   }
 
   @Test

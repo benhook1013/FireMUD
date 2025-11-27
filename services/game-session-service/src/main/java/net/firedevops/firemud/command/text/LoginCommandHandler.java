@@ -12,6 +12,7 @@ import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,9 +62,9 @@ public final class LoginCommandHandler {
         accountClient.authenticate(
             properties.getDefaultTenantId(), args.get(0), args.get(1), otp);
     var error = authResponse.getError();
-    if (!error.getCode().isBlank()) {
+    if (error != null && !error.getCode().isBlank()) {
       return new LoginCommandHandlingResult(
-          CommandEnqueueResult.failure(error.getCode(), error.getMessage()), null);
+          CommandEnqueueResult.failure(mapErrorCode(error), error.getMessage()), null);
     }
 
     Optional<LoginResult> loginResult = buildLoginResult(sessionId, authResponse.getAuthToken());
@@ -113,6 +114,21 @@ public final class LoginCommandHandler {
                     instance.getOwnerAccountId(),
                     instance.getId(),
                     jwt));
+  }
+
+  private String mapErrorCode(ErrorDetail error) {
+    String message = error.getMessage().toLowerCase();
+    if (message.contains("invalid credentials")) {
+      return "INVALID_CREDENTIALS";
+    }
+    if (message.contains("invalid 2fa") || message.contains("otp")) {
+      return "OTP_REQUIRED";
+    }
+    if (message.contains("locked")) {
+      return "ACCOUNT_LOCKED";
+    }
+    String code = error.getCode();
+    return code == null || code.isBlank() ? "UPSTREAM_FAILURE" : code;
   }
 
   private Long parseSessionId(String sessionIdText) {
