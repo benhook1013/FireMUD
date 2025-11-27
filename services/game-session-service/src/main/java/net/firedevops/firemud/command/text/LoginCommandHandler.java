@@ -19,6 +19,7 @@ import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -32,6 +33,7 @@ public final class LoginCommandHandler {
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
   private final LogOnlyProperties logOnlyProperties;
+  private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -52,9 +54,9 @@ public final class LoginCommandHandler {
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.logOnlyProperties =
         Objects.requireNonNull(logOnlyProperties, "logOnlyProperties must not be null");
-    Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
-    this.takeoverCounter = meterRegistry.counter("gamesession.session.takeover");
-    this.resumeCounter = meterRegistry.counter("gamesession.session.resume");
+    this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
+    this.takeoverCounter = this.meterRegistry.counter("gamesession.session.takeover");
+    this.resumeCounter = this.meterRegistry.counter("gamesession.session.resume");
   }
 
   public LoginCommandHandlingResult handle(
@@ -154,25 +156,46 @@ public final class LoginCommandHandler {
       long accountId,
       long playerId,
       SessionContext existing) {
-    if (existing.sessionId() == incomingSessionId) {
-      resumeCounter.increment();
-      logger.debug(
-          "Session resumed for tenant {} account {} player {} session {}",
-          tenantId,
-          accountId,
-          playerId,
-          incomingSessionId);
-    } else {
-      takeoverCounter.increment();
-      logger.info(
-          "Taking over session {} for tenant {} account {} player {}; new session {}",
-          existing.sessionId(),
-          tenantId,
-          accountId,
-          playerId,
-          incomingSessionId);
-      sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
+    try (MDC.MDCCloseable tenant =
+            MDC.putCloseable("tenantId", String.valueOf(tenantId));
+        MDC.MDCCloseable account = MDC.putCloseable("accountId", String.valueOf(accountId));
+        MDC.MDCCloseable player = MDC.putCloseable("playerId", String.valueOf(playerId))) {
+      if (existing.sessionId() == incomingSessionId) {
+        resumeCounter.increment();
+        recordLabeledMetric("gamesession.session.resume", tenantId, accountId, playerId);
+        logger.debug(
+            "Session resumed for tenant {} account {} player {} session {}",
+            tenantId,
+            accountId,
+            playerId,
+            incomingSessionId);
+      } else {
+        takeoverCounter.increment();
+        recordLabeledMetric("gamesession.session.takeover", tenantId, accountId, playerId);
+        logger.info(
+            "Taking over session {} for tenant {} account {} player {}; new session {}",
+            existing.sessionId(),
+            tenantId,
+            accountId,
+            playerId,
+            incomingSessionId);
+        sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
+      }
     }
+  }
+
+  private void recordLabeledMetric(
+      String name, long tenantId, long accountId, long playerId) {
+    meterRegistry
+        .counter(
+            name,
+            "tenantId",
+            String.valueOf(tenantId),
+            "accountId",
+            String.valueOf(accountId),
+            "playerId",
+            String.valueOf(playerId))
+        .increment();
   }
 
   private Optional<LoginResult> buildLoginResult(GameInstance instance, long accountId, String jwt) {

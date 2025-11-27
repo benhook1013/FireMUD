@@ -14,9 +14,8 @@ public final class RedisSessionContextService implements SessionContextService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration sessionTtl;
 
-  private static final String CONTEXT_KEY_TEMPLATE = "session:%d:%d:context";
-  private static final String LOOKUP_KEY_TEMPLATE = "session:lookup:%d";
-  private static final String IDENTITY_KEY_TEMPLATE = "session:%d:identity:%d:%d:context";
+  private static final String CONTEXT_KEY_TEMPLATE = "sessionctx:%d:%d:context";
+  private static final String IDENTITY_KEY_TEMPLATE = "sessionctx:%d:identity:%d:%d:context";
 
   public RedisSessionContextService(
       RedisTemplate<String, Object> redisTemplate,
@@ -30,7 +29,6 @@ public final class RedisSessionContextService implements SessionContextService {
   public void save(SessionContext context) {
     var ops = redisTemplate.opsForValue();
     ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
-    ops.set(lookupKey(context.sessionId()), context, sessionTtl);
     ops.set(
         identityKey(context.tenantId(), context.accountId(), context.playerId()),
         context,
@@ -38,9 +36,9 @@ public final class RedisSessionContextService implements SessionContextService {
   }
 
   @Override
-  public Optional<SessionContext> findBySessionId(long sessionId) {
+  public Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId) {
     return Optional.ofNullable(
-        (SessionContext) redisTemplate.opsForValue().get(lookupKey(sessionId)));
+        (SessionContext) redisTemplate.opsForValue().get(contextKey(tenantId, sessionId)));
   }
 
   @Override
@@ -55,21 +53,15 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public void deleteBySessionId(long tenantId, long sessionId) {
-    Optional<SessionContext> existing = findBySessionId(sessionId);
+    Optional<SessionContext> existing = findByTenantAndSessionId(tenantId, sessionId);
     redisTemplate.delete(contextKey(tenantId, sessionId));
-    redisTemplate.delete(lookupKey(sessionId));
     existing.ifPresent(
         context ->
             redisTemplate.delete(
                 identityKey(context.tenantId(), context.accountId(), context.playerId())));
   }
-
   private String contextKey(long tenantId, long sessionId) {
     return String.format(CONTEXT_KEY_TEMPLATE, tenantId, sessionId);
-  }
-
-  private String lookupKey(long sessionId) {
-    return String.format(LOOKUP_KEY_TEMPLATE, sessionId);
   }
 
   private String identityKey(long tenantId, long accountId, long playerId) {

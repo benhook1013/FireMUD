@@ -71,7 +71,8 @@ class SessionResumptionFlowTest {
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId("77").build());
     sessionAuthenticationService =
-        new SessionAuthenticationService(sessionContextService, properties);
+        new SessionAuthenticationService(
+            sessionContextService, properties, instanceRepository);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             commandService,
@@ -146,8 +147,12 @@ class SessionResumptionFlowTest {
     }
 
     @Override
-    public Optional<SessionContext> findBySessionId(long sessionId) {
-      return Optional.ofNullable(sessionMap.get(sessionId));
+    public Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId) {
+      SessionContext context = sessionMap.get(sessionId);
+      if (context == null || context.tenantId() != tenantId) {
+        return Optional.empty();
+      }
+      return Optional.of(context);
     }
 
     @Override

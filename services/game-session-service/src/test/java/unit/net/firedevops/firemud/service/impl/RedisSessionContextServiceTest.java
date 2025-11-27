@@ -36,15 +36,25 @@ class RedisSessionContextServiceTest {
     service.save(context);
 
     verify(valueOperations)
-        .set("session:10:1:context", context, TTL);
+        .set("sessionctx:10:1:context", context, TTL);
     verify(valueOperations)
-        .set("session:10:identity:20:30:context", context, TTL);
+        .set("sessionctx:10:identity:20:30:context", context, TTL);
+  }
+
+  @Test
+  void findByTenantAndSessionIdReturnsPersistedContext() {
+    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
+    when(valueOperations.get("sessionctx:10:1:context")).thenReturn(context);
+
+    Optional<SessionContext> result = service.findByTenantAndSessionId(10L, 1L);
+
+    assertEquals(Optional.of(context), result);
   }
 
   @Test
   void findByAccountAndPlayerReturnsPersistedContext() {
     SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
-    when(valueOperations.get("session:10:identity:20:30:context")).thenReturn(context);
+    when(valueOperations.get("sessionctx:10:identity:20:30:context")).thenReturn(context);
 
     Optional<SessionContext> result = service.findByAccountAndPlayer(10L, 20L, 30L);
 
@@ -54,11 +64,11 @@ class RedisSessionContextServiceTest {
   @Test
   void deleteBySessionIdRemovesBothKeys() {
     SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
-    when(valueOperations.get("session:10:1:context")).thenReturn(context);
+    when(valueOperations.get("sessionctx:10:1:context")).thenReturn(context);
 
     service.deleteBySessionId(10L, 1L);
 
-    verify(redisTemplate).delete("session:10:1:context");
-    verify(redisTemplate).delete("session:10:identity:20:30:context");
+    verify(redisTemplate).delete("sessionctx:10:1:context");
+    verify(redisTemplate).delete("sessionctx:10:identity:20:30:context");
   }
 }
