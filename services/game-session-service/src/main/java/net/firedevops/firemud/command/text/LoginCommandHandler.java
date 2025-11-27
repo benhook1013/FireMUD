@@ -1,0 +1,94 @@
+package net.firedevops.firemud.command.text;
+
+import java.util.List;
+import java.util.Objects;
+import net.firedevops.firemud.command.text.LoginCommandConstants;
+import net.firedevops.firemud.command.text.LoginCommandHandlingResult;
+import net.firedevops.firemud.command.text.TextCommand;
+import net.firedevops.firemud.dto.CommandEnqueueResult;
+import net.firedevops.firemud.entity.GameInstance;
+import net.firedevops.firemud.repository.GameInstanceRepository;
+import net.firedevops.firemud.service.CommandService;
+import net.firedevops.firemud.service.SessionContext;
+import net.firedevops.firemud.service.SessionContextService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+/** Handles LOGIN/LOGON commands and generates immediate responses when possible. */
+@Component
+public final class LoginCommandHandler {
+  private static final Logger logger = LoggerFactory.getLogger(LoginCommandHandler.class);
+
+  private final CommandService commandService;
+  private final GameInstanceRepository gameInstanceRepository;
+  private final SessionContextService sessionContextService;
+
+  @Autowired
+  public LoginCommandHandler(
+      CommandService commandService,
+      GameInstanceRepository gameInstanceRepository,
+      SessionContextService sessionContextService) {
+    this.commandService =
+        Objects.requireNonNull(commandService, "commandService must not be null");
+    this.gameInstanceRepository =
+        Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
+    this.sessionContextService =
+        Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
+  }
+
+  public LoginCommandHandlingResult handle(
+      String sessionId, TextCommand command, boolean requiresSoloTick) {
+    List<String> args = command.args();
+    if (args.size() < 2) {
+      CommandEnqueueResult failure =
+          CommandEnqueueResult.failure(
+              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
+              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
+      return new LoginCommandHandlingResult(failure, null);
+    }
+
+    CommandEnqueueResult enqueueResult =
+        commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
+    if (enqueueResult.accepted()) {
+      storeSessionContext(sessionId);
+    }
+    return new LoginCommandHandlingResult(enqueueResult, null);
+  }
+
+  private void storeSessionContext(String sessionIdText) {
+    if (sessionContextService == null || gameInstanceRepository == null) {
+      return;
+    }
+
+    Long sessionId = parseSessionId(sessionIdText);
+    if (sessionId == null) {
+      return;
+    }
+
+    gameInstanceRepository
+        .findById(sessionId)
+        .map(this::buildContextFromInstance)
+        .ifPresent(
+            context -> {
+              sessionContextService.save(context);
+              logger.debug("Updated session context for {}:{}", context.tenantId(), context.sessionId());
+            });
+  }
+
+  private SessionContext buildContextFromInstance(GameInstance instance) {
+    long tenantId = instance.getTenantId();
+    long accountId = instance.getOwnerAccountId();
+    long playerId = accountId; // placeholder until character selection exists
+    return new SessionContext(instance.getId(), tenantId, accountId, playerId, instance.getId());
+  }
+
+  private Long parseSessionId(String sessionIdText) {
+    try {
+      return Long.parseLong(sessionIdText);
+    } catch (NumberFormatException ex) {
+      return null;
+    }
+  }
+}

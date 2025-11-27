@@ -1,0 +1,12 @@
+package net.firedevops.firemud.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/** Configurable operating flags for the Game Session Service. */
+@Data
+@ConfigurationProperties(prefix = "game-session")
+public class GameSessionProperties {
+  /** Require authentication before processing gameplay commands. */
+  private boolean requireAuthenticatedCommands = true;
+}
