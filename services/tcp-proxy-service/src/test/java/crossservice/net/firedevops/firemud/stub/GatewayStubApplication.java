@@ -7,6 +7,7 @@ import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -64,8 +65,12 @@ public class GatewayStubApplication {
 
     @Override
     public Mono<Void> handle(WebSocketSession inbound) {
+      HttpHeaders outboundHeaders = new HttpHeaders();
+      outboundHeaders.addAll(inbound.getHandshakeInfo().getHeaders());
+
       return client.execute(
           targetUri,
+          outboundHeaders,
           outbound -> {
             Mono<Void> inboundToTarget =
                 outbound
