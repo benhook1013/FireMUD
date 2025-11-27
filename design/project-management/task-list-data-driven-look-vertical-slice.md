@@ -71,4 +71,3 @@ Prompt for Codex to generate the next vertical slice task list after these items
 
 "Context: We just completed the Login and Session vertical slice described in design/project-management/task-list-login-and-session-vertical-slice.md. Please inspect the current code and design docs, then propose a new markdown task list file under design/project-management/ focused on the next smallest playable/demo slice that follows this flow deeper into the system (for example, data-driven LOOK that integrates World and Entity services, the SAY/chat path through Social & Groups, or more advanced reconnection edge cases). Each task should be small enough to hand to Codex as a single chunk, and the file should end with a note reminding us to reconcile any duplicated items in existing task lists and design docs."
 -->
-
