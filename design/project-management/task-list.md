@@ -358,3 +358,4 @@ The standard microservice checklist is now copied into each service task list.
 - [ ] Add Fluent Bit, Prometheus, and Grafana to the local Docker Compose stack
 - [ ] Configure environment-specific Jaeger retention policies
 - [ ] Deploy Redis as a clustered StatefulSet with automatic failover in production
+- [ ] Upgrade the platform to Spring Boot 3.6+ (or 4.x when stable) so we can migrate tests from `@MockBean` to the new `@MockitoBean` support and drop the deprecated annotation usage currently suppressed in the cross-service harness.

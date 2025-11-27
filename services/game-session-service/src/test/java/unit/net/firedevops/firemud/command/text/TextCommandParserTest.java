@@ -40,19 +40,19 @@ class TextCommandParserTest {
   }
 
   @Test
-  void blankInputProducesUnknown() {
+  void blankInputIsIgnored() {
     TextCommand command = parser.parse("    ");
 
-    assertEquals(TextCommandType.UNKNOWN, command.type());
+    assertEquals(TextCommandType.NOOP, command.type());
     assertTrue(command.args().isEmpty());
     assertEquals("    ", command.rawLine());
   }
 
   @Test
-  void nullInputProducesUnknown() {
+  void nullInputIsIgnored() {
     TextCommand command = parser.parse(null);
 
-    assertEquals(TextCommandType.UNKNOWN, command.type());
+    assertEquals(TextCommandType.NOOP, command.type());
     assertTrue(command.args().isEmpty());
     assertEquals("", command.rawLine());
   }

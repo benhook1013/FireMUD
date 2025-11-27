@@ -9,14 +9,14 @@ public class TextCommandParser {
     String source = rawLine == null ? "" : rawLine;
     String trimmed = source.trim();
     if (trimmed.isEmpty()) {
-      return new TextCommand(TextCommandType.UNKNOWN, List.of(), source);
+      return new TextCommand(TextCommandType.NOOP, List.of(), source);
     }
 
     String[] tokens = trimmed.split("\\s+");
     TextCommandType type = TextCommandType.fromToken(tokens[0]);
     List<String> args = switch (type) {
       case LOGIN -> parseRemainingTokens(tokens);
-      case LOOK -> List.of();
+      case LOOK, NOOP -> List.of();
       case SAY -> extractSayMessage(trimmed);
       case UNKNOWN -> parseRemainingTokens(tokens);
     };

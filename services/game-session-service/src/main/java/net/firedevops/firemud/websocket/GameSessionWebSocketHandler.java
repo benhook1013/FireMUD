@@ -4,6 +4,7 @@ import java.io.IOException;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandParser;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +44,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     boolean requiresSoloTick = parseSoloTick(session);
     TextCommand command = parser.parse(message.getPayload());
+    if (command.type() == TextCommandType.NOOP) {
+      return;
+    }
     CommandEnqueueResult result = interpreter.interpret(sessionId, command, requiresSoloTick);
     session.sendMessage(new TextMessage(formatResponse(command, result)));
   }

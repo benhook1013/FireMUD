@@ -26,6 +26,9 @@ public class TextCommandInterpreter {
   }
 
   public CommandEnqueueResult interpret(String sessionId, TextCommand command, boolean requiresSoloTick) {
+    if (command.type() == TextCommandType.NOOP) {
+      return CommandEnqueueResult.success();
+    }
     if (command.type() == TextCommandType.UNKNOWN) {
       return CommandEnqueueResult.failure("UNKNOWN_COMMAND", command.rawLine());
     }

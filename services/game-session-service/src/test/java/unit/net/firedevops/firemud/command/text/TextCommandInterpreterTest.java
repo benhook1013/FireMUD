@@ -59,4 +59,14 @@ class TextCommandInterpreterTest {
     assertEquals("UNKNOWN_COMMAND", result.errorCode());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
+
+  @Test
+  void blankCommandIsIgnored() {
+    TextCommand noOp = new TextCommand(TextCommandType.NOOP, List.of(), "   ");
+
+    CommandEnqueueResult result = interpreter.interpret("123", noOp, false);
+
+    assertTrue(result.accepted());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
 }

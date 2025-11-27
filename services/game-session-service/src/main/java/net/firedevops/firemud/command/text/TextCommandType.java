@@ -7,6 +7,7 @@ public enum TextCommandType {
   LOGIN,
   LOOK,
   SAY,
+  NOOP,
   UNKNOWN;
 
   public static TextCommandType fromToken(String token) {
