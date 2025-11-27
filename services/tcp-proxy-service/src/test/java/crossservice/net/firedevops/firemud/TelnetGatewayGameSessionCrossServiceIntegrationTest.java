@@ -21,7 +21,6 @@ import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -47,6 +46,7 @@ import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -73,6 +73,7 @@ private static GatewayHolder GATEWAY;
   @Autowired private TestRestTemplate restTemplate;
 
   @Autowired private TelnetServer telnetServer;
+  @SuppressWarnings("removal")
   @MockBean private GRpcServerRunner grpcServerRunner;
 
   @AfterAll
@@ -84,9 +85,6 @@ private static GatewayHolder GATEWAY;
     if (GAME_SESSION_STUB != null) {
       GAME_SESSION_STUB.close();
       GAME_SESSION_STUB = null;
-    }
-    if (REDIS != null) {
-      REDIS.stop();
     }
   }
 
@@ -289,4 +287,5 @@ private static GatewayHolder GATEWAY;
       return session.send(replies);
     }
   }
+
 }

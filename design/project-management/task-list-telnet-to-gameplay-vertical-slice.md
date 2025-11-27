@@ -85,6 +85,13 @@ Work on the tcp-proxy cross-service test has drifted: the current `TelnetGateway
 - [x] Re-run `./gradlew :tcp-proxy-service:test --tests crossservice.net.firedevops.firemud.TelnetGatewayGameSessionCrossServiceIntegrationTest` and log any remaining failures as follow-up items (e.g., LOOK handler expectations) rather than piling on mocks — command executed successfully (latest run in this workspace, see shell history) with no remaining failures.
 - [x] Document the new helper stub and wiring approach in this file and the per-service task lists once it's stable, so future slices can reuse the simplified pattern — this checklist plus `design/project-management/task-list-tcp-proxy-service.md` and `design/project-management/task-list-spring-cloud-gateway.md` now include references to the stub/test harness.
 
+## 9. Outstanding Cleanup: gRPC Test Runner Warning
+
+We temporarily reintroduced `@MockBean GRpcServerRunner` in `TelnetGatewayGameSessionCrossServiceIntegrationTest` to keep the cross-service harness green, but Spring Boot has marked this annotation for removal. Follow-up tasks:
+
+- [ ] Identify an alternative way to disable the embedded gRPC server (for example through profile-specific config or a lightweight stub) so we can drop the `@MockBean`.
+- [ ] Once the alternate approach is in place, remove the `@MockBean` and add a note to the tcp-proxy task list documenting the chosen pattern so future slices don’t reintroduce deprecated annotations.
+
 ---
 
 Note: After completing tasks in this checklist, go back and update the existing per-service task list documents (such as `design/project-management/task-list-tcp-proxy-service.md`, `design/project-management/task-list-game-session-service.md`, and `design/project-management/task-list-spring-cloud-gateway.md`) and the relevant design docs so duplicated items are reconciled and the architecture documentation reflects the completed vertical slice.
