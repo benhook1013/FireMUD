@@ -1,6 +1,4 @@
 spring:
-  profiles:
-    active: dev
   application:
     name: spring-cloud-gateway
   flyway:
@@ -140,4 +138,3 @@ spring:
     resources:
       cache:
         period: 3600
-
