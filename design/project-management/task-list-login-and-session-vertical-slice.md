@@ -31,7 +31,7 @@ This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` 
 - [x] Implement basic session resumption behaviour so that when a previously connected client disconnects and later sends `LOGIN` again with valid credentials for an existing Redis session, Game Session reuses the existing tick/command queues instead of starting a fresh game instance.
 - [x] Ensure that session takeover and resumption paths emit Micrometer metrics (for example `gamesession.session.takeover` and `gamesession.session.resume`) and structured logs including `tenantId`, `accountId`, and `playerId` to support debugging.
 - [x] Add focused tests (unit or Spring Boot integration) that simulate two WebSocket connections using the same character: the first performs `LOGIN` and `LOOK`, the second performs `LOGIN` and is granted control while the first receives a disconnect or error, and subsequent `LOOK` calls continue to operate on the same underlying game state.
-- [ ] Update the [Reconnection Strategy](../architecture/system-architecture-reconnection.md) doc with a short "implemented status" note describing which parts of the reconnect flow are now live (e.g., session takeover and basic resume after TCP/WebSocket loss) and which remain future work.
+- [x] Update the [Reconnection Strategy](../architecture/system-architecture-reconnection.md) doc with a short "implemented status" note describing which parts of the reconnect flow are now live (e.g., session takeover and basic resume after TCP/WebSocket loss) and which remain future work.
 
 ## 5. Telnet and WebSocket LOGIN Parity
 

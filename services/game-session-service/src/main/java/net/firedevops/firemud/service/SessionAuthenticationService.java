@@ -2,7 +2,6 @@ package net.firedevops.firemud.service;
 
 import java.util.Optional;
 import net.firedevops.firemud.config.GameSessionProperties;
-import net.firedevops.firemud.repository.GameInstanceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -11,16 +10,12 @@ import org.springframework.stereotype.Component;
 public final class SessionAuthenticationService {
   private final SessionContextService sessionContextService;
   private final GameSessionProperties properties;
-  private final GameInstanceRepository gameInstanceRepository;
 
   @Autowired
   public SessionAuthenticationService(
-      SessionContextService sessionContextService,
-      GameSessionProperties properties,
-      GameInstanceRepository gameInstanceRepository) {
+      SessionContextService sessionContextService, GameSessionProperties properties) {
     this.sessionContextService = sessionContextService;
     this.properties = properties;
-    this.gameInstanceRepository = gameInstanceRepository;
   }
 
   public boolean isAuthenticated(String sessionIdText) {
@@ -32,10 +27,7 @@ public final class SessionAuthenticationService {
       return false;
     }
     long sessionId = maybeSessionId.get();
-    return gameInstanceRepository
-        .findById(sessionId)
-        .flatMap(gameInstance -> sessionContextService.findBySessionId(gameInstance.getTenantId(), sessionId))
-        .isPresent();
+    return sessionContextService.findBySessionId(sessionId).isPresent();
   }
 
   private Optional<Long> parseSessionId(String text) {
