@@ -7,7 +7,10 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
@@ -67,13 +70,12 @@ public class TcpProxyEventClient implements AutoCloseable {
   void init() throws SSLException, IOException {
     reloadChannel();
     if (tlsFiles != null) {
-      watcher =
-          TlsCertificateWatcher.createAndStart(
-              List.of(
-                  tlsFiles.certChain().toPath(),
-                  tlsFiles.privateKey().toPath(),
-                  tlsFiles.caCert().toPath()),
-              this::safeReload);
+      List<Path> watchPaths = tlsFiles.watchPaths();
+      if (!watchPaths.isEmpty()) {
+        watcher = TlsCertificateWatcher.createAndStart(watchPaths, this::safeReload);
+      } else {
+        logger.info("TLS certificates loaded from classpath resources; file watching is disabled");
+      }
     } else {
       logger.info("TLS certificates not configured; TcpProxyEventClient will use plaintext");
     }
@@ -82,12 +84,12 @@ public class TcpProxyEventClient implements AutoCloseable {
   private synchronized void safeReload() {
     try {
       reloadChannel();
-    } catch (SSLException e) {
+    } catch (Exception e) {
       logger.error("Failed to reload gRPC channel", e);
     }
   }
 
-  private void reloadChannel() throws SSLException {
+  private void reloadChannel() throws SSLException, IOException {
     String target = endpoints.getGameSessionService();
     if (target == null || target.isEmpty()) {
       target = "game-session-service:6565";
@@ -102,12 +104,16 @@ public class TcpProxyEventClient implements AutoCloseable {
             .keepAliveTimeout(5, TimeUnit.SECONDS)
             .keepAliveWithoutCalls(true);
     if (resolved != null) {
-      var sslContext =
-          GrpcSslContexts.forClient()
-              .trustManager(resolved.caCert())
-              .keyManager(resolved.certChain(), resolved.privateKey())
-              .build();
-      builder = builder.sslContext(sslContext);
+      try (InputStream certChainStream = resolved.certChain().openStream();
+          InputStream privateKeyStream = resolved.privateKey().openStream();
+          InputStream caCertStream = resolved.caCert().openStream()) {
+        var sslContext =
+            GrpcSslContexts.forClient()
+                .trustManager(caCertStream)
+                .keyManager(certChainStream, privateKeyStream)
+                .build();
+        builder = builder.sslContext(sslContext);
+      }
     } else {
       builder = builder.usePlaintext();
     }
@@ -148,41 +154,67 @@ public class TcpProxyEventClient implements AutoCloseable {
     }
   }
 
-  private TlsFiles resolveTlsFiles() {
-    File certChainFile = resolveFile(tlsProps.getCertChain());
-    File privateKeyFile = resolveFile(tlsProps.getPrivateKey());
-    File caCertFile = resolveFile(tlsProps.getCaCert());
-    if (certChainFile == null || privateKeyFile == null || caCertFile == null) {
+  private TlsFiles resolveTlsFiles() throws IOException {
+    TlsResource certChain = resolveTlsResource(tlsProps.getCertChain(), "certChain");
+    TlsResource privateKey = resolveTlsResource(tlsProps.getPrivateKey(), "privateKey");
+    TlsResource caCert = resolveTlsResource(tlsProps.getCaCert(), "caCert");
+    if (certChain == null && privateKey == null && caCert == null) {
       return null;
     }
-    return new TlsFiles(certChainFile, privateKeyFile, caCertFile);
+    if (certChain == null || privateKey == null || caCert == null) {
+      throw new IOException("TLS configuration must specify certChain, privateKey, and caCert");
+    }
+    return new TlsFiles(certChain, privateKey, caCert);
   }
 
-  private File resolveFile(String configuredPath) {
+  private TlsResource resolveTlsResource(String configuredPath, String propertyName)
+      throws IOException {
     if (!StringUtils.hasText(configuredPath)) {
       return null;
     }
-    try {
-      if (configuredPath.startsWith("classpath:")) {
-        String resourcePath = configuredPath.substring("classpath:".length());
-        ClassPathResource resource = new ClassPathResource(resourcePath);
-        if (!resource.exists()) {
-          logger.debug("Classpath resource {} not found for TLS configuration", resourcePath);
-          return null;
-        }
-        return resource.getFile();
+    if (configuredPath.startsWith("classpath:")) {
+      String resourcePath = configuredPath.substring("classpath:".length());
+      ClassPathResource resource = new ClassPathResource(resourcePath);
+      if (!resource.exists()) {
+        throw new IOException("Classpath resource not found for TLS property " + propertyName);
       }
-      File file = new File(configuredPath);
-      if (file.exists()) {
-        return file;
+      return new TlsResource(resource::getInputStream, null);
+    }
+    File file = new File(configuredPath);
+    if (!file.exists()) {
+      throw new IOException("TLS file does not exist for property "
+          + propertyName
+          + ": "
+          + configuredPath);
+    }
+    Path path = file.toPath();
+    return new TlsResource(() -> Files.newInputStream(path), path);
+  }
+
+  private record TlsFiles(TlsResource certChain, TlsResource privateKey, TlsResource caCert) {
+    List<Path> watchPaths() {
+      List<Path> paths = new ArrayList<>();
+      addIfPresent(paths, certChain.watchPath());
+      addIfPresent(paths, privateKey.watchPath());
+      addIfPresent(paths, caCert.watchPath());
+      return paths;
+    }
+
+    private static void addIfPresent(List<Path> paths, Path path) {
+      if (path != null) {
+        paths.add(path);
       }
-      logger.debug("TLS file {} does not exist", configuredPath);
-      return null;
-    } catch (IOException e) {
-      logger.warn("Failed to resolve TLS file {}", configuredPath, e);
-      return null;
     }
   }
 
-  private record TlsFiles(File certChain, File privateKey, File caCert) {}
+  private record TlsResource(TlsInputStreamSupplier streamSupplier, Path watchPath) {
+    InputStream openStream() throws IOException {
+      return streamSupplier.open();
+    }
+  }
+
+  @FunctionalInterface
+  private interface TlsInputStreamSupplier {
+    InputStream open() throws IOException;
+  }
 }
