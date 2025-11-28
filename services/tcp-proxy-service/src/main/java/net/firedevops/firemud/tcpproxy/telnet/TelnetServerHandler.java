@@ -612,7 +612,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       @Override
       public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
         touchActivity();
-        logger.info("Gateway response: {}", data);
+        if (logger.isDebugEnabled()) {
+          logger.debug("Gateway response: {}", data);
+        }
         if (context != null) {
           context.writeAndFlush(data.toString() + "\n");
         }

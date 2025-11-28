@@ -57,8 +57,9 @@ public class TextCommandInterpreter {
       return new TextCommandInterpretationResult(CommandEnqueueResult.success(), null);
     }
     if (command.type() == TextCommandType.UNKNOWN) {
+      String message = "Unknown command";
       return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure("UNKNOWN_COMMAND", command.rawLine()), null);
+          CommandEnqueueResult.failure("UNKNOWN_COMMAND", message), null);
     }
     if (command.type() == TextCommandType.LOGIN) {
       LoginCommandHandlingResult loginResult =
