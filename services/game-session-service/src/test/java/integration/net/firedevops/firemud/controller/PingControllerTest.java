@@ -6,21 +6,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import net.firedevops.firemud.service.PingService;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(PingController.class)
-@AutoConfigureMockMvc
+@GameSessionIntegrationTest
 class PingControllerTest {
 
   @Autowired private MockMvc mockMvc;
 
   @MockBean private PingService pingService;
+  @MockBean private GRpcServerRunner grpcServerRunner;
 
   @Test
   void pingReturnsApiResponse() throws Exception {

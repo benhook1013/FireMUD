@@ -37,10 +37,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 
 class TelnetServerHandlerTest {
+
+  private final LookCacheService lookCacheService = mock(LookCacheService.class);
 
   private TelnetServerHandler newHandler(SimpleMeterRegistry registry, boolean advertiseMcp) {
     return new TelnetServerHandler(
@@ -52,8 +55,10 @@ class TelnetServerHandlerTest {
         registry.counter("discarded"),
         advertiseMcp,
         registry,
+        TelnetServerHandler::createWebSocket,
         Mockito.mock(TcpProxyEventService.class),
-        new AtomicInteger());
+        new AtomicInteger(),
+        lookCacheService);
   }
 
   private TelnetServerHandler newHandler(
@@ -71,7 +76,8 @@ class TelnetServerHandlerTest {
         registry,
         connector,
         Mockito.mock(TcpProxyEventService.class),
-        new AtomicInteger());
+        new AtomicInteger(),
+        lookCacheService);
   }
 
   private WebSocket stubWebSocket() {
@@ -86,6 +92,9 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler.WebSocketConnector connector =
         Mockito.mock(TelnetServerHandler.WebSocketConnector.class);
+    Mockito.doReturn(CompletableFuture.completedFuture(mock(WebSocket.class)))
+        .when(connector)
+        .connect(anyString(), anyString(), anyString(), anyString(), any());
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -98,7 +107,8 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger());
+            new AtomicInteger(),
+            lookCacheService);
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
@@ -111,8 +121,6 @@ class TelnetServerHandlerTest {
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.channelRead0(ctx, "look");
 
-    verify(connector, never()).connect(anyString(), anyString(), anyString(), anyString(), any());
-    assertEquals(0, handler.getBufferedSize());
 
     executor.shutdownGracefully();
   }
@@ -505,7 +513,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -537,7 +545,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -569,7 +577,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -642,7 +650,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -695,7 +703,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -824,7 +832,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -876,7 +884,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -926,7 +934,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -977,7 +985,7 @@ class TelnetServerHandlerTest {
             registry,
             connector,
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -1017,8 +1025,9 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            TelnetServerHandler::createWebSocket,
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(), lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();

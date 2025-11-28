@@ -15,9 +15,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 
 class TelnetPipelineIntegrationTest {
+
+  private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
 
   @Test
   void rawBytesFlowThroughPipelineWithNegotiationResponses() {
@@ -32,8 +35,10 @@ class TelnetPipelineIntegrationTest {
             registry.counter("discarded"),
             false,
             registry,
+            TelnetServerHandler::createWebSocket,
             Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger());
+            new AtomicInteger(),
+            lookCacheService);
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
@@ -73,8 +78,10 @@ class TelnetPipelineIntegrationTest {
             registry.counter("discarded"),
             false,
             registry,
+            TelnetServerHandler::createWebSocket,
             Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger());
+            new AtomicInteger(),
+            lookCacheService);
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);

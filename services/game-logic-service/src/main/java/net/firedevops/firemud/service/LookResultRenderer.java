@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 public class LookResultRenderer {
   public String render(LookResult result) {
     StringBuilder out = new StringBuilder();
-    out.append("OK LOOK\n");
     out.append("Room: ").append(result.getRoomName()).append(" (ID: ").append(result.getRoomId()).append(")\n");
     out.append("Short: ").append(result.getShortDescription()).append("\n");
     out.append("Long: ").append(result.getLongDescription()).append("\n");

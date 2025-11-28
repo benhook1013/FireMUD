@@ -64,7 +64,7 @@ subprojects {
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
             if (name.contains("Test")) {
-                // Ignore the current @MockBean removal warnings until Spring 4.0 lands so tests stay clean.
+                // Ignore the current @MockBean removal warnings until Spring Boot 4.0 lands so tests stay clean.
                 options.compilerArgs.add("-Xlint:-removal")
             }
         }

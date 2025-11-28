@@ -26,16 +26,16 @@ class RoomEntityServiceImplTest {
     LookProperties.LookRoom room = new LookProperties.LookRoom();
     room.getEntities().add(entity("P-1", "Sora", EntityType.PLAYER, ReloadHint.STABLE));
     room.getEntities().add(entity("NPC-1", "Kobold Scout", EntityType.NPC, ReloadHint.STABLE));
-    props.getRooms().put("demo:R-1021", room);
+    props.getRooms().put("1:R-1021", room);
 
-    List<RoomEntityDto> listed = service.listEntities("demo", "R-1021");
+    List<RoomEntityDto> listed = service.listEntities("1", "R-1021");
     assertEquals(2, listed.size());
     assertTrue(listed.stream().anyMatch(dto -> dto.displayName().equals("Sora")));
   }
 
   @Test
   void returnsEmptyWhenRoomMissing() {
-    List<RoomEntityDto> listed = service.listEntities("demo", "missing");
+    List<RoomEntityDto> listed = service.listEntities("1", "missing");
     assertTrue(listed.isEmpty());
   }
 

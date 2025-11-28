@@ -14,7 +14,9 @@ class LookResultRendererTest {
     LookResult result = LookTestFixtures.sampleLookResult();
     String text = renderer.render(result);
 
-    assertThat(text).isEqualTo(LookTestFixtures.canonicalLookText().trim());
+    String canonicalBody =
+        LookTestFixtures.canonicalLookText().replaceFirst("^OK LOOK\\n", "").trim();
+    assertThat(text).isEqualTo(canonicalBody);
   }
 
   @Test

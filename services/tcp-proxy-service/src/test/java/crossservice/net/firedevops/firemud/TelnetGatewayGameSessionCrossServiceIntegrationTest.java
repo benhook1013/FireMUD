@@ -3,6 +3,7 @@ package crossservice.net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
+import net.firedevops.firemud.test.LookTestFixtures;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -115,8 +116,8 @@ private static GatewayHolder GATEWAY;
       writer.println("SESSION 1 1");
       writer.println("look");
       String response = readMultiLineResponse(reader);
-      String expected = LookCommandConstants.LOOK_RESPONSE;
-      assertThat(response).isEqualTo(expected);
+      assertThat(response.trim())
+          .isEqualTo(net.firedevops.firemud.test.LookTestFixtures.canonicalLookText().trim());
     }
 
     awaitCommand("look");
@@ -149,7 +150,7 @@ private static GatewayHolder GATEWAY;
 
     assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(2);
     assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(0));
-    assertThat(telnetLookResponse).isEqualTo(websocketResponses.get(1));
+    assertThat(telnetLookResponse.trim()).isEqualTo(websocketResponses.get(1).trim());
   }
 
   private static void awaitCommand(String expected) {
@@ -379,7 +380,7 @@ private static GatewayHolder GATEWAY;
 
     private String responsePayload(String command) {
       if ("LOOK".equalsIgnoreCase(command)) {
-        return LookCommandConstants.LOOK_RESPONSE;
+        return LookTestFixtures.canonicalLookText();
       }
       return "processed:" + command;
     }

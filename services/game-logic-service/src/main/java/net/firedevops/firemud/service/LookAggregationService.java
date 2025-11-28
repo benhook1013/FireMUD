@@ -15,9 +15,11 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.RoomEntity;
 import net.firedevops.firemud.service.LookResultRenderer;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
+import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -57,13 +59,16 @@ public class LookAggregationService {
 
   private RoomSnapshot fetchSnapshot(LookRequest request) {
     try {
-      return worldStub
-          .getRoomSnapshot(
+      GetRoomSnapshotResponse response =
+          worldStub.getRoomSnapshot(
               GetRoomSnapshotRequest.newBuilder()
                   .setTenantId(request.getTenantId())
                   .setRoomId(request.getRoomId())
-                  .build())
-          .getSnapshot();
+                  .build());
+      if (response.hasError()) {
+        throw statusFromError(response.getError(), "WorldManagement");
+      }
+      return response.getSnapshot();
     } catch (StatusRuntimeException ex) {
       throw rethrowWithSource(ex, "WorldManagement");
     }
@@ -71,14 +76,40 @@ public class LookAggregationService {
 
   private ListRoomEntitiesResponse fetchEntities(LookRequest request) {
     try {
-      return entityStub.listRoomEntities(
-          ListRoomEntitiesRequest.newBuilder()
-              .setTenantId(request.getTenantId())
-              .setRoomId(request.getRoomId())
-              .build());
+      ListRoomEntitiesResponse response =
+          entityStub.listRoomEntities(
+              ListRoomEntitiesRequest.newBuilder()
+                  .setTenantId(request.getTenantId())
+                  .setRoomId(request.getRoomId())
+                  .build());
+      if (response.hasError()) {
+        throw statusFromError(response.getError(), "EntityManagement");
+      }
+      return response;
     } catch (StatusRuntimeException ex) {
       throw rethrowWithSource(ex, "EntityManagement");
     }
+  }
+
+  private StatusRuntimeException statusFromError(ErrorDetail error, String source) {
+    Status.Code statusCode = mapErrorCode(error);
+    String description =
+        Optional.ofNullable(error.getMessage()).filter(s -> !s.isBlank()).orElse("unreachable");
+    return Status.fromCode(statusCode)
+        .withDescription(source + ": " + description)
+        .asRuntimeException();
+  }
+
+  private Status.Code mapErrorCode(ErrorDetail error) {
+    if (error == null || error.getCode() == null) {
+      return Status.Code.UNAVAILABLE;
+    }
+    return switch (error.getCode().toUpperCase()) {
+      case "INVALID_ARGUMENT" -> Status.Code.INVALID_ARGUMENT;
+      case "NOT_FOUND" -> Status.Code.NOT_FOUND;
+      case "PERMISSION_DENIED" -> Status.Code.PERMISSION_DENIED;
+      default -> Status.Code.UNAVAILABLE;
+    };
   }
 
   private StatusRuntimeException rethrowWithSource(StatusRuntimeException ex, String source) {

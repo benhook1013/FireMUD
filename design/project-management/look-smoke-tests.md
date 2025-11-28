@@ -41,7 +41,7 @@ Document every command/response pair so reproducible cross-service logs can be r
 
 - Store the transcripts under `design/project-management/smoke-tests/look/` with filenames describing the transport and timestamp.
 - Reference these scripts in the README/CI docs once the full automated cross-service tests exist.
-- When replaying the scripts, capture `gamesession.command.look.invocations`/`gamesession.command.look.failures` counters (via `/actuator/prometheus` or the Micrometer endpoint) and log output from Game Session to confirm the metrics/`ERROR …` mappings fire for both success and failure scenarios.
+- When replaying the scripts, capture `gamesession.command.look.invocations`/`gamesession.command.look.failures` counters (via `/actuator/prometheus` or the Micrometer endpoint) and log output from Game Session to confirm the metrics/`ERROR <CODE>` mappings fire for both success and failure scenarios.
 - Keep an eye on Game Logic logs for the `Rendered LOOK text` entry emitted by `LookResultRenderer` so you can correlate the structured DTO with the textual transcript when diagnosing discrepancies.
 - Consult `design/project-management/look-instrumentation.md` for a deeper dive into the meters/logs that should light up during these runs and how to correlate them back to tenants, error codes, and smoke transcripts.
 - Run `./gradlew crossServiceTest` to replay the automated WebSocket and Telnet LOOK transcripts, confirm the new instrumentation counters/log entries, and eliminate manual setup barriers for regression validation.

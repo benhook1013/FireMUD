@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamelogic.v1.LookExit;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.service.LookResultRenderer;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
@@ -104,5 +105,23 @@ class LookAggregationServiceTest {
     assertThatThrownBy(() -> service.resolve(request))
         .isInstanceOf(StatusRuntimeException.class)
         .hasMessageContaining("WorldManagement");
+  }
+
+  @Test
+  void propagatesWorldErrorDetailResponse() {
+    when(worldStub.getRoomSnapshot(any()))
+        .thenReturn(
+            GetRoomSnapshotResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("NOT_FOUND")
+                        .setMessage("room missing")
+                        .build())
+                .build());
+
+    assertThatThrownBy(() -> service.resolve(request))
+        .isInstanceOf(StatusRuntimeException.class)
+        .hasMessageContaining("WorldManagement")
+        .hasMessageContaining("room missing");
   }
 }

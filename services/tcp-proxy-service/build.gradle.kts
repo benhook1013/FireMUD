@@ -17,6 +17,7 @@ dependencies {
     implementation(libs.spring.boot.starter.actuator)
     implementation("io.netty:netty-all:4.2.7.Final")
     implementation(libs.spring.boot.starter.websocket)
+    implementation(libs.spring.boot.starter.data.redis)
     implementation(project(":common-library"))
     implementation(project(":game-session-service"))
     implementation(libs.grpc.spring.boot.starter)

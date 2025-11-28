@@ -36,14 +36,10 @@ import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.ObjectProvider;
 
-@Disabled(
-    "TODO: re-enable when the dev-isolated session stubs can be replaced by the real Redis/account pipeline "
-        + "(design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
 class SessionResumptionFlowTest {
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
   private static final String LOOK_PAYLOAD = "LOOK";

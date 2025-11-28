@@ -27,7 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 
 /** Simple Netty-based Telnet server that forwards input to the gateway via WebSocket. */
@@ -52,18 +52,13 @@ public final class TelnetServer {
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
   private volatile int boundPort;
-  private LookCommandHandler lookCommandHandler;
+  private final LookCacheService lookCacheService;
 
   private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
   private final EventLoopGroup workerGroup = new NioEventLoopGroup();
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
-
-  @Autowired(required = false)
-  public void setLookCommandHandler(LookCommandHandler lookCommandHandler) {
-    this.lookCommandHandler = lookCommandHandler;
-  }
 
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,
@@ -74,7 +69,8 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
       MeterRegistry meterRegistry,
-      TcpProxyEventService eventService) {
+      TcpProxyEventService eventService,
+      LookCacheService lookCacheService) {
     this.port = port;
     this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
@@ -88,6 +84,7 @@ public final class TelnetServer {
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
     this.tlsMisconfigCounter = meterRegistry.counter("tcpproxy.tls.misconfig");
     this.eventService = eventService;
+    this.lookCacheService = lookCacheService;
     Gauge.builder(
             "tcpproxy.connections.active",
             activeConnections,
@@ -150,20 +147,20 @@ public final class TelnetServer {
                       .addLast(new LineBasedFrameDecoder(1024, false, true))
                       .addLast(new StringDecoder(StandardCharsets.ISO_8859_1))
                       .addLast(new StringEncoder(StandardCharsets.ISO_8859_1))
-                      .addLast(
-                          new TelnetServerHandler(
-                              gatewayWsUrl,
-                              devIsolated,
-                              activeConnections::incrementAndGet,
-                              activeConnections::decrementAndGet,
-                              connectionCounter,
-                              discardedCommandCounter,
-                              advertiseMcp,
-                              meterRegistry,
-                              TelnetServerHandler::createWebSocket,
-                              eventService,
-                              bufferDepth,
-                              lookCommandHandler));
+                          .addLast(
+                              new TelnetServerHandler(
+                                  gatewayWsUrl,
+                                  devIsolated,
+                                  activeConnections::incrementAndGet,
+                                  activeConnections::decrementAndGet,
+                                  connectionCounter,
+                                  discardedCommandCounter,
+                                  advertiseMcp,
+                                  meterRegistry,
+                                  TelnetServerHandler::createWebSocket,
+                                  eventService,
+                                  bufferDepth,
+                                  lookCacheService));
                 }
               });
       serverChannel = b.bind(port).sync().channel();

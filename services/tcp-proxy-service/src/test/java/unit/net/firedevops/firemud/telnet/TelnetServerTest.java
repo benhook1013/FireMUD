@@ -5,12 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
-import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
-import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 
 class TelnetServerTest {
   private TelnetServer server;
@@ -34,7 +34,8 @@ class TelnetServerTest {
             "",
             false,
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-            Mockito.mock(TcpProxyEventService.class));
+            Mockito.mock(TcpProxyEventService.class),
+            Mockito.mock(LookCacheService.class));
     server.start();
     server.stop();
     assertTrue(true); // no exception means success
@@ -59,7 +60,8 @@ class TelnetServerTest {
                     key,
                     false,
                     registry,
-                    Mockito.mock(TcpProxyEventService.class)));
+                    Mockito.mock(TcpProxyEventService.class),
+                    Mockito.mock(LookCacheService.class)));
 
     assertTrue(ex.getMessage().contains("TLS"));
     assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());

@@ -12,6 +12,7 @@ import io.netty.handler.codec.string.StringDecoder;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,8 @@ import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.test.context.TestPropertySource;
+import org.mockito.Mockito;
 
 @SpringBootTest(classes = TelnetServerHandlerSpringBootTest.TestConfig.class)
 class TelnetServerHandlerSpringBootTest {
@@ -28,6 +31,11 @@ class TelnetServerHandlerSpringBootTest {
     @Bean
     MeterRegistry meterRegistry() {
       return new SimpleMeterRegistry();
+    }
+
+    @Bean
+    LookCacheService lookCacheService() {
+      return Mockito.mock(LookCacheService.class);
     }
   }
 
@@ -51,8 +59,10 @@ class TelnetServerHandlerSpringBootTest {
             meterRegistry.counter("test.discarded"),
             false,
             meterRegistry,
+            TelnetServerHandler::createWebSocket,
             eventService,
-            bufferDepth);
+            bufferDepth,
+            Mockito.mock(LookCacheService.class));
 
     EmbeddedChannel channel =
         new EmbeddedChannel(

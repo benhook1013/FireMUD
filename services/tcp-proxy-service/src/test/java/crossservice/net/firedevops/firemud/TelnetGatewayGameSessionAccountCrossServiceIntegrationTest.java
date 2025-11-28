@@ -120,6 +120,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     registry.add("GATEWAY_WS_URL", GATEWAY::websocketUrl);
     registry.add("TCP_PROXY_PORT", () -> 0);
+    registry.add("firemud.redis.host", REDIS::getHost);
+    registry.add("firemud.redis.port", () -> REDIS.getMappedPort(6379));
   }
 
   @AfterAll

@@ -6,10 +6,12 @@ import java.time.Duration;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnMissingBean(LookCacheService.class)
 @RequiredArgsConstructor
 public class RedisLookCacheService implements LookCacheService {
   private final RedisTemplate<String, String> redisTemplate;

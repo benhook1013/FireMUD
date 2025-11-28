@@ -45,8 +45,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers(disabledWithoutDocker = true)
-@Disabled(
-    "Requires the full cross-service stack (Game Logic + stubs, Redis/Postgres/Testcontainers) and is intended for manual runs")
 class LookWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
   private static final long TENANT_ID = 1L;

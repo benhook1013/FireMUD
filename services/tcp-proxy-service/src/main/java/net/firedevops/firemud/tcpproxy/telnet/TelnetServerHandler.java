@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -79,7 +79,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
-  private final LookCommandHandler lookCommandHandler;
+  private final LookCacheService lookCacheService;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -146,7 +146,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       WebSocketConnector webSocketConnector,
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth,
-      LookCommandHandler lookCommandHandler) {
+      LookCacheService lookCacheService) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.devIsolated = devIsolated;
     this.onConnect = onConnect;
@@ -165,7 +165,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.reconnectCounter = meterRegistry.counter("tcpproxy.websocket.reconnects");
     this.reconnectCounter.increment(0.0);
     updateBufferDepthGauge();
-    this.lookCommandHandler = lookCommandHandler;
+    this.lookCacheService = lookCacheService;
   }
 
   @FunctionalInterface
@@ -584,14 +584,24 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void sendCachedLookIfPresent() {
-    if (lookCommandHandler == null || context == null || !sessionContext.isReady()) {
+    if (lookCacheService == null || context == null || !sessionContext.isReady()) {
       return;
     }
     String sessionId = sessionContext.sessionId();
     String tenantId = sessionContext.tenantId();
-    lookCommandHandler
-        .cachedLook(tenantId, sessionId)
-        .ifPresent(text -> context.writeAndFlush(text + "\n\n"));
+    try {
+      long tenant = Long.parseLong(tenantId);
+      long session = Long.parseLong(sessionId);
+      lookCacheService
+          .get(tenant, session)
+          .map(LookCacheService.CachedLook::renderedText)
+          .ifPresent(text -> context.writeAndFlush(text + "\n\n"));
+    } catch (NumberFormatException ex) {
+      logger.debug(
+          "Invalid cached LOOK identifiers tenant={} session={}", tenantId, sessionId, ex);
+    } catch (RuntimeException ex) {
+      logger.debug("Unable to read cached LOOK for session {}", sessionId, ex);
+    }
   }
 
   private void notifyDisconnectAsync() {

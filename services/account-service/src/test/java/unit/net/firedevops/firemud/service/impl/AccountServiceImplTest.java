@@ -119,9 +119,9 @@ class AccountServiceImplTest {
 
     AuthenticationResult result = service.authenticate(1L, "demo", "password", null);
 
-    assertNotNull(result.token());
+    assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.token());
+    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
   }
 
   @Test
