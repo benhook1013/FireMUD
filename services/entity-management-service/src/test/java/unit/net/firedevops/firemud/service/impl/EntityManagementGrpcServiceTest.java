@@ -11,6 +11,7 @@ import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.service.CharacterService;
 import net.firedevops.firemud.service.InventoryService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.RoomEntityService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
@@ -28,9 +29,10 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, meterRegistry);
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -63,9 +65,10 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, meterRegistry);
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -98,9 +101,10 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, meterRegistry);
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
 
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.ping(
@@ -134,9 +138,10 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, meterRegistry);
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
         ref = new AtomicReference<>();
@@ -174,9 +179,10 @@ class EntityManagementGrpcServiceTest {
         Mockito.mock(io.micrometer.core.instrument.Counter.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, meterRegistry);
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
 
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.listCharactersByAccount(

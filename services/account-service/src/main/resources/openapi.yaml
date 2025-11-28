@@ -51,10 +51,22 @@ components:
         otp:
           type: string
       required: [tenantId, username, password]
-    AuthTokenDto:
+    AuthenticationResult:
       type: object
       properties:
+        accountId:
+          type: integer
         authToken:
+          type: string
+    ResultStatus:
+      type: string
+      enum: [SUCCESS, ERROR]
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
           type: string
     ProfileDto:
       type: object
@@ -164,11 +176,18 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: Auth token
+          description: Authentication result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthTokenDto'
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/AuthenticationResult'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Invalid credentials
   /auth/request-password-reset:

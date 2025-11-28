@@ -8,120 +8,73 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.File;
-import java.io.IOException;
-import java.nio.file.Path;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
-import javax.net.ssl.SSLException;
-import net.firedevops.firemud.common.LoggingUtil;
+import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.config.GrpcClientProperties;
-import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
+import net.firedevops.firemud.gamelogic.v1.LookRequest;
+import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/** gRPC client for the Game Logic Service using mTLS. */
 @Component
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Configuration and channel references remain internal")
-public final class GameLogicClient implements AutoCloseable {
+@RequiredArgsConstructor
+@SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Injected configuration is stored internally")
+public class GameLogicClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
-  private final DevIsolatedProperties devIsolatedProperties;
-  private static final org.slf4j.Logger logger = LoggingUtil.getLogger(GameLogicClient.class);
+  private final GrpcClientProperties grpcClientProperties;
+
   private ManagedChannel channel;
   private GameLogicServiceGrpc.GameLogicServiceBlockingStub stub;
-  private TlsCertificateWatcher watcher;
-  private String targetHost;
-  private int targetPort;
-
-  public GameLogicClient(
-      ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
-      DevIsolatedProperties devIsolatedProperties) {
-    this.endpoints = endpoints;
-    this.tlsProps = tlsProps;
-    this.devIsolatedProperties = devIsolatedProperties;
-  }
 
   @PostConstruct
-  void init() throws SSLException, IOException {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; skipping GameLogicClient channel initialization");
-      return;
-    }
+  void init() throws Exception {
     String target = endpoints.getGameLogicService();
+    if (target == null || target.isBlank()) {
+      target = "game-logic-service:6565";
+    }
     String[] parts = target.split(":");
-    targetHost = parts[0];
-    targetPort = Integer.parseInt(parts[1]);
-    if (tlsProps.isPlaintext()) {
+    String host = parts[0];
+    int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
+    if (grpcClientProperties.isPlaintext()) {
+      channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
+    } else {
+      var sslContext =
+          GrpcSslContexts.forClient()
+              .trustManager(new File(grpcClientProperties.getCaCert()))
+              .keyManager(new File(grpcClientProperties.getCertChain()), new File(grpcClientProperties.getPrivateKey()))
+              .build();
       channel =
-          ManagedChannelBuilder.forAddress(targetHost, targetPort)
+          NettyChannelBuilder.forAddress(host, port)
+              .sslContext(sslContext)
               .keepAliveTime(30, TimeUnit.SECONDS)
               .keepAliveTimeout(5, TimeUnit.SECONDS)
               .keepAliveWithoutCalls(true)
-              .usePlaintext()
               .build();
-      stub = GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
-    } else {
-      reloadChannel();
-      watcher =
-          TlsCertificateWatcher.createAndStart(
-              List.of(
-                  Path.of(tlsProps.getCertChain()),
-                  Path.of(tlsProps.getPrivateKey()),
-                  Path.of(tlsProps.getCaCert())),
-              this::safeReload);
     }
-  }
-
-  private synchronized void safeReload() {
-    try {
-      reloadChannel();
-    } catch (SSLException e) {
-      // Log but continue using the existing channel if reload fails
-      net.firedevops.firemud.common.LoggingUtil.getLogger(GameLogicClient.class)
-          .error("Failed to reload gRPC channel", e);
-    }
-  }
-
-  private void reloadChannel() throws SSLException {
-    var sslContext =
-        GrpcSslContexts.forClient()
-            .trustManager(new File(tlsProps.getCaCert()))
-            .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
-            .build();
-    ManagedChannel newChannel =
-        NettyChannelBuilder.forAddress(targetHost, targetPort)
-            .sslContext(sslContext)
-            .keepAliveTime(30, TimeUnit.SECONDS)
-            .keepAliveTimeout(5, TimeUnit.SECONDS)
-            .keepAliveWithoutCalls(true)
-            .build();
-    if (channel != null) {
-      channel.shutdown();
-    }
-    channel = newChannel;
     stub = GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
-  /** Simple ping to verify connectivity. */
+  public LookResult resolveLook(
+      String tenantId, String sessionId, String playerId, String roomId) {
+    LookRequest request =
+        LookRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setSessionId(sessionId)
+            .setPlayerId(playerId)
+            .setRoomId(roomId)
+            .build();
+    return stub.resolveLook(request);
+  }
+
   public PingResponse ping() {
-    return stub.ping(PingRequest.newBuilder().build());
+    return stub.ping(PingRequest.getDefaultInstance());
   }
 
   @PreDestroy
-  @Override
-  public void close() throws IOException {
-    if (watcher != null) {
-      watcher.close();
-    }
+  public void close() {
     if (channel != null) {
       channel.shutdown();
     }

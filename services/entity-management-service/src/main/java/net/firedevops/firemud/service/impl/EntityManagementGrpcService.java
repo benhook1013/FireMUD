@@ -7,21 +7,28 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.dto.CharacterDto;
+import net.firedevops.firemud.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
+import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
 import net.firedevops.firemud.service.CharacterService;
 import net.firedevops.firemud.service.InventoryService;
+import net.firedevops.firemud.dto.RoomEntityDto;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.RoomEntityService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 import org.springframework.data.domain.Pageable;
@@ -42,15 +49,18 @@ public class EntityManagementGrpcService
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is thread-safe and stored as injected")
   private final MeterRegistry meterRegistry;
+  private final RoomEntityService roomEntityService;
 
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
       InventoryService inventoryService,
+      RoomEntityService roomEntityService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
     this.inventoryService = inventoryService;
+    this.roomEntityService = roomEntityService;
     this.meterRegistry = meterRegistry;
   }
 
@@ -189,6 +199,23 @@ public class EntityManagementGrpcService
     }
   }
 
+  @Override
+  @Timed(value = "entityGrpc.listRoomEntities")
+  public void listRoomEntities(
+      ListRoomEntitiesRequest request,
+      StreamObserver<ListRoomEntitiesResponse> responseObserver) {
+    try {
+      var entities = roomEntityService.listEntities(request.getTenantId(), request.getRoomId());
+      var builder = ListRoomEntitiesResponse.newBuilder();
+      entities.stream().map(this::toProto).forEach(builder::addEntities);
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+    }
+  }
+
   private Character toProto(CharacterDto dto) {
     return Character.newBuilder()
         .setId(String.valueOf(dto.id()))
@@ -203,6 +230,19 @@ public class EntityManagementGrpcService
         .setStamina(dto.stamina())
         .setHealth(dto.health())
         .setMana(dto.mana())
+        .build();
+  }
+
+  private RoomEntity toProto(RoomEntityDto dto) {
+    return RoomEntity.newBuilder()
+        .setEntityId(dto.entityId())
+        .setDisplayName(dto.displayName())
+        .setEntityType(dto.entityType())
+        .setRole(dto.role() == null ? "" : dto.role())
+        .addAllStateFlags(dto.stateFlags())
+        .setVisionPriority(dto.visionPriority())
+        .setReloadHint(dto.reloadHint())
+        .setVisible(dto.visible())
         .build();
   }
 }

@@ -10,6 +10,7 @@ option java_multiple_files = true;
 service WorldManagementService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
+  rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
   rpc UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse);
 }
 
@@ -21,6 +22,36 @@ message GetRoomRequest {
 message GetRoomResponse {
   string room_json = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetRoomSnapshotRequest {
+  string tenant_id = 1;
+  string room_id = 2;
+}
+
+message GetRoomSnapshotResponse {
+  RoomSnapshot snapshot = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RoomSnapshot {
+  string room_id = 1;
+  string tenant_id = 2;
+  string room_name = 3;
+  string short_description = 4;
+  string long_description = 5;
+  repeated RoomExitSnapshot exits = 6;
+  map<string, string> ambient_state = 7;
+  repeated string room_flags = 8;
+}
+
+message RoomExitSnapshot {
+  string exit_id = 1;
+  string target_room_id = 2;
+  string target_room_name = 3;
+  string label = 4;
+  string description = 5;
+  int32 cost = 6;
 }
 
 message UpdateWorldStateRequest {

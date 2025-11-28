@@ -322,7 +322,7 @@ These documents explain how the compose setup differs from production and provid
 ### Dev-isolated stubbed services
 
 - When `game-session.dev-isolated` (or `GAME_SESSION_DEV_ISOLATED`) is `true`, the Game Session Service (and dependent tests) uses in-memory replacements (`DevIsolatedSessionContextService`, `DevIsolatedGameInstanceService`, and `DevIsolatedGameInstanceRegistry`) instead of hitting Redis/JPA. This keeps LOGIN + LOOK flows runnable on a developer laptop that lacks PostgreSQL/Redis/Account Service dependencies.
-- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, and `SessionResumptionFlowTest`) are currently annotated with `@Disabled` and reference the TODO in `design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`. They should be revisited and re-enabled once the real Account/Redis/GameInstance wiring is available so Gradle runs against production services instead of the stubbed dev-isolated path.
+- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, and `SessionResumptionFlowTest`) are currently annotated with `@Disabled` and reference the TODO in `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`. They should be revisited and re-enabled once the real Account/Redis/GameInstance wiring is available so Gradle runs against production services instead of the stubbed dev-isolated path.
 
 ### Syncing the repo into WSL
 

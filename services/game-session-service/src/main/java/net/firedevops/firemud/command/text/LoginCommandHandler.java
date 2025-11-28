@@ -13,7 +13,6 @@ import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
-import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -30,7 +29,6 @@ import org.springframework.stereotype.Component;
 public final class LoginCommandHandler {
   private static final Logger logger = LoggerFactory.getLogger(LoginCommandHandler.class);
 
-  private final CommandService commandService;
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
@@ -42,15 +40,12 @@ public final class LoginCommandHandler {
 
   @Autowired
   public LoginCommandHandler(
-      CommandService commandService,
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService,
       AccountClient accountClient,
       DevIsolatedProperties devIsolatedProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
-    this.commandService =
-        Objects.requireNonNull(commandService, "commandService must not be null");
     this.gameInstanceRepository =
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
     this.sessionContextService =
@@ -120,13 +115,9 @@ public final class LoginCommandHandler {
     Optional<LoginResult> loginResult =
         buildLoginResult(instance, authenticatedAccountId, authResponse.getAuthToken());
 
-    CommandEnqueueResult enqueueResult =
-        commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
-    String responseText = null;
-    if (enqueueResult.accepted()) {
-      loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
-      responseText = "Logged in as " + args.get(0);
-    }
+    CommandEnqueueResult enqueueResult = CommandEnqueueResult.success();
+    loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
+    String responseText = "Logged in as " + args.get(0);
     return new LoginCommandHandlingResult(enqueueResult, responseText);
   }
 

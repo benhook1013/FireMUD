@@ -2,7 +2,7 @@
 
 ## Account Management
 
-- [ ] *(Login/session tasks maintained in the Login & Session vertical slice `design/project-management/task-list-login-and-session-vertical-slice.md`.)*
+- [ ] *(Login/session tasks maintained in the Login & Session vertical slice `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md`.)*
 - [x] Implement user registration and authentication (OAuth2, JWT)
 - [x] Implement session management and persistent logins
 - [x] Implement role-based access control (RBAC) for admins, moderators, and players

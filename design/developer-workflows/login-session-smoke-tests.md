@@ -52,4 +52,4 @@ You are in a candle-lit antechamber carved into basalt.
 
 ## 3. Verifying the Same Experience
 
-Compare the WebSocket `LOOK` response and the Telnet `LOOK` response; they should match exactly because both commands traverse `/ws/game/**` and are handled by the same Game Session login/tick pipeline. Recording the two output blocks above and diffing them is enough to prove parity. Document any differences (for example, missing blank lines) as regressions in `design/project-management/task-list-login-and-session-vertical-slice.md`.
+Compare the WebSocket `LOOK` response and the Telnet `LOOK` response; they should match exactly because both commands traverse `/ws/game/**` and are handled by the same Game Session login/tick pipeline. Recording the two output blocks above and diffing them is enough to prove parity. Document any differences (for example, missing blank lines) as regressions in `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md`.

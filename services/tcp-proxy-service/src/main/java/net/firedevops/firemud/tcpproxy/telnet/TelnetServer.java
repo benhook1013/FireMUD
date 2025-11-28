@@ -23,9 +23,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import net.firedevops.firemud.command.text.LookCommandHandler;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 
 /** Simple Netty-based Telnet server that forwards input to the gateway via WebSocket. */
@@ -50,12 +52,18 @@ public final class TelnetServer {
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
   private volatile int boundPort;
+  private LookCommandHandler lookCommandHandler;
 
   private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
   private final EventLoopGroup workerGroup = new NioEventLoopGroup();
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
+
+  @Autowired(required = false)
+  public void setLookCommandHandler(LookCommandHandler lookCommandHandler) {
+    this.lookCommandHandler = lookCommandHandler;
+  }
 
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,
@@ -152,8 +160,10 @@ public final class TelnetServer {
                               discardedCommandCounter,
                               advertiseMcp,
                               meterRegistry,
+                              TelnetServerHandler::createWebSocket,
                               eventService,
-                              bufferDepth));
+                              bufferDepth,
+                              lookCommandHandler));
                 }
               });
       serverChannel = b.bind(port).sync().channel();

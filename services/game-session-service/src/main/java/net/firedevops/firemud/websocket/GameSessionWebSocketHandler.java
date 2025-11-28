@@ -1,6 +1,7 @@
 package net.firedevops.firemud.websocket;
 
 import java.io.IOException;
+import net.firedevops.firemud.command.text.LookCommandHandler;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandParser;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
@@ -21,18 +22,29 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private static final Logger logger = LoggerFactory.getLogger(GameSessionWebSocketHandler.class);
   private static final String SESSION_HEADER = "X-Session-Id";
+  private static final String TENANT_HEADER = "X-Tenant-Id";
   private static final String SOLO_TICK_HEADER = "X-Requires-Solo-Tick";
 
   private final TextCommandInterpreter interpreter;
+  private final LookCommandHandler lookHandler;
   private final TextCommandParser parser = new TextCommandParser();
 
-  public GameSessionWebSocketHandler(TextCommandInterpreter interpreter) {
+  public GameSessionWebSocketHandler(
+      TextCommandInterpreter interpreter, LookCommandHandler lookHandler) {
     this.interpreter = interpreter;
+    this.lookHandler = lookHandler;
   }
 
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {
     logger.debug("WebSocket session {} established with headers {}", session.getId(), session.getHandshakeHeaders());
+    String sessionId = resolveSessionId(session);
+    String tenantId = resolveTenantId(session);
+    if (StringUtils.hasText(sessionId) && StringUtils.hasText(tenantId)) {
+      lookHandler
+          .cachedLook(tenantId, sessionId)
+          .ifPresent(text -> sendCachedLook(session, text));
+    }
   }
 
   @Override
@@ -62,6 +74,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return session.getHandshakeHeaders().getFirst(SESSION_HEADER);
   }
 
+  private String resolveTenantId(WebSocketSession session) {
+    return session.getHandshakeHeaders().getFirst(TENANT_HEADER);
+  }
+
   private String formatResponse(TextCommand command, TextCommandInterpretationResult interpretation) {
     CommandEnqueueResult result = interpretation.commandResult();
     if (result.accepted()) {
@@ -73,5 +89,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     String message = result.errorMessage() == null ? "" : result.errorMessage();
     return "ERROR " + result.errorCode() + " " + message;
+  }
+
+  private void sendCachedLook(WebSocketSession session, String text) {
+    try {
+      session.sendMessage(new TextMessage(text + "\n\n"));
+    } catch (IOException ex) {
+      logger.warn("Failed to send cached LOOK text", ex);
+    }
   }
 }

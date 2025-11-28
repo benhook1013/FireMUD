@@ -3,8 +3,8 @@ package unit.net.firedevops.firemud.command.text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -14,16 +14,21 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
+import net.firedevops.firemud.client.GameLogicClient;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.command.text.LookTextRenderer;
 import net.firedevops.firemud.command.text.LoginCommandHandler;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.command.text.TextCommandType;
-import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.config.DevIsolatedProperties;
+import net.firedevops.firemud.config.GameLogicProperties;
+import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
+import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -38,7 +43,7 @@ import org.springframework.beans.factory.ObjectProvider;
 
 @Disabled(
     "TODO: re-enable when the dev-isolated session stubs can be replaced by the real Redis/account pipeline "
-        + "(design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
+        + "(design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
 class SessionResumptionFlowTest {
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
   private static final String LOOK_PAYLOAD = "LOOK";
@@ -49,7 +54,11 @@ class SessionResumptionFlowTest {
   private final GameSessionProperties properties = new GameSessionProperties();
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-  private final LookCommandHandler lookHandler = new LookCommandHandler();
+  private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
+  private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
+  private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
+  private LookCommandHandler lookHandler;
+  private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
   private final SessionContextService sessionContextService = new InMemorySessionContextService();
   private SessionAuthenticationService sessionAuthenticationService;
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
@@ -88,13 +97,24 @@ class SessionResumptionFlowTest {
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
-            commandService,
             instanceRepository,
             sessionContextService,
             accountClient,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
+    lookHandler =
+        new LookCommandHandler(
+            gameLogicClient,
+            lookTextRenderer,
+            sessionAuthenticationService,
+            gameLogicProperties,
+            meterRegistry,
+            lookCacheService);
+    LookResult lookResult = LookResult.newBuilder().setRoomId("1021").build();
+    when(gameLogicClient.resolveLook(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(lookResult);
+    when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");
     interpreter =
         new TextCommandInterpreter(
             commandService, lookHandler, loginHandler, sessionAuthenticationService);
@@ -109,7 +129,7 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult firstLook =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
-    assertEquals(LookCommandHandler.DEFAULT_ROOM_DESCRIPTION, firstLook.responseText());
+    assertEquals("OK LOOK text", firstLook.responseText());
 
     TextCommandInterpretationResult secondLogin =
         interpreter.interpret("1", LOGIN_PAYLOAD, false);
@@ -118,7 +138,7 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult secondLook =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
-    assertEquals(LookCommandHandler.DEFAULT_ROOM_DESCRIPTION, secondLook.responseText());
+    assertEquals("OK LOOK text", secondLook.responseText());
 
     assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
@@ -139,7 +159,7 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult secondLook =
         interpreter.interpret("2", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
-    assertEquals(LookCommandHandler.DEFAULT_ROOM_DESCRIPTION, secondLook.responseText());
+    assertEquals("OK LOOK text", secondLook.responseText());
 
     TextCommandInterpretationResult firstLookAfterTakeover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);

@@ -1,0 +1,47 @@
+# LOOK Smoke Tests
+
+These lightweight scripts document the manual sequence of `LOGIN` + `LOOK` commands for both WebSocket and Telnet transports so developers can verify the vertical slice while the wired cross-service tests are still in progress.
+
+## 1. WebSocket smoke script
+
+Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
+
+1. Connect to the Gateway stub pointing at the Game Session service:
+
+   ```
+   wscat -c ws://localhost:8080/ws/game
+   ```
+
+2. (Optional) Send `SESSION <sessionId> <tenantId>` if resuming an existing session created via the REST `POST /sessions` endpoint.
+3. Send `LOGIN demo@example.com swordfish` and expect `OK LOGIN Logged in as demo@example.com`.
+4. Send `LOOK`. The response should match the canonical transcript in `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md#1-protocol-ux-and-design-alignment-for-look` (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
+5. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations{tenantId="1"}` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
+6. If the room does not exist or downstream services fail, verify the response matches one of the documented error codes (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`, `ERROR LOOK_UNAVAILABLE`).
+
+Save the full transcript (commands + responses) to a file for regression comparison.
+
+## 2. Telnet smoke script
+
+Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-proxy-service` startup docs).
+
+1. Use a Telnet client such as `telnet` or `nc` to connect to the proxy port:
+
+   ```
+   telnet localhost 4000
+   ```
+
+2. Send `SESSION <sessionId> <tenantId>` to attach to the existing Game Session once created via REST.
+3. Send `LOGIN demo@example.com swordfish` and expect the same `OK LOGIN` line as the WebSocket script.
+4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
+5. To test failure handling, request `LOOK` with a missing room id (by instructing Game Logic to look at a non seeded room). The proxy should relay `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection. Include the final transcript as `look-telnet-<timestamp>.log`.
+
+Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. The sample transcripts under `design/project-management/smoke-tests/look/` (`look-ws-sample.log`, `look-telnet-sample.log`) show the expected formatting for happy-path runs.
+
+## 3. Notes
+
+- Store the transcripts under `design/project-management/smoke-tests/look/` with filenames describing the transport and timestamp.
+- Reference these scripts in the README/CI docs once the full automated cross-service tests exist.
+- When replaying the scripts, capture `gamesession.command.look.invocations`/`gamesession.command.look.failures` counters (via `/actuator/prometheus` or the Micrometer endpoint) and log output from Game Session to confirm the metrics/`ERROR …` mappings fire for both success and failure scenarios.
+- Keep an eye on Game Logic logs for the `Rendered LOOK text` entry emitted by `LookResultRenderer` so you can correlate the structured DTO with the textual transcript when diagnosing discrepancies.
+- Consult `design/project-management/look-instrumentation.md` for a deeper dive into the meters/logs that should light up during these runs and how to correlate them back to tenants, error codes, and smoke transcripts.
+- Run `./gradlew crossServiceTest` to replay the automated WebSocket and Telnet LOOK transcripts, confirm the new instrumentation counters/log entries, and eliminate manual setup barriers for regression validation.

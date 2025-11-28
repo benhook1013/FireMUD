@@ -102,7 +102,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - Use `./gradlew :game-session-service:bootRunDevIsolated` (or set `GAME_SESSION_DEV_ISOLATED=true`) when you need to exercise the Game Session Service without PostgreSQL, Redis, or downstream gRPC dependencies. The dev-isolated beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
 - The `DevIsolatedGameSessionSmokeTest` in `services/game-session-service/src/test/java/integration/net/firedevops/firemud/DevIsolatedGameSessionSmokeTest.java` starts the dev profile in dev-isolated mode, posts to `POST /sessions`, and asserts the request is accepted and logged, proving the fast-path smoke test that only touches in-memory components.
-- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) are currently decorated with `@Disabled` so they only act as TODO reminders until the real Account/Redis/GameInstance wiring exists (see `design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`).
+- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) are currently decorated with `@Disabled` so they only act as TODO reminders until the real Account/Redis/GameInstance wiring exists (see `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`).
 
 ## Environment Variables
 
@@ -153,16 +153,16 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
-| `LOOK` | Requests the current room description plus exits. | `LOOK` |
+| `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 
-This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature.
+This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature. `LOOK` is treated as a fully data-driven command: Game Session enforces authentication, forwards it to Game Logic, which fetches room metadata from World Management and visible entities from Entity Management before the response is rendered over Telnet or WebSocket.
 
 ### Login / Logon semantics
 
 Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. OTP values are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
 
-**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands.
+**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. `LOOK` calls use the session created by `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
@@ -208,15 +208,68 @@ LOGIN demo@example.com swordfish
 ERROR ACCOUNT_LOCKED Account locked after repeated failures
 ```
 
+### LOOK transcripts
+
+Telnet `LOOK` (after successful login):
+
+```text
+LOOK
+OK LOOK
+Room: Candle-lit Antechamber (ID: R-1021)
+Short: You stand in a basalt chamber warmed by the brazier near the western wall.
+Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.
+Exits: NORTH (arched passage leading toward the cavern mouth), EAST (narrow fissure descending toward the forges).
+Entities:
+- NPC "Kobold Scout" (alert, checking the eastern balustrade)
+- Player "Sora" (leaning against the southern pillar)
+```
+
+WebSocket `LOOK` (same authenticated player, different transport):
+
+```text
+LOOK
+OK LOOK
+Room: Crafting Hall of Ember (ID: R-2045)
+Short: A vaulted hall lined with anvils and hanging banners.
+Long: Sparks drift upward from the forges while metalworkers shout over the rhythm of hammers; the far wall is dominated by the etched sigil of the Ember Guild.
+Exits: SOUTH (wide stair toward the guild atrium), WEST (narrow corridor past the glazing ovens).
+Entities:
+- NPC "Master Smith Torga" (wiping soot from his shoulders)
+- Player "Sora" (now near the south stair, waving to a passing engineer)
+```
+
 ### Implementation status (vertical slice)
 
 For the current Telnet-to-gameplay vertical slice, the implementation intentionally separates "system" commands (session and login related) from gameplay commands:
 
 - `LOGIN` / `LOGON` are treated as system commands owned by the Game Session Service and will be wired into the authentication and world-selection flow described in [Authentication & Authorization](../../system-architecture-authentication.md). At this stage they are defined in the protocol and parser, but the full login flow is still being implemented under `design/project-management/task-list-game-session-service.md`.
-- `LOOK` is implemented as a minimal, deterministic room description inside the Game Session Service via a `LookCommandHandler`. This is a temporary gameplay stub used to validate the end-to-end text command flow and tests; future slices will route LOOK and other gameplay commands through the world/logic/scripting stack so that room descriptions and exits are fully data-driven.
+- `LOOK` is implemented through the Game Logic Service's data-driven resolver (`ResolveLook`), which orchestrates room snapshots from World Management and visible entities from Entity Management; Game Session formats that aggregated result, caches the last successful snapshot per session, and streams it back to Telnet and WebSocket clients so the gameplay flow remains deterministic while drawing from the shared world state.
 - `SAY` and additional gameplay commands will follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
 
 The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic. Once this login slice lands, gameplay commands such as `LOOK` and `SAY` only execute for authenticated sessions (outside of explicitly documented dev/test bypasses), so the interpreter rejects untrusted text with `ERROR NOT_AUTHENTICATED` before the command queue ever sees it.
+
+### LOOK slice status
+
+- **Live:** Data-driven `LOOK` flows now route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in `design/project-management/look-instrumentation.md` before replying over Telnet or WebSocket.
+- **Stubbed:** Room/exit metadata and visible entities still derive from the seeded demo world migration and the `firemud.look.rooms` fixtures so transcripts and regression tests stay stable while the cross-service WebSocket/Telnet flows rely on the shared stub utilities.
+- **Deferred:** Dynamic lighting, line-of-sight filtering, script-driven room prose, and the optional reconnection replay of cached snapshots remain future work once instrumentation, metrics, and cross-service regression coverage stabilize.
+
+### LOOK request flow
+
+1. Game Session validates the Redis-backed session context created by a successful `LOGIN`/`LOGON`. If the guard fails, the service immediately returns `ERROR NOT_AUTHENTICATED`.
+2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `sessionId`, `playerId`, and `roomId`. ResolveLook enforces visibility rules and aggregates room metadata from World Management plus visible-entity lists from Entity Management.
+3. Game Logic returns a structured `LookResult` (name, short/long descriptions, exits, visible entities, optional highlights), which Game Session renders into the `OK LOOK` text response, emits metrics/logs (`gamesession.command.look.*`), and caches the serialized snapshot per session so reconnections can replay it quickly.
+4. Reconnecting Telnet or WebSocket clients receive the cached snapshot before buffered commands replay. If the snapshot is missing or stale, Game Session reruns `ResolveLook`, so the projection stays consistent when the world changes while the player was offline.
+
+### LOOK error mapping & metrics
+
+`LOOK` commands now translate Game Logic failures into protocol errors so clients see consistent responses:
+
+- `ERROR ROOM_NOT_FOUND` (room-level missing)
+- `ERROR WORLD_UNAVAILABLE` / `ERROR ENTITY_UNAVAILABLE` when downstream gRPC targets refuse the call (the error description includes the service name).
+- `ERROR LOOK_UNAVAILABLE` for generic infrastructure issues and `ERROR UNEXPECTED` for server-side bugs.
+
+Metrics `gamesession.command.look.invocations` and `gamesession.command.look.failures` are tagged with `tenantId` and (when applicable) `error`, allowing operators to match client-visible failures with the underlying reason quickly.
 
 ### Response format
 
@@ -233,8 +286,13 @@ OK LOGIN Logged in as demo@example.com
 
 LOOK
 OK LOOK
-You are in a candle-lit antechamber carved into basalt.
-Exits: NORTH EAST
+Room: Candle-lit Antechamber (ID: R-1021)
+Short: You stand in a basalt chamber warmed by a single brazier.
+Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.
+Exits: NORTH (arched passage toward the cavern mouth), EAST (narrow fissure descending toward the forges).
+Entities:
+- NPC "Kobold Scout" (alert, leaning on the eastern balustrade)
+- Player "Sora" (half-hidden in the shadowed niche)
 
 SAY Hello travelers
 OK SAY

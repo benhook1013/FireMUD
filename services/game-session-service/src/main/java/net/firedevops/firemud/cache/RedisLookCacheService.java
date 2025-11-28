@@ -1,0 +1,61 @@
+package net.firedevops.firemud.cache;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.util.Optional;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+public class RedisLookCacheService implements LookCacheService {
+  private final RedisTemplate<String, String> redisTemplate;
+  private final ObjectMapper objectMapper;
+
+  @Value("${firemud.look.cache.ttl-ms:600000}")
+  private long ttlMs;
+
+  private static final String KEY_TEMPLATE = "lookcache:%d:%d";
+
+  private static final class CachedPayload {
+    public String roomId;
+    public String renderedText;
+    public long cachedAtMs;
+  }
+
+  @Override
+  public void cache(long tenantId, long sessionId, String roomId, String renderedText) {
+    CachedPayload payload = new CachedPayload();
+    payload.roomId = roomId;
+    payload.renderedText = renderedText;
+    payload.cachedAtMs = System.currentTimeMillis();
+    try {
+      redisTemplate.opsForValue().set(
+          key(tenantId, sessionId), objectMapper.writeValueAsString(payload), Duration.ofMillis(ttlMs));
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException("Failed to serialize LOOK cache payload", e);
+    }
+  }
+
+  @Override
+  public Optional<CachedLook> get(long tenantId, long sessionId) {
+    String payload = redisTemplate.opsForValue().get(key(tenantId, sessionId));
+    if (payload == null) {
+      return Optional.empty();
+    }
+    try {
+      CachedPayload cached = objectMapper.readValue(payload, CachedPayload.class);
+      return Optional.of(new CachedLook(cached.roomId, cached.renderedText, cached.cachedAtMs));
+    } catch (JsonProcessingException e) {
+      redisTemplate.delete(key(tenantId, sessionId));
+      return Optional.empty();
+    }
+  }
+
+  private String key(long tenantId, long sessionId) {
+    return String.format(KEY_TEMPLATE, tenantId, sessionId);
+  }
+}

@@ -25,6 +25,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
+import net.firedevops.firemud.GameLogicServiceApplication;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -35,6 +36,9 @@ import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.service.GatewayRoute;
 import net.firedevops.firemud.service.GatewayRouteService;
 import net.firedevops.firemud.service.GameInstanceService;
+import net.firedevops.firemud.test.LookTestFixtures;
+import net.firedevops.firemud.test.stubs.EntityManagementStubServer;
+import net.firedevops.firemud.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import io.opentelemetry.api.GlobalOpenTelemetry;
@@ -43,7 +47,6 @@ import org.lognet.springboot.grpc.GRpcServicesRegistry;
 import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
 import io.grpc.health.v1.HealthCheckResponse;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -80,8 +83,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
-@Testcontainers
-@Disabled("Data-driven LOOK slice not wired; re-enable when integration path returns real responses")
+@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class)
@@ -103,6 +105,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       new GenericContainer<>(DockerImageName.parse("redis:7.2-alpine")).withExposedPorts(6379);
 
   private static AccountServiceStub ACCOUNT_STUB;
+  private static WorldManagementStubServer WORLD_STUB;
+  private static EntityManagementStubServer ENTITY_STUB;
+  private static GameLogicHolder GAME_LOGIC;
   private static GameSessionHolder GAME_SESSION;
   private static GatewayHolder GATEWAY;
 
@@ -131,6 +136,18 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       ACCOUNT_STUB.close();
       ACCOUNT_STUB = null;
     }
+    if (GAME_LOGIC != null) {
+      GAME_LOGIC.close();
+      GAME_LOGIC = null;
+    }
+    if (WORLD_STUB != null) {
+      WORLD_STUB.close();
+      WORLD_STUB = null;
+    }
+    if (ENTITY_STUB != null) {
+      ENTITY_STUB.close();
+      ENTITY_STUB = null;
+    }
   }
 
   @Test
@@ -155,11 +172,19 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(telnetLoginResponse).isNotNull();
       writer.println("LOOK");
       telnetLookResponse = readMultiLineResponse(reader);
+
+      WORLD_STUB.triggerNotFound("room missing for regression");
+      writer.println("LOOK");
+      String telnetFailureResponse = readMultiLineResponse(reader);
+      assertThat(telnetFailureResponse).startsWith("ERROR ROOM_NOT_FOUND");
     }
 
     assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(websocketResponses.get(1).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText().trim());
     assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(0));
-    assertThat(telnetLookResponse).isEqualTo(websocketResponses.get(1));
+    assertThat(telnetLookResponse.trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText().trim());
 
     assertThat(ACCOUNT_STUB.capturedRequests())
         .anyMatch(
@@ -177,8 +202,25 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         throw new IllegalStateException("Failed to start account stub", e);
       }
     }
+    if (WORLD_STUB == null) {
+      try {
+        WORLD_STUB = startWorldStub();
+      } catch (IOException e) {
+        throw new IllegalStateException("Failed to start world stub", e);
+      }
+    }
+    if (ENTITY_STUB == null) {
+      try {
+        ENTITY_STUB = startEntityStub();
+      } catch (IOException e) {
+        throw new IllegalStateException("Failed to start entity stub", e);
+      }
+    }
+    if (GAME_LOGIC == null) {
+      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port());
+    }
     if (GAME_SESSION == null) {
-      GAME_SESSION = startGameSession(ACCOUNT_STUB.port());
+      GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
     }
     if (GATEWAY == null) {
       GATEWAY = startGateway(GAME_SESSION.port());
@@ -190,7 +232,29 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new AccountServiceStub(port);
   }
 
-  private static GameSessionHolder startGameSession(int accountPort) {
+  private static WorldManagementStubServer startWorldStub() throws IOException {
+    return new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
+  }
+
+  private static EntityManagementStubServer startEntityStub() throws IOException {
+    return new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
+  }
+
+  private static GameLogicHolder startGameLogic(int worldPort, int entityPort) {
+    int grpcPort = TestSocketUtils.findAvailableTcpPort();
+    Map<String, Object> props = new LinkedHashMap<>();
+    props.put("server.port", "0");
+    props.put("grpc.server.port", String.valueOf(grpcPort));
+    props.put("grpc.server.security.enabled", "false");
+    props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.services.worldManagementService", "localhost:" + worldPort);
+    props.put("firemud.services.entityManagementService", "localhost:" + entityPort);
+    ConfigurableApplicationContext context =
+        new SpringApplicationBuilder(GameLogicServiceApplication.class).properties(props).run();
+    return new GameLogicHolder(context, grpcPort);
+  }
+
+  private static GameSessionHolder startGameSession(int gameLogicPort, int accountPort) {
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("server.port", "0");
     props.put("grpc.server.port", "0");
@@ -198,10 +262,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("game-session.dev-isolated", "false");
     props.put("game-session.require-authenticated-commands", "true");
     props.put("firemud.services.accountService", "localhost:" + accountPort);
-    props.put("firemud.services.gameLogicService", "localhost:0");
-    props.put("firemud.services.worldManagementService", "localhost:0");
-    props.put("firemud.services.entityManagementService", "localhost:0");
+    props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
     props.put("firemud.grpc.plaintext", "true");
+    props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
     props.put("firemud.postgres.host", POSTGRES.getHost());
     props.put("firemud.postgres.port", String.valueOf(POSTGRES.getMappedPort(5432)));
     props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
@@ -390,6 +453,24 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     String websocketUrl() {
       return "ws://localhost:" + port + "/ws/game";
+    }
+
+    void close() {
+      context.close();
+    }
+  }
+
+  private static final class GameLogicHolder {
+    private final ConfigurableApplicationContext context;
+    private final int grpcPort;
+
+    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
+      this.context = context;
+      this.grpcPort = grpcPort;
+    }
+
+    int grpcPort() {
+      return grpcPort;
     }
 
     void close() {

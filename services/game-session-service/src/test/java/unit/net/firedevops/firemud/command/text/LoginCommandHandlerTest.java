@@ -31,7 +31,6 @@ import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
-import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,7 +42,6 @@ import org.springframework.beans.factory.ObjectProvider;
 class LoginCommandHandlerTest {
   private static final String AUTH_TOKEN = "mock-jwt";
 
-  private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final SessionContextService sessionContextService =
@@ -68,7 +66,6 @@ class LoginCommandHandlerTest {
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     handler =
         new LoginCommandHandler(
-            commandService,
             gameInstanceRepository,
             sessionContextService,
             accountClient,
@@ -79,10 +76,8 @@ class LoginCommandHandlerTest {
 
   @Test
   void parameterizedLoginEnqueuesCommand() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
@@ -90,7 +85,6 @@ class LoginCommandHandlerTest {
 
     assertTrue(result.commandResult().accepted());
     assertEquals("Logged in as demo@example.com", result.responseText());
-    verify(commandService).enqueue("1", command.rawLine(), false);
     verify(accountClient)
         .authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"), eq(""));
   }
@@ -100,14 +94,12 @@ class LoginCommandHandlerTest {
     CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
 
     LoginCommandHandlingResult result = handler.handle("session-1", command, false);
 
     assertFalse(result.commandResult().accepted());
     assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
     verify(gameInstanceRepository, never()).findById(anyLong());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -120,7 +112,6 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("SESSION_NOT_FOUND", result.commandResult().errorCode());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -136,7 +127,6 @@ class LoginCommandHandlerTest {
     assertEquals(
         LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE,
         result.commandResult().errorMessage());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -144,7 +134,6 @@ class LoginCommandHandlerTest {
     CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
 
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
@@ -191,7 +180,6 @@ class LoginCommandHandlerTest {
     CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
     GameInstance instance = buildInstance(1L, 22L, 77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
@@ -312,7 +300,6 @@ class LoginCommandHandlerTest {
     CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(TextCommandType.LOGIN, List.of("demo@example.com", "swordfish"), "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
 
     GameInstance instance = new GameInstance();
     instance.setId(1L);
@@ -336,7 +323,6 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
 
     GameInstance instance = new GameInstance();
     instance.setId(2L);
@@ -362,7 +348,6 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    when(commandService.enqueue(anyString(), anyString(), anyBoolean())).thenReturn(success);
 
     GameInstance instance = new GameInstance();
     instance.setId(1L);

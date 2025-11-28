@@ -13,6 +13,7 @@ service EntityManagementService {
   rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
+  rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
 }
 
 message CreateCharacterRequest {
@@ -65,6 +66,41 @@ message Character {
 
 message ListCharactersByAccountResponse {
   repeated Character characters = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ListRoomEntitiesRequest {
+  string tenant_id = 1;
+  string room_id = 2;
+}
+
+enum EntityType {
+  ENTITY_TYPE_UNSPECIFIED = 0;
+  PLAYER = 1;
+  NPC = 2;
+  ITEM = 3;
+}
+
+enum ReloadHint {
+  RELOAD_HINT_UNSPECIFIED = 0;
+  STABLE = 1;
+  PLAYER_ENTERED = 2;
+  PLAYER_LEFT = 3;
+}
+
+message RoomEntity {
+  string entity_id = 1;
+  string display_name = 2;
+  EntityType entity_type = 3;
+  string role = 4;
+  repeated string state_flags = 5;
+  int32 vision_priority = 6;
+  ReloadHint reload_hint = 7;
+  bool visible = 8;
+}
+
+message ListRoomEntitiesResponse {
+  repeated RoomEntity entities = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

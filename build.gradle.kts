@@ -230,6 +230,12 @@ tasks.named("check") {
     }
 }
 
+tasks.register("crossServiceTest") {
+    group = "verification"
+    description = "Runs the cross-service LOOK regression suites."
+    dependsOn(":game-session-service:crossServiceTest", ":tcp-proxy-service:crossServiceTest")
+}
+
 tasks.register<Exec>("buildBaseImage") {
     commandLine(
         "docker",

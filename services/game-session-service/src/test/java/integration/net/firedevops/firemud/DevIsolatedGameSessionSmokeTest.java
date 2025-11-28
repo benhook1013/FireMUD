@@ -36,7 +36,7 @@ import org.springframework.http.ResponseEntity;
 @Disabled(
     "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
         + "tests currently depend on the dev-isolated stubbed services "
-        + "(see design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
+        + "(see design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
 @ExtendWith(OutputCaptureExtension.class)
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,

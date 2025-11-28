@@ -56,6 +56,18 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Scripting hooks let creators inject custom actions into the command engine.
 - Optimized rule evaluation supports large-scale battles.
 
+### LOOK aggregation & formatting
+
+- `ResolveLook` orchestrates World Management and Entity Management snapshots to build a deterministic `LookResult` that Game Session renders for clients.
+- A dedicated `LookResultRenderer` keeps the canonical textual output in sync with the documented protocol transcripts (room name/desc/exits/entities) so the service can log or inspect the text while keeping the structured DTO clean.
+- Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet/WebSocket clients.
+
+### Implementation status (LOOK slice)
+
+- **Live:** The data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`; it orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to the `LookResultRenderer`, and publishes the telemetry described in `../../project-management/look-instrumentation.md`.
+- **Stubbed:** Room and entity context still comes from the seeded demo world and entity fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
+- **Deferred:** Future slices will expand the renderer with richer prose, annotate `LookResult` with combat/effect metadata, and surface additional visibility hints once the core text shape proves stable.
+
 ### Data Model
 
 This service is largely stateless. It relies on:
