@@ -7,7 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.util.Optional;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -18,12 +18,12 @@ import org.mockito.Mockito;
 
 class CommandServiceImplTest {
   @Test
-  void logOnlyAcknowledgesCommands() {
+  void devIsolatedAcknowledgesCommands() {
     TickService tickService = Mockito.mock(TickService.class);
     SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(tickService, rateLimiter, new LogOnlyProperties(true), repository);
+        new CommandServiceImpl(tickService, rateLimiter, new DevIsolatedProperties(true), repository);
 
     CommandEnqueueResult result = service.enqueue("non-numeric", "look", false);
 
@@ -39,7 +39,7 @@ class CommandServiceImplTest {
     Mockito.when(rateLimiter.allow(5L)).thenReturn(false);
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(tickService, rateLimiter, new LogOnlyProperties(false), repository);
+        new CommandServiceImpl(tickService, rateLimiter, new DevIsolatedProperties(false), repository);
 
     CommandEnqueueResult result = service.enqueue("5", "look", false);
 
@@ -58,7 +58,7 @@ class CommandServiceImplTest {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
     CommandServiceImpl service =
-        new CommandServiceImpl(tickService, rateLimiter, new LogOnlyProperties(false), repository);
+        new CommandServiceImpl(tickService, rateLimiter, new DevIsolatedProperties(false), repository);
 
     CommandEnqueueResult result = service.enqueue("7", "look", true);
 

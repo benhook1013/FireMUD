@@ -2,7 +2,7 @@ services:
   spring-cloud-gateway:
     build: ../services/spring-cloud-gateway
     profiles:
-      - tcp-proxy-logonly
+      - tcp-proxy-devisolated
     environment:
       SPRING_PROFILES_ACTIVE: dev
     ports:
@@ -11,10 +11,10 @@ services:
   tcp-proxy-service:
     build: ../services/tcp-proxy-service
     profiles:
-      - tcp-proxy-logonly
+      - tcp-proxy-devisolated
     environment:
       SPRING_PROFILES_ACTIVE: dev
-      TCP_PROXY_LOG_ONLY: "true"
+      TCP_PROXY_DEV_ISOLATED: "true"
       GATEWAY_WS_URL: ws://localhost:8080/dev/echo
     ports:
       - "2323:2323"

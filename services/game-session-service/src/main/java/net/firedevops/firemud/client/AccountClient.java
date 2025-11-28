@@ -14,7 +14,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.config.GrpcClientProperties;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
@@ -26,7 +26,7 @@ public final class AccountClient implements AutoCloseable {
 
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
-  private final LogOnlyProperties logOnlyProperties;
+  private final DevIsolatedProperties devIsolatedProperties;
 
   private ManagedChannel channel;
   private AccountServiceGrpc.AccountServiceBlockingStub stub;
@@ -34,16 +34,16 @@ public final class AccountClient implements AutoCloseable {
   public AccountClient(
       ServiceEndpointsProperties endpoints,
       GrpcClientProperties tlsProps,
-      LogOnlyProperties logOnlyProperties) {
+      DevIsolatedProperties devIsolatedProperties) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;
-    this.logOnlyProperties = logOnlyProperties;
+    this.devIsolatedProperties = devIsolatedProperties;
   }
 
   @PostConstruct
   void init() throws Exception {
-    if (logOnlyProperties.isLogOnly()) {
-      logger.info("Log-only mode enabled; skipping AccountService channel initialization");
+    if (devIsolatedProperties.isDevIsolated()) {
+      logger.info("Dev-isolated mode enabled; skipping AccountService channel initialization");
       return;
     }
     String target = endpoints.getAccountService();
@@ -81,8 +81,8 @@ public final class AccountClient implements AutoCloseable {
   /** Authenticates a player via the Account Service. */
   public AuthenticateResponse authenticate(
       String tenantId, String username, String password, String otp) {
-    if (logOnlyProperties.isLogOnly() || stub == null) {
-      return AuthenticateResponse.newBuilder().setAuthToken("log-only").build();
+    if (devIsolatedProperties.isDevIsolated() || stub == null) {
+      return AuthenticateResponse.newBuilder().setAuthToken("dev-isolated").build();
     }
     AuthenticateRequest request =
         AuthenticateRequest.newBuilder()

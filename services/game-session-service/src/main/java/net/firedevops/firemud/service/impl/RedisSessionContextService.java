@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 
 /** Persists session context metadata in Redis keys scoped by tenant/session. */
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = true)
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = true)
 public final class RedisSessionContextService implements SessionContextService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration sessionTtl;

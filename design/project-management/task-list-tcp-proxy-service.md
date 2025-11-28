@@ -21,7 +21,7 @@
 - [x] Enforce Telnet protocol command whitelist and input sanitization
 - [ ] Implement connection throttling and rate limits
 - [ ] Resend buffered commands after reconnect via `PushBufferedInput`
-- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery (currently log-only stubs)
+- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery (currently dev-isolated stubs)
 - [ ] Integrate with the Reconnection Strategy to resume sessions transparently
 
 ## Security

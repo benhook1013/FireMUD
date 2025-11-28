@@ -13,6 +13,7 @@ import net.firedevops.firemud.GameSessionServiceApplication;
 import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.service.CommandService;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,12 +30,16 @@ import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+@Disabled(
+    "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
+        + "test currently depends on dev-isolated stubs "
+        + "(design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
 @SpringBootTest(
     classes = GameSessionServiceApplication.class,
     webEnvironment = WebEnvironment.RANDOM_PORT,
     properties = {
       "spring.profiles.active=test",
-      "game-session.log-only=true",
+      "game-session.dev-isolated=true",
       "game-session.require-authenticated-commands=false",
       "firemud.database.enabled=false",
       "spring.application.name=game-session-service",

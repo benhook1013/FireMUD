@@ -1,26 +1,26 @@
-package net.firedevops.firemud.service.logonly;
+package net.firedevops.firemud.service.devisolated;
 
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.service.GameInstanceService;
-import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
+import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.slf4j.Logger;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
- * GameInstanceService implementation for log-only mode that avoids database access.
+ * GameInstanceService implementation for dev-isolated mode that avoids database access.
  */
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "true")
-public class LogOnlyGameInstanceService implements GameInstanceService {
-  private static final Logger logger = LoggingUtil.getLogger(LogOnlyGameInstanceService.class);
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")
+public class DevIsolatedGameInstanceService implements GameInstanceService {
+  private static final Logger logger = LoggingUtil.getLogger(DevIsolatedGameInstanceService.class);
 
-  private final LogOnlyGameInstanceRegistry registry;
+  private final DevIsolatedGameInstanceRegistry registry;
 
-  public LogOnlyGameInstanceService(LogOnlyGameInstanceRegistry registry) {
+  public DevIsolatedGameInstanceService(DevIsolatedGameInstanceRegistry registry) {
     this.registry = registry;
   }
 
@@ -36,7 +36,7 @@ public class LogOnlyGameInstanceService implements GameInstanceService {
     instance.setStatus("RUNNING");
     registry.register(instance);
     logger.info(
-        "Log-only mode enabled; acknowledging start for tenant {} version {} patch {}; session {}",
+        "Dev-isolated mode enabled; acknowledging start for tenant {} version {} patch {}; session {}",
         request.tenantId(),
         request.runtimeVersion(),
         request.scriptPatchVersion(),
@@ -52,16 +52,16 @@ public class LogOnlyGameInstanceService implements GameInstanceService {
 
   @Override
   public GameInstanceDto stopSession(long sessionId) {
-    logger.info("Log-only mode enabled; acknowledging stop for session {}", sessionId);
+    logger.info("Dev-isolated mode enabled; acknowledging stop for session {}", sessionId);
     registry.updateStatus(sessionId, "STOPPED");
     registry.remove(sessionId);
-    return new GameInstanceDto(sessionId, 0L, "log-only", null, 0L, "STOPPED");
+    return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "STOPPED");
   }
 
   @Override
   public GameInstanceDto restartSession(long sessionId) {
-    logger.info("Log-only mode enabled; acknowledging restart for session {}", sessionId);
+    logger.info("Dev-isolated mode enabled; acknowledging restart for session {}", sessionId);
     registry.updateStatus(sessionId, "RUNNING");
-    return new GameInstanceDto(sessionId, 0L, "log-only", null, 0L, "RUNNING");
+    return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "RUNNING");
   }
 }

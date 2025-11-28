@@ -8,7 +8,8 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
@@ -36,7 +37,7 @@ public final class TelnetServer {
   private final int port;
   private final String gatewayWsUrl;
   private final boolean tlsEnabled;
-  private final boolean logOnly;
+  private final boolean devIsolated;
   private final String certPath;
   private final String keyPath;
   private final boolean advertiseMcp;
@@ -51,8 +52,9 @@ public final class TelnetServer {
   private final TcpProxyEventService eventService;
   private volatile int boundPort;
 
-  private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
-  private final EventLoopGroup workerGroup = new NioEventLoopGroup();
+  private final EventLoopGroup bossGroup =
+      new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+  private final EventLoopGroup workerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
@@ -61,7 +63,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_PORT:2323}") int port,
       @Value("${GATEWAY_WS_URL:ws://spring-cloud-gateway:8080/ws/game}") String gatewayWsUrl,
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
-      @Value("${TCP_PROXY_LOG_ONLY:false}") boolean logOnly,
+      @Value("${TCP_PROXY_DEV_ISOLATED:false}") boolean devIsolated,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
@@ -71,7 +73,7 @@ public final class TelnetServer {
     this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
     this.tlsEnabled = tlsEnabled;
-    this.logOnly = logOnly;
+    this.devIsolated = devIsolated;
     this.certPath = certPath;
     this.keyPath = keyPath;
     this.advertiseMcp = advertiseMcp;
@@ -145,7 +147,7 @@ public final class TelnetServer {
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
-                              logOnly,
+                              devIsolated,
                               activeConnections::incrementAndGet,
                               activeConnections::decrementAndGet,
                               connectionCounter,

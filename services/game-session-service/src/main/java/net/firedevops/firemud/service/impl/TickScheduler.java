@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repository and service are not exposed")
 @Component
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
 @RequiredArgsConstructor
 public final class TickScheduler {
   private final GameInstanceRepository repository;

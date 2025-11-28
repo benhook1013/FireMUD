@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service.logonly;
+package net.firedevops.firemud.service.devisolated;
 
 import java.util.Map;
 import java.util.Optional;
@@ -8,11 +8,11 @@ import net.firedevops.firemud.entity.GameInstance;
 import org.springframework.stereotype.Component;
 
 /**
- * Tracks the lightweight GameInstance metadata created while log-only mode is enabled.
+ * Tracks the lightweight GameInstance metadata created while dev-isolated mode is enabled.
  * These instances never hit a real database, but need to be visible to LOGIN handling.
  */
 @Component
-public final class LogOnlyGameInstanceRegistry {
+public final class DevIsolatedGameInstanceRegistry {
   private final AtomicLong nextId = new AtomicLong(1L);
   private final Map<Long, GameInstance> instances = new ConcurrentHashMap<>();
 

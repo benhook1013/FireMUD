@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service.logonly;
+package net.firedevops.firemud.service.devisolated;
 
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
@@ -8,29 +8,29 @@ import org.slf4j.Logger;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
-/** CommandService variant that avoids database lookups in log-only mode. */
+/** CommandService variant that avoids database lookups in dev-isolated mode. */
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "true")
-public class LogOnlyCommandService implements CommandService {
-  private static final Logger logger = LoggingUtil.getLogger(LogOnlyCommandService.class);
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")
+public class DevIsolatedCommandService implements CommandService {
+  private static final Logger logger = LoggingUtil.getLogger(DevIsolatedCommandService.class);
 
   private final TickService tickService;
 
-  public LogOnlyCommandService(TickService tickService) {
+  public DevIsolatedCommandService(TickService tickService) {
     this.tickService = tickService;
   }
 
   @Override
   public CommandEnqueueResult enqueue(String sessionIdText, String command, boolean requiresSoloTick) {
     logger.info(
-        "Log-only mode enabled; acknowledging enqueue for session {} command {}",
+        "Dev-isolated mode enabled; acknowledging enqueue for session {} command {}",
         sessionIdText,
         command);
     try {
       long sessionId = Long.parseLong(sessionIdText);
       tickService.enqueueCommand(sessionId, command, requiresSoloTick);
     } catch (NumberFormatException ignored) {
-      // Fall through; validation is not enforced in log-only mode.
+      // Fall through; validation is not enforced in dev-isolated mode.
     }
     return CommandEnqueueResult.success();
   }

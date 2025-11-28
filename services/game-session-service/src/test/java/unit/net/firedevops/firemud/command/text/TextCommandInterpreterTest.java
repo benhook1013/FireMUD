@@ -20,14 +20,14 @@ import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.command.text.TextCommandType;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContextService;
-import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
+import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,9 +45,9 @@ class TextCommandInterpreterTest {
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
-  private final LogOnlyProperties logOnlyProperties = new LogOnlyProperties(false);
+  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-  private final ObjectProvider<LogOnlyGameInstanceRegistry> logOnlyRegistryProvider =
+  private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler loginHandler;
   private TextCommandInterpreter interpreter;
@@ -61,15 +61,15 @@ class TextCommandInterpreterTest {
                 .setAuthToken("auth")
                 .setAccountId("123")
                 .build());
-    when(logOnlyRegistryProvider.getIfAvailable()).thenReturn(null);
+    when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     loginHandler =
         new LoginCommandHandler(
             commandService,
             gameInstanceRepository,
             sessionContextService,
             accountClient,
-            logOnlyProperties,
-            logOnlyRegistryProvider,
+            devIsolatedProperties,
+            devIsolatedRegistryProvider,
             meterRegistry);
     GameInstance demoInstance = new GameInstance();
     demoInstance.setId(1L);

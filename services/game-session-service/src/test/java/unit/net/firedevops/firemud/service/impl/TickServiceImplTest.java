@@ -8,7 +8,7 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +37,7 @@ class TickServiceImplTest {
     repository = mock(net.firedevops.firemud.repository.GameInstanceRepository.class);
     service =
         new TickServiceImpl(
-            redisTemplate, meterRegistry, conflictTracker, repository, new LogOnlyProperties(false));
+            redisTemplate, meterRegistry, conflictTracker, repository, new DevIsolatedProperties(false));
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.entity.GameInstance();
     instance.setTenantId(1L);

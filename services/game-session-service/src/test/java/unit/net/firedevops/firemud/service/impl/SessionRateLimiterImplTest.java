@@ -7,7 +7,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.junit.jupiter.api.Test;
@@ -39,7 +39,7 @@ class SessionRateLimiterImplTest {
         .set(anyString(), anyString());
     doAnswer(inv -> true).when(redis).expire(anyString(), org.mockito.ArgumentMatchers.any());
     SessionRateLimiterImpl limiter =
-        new SessionRateLimiterImpl(redis, 2, new LogOnlyProperties(false));
+        new SessionRateLimiterImpl(redis, 2, new DevIsolatedProperties(false));
     assertTrue(limiter.allow(1L));
     assertTrue(limiter.allow(1L));
     assertFalse(limiter.allow(1L));

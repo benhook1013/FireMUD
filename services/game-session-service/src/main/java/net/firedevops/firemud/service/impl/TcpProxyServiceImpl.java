@@ -5,7 +5,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -36,7 +36,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final SessionStateService sessionStateService;
   private final MeterRegistry meterRegistry;
   private final PingService pingService;
-  private final LogOnlyProperties logOnlyProperties;
+  private final DevIsolatedProperties devIsolatedProperties;
 
   public TcpProxyServiceImpl(
       CommandService commandService,
@@ -44,13 +44,13 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       SessionStateService sessionStateService,
       MeterRegistry meterRegistry,
       PingService pingService,
-      LogOnlyProperties logOnlyProperties) {
+      DevIsolatedProperties devIsolatedProperties) {
     this.commandService = commandService;
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
-    this.logOnlyProperties = logOnlyProperties;
+    this.devIsolatedProperties = devIsolatedProperties;
   }
 
   @Override
@@ -153,12 +153,12 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       return SessionValidationResult.failed(
           error("INVALID_ARGUMENT", "tenantId must be numeric"));
     }
-    // Log-only mode never persists GameInstance records, so this lookup currently always fails
-    // and propagates NOT_FOUND. We should skip the DB check or seed the session state when log-only
+    // Dev-isolated mode never persists GameInstance records, so this lookup currently always fails
+    // and propagates NOT_FOUND. We should skip the DB check or seed the session state when dev-isolated
     // mode is enabled so buffered input/disconnect hooks remain usable in that profile.
-    if (logOnlyProperties.isLogOnly()) {
+    if (devIsolatedProperties.isDevIsolated()) {
       return new SessionValidationResult(
-          sessionId, tenantId, buildLogOnlyInstance(sessionId, tenantId), null);
+          sessionId, tenantId, buildDevIsolatedInstance(sessionId, tenantId), null);
     }
     Optional<GameInstance> maybeInstance = repository.findById(sessionId);
     if (maybeInstance.isEmpty()) {
@@ -172,11 +172,11 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     return new SessionValidationResult(sessionId, tenantId, instance, null);
   }
 
-  private GameInstance buildLogOnlyInstance(long sessionId, long tenantId) {
+  private GameInstance buildDevIsolatedInstance(long sessionId, long tenantId) {
     GameInstance instance = new GameInstance();
     instance.setId(sessionId);
     instance.setTenantId(tenantId);
-    instance.setRuntimeVersion("log-only");
+    instance.setRuntimeVersion("dev-isolated");
     instance.setScriptPatchVersion(null);
     instance.setOwnerAccountId(0L);
     instance.setStatus("RUNNING");

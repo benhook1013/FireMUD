@@ -39,21 +39,21 @@ tasks.named<BootRun>("bootRun") {
         ?: "dev"
 
     systemProperty("spring.profiles.active", activeProfile)
-    val logOnly = System.getProperty("game-session.log-only")
-        ?: System.getenv("GAME_SESSION_LOG_ONLY")
+    val devIsolated = System.getProperty("game-session.dev-isolated")
+        ?: System.getenv("GAME_SESSION_DEV_ISOLATED")
         ?: "true"
-    systemProperty("game-session.log-only", logOnly)
-    environment("GAME_SESSION_LOG_ONLY", logOnly)
+    systemProperty("game-session.dev-isolated", devIsolated)
+    environment("GAME_SESSION_DEV_ISOLATED", devIsolated)
 }
 
-tasks.register<BootRun>("bootRunLogOnly") {
+tasks.register<BootRun>("bootRunDevIsolated") {
     group = "application"
-    description = "Start the game session service in dev with log-only handling"
+    description = "Start the game session service in dev with dev-isolated handling"
     mainClass.set("net.firedevops.firemud.GameSessionServiceApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
-    environment("GAME_SESSION_LOG_ONLY", "true")
-    systemProperty("game-session.log-only", "true")
+    environment("GAME_SESSION_DEV_ISOLATED", "true")
+    systemProperty("game-session.dev-isolated", "true")
 }
 
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")

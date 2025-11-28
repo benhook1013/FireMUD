@@ -140,6 +140,7 @@ participate in CI.
 - [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [x] *(When workflows span services)* add cross-service integration tests
+- [ ] Revisit the dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) after the real Account/Redis/GameInstance wiring lands; they are currently disabled via `@Disabled` with a TODO pointing to `design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`.
 
 ---
 

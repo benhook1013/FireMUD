@@ -12,7 +12,7 @@ import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.SessionStateService;
@@ -42,7 +42,7 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new LogOnlyProperties(false));
+            new DevIsolatedProperties(false));
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -82,7 +82,7 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new LogOnlyProperties(false));
+            new DevIsolatedProperties(false));
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -134,7 +134,7 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new LogOnlyProperties(false));
+            new DevIsolatedProperties(false));
 
     AtomicReference<PushBufferedInputResponse> ref = new AtomicReference<>();
     service.pushBufferedInput(
@@ -185,7 +185,7 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new LogOnlyProperties(false));
+            new DevIsolatedProperties(false));
 
     AtomicReference<PushBufferedInputResponse> ref = new AtomicReference<>();
     service.pushBufferedInput(

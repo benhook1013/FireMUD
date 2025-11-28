@@ -20,7 +20,7 @@ import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.command.text.LoginCommandConstants;
@@ -33,7 +33,7 @@ import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContextService;
-import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
+import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -49,9 +49,9 @@ class LoginCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
-  private final LogOnlyProperties logOnlyProperties = new LogOnlyProperties(false);
+  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-  private final ObjectProvider<LogOnlyGameInstanceRegistry> logOnlyRegistryProvider =
+  private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler handler;
 
@@ -65,15 +65,15 @@ class LoginCommandHandlerTest {
                 .setAuthToken(AUTH_TOKEN)
                 .setAccountId("77")
                 .build());
-    when(logOnlyRegistryProvider.getIfAvailable()).thenReturn(null);
+    when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     handler =
         new LoginCommandHandler(
             commandService,
             gameInstanceRepository,
             sessionContextService,
             accountClient,
-            logOnlyProperties,
-            logOnlyRegistryProvider,
+            devIsolatedProperties,
+            devIsolatedRegistryProvider,
             meterRegistry);
   }
 

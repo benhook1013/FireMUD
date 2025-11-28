@@ -195,7 +195,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("server.port", "0");
     props.put("grpc.server.port", "0");
     props.put("grpc.server.enabled", "false");
-    props.put("game-session.log-only", "false");
+    props.put("game-session.dev-isolated", "false");
     props.put("game-session.require-authenticated-commands", "true");
     props.put("firemud.services.accountService", "localhost:" + accountPort);
     props.put("firemud.services.gameLogicService", "localhost:0");

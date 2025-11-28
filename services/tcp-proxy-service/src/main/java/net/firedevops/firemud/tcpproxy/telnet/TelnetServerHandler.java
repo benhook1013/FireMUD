@@ -43,7 +43,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN", "LOGON");
 
   private final String gatewayWsUrl;
-  private final boolean logOnly;
+  private final boolean devIsolated;
   private final Runnable onConnect;
   private final Runnable onDisconnect;
   private final io.micrometer.core.instrument.Counter connectionCounter;
@@ -79,7 +79,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   public TelnetServerHandler(
       String gatewayWsUrl,
-      boolean logOnly,
+      boolean devIsolated,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
@@ -90,7 +90,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       AtomicInteger bufferDepth) {
     this(
         gatewayWsUrl,
-        logOnly,
+        devIsolated,
         onConnect,
         onDisconnect,
         connectionCounter,
@@ -104,7 +104,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   TelnetServerHandler(
       String gatewayWsUrl,
-      boolean logOnly,
+      boolean devIsolated,
       Runnable onConnect,
       Runnable onDisconnect,
       io.micrometer.core.instrument.Counter connectionCounter,
@@ -115,7 +115,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth) {
     this.gatewayWsUrl = gatewayWsUrl;
-    this.logOnly = logOnly;
+    this.devIsolated = devIsolated;
     this.onConnect = onConnect;
     this.onDisconnect = onDisconnect;
     this.connectionCounter = connectionCounter;
@@ -298,8 +298,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     onConnect.run();
     logger.info(
         "Telnet client connected from {} targeting {}", clientIp != null ? clientIp : remote, gatewayWsUrl);
-    if (logOnly) {
-      logger.info("Log-only mode enabled; skipping WebSocket bridge for {}", gatewayWsUrl);
+    if (devIsolated) {
+      logger.info("Dev-isolated mode enabled; skipping WebSocket bridge for {}", gatewayWsUrl);
     }
   }
 
@@ -316,7 +316,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       logTelnetInput(sanitized);
       touchActivity();
 
-      if (logOnly) {
+      if (devIsolated) {
         return;
       }
 
@@ -411,14 +411,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void ensureGatewayConnected() {
-    if (logOnly || closing || webSocket != null || reconnecting) {
+    if (devIsolated || closing || webSocket != null || reconnecting) {
       return;
     }
     connectToGateway();
   }
 
   private void connectToGateway() {
-    if (closing || logOnly) {
+    if (closing || devIsolated) {
       return;
     }
     reconnecting = true;
@@ -440,7 +440,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void handleGatewayDisconnect() {
-    if (closing || logOnly) {
+    if (closing || devIsolated) {
       return;
     }
     cancelOutstandingSends();
@@ -490,7 +490,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void pushBufferedInputAsync(List<String> buffered) {
-    if (logOnly || !sessionContext.isReady() || buffered.isEmpty()) {
+    if (devIsolated || !sessionContext.isReady() || buffered.isEmpty()) {
       return;
     }
     CompletableFuture
@@ -547,7 +547,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void notifyDisconnectAsync() {
-    if (logOnly || !sessionContext.isReady()) {
+    if (devIsolated || !sessionContext.isReady()) {
       return;
     }
     CompletableFuture.runAsync(

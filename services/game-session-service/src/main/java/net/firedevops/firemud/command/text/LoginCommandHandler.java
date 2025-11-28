@@ -9,7 +9,7 @@ import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.client.AccountClient;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
@@ -17,7 +17,7 @@ import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
+import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -34,8 +34,8 @@ public final class LoginCommandHandler {
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
-  private final LogOnlyProperties logOnlyProperties;
-  private final LogOnlyGameInstanceRegistry logOnlyGameInstanceRegistry;
+  private final DevIsolatedProperties devIsolatedProperties;
+  private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
   private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
@@ -46,8 +46,8 @@ public final class LoginCommandHandler {
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService,
       AccountClient accountClient,
-      LogOnlyProperties logOnlyProperties,
-      ObjectProvider<LogOnlyGameInstanceRegistry> logOnlyGameInstanceRegistryProvider,
+      DevIsolatedProperties devIsolatedProperties,
+      ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
     this.commandService =
         Objects.requireNonNull(commandService, "commandService must not be null");
@@ -56,9 +56,9 @@ public final class LoginCommandHandler {
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
-    this.logOnlyProperties =
-        Objects.requireNonNull(logOnlyProperties, "logOnlyProperties must not be null");
-    this.logOnlyGameInstanceRegistry = logOnlyGameInstanceRegistryProvider.getIfAvailable();
+    this.devIsolatedProperties =
+        Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
+    this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter("gamesession.session.takeover");
     this.resumeCounter = this.meterRegistry.counter("gamesession.session.resume");
@@ -82,9 +82,9 @@ public final class LoginCommandHandler {
 
     Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(numericSessionId);
     if (maybeInstance.isEmpty()
-        && logOnlyProperties.isLogOnly()
-        && logOnlyGameInstanceRegistry != null) {
-      maybeInstance = logOnlyGameInstanceRegistry.findById(numericSessionId);
+        && devIsolatedProperties.isDevIsolated()
+        && devIsolatedGameInstanceRegistry != null) {
+      maybeInstance = devIsolatedGameInstanceRegistry.findById(numericSessionId);
     }
     if (maybeInstance.isEmpty()) {
       CommandEnqueueResult failure =
@@ -107,7 +107,7 @@ public final class LoginCommandHandler {
 
     Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
     if (authenticatedAccountId == null || authenticatedAccountId <= 0) {
-      if (logOnlyProperties.isLogOnly()) {
+      if (devIsolatedProperties.isDevIsolated()) {
         authenticatedAccountId = instance.getOwnerAccountId();
       } else {
         return invalidAccountFailure();

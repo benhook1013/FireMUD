@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service.logonly;
+package net.firedevops.firemud.service.devisolated;
 
 import java.util.Map;
 import java.util.Optional;
@@ -9,12 +9,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
- * In-memory {@link SessionContextService} used when the log-only profile is enabled.
+ * In-memory {@link SessionContextService} used when the dev-isolated profile is enabled.
  * This keeps the LOGIN path runnable without Redis while still sharing the same API.
  */
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "true")
-public final class LogOnlySessionContextService implements SessionContextService {
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")
+public final class DevIsolatedSessionContextService implements SessionContextService {
   private final Map<String, SessionContext> contexts = new ConcurrentHashMap<>();
   private final Map<String, SessionContext> identities = new ConcurrentHashMap<>();
 
