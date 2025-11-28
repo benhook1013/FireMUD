@@ -27,10 +27,13 @@ import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContextService;
+import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.ObjectProvider;
 
 class TextCommandInterpreterTest {
   private final CommandService commandService = Mockito.mock(CommandService.class);
@@ -44,6 +47,8 @@ class TextCommandInterpreterTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final LogOnlyProperties logOnlyProperties = new LogOnlyProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final ObjectProvider<LogOnlyGameInstanceRegistry> logOnlyRegistryProvider =
+      Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler loginHandler;
   private TextCommandInterpreter interpreter;
 
@@ -56,6 +61,7 @@ class TextCommandInterpreterTest {
                 .setAuthToken("auth")
                 .setAccountId("123")
                 .build());
+    when(logOnlyRegistryProvider.getIfAvailable()).thenReturn(null);
     loginHandler =
         new LoginCommandHandler(
             commandService,
@@ -63,6 +69,7 @@ class TextCommandInterpreterTest {
             sessionContextService,
             accountClient,
             logOnlyProperties,
+            logOnlyRegistryProvider,
             meterRegistry);
     GameInstance demoInstance = new GameInstance();
     demoInstance.setId(1L);

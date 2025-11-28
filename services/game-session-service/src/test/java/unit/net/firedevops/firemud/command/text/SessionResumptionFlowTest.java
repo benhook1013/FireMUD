@@ -29,9 +29,12 @@ import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
+import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.ObjectProvider;
 
 class SessionResumptionFlowTest {
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
@@ -46,6 +49,8 @@ class SessionResumptionFlowTest {
   private final LookCommandHandler lookHandler = new LookCommandHandler();
   private final SessionContextService sessionContextService = new InMemorySessionContextService();
   private SessionAuthenticationService sessionAuthenticationService;
+  private final ObjectProvider<LogOnlyGameInstanceRegistry> logOnlyRegistryProvider =
+      Mockito.mock(ObjectProvider.class);
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
@@ -73,6 +78,7 @@ class SessionResumptionFlowTest {
     sessionAuthenticationService =
         new SessionAuthenticationService(
             sessionContextService, properties, instanceRepository);
+    when(logOnlyRegistryProvider.getIfAvailable()).thenReturn(null);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             commandService,
@@ -80,6 +86,7 @@ class SessionResumptionFlowTest {
             sessionContextService,
             accountClient,
             logOnlyProperties,
+            logOnlyRegistryProvider,
             meterRegistry);
     interpreter =
         new TextCommandInterpreter(

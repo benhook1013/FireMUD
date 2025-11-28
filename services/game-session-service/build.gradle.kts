@@ -55,3 +55,13 @@ tasks.register<BootRun>("bootRunLogOnly") {
     environment("GAME_SESSION_LOG_ONLY", "true")
     systemProperty("game-session.log-only", "true")
 }
+
+val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+
+tasks.withType<Test>().configureEach {
+    if (isWindows) {
+        maxParallelForks = 1
+        forkEvery = 0
+        doNotTrackState("Workaround for Windows file locking on test binary output")
+    }
+}

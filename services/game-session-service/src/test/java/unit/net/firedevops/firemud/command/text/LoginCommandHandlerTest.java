@@ -33,10 +33,12 @@ import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContextService;
+import net.firedevops.firemud.service.logonly.LogOnlyGameInstanceRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
 
 class LoginCommandHandlerTest {
   private static final String AUTH_TOKEN = "mock-jwt";
@@ -49,6 +51,8 @@ class LoginCommandHandlerTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final LogOnlyProperties logOnlyProperties = new LogOnlyProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final ObjectProvider<LogOnlyGameInstanceRegistry> logOnlyRegistryProvider =
+      Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler handler;
 
   @BeforeEach
@@ -61,6 +65,7 @@ class LoginCommandHandlerTest {
                 .setAuthToken(AUTH_TOKEN)
                 .setAccountId("77")
                 .build());
+    when(logOnlyRegistryProvider.getIfAvailable()).thenReturn(null);
     handler =
         new LoginCommandHandler(
             commandService,
@@ -68,6 +73,7 @@ class LoginCommandHandlerTest {
             sessionContextService,
             accountClient,
             logOnlyProperties,
+            logOnlyRegistryProvider,
             meterRegistry);
   }
 
