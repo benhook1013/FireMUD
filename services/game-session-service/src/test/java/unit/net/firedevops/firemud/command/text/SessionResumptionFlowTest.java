@@ -35,7 +35,6 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.ObjectProvider;
 
 @Disabled(
     "TODO: re-enable when the dev-isolated session stubs can be replaced by the real Redis/account pipeline "
@@ -81,7 +80,11 @@ class SessionResumptionFlowTest {
             AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId("77").build());
     sessionAuthenticationService =
         new SessionAuthenticationService(
-            sessionContextService, properties, instanceRepository);
+            sessionContextService,
+            properties,
+            instanceRepository,
+            devIsolatedProperties,
+            devIsolatedRegistryProvider);
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(

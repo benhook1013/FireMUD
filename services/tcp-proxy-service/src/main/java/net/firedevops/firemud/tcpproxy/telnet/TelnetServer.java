@@ -8,8 +8,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
-import io.netty.channel.MultiThreadIoEventLoopGroup;
-import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
@@ -52,9 +51,8 @@ public final class TelnetServer {
   private final TcpProxyEventService eventService;
   private volatile int boundPort;
 
-  private final EventLoopGroup bossGroup =
-      new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-  private final EventLoopGroup workerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+  private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
+  private final EventLoopGroup workerGroup = new NioEventLoopGroup();
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
@@ -165,6 +163,12 @@ public final class TelnetServer {
       running.set(false);
       Thread.currentThread().interrupt();
       throw e;
+    } catch (Exception e) {
+      running.set(false);
+      serverChannel = null;
+      String message = "Telnet server failed to start";
+      logger.error(message, e);
+      throw new IllegalStateException(message, e);
     }
   }
 
@@ -174,9 +178,14 @@ public final class TelnetServer {
       return;
     }
     try {
-      serverChannel.close().sync();
+      if (serverChannel != null) {
+        serverChannel.close().sync();
+      }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    }
+    finally {
+      serverChannel = null;
     }
     bossGroup.shutdownGracefully();
     workerGroup.shutdownGracefully();
