@@ -155,6 +155,21 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
+| `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
+| `WHISPER <player> <text>` | Directed chat that points at a single nearby player while keeping the payload in the same format. | `WHISPER Sora The forge smells of brimstone` |
+
+Chat commands emit a shared success payload so Telnet and WebSocket clients can render the same transcript. After a successful `SAY`, `YELL`, or `WHISPER` command the server responds with:
+
+```text
+OK SAY
+Speaker: Emberline
+Delivered-To: Emberline, Sora, Kobold Scout
+Message: Hello travelers
+```
+
+`Speaker` annotations let clients highlight who originated the message while `Delivered-To` lists the recipients that observed the chat frame, mirroring the metadata exposed to both Telnet and WebSocket clients. The `Message` line echoes the trimmed text so transport implementations can prefer the structured metadata or stitched narratives, e.g., `Emberline says, "Hello travelers"` in-game view layers.
+
+Chat parsing enforces that `SAY` and `YELL` include at least one non-whitespace character and that `WHISPER` provides both an existing player identifier and the message text. Submitting an empty/whitespace-only payload or exceeding the configured message limit (currently 512 characters) yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`. A missing whisper target or text also returns `ERROR INVALID_ARGUMENT` with the same guidance so clients can keep their parsers simple.
 
 This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature. `LOOK` is treated as a fully data-driven command: Game Session enforces authentication, forwards it to Game Logic, which fetches room metadata from World Management and visible entities from Entity Management before the response is rendered over Telnet or WebSocket.
 
@@ -247,6 +262,13 @@ For the current Telnet-to-gameplay vertical slice, the implementation intentiona
 - `SAY` and additional gameplay commands will follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
 
 The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic. Once this login slice lands, gameplay commands such as `LOOK` and `SAY` only execute for authenticated sessions (outside of explicitly documented dev/test bypasses), so the interpreter rejects untrusted text with `ERROR NOT_AUTHENTICATED` before the command queue ever sees it.
+
+### SAY request flow
+
+1. Game Session validates the same Redis-backed session context leveraged by `LOOK`; unauthenticated inputs are rejected with `ERROR NOT_AUTHENTICATED` before any gameplay command reaches the interpreter.
+2. Authenticated `SAY`/`YELL`/`WHISPER` commands are routed through `SayCommandHandler`, which packages `tenantId`, `sessionId`, `playerId`, `roomId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
+3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload (or a stubbed notification) to the Social & Groups Service for delivery and logging. Upon success it returns the deterministic recipient list, which Game Session uses to render the canonical `OK SAY` response and emit `gamesession.command.say.invocations`/`failures` instrumentation.
+4. Backend failures (e.g., delivery blocked, Social service unavailable) propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED` while `ERROR NOT_AUTHENTICATED` remains the consistent pre-flight guard for untrusted requests.
 
 ### LOOK slice status
 

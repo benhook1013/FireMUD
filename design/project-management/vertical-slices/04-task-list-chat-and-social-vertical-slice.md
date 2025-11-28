@@ -4,10 +4,53 @@ After `LOOK` flows through the new Game Logic + World + Entity path, the next sm
 
 ## 1. Protocol, UX, and Design Alignment for SAY
 
-- [ ] Update the Minimal Text Command Protocol section so `SAY` (and aliases like `YELL`/`WHISPER`) document the required arguments, the canonical response shape (`OK SAY`, speaker annotations, delivered-to list), and how edge cases (empty message, overly long text) report `ERROR INVALID_ARGUMENT`.
-- [ ] Decide and document the order of appearance for in-room chat lines, speaker attribution, and how co-located listeners see the `SAY` payload (e.g., prefixed with nick vs. `PlayerName says ...`). Capture at least one Telnet and one WebSocket transcript showing `SAY` reaching two clients plus a nearby NPC echo.
-- [ ] Add a short subsection to the Game Session and Game Logic design docs describing how `SAY` requests flow through Game Session → Game Logic → Social/Group services (or a stub for now) and how we guard the pathway with authentication/session context.
-- [ ] Confirm the design docs reiterate `SAY` requires the same authenticated session guard already pulled into `LOOK` and that unauthenticated clients receive `ERROR NOT_AUTHENTICATED`.
+- [x] Update the Minimal Text Command Protocol section so `SAY` (and aliases like `YELL`/`WHISPER`) document the required arguments, the canonical response shape (`OK SAY`, speaker annotations, delivered-to list), and how edge cases (empty message, overly long text) report `ERROR INVALID_ARGUMENT`.
+- [x] Decide and document the order of appearance for in-room chat lines, speaker attribution, and how co-located listeners see the `SAY` payload (e.g., prefixed with nick vs. `PlayerName says ...`). Capture at least one Telnet and one WebSocket transcript showing `SAY` reaching two clients plus a nearby NPC echo.
+- [x] Add a short subsection to the Game Session and Game Logic design docs describing how `SAY` requests flow through Game Session → Game Logic → Social/Group services (or a stub for now) and how we guard the pathway with authentication/session context.
+- [x] Confirm the design docs reiterate `SAY` requires the same authenticated session guard already pulled into `LOOK` and that unauthenticated clients receive `ERROR NOT_AUTHENTICATED`.
+
+### In-room `SAY` ordering and transcripts
+
+Document that every `SAY`-family response follows a fixed sequence: the transport echoes `OK SAY`, then a `Speaker` annotation identifies the originator, `Delivered-To` lists recipients in deterministic order (sender first, followed by attendees sorted by name), and `Message` repeats the chat text. Co-located listeners (players or NPC loggers) may render the WHO metadata into a narrative such as `Emberline says, "Hello travelers"` while still relying on the structured payload for ordering.
+
+Supply at least two transcripts (one Telnet-style, one WebSocket-style) that highlight this ordering and show the chat hitting two active clients plus a nearby NPC echo. For example:
+
+Telnet - Emberline's client (emitter):
+
+```text
+SAY Hello travelers
+OK SAY
+Speaker: Emberline
+Delivered-To: Emberline, Sora, Kobold Scout
+Message: Hello travelers
+```
+
+Telnet - Sora's client (listener) displays only the shared payload rendered in narrative form:
+
+```text
+Emberline says, "Hello travelers"
+Kobold Scout echoes: "Kobold Scout nods and replies, `Stay awhile.`"
+```
+
+WebSocket - Emberline's connection (emitter) observes the same structured response, while Sora's connection consumes a mirrored packet. The NPC echo can be represented as an automated webhook from the Social service:
+
+```json
+{
+  "event": "chat",
+  "command": "OK SAY",
+  "speaker": "Emberline",
+  "deliveredTo": ["Emberline", "Sora", "Kobold Scout"],
+  "message": "Hello travelers"
+}
+```
+
+Nearby NPC echo:
+
+```text
+Kobold Scout says, "Stay awhile."
+```
+
+These transcripts demonstrate how both transports serialize the canonical `OK SAY` structure before layering flavor text for players or NPCs, ensuring regression suites can assert parity between Telnet and WebSocket experiences.
 
 ## 2. Game Logic Service: Chat Aggregation
 
