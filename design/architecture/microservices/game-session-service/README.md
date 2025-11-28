@@ -98,10 +98,11 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
-## Log-only Mode
+## Dev-isolated Mode
 
-- Use `./gradlew :game-session-service:bootRunLogOnly` (or set `GAME_SESSION_LOG_ONLY=true`) when you need to exercise the Game Session Service without PostgreSQL, Redis, or downstream gRPC dependencies. The log-only beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
-- The `LogOnlyGameSessionSmokeTest` in `services/game-session-service/src/test/java/integration/net/firedevops/firemud/LogOnlyGameSessionSmokeTest.java` starts the dev profile in log-only mode, posts to `POST /sessions`, and asserts the request is accepted and logged, proving the fast-path smoke test that only touches in-memory components.
+- Use `./gradlew :game-session-service:bootRunDevIsolated` (or set `GAME_SESSION_DEV_ISOLATED=true`) when you need to exercise the Game Session Service without PostgreSQL, Redis, or downstream gRPC dependencies. The dev-isolated beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
+- The `DevIsolatedGameSessionSmokeTest` in `services/game-session-service/src/test/java/integration/net/firedevops/firemud/DevIsolatedGameSessionSmokeTest.java` starts the dev profile in dev-isolated mode, posts to `POST /sessions`, and asserts the request is accepted and logged, proving the fast-path smoke test that only touches in-memory components.
+- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) are currently decorated with `@Disabled` so they only act as TODO reminders until the real Account/Redis/GameInstance wiring exists (see `design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`).
 
 ## Environment Variables
 
@@ -150,11 +151,62 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <password>` | Authenticates a session and binds it to an account. | `LOGIN demo@example.com swordfish` |
+| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
+| `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `LOOK` | Requests the current room description plus exits. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 
 This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature.
+
+### Login / Logon semantics
+
+Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. OTP values are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
+
+**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands.
+
+The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
+
+Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
+
+- `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet, so clients must send `LOGIN <username> <password>`.
+- `INVALID_ACCOUNT` – the Account Service returned an account identifier that could not be parsed into a long.
+- `ACCOUNT_MISMATCH` – the authenticated account does not own the requested game session.
+- `SESSION_NOT_FOUND` – the supplied session identifier has no corresponding `GameInstance`.
+- `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
+
+Telnet success (prompt-based):
+
+```text
+LOGIN
+OK LOGIN Enter username:
+demo@example.com
+OK LOGIN Enter password:
+swordfish
+OK LOGIN Logged in as demo@example.com
+```
+
+The transcript above presents the planned prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
+
+Telnet failure (wrong password):
+
+```text
+LOGIN demo@example.com wrongpass
+ERROR INVALID_CREDENTIALS Invalid username or password
+```
+
+WebSocket success (parameterized command with optional OTP omitted):
+
+```text
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
+```
+
+WebSocket failure (account locked):
+
+```text
+LOGIN demo@example.com swordfish
+ERROR ACCOUNT_LOCKED Account locked after repeated failures
+```
 
 ### Implementation status (vertical slice)
 
@@ -164,7 +216,7 @@ For the current Telnet-to-gameplay vertical slice, the implementation intentiona
 - `LOOK` is implemented as a minimal, deterministic room description inside the Game Session Service via a `LookCommandHandler`. This is a temporary gameplay stub used to validate the end-to-end text command flow and tests; future slices will route LOOK and other gameplay commands through the world/logic/scripting stack so that room descriptions and exits are fully data-driven.
 - `SAY` and additional gameplay commands will follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
 
-The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic.
+The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic. Once this login slice lands, gameplay commands such as `LOOK` and `SAY` only execute for authenticated sessions (outside of explicitly documented dev/test bypasses), so the interpreter rejects untrusted text with `ERROR NOT_AUTHENTICATED` before the command queue ever sees it.
 
 ### Response format
 

@@ -14,6 +14,8 @@ import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.config.MailProperties;
 import net.firedevops.firemud.dto.AccountDto;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
+import net.firedevops.firemud.dto.AuthenticationResult;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.entity.Account;
@@ -30,6 +32,7 @@ import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.EmailService;
 import net.firedevops.firemud.service.NotificationService;
 import net.firedevops.firemud.service.session.SessionService;
+import net.firedevops.firemud.service.exception.AuthenticationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -114,17 +117,21 @@ class AccountServiceImplTest {
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.of(account));
 
-    String token = service.authenticate(1L, "demo", "password", null);
+    AuthenticationResult result = service.authenticate(1L, "demo", "password", null);
 
-    assertNotNull(token);
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, token);
+    assertNotNull(result.token());
+    assertEquals(1L, result.accountId());
+    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.token());
   }
 
   @Test
   void authenticateThrowsWhenInvalid() {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
-    assertThrows(
-        IllegalArgumentException.class, () -> service.authenticate(1L, "demo", "bad", null));
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.authenticate(1L, "demo", "bad", null));
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 
   @Test

@@ -9,6 +9,10 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.WebSocket;
+import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -16,7 +20,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
@@ -113,6 +121,35 @@ private static GatewayHolder GATEWAY;
 
     awaitCommand("look");
     assertThat(GAME_SESSION_STUB.stub().receivedCommands()).contains("look");
+  }
+
+  @Test
+  void telnetLoginMatchesGatewayWebSocketResponses() throws Exception {
+    ensureTestServicesStarted();
+    List<String> websocketResponses =
+        runGatewayWebSocketCommands("LOGIN demo@example.com swordfish", "LOOK");
+
+    String telnetLoginResponse;
+    String telnetLookResponse;
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1), true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      writer.println("SESSION 2 2");
+      writer.println("LOGIN demo@example.com swordfish");
+      telnetLoginResponse = reader.readLine();
+      assertThat(telnetLoginResponse).isNotNull();
+      writer.println("LOOK");
+      telnetLookResponse = readMultiLineResponse(reader);
+    }
+
+    assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(0));
+    assertThat(telnetLookResponse).isEqualTo(websocketResponses.get(1));
   }
 
   private static void awaitCommand(String expected) {
@@ -278,6 +315,44 @@ private static GatewayHolder GATEWAY;
       }
     }
     return builder.toString();
+  }
+
+  private List<String> runGatewayWebSocketCommands(String loginCommand, String lookCommand)
+      throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    List<String> responses = new CopyOnWriteArrayList<>();
+    CompletableFuture<Void> responsesReady = new CompletableFuture<>();
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .buildAsync(
+                URI.create(GATEWAY.websocketUrl()),
+                new Listener() {
+                  private int received;
+
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    received++;
+                    webSocket.request(1);
+                    if (received >= 2 && !responsesReady.isDone()) {
+                      responsesReady.complete(null);
+                    }
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+    webSocket.sendText(loginCommand, true).join();
+    webSocket.sendText(lookCommand, true).join();
+    responsesReady.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    return responses;
   }
 
   private static final class GameSessionWebSocketHandler implements WebSocketHandler {

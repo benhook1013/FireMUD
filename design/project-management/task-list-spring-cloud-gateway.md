@@ -6,6 +6,8 @@
 
 ## Core Gateway
 
+> **Note:** Telnet and WebSocket login/session behavior (including `/ws/game/**`) is maintained in [the Login & Session vertical slice](task-list-login-and-session-vertical-slice.md), so please consult that checklist for the current work instead of duplicating tasks here.
+
 - [x] Handle API routing and request validation
 - [ ] Terminate TLS and forward traffic to internal services using mTLS
 - [x] Collect connection metrics and throttle abusive clients

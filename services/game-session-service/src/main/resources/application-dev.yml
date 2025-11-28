@@ -27,7 +27,7 @@ firemud:
 
 # Disable external stateful dependencies in local/testing profile.
 game-session:
-  log-only: true
+  dev-isolated: true
 
 # Keep this "env-style" key around as a placeholder for now.
-GAME_SESSION_LOG_ONLY: true
+GAME_SESSION_DEV_ISOLATED: true

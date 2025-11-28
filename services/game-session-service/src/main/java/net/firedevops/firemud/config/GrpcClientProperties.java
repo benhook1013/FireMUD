@@ -10,4 +10,5 @@ public class GrpcClientProperties {
   private String certChain;
   private String privateKey;
   private String caCert;
+  private boolean plaintext;
 }

@@ -18,6 +18,7 @@ public enum TextCommandType {
     String normalized = token.trim().toUpperCase(Locale.ROOT);
     return switch (normalized) {
       case "LOGIN" -> LOGIN;
+      case "LOGON" -> LOGIN;
       case "LOOK" -> LOOK;
       case "SAY" -> SAY;
       default -> UNKNOWN;

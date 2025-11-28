@@ -82,7 +82,7 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void logOnlyModeSkipsGatewayConnection() throws Exception {
+  void devIsolatedModeSkipsGatewayConnection() throws Exception {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler.WebSocketConnector connector =
         Mockito.mock(TelnetServerHandler.WebSocketConnector.class);

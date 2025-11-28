@@ -9,7 +9,7 @@ spring:
     locations: classpath:db/migration,classpath:firemud-common/db/migration/saga
     defaultSchema: ${SERVICE_SCHEMA:public}
 game-session:
-  log-only: false
+  dev-isolated: false
 
 management:
   endpoints:

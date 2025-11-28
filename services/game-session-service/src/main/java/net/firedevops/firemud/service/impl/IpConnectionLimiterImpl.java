@@ -2,7 +2,7 @@ package net.firedevops.firemud.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 
 /** Redis-backed implementation of {@link IpConnectionLimiter}. */
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
 public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -21,22 +21,22 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   private final int maxConnectionsPerIp;
 
   private final Duration entryTtl;
-  private final LogOnlyProperties logOnlyProperties;
+  private final DevIsolatedProperties devIsolatedProperties;
 
   public IpConnectionLimiterImpl(
       StringRedisTemplate redisTemplate,
       @Value("${GAME_SESSION_MAX_CONNECTIONS_PER_IP:5}") int maxConnectionsPerIp,
       @Value("${GAME_SESSION_CONN_TTL_SEC:3600}") long entryTtlSeconds,
-      LogOnlyProperties logOnlyProperties) {
+      DevIsolatedProperties devIsolatedProperties) {
     this.redisTemplate = redisTemplate;
     this.maxConnectionsPerIp = maxConnectionsPerIp;
     this.entryTtl = Duration.ofSeconds(entryTtlSeconds);
-    this.logOnlyProperties = logOnlyProperties;
+    this.devIsolatedProperties = devIsolatedProperties;
   }
 
   @Override
   public boolean canAccept(String ip) {
-    if (logOnlyProperties.isLogOnly()) {
+    if (devIsolatedProperties.isDevIsolated()) {
       return true;
     }
 
@@ -48,7 +48,7 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   @Override
   public void register(String ip, long sessionId) {
-    if (logOnlyProperties.isLogOnly()) {
+    if (devIsolatedProperties.isDevIsolated()) {
       return;
     }
 
@@ -62,7 +62,7 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
   @Override
   public void release(long sessionId) {
-    if (logOnlyProperties.isLogOnly()) {
+    if (devIsolatedProperties.isDevIsolated()) {
       return;
     }
 

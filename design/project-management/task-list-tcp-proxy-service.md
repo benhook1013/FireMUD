@@ -2,6 +2,8 @@
 
 ## Telnet Bridge
 
+> **Note:** The Telnet `SESSION` + `LOGIN` + `LOOK` parity and reconnection flows are tracked in [design/project-management/task-list-login-and-session-vertical-slice.md](task-list-login-and-session-vertical-slice.md) so we avoid duplicating the same tasks here.
+
 - [x] Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway
 - [x] Define Telnet bridge gRPC APIs for TCP Proxy Service
 - [x] Implement Telnet networking and WebSocket bridging
@@ -19,7 +21,7 @@
 - [x] Enforce Telnet protocol command whitelist and input sanitization
 - [ ] Implement connection throttling and rate limits
 - [ ] Resend buffered commands after reconnect via `PushBufferedInput`
-- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery (currently log-only stubs)
+- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery (currently dev-isolated stubs)
 - [ ] Integrate with the Reconnection Strategy to resume sessions transparently
 
 ## Security

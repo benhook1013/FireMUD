@@ -10,25 +10,77 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Optional;
+import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.client.AccountClient;
 import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.command.text.LoginCommandConstants;
+import net.firedevops.firemud.command.text.LoginCommandHandler;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.command.text.TextCommandType;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
+import net.firedevops.firemud.entity.GameInstance;
+import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
+import net.firedevops.firemud.service.SessionAuthenticationService;
+import net.firedevops.firemud.service.SessionContextService;
+import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.ObjectProvider;
 
 class TextCommandInterpreterTest {
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final LookCommandHandler lookHandler = new LookCommandHandler();
+  private final GameInstanceRepository gameInstanceRepository =
+      Mockito.mock(GameInstanceRepository.class);
+  private final SessionContextService sessionContextService =
+      Mockito.mock(SessionContextService.class);
+  private final SessionAuthenticationService sessionAuthenticationService =
+      Mockito.mock(SessionAuthenticationService.class);
+  private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
+  private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
+      Mockito.mock(ObjectProvider.class);
+  private LoginCommandHandler loginHandler;
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
   void setUp() {
-    interpreter = new TextCommandInterpreter(commandService, lookHandler);
+    meterRegistry.clear();
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            net.firedevops.firemud.account.v1.AuthenticateResponse.newBuilder()
+                .setAuthToken("auth")
+                .setAccountId("123")
+                .build());
+    when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
+    loginHandler =
+        new LoginCommandHandler(
+            commandService,
+            gameInstanceRepository,
+            sessionContextService,
+            accountClient,
+            devIsolatedProperties,
+            devIsolatedRegistryProvider,
+            meterRegistry);
+    GameInstance demoInstance = new GameInstance();
+    demoInstance.setId(1L);
+    demoInstance.setTenantId(22L);
+    demoInstance.setOwnerAccountId(123L);
+    when(gameInstanceRepository.findById(Mockito.anyLong()))
+        .thenReturn(Optional.of(demoInstance));
+    when(sessionAuthenticationService.isAuthenticated(Mockito.anyString())).thenReturn(true);
+    interpreter =
+        new TextCommandInterpreter(
+            commandService, lookHandler, loginHandler, sessionAuthenticationService);
   }
 
   @Test
@@ -85,5 +137,55 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void loginWithCredentialsIsRoutedToCommandService() {
+    CommandEnqueueResult success = CommandEnqueueResult.success();
+    when(commandService.enqueue("123", "LOGIN demo demo", false)).thenReturn(success);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("123", "LOGIN demo demo", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    verify(commandService).enqueue("123", "LOGIN demo demo", false);
+  }
+
+  @Test
+  void loginWithoutCredentialsPromptsError() {
+    TextCommandInterpretationResult interpretation = interpreter.interpret("123", "LOGIN", false);
+    CommandEnqueueResult result = interpretation.commandResult();
+
+    assertFalse(result.accepted());
+    assertEquals(LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE, result.errorCode());
+    assertEquals(
+        LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE, result.errorMessage());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void gameplayCommandRequiresAuthentication() {
+    when(sessionAuthenticationService.isAuthenticated("321")).thenReturn(false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("321", "LOOK", false);
+
+    CommandEnqueueResult result = interpretation.commandResult();
+    assertFalse(result.accepted());
+    assertEquals("NOT_AUTHENTICATED", result.errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void gameplayCommandAllowedWhenAuthenticated() {
+    when(sessionAuthenticationService.isAuthenticated("999")).thenReturn(true);
+    CommandEnqueueResult success = CommandEnqueueResult.success();
+    when(commandService.enqueue("999", "LOOK", false)).thenReturn(success);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("999", "LOOK", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    verify(commandService).enqueue("999", "LOOK", false);
   }
 }

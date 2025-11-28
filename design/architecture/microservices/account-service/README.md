@@ -209,7 +209,18 @@ Authentication generates a JWT that is stored **server-side** in Redis for inter
 
 Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
 
-### REST & gRPC Endpoints
+### Login error codes
+
+Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:
+
+- `AUTH_INVALID_CREDENTIALS` - wrong username or password
+- `AUTH_OTP_REQUIRED` - invalid or missing OTP for a two-factor-protected account
+- `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
+- `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
+
+The Game Session Service translates these codes into the text-protocol `ERROR <CODE>` responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
+
+## REST & gRPC Endpoints
 
 #### REST
 

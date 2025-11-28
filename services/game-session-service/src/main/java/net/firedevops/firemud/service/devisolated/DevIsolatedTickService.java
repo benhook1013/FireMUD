@@ -1,4 +1,4 @@
-package net.firedevops.firemud.service.logonly;
+package net.firedevops.firemud.service.devisolated;
 
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
@@ -8,42 +8,42 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
- * TickService implementation used when GAME_SESSION_LOG_ONLY=true.
+ * TickService implementation used when GAME_SESSION_DEV_ISOLATED=true.
  *
  * <p>Provides in-memory no-op behavior so the application can start without Redis.</p>
  */
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "true")
-public class LogOnlyTickService implements TickService {
-  private static final Logger logger = LoggingUtil.getLogger(LogOnlyTickService.class);
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")
+public class DevIsolatedTickService implements TickService {
+  private static final Logger logger = LoggingUtil.getLogger(DevIsolatedTickService.class);
 
   @Override
   public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
     logger.info(
-        "Log-only mode enabled; recording enqueue request for session {} command {}",
+        "Dev-isolated mode enabled; recording enqueue request for session {} command {}",
         sessionId,
         command);
   }
 
   @Override
   public void processTick(Long sessionId) {
-    logger.info("Log-only mode enabled; skipping tick processing for session {}", sessionId);
+    logger.info("Dev-isolated mode enabled; skipping tick processing for session {}", sessionId);
   }
 
   @Override
   public String queryState(Long sessionId) {
-    logger.info("Log-only mode enabled; returning empty state for session {}", sessionId);
+    logger.info("Dev-isolated mode enabled; returning empty state for session {}", sessionId);
     return "{}";
   }
 
   @Override
   public void pauseTicks(String reason) {
-    logger.info("Tick pause requested (log-only): {}", reason);
+    logger.info("Tick pause requested (dev-isolated): {}", reason);
   }
 
   @Override
   public void resumeTicks(String reason) {
-    logger.info("Tick resume requested (log-only): {}", reason);
+    logger.info("Tick resume requested (dev-isolated): {}", reason);
   }
 
   @Override

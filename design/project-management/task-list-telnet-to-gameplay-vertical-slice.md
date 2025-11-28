@@ -73,8 +73,8 @@ Link to the [Minimal Text Command Protocol](../architecture/microservices/game-s
 - [x] Ensure the `game-session-service` Gradle configuration generates and compiles gRPC stubs from `protos/game-session/v1/game_session_service.proto` into the module, and add a short note in the Game Session design docs describing where the generated stubs are used.
 - [x] Implement a minimal `GameSessionService` gRPC server in `game-session-service` based on the `game_session.v1` proto (at least the `Ping` RPC), reusing existing service-layer logic where possible.
 - [x] Add tests that exercise the `GameSessionService` gRPC `Ping` endpoint and verify it returns a successful `ErrorDetail` code and message.
-- [x] Add a smoke test that starts `game-session-service` in log-only mode (matching the `bootRunLogOnly` configuration) and verifies a simple request flow (for example starting a session or enqueuing a command) is accepted and logged without hitting external dependencies.
-- [x] Update `services/game-session-service/README.md` or the Game Session design docs with a brief "Log-only mode" section that links to the smoke test, explains when to use it, and clarifies that it avoids database and external service calls.
+- [x] Add a smoke test that starts `game-session-service` in dev-isolated mode (matching the `bootRunDevIsolated` configuration) and verifies a simple request flow (for example starting a session or enqueuing a command) is accepted and logged without hitting external dependencies.
+- [x] Update `services/game-session-service/README.md` or the Game Session design docs with a brief "Dev-isolated mode" section that links to the smoke test, explains when to use it, and clarifies that it avoids database and external service calls.
 
 ## 8. Cross-Service Test Stabilization Follow-Up
 

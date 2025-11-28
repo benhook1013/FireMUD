@@ -36,7 +36,7 @@ public final class TelnetServer {
   private final int port;
   private final String gatewayWsUrl;
   private final boolean tlsEnabled;
-  private final boolean logOnly;
+  private final boolean devIsolated;
   private final String certPath;
   private final String keyPath;
   private final boolean advertiseMcp;
@@ -61,7 +61,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_PORT:2323}") int port,
       @Value("${GATEWAY_WS_URL:ws://spring-cloud-gateway:8080/ws/game}") String gatewayWsUrl,
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
-      @Value("${TCP_PROXY_LOG_ONLY:false}") boolean logOnly,
+      @Value("${TCP_PROXY_DEV_ISOLATED:false}") boolean devIsolated,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
@@ -71,7 +71,7 @@ public final class TelnetServer {
     this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
     this.tlsEnabled = tlsEnabled;
-    this.logOnly = logOnly;
+    this.devIsolated = devIsolated;
     this.certPath = certPath;
     this.keyPath = keyPath;
     this.advertiseMcp = advertiseMcp;
@@ -145,7 +145,7 @@ public final class TelnetServer {
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
-                              logOnly,
+                              devIsolated,
                               activeConnections::incrementAndGet,
                               activeConnections::decrementAndGet,
                               connectionCounter,
@@ -163,6 +163,12 @@ public final class TelnetServer {
       running.set(false);
       Thread.currentThread().interrupt();
       throw e;
+    } catch (Exception e) {
+      running.set(false);
+      serverChannel = null;
+      String message = "Telnet server failed to start";
+      logger.error(message, e);
+      throw new IllegalStateException(message, e);
     }
   }
 
@@ -172,9 +178,14 @@ public final class TelnetServer {
       return;
     }
     try {
-      serverChannel.close().sync();
+      if (serverChannel != null) {
+        serverChannel.close().sync();
+      }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+    }
+    finally {
+      serverChannel = null;
     }
     bossGroup.shutdownGracefully();
     workerGroup.shutdownGracefully();

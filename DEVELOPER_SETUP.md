@@ -319,6 +319,16 @@ More details on deployment environments and gateway routing can be found in the 
 
 These documents explain how the compose setup differs from production and provide examples of the configuration files.
 
+### Dev-isolated stubbed services
+
+- When `game-session.dev-isolated` (or `GAME_SESSION_DEV_ISOLATED`) is `true`, the Game Session Service (and dependent tests) uses in-memory replacements (`DevIsolatedSessionContextService`, `DevIsolatedGameInstanceService`, and `DevIsolatedGameInstanceRegistry`) instead of hitting Redis/JPA. This keeps LOGIN + LOOK flows runnable on a developer laptop that lacks PostgreSQL/Redis/Account Service dependencies.
+- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, and `SessionResumptionFlowTest`) are currently annotated with `@Disabled` and reference the TODO in `design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`. They should be revisited and re-enabled once the real Account/Redis/GameInstance wiring is available so Gradle runs against production services instead of the stubbed dev-isolated path.
+
+### Syncing the repo into WSL
+
+- Running Gradle inside WSL avoids the Windows file-locking issues that can block `build/test-results/**`. Use `dev-tools/sync-to-wsl.ps1` to copy the current working tree into a mirror inside WSL (default `~/firemud-wsl`) and keep it up to date. Run the script without arguments to sync Windows → WSL, and pass `-Reverse` to copy changes back from the WSL mirror.
+- After syncing, open a WSL shell, `cd ~/firemud-wsl`, and run the usual `./gradlew …` commands there. This keeps your editor on Windows while letting long-running builds/tests execute on a Linux filesystem.
+
 ---
 
 You are now ready to explore the codebase and contribute!

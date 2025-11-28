@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.TickService;
 import org.slf4j.Logger;
@@ -33,7 +33,7 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are kept internal")
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
 @RequiredArgsConstructor
 public class TickServiceImpl implements TickService {
   private static final Logger logger = LoggingUtil.getLogger(TickServiceImpl.class);
@@ -42,7 +42,7 @@ public class TickServiceImpl implements TickService {
   private final MeterRegistry meterRegistry;
   private final ConflictTracker conflictTracker;
   private final GameInstanceRepository gameInstanceRepository;
-  private final LogOnlyProperties logOnlyProperties;
+  private final DevIsolatedProperties devIsolatedProperties;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -135,9 +135,9 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.command.enqueue")
   public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
-    if (logOnlyProperties.isLogOnly()) {
+    if (devIsolatedProperties.isDevIsolated()) {
       logger.info(
-          "Log-only mode enabled; recording enqueue request for session {} command {}", sessionId, command);
+          "Dev-isolated mode enabled; recording enqueue request for session {} command {}", sessionId, command);
       return;
     }
 
@@ -152,8 +152,8 @@ public class TickServiceImpl implements TickService {
   @Timed(value = "gamesession.tick.process")
   @Async("tickExecutor")
   public void processTick(Long sessionId) {
-    if (logOnlyProperties.isLogOnly()) {
-      logger.info("Log-only mode enabled; skipping tick processing for session {}", sessionId);
+    if (devIsolatedProperties.isDevIsolated()) {
+      logger.info("Dev-isolated mode enabled; skipping tick processing for session {}", sessionId);
       return;
     }
 
@@ -237,8 +237,8 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.state.query")
   public String queryState(Long sessionId) {
-    if (logOnlyProperties.isLogOnly()) {
-      logger.info("Log-only mode enabled; returning empty state for session {}", sessionId);
+    if (devIsolatedProperties.isDevIsolated()) {
+      logger.info("Dev-isolated mode enabled; returning empty state for session {}", sessionId);
       return "{}";
     }
 

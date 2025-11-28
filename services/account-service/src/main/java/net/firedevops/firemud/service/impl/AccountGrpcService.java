@@ -25,6 +25,7 @@ import net.firedevops.firemud.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
 import net.firedevops.firemud.service.AccountService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.exception.AuthenticationException;
 import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
@@ -80,13 +81,28 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
-      String token =
+      net.firedevops.firemud.dto.AuthenticationResult result =
           accountService.authenticate(
               Long.valueOf(request.getTenantId()),
               request.getUsername(),
               request.getPassword(),
               request.getOtp());
-      AuthenticateResponse response = AuthenticateResponse.newBuilder().setAuthToken(token).build();
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setAuthToken(result.token())
+              .setAccountId(String.valueOf(result.accountId()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode(ex.getCode())
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {

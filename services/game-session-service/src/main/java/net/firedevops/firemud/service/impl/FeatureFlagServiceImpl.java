@@ -4,7 +4,7 @@ import io.micrometer.core.annotation.Timed;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.FeatureFlagDto;
 import net.firedevops.firemud.dto.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.entity.FeatureFlag;
@@ -18,21 +18,21 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
 public class FeatureFlagServiceImpl implements FeatureFlagService {
   private static final Logger logger = LoggingUtil.getLogger(FeatureFlagServiceImpl.class);
 
   private final FeatureFlagRepository repository;
   private final FeatureFlagMapper mapper;
-  private final LogOnlyProperties logOnlyProperties;
+  private final DevIsolatedProperties devIsolatedProperties;
 
   @Override
   @Timed(value = "gamesession.feature.toggle")
   @Transactional
   public FeatureFlagDto toggleFlag(ToggleFeatureFlagRequest request) {
     logger.info("Toggling feature flag {} for tenant {}", request.name(), request.tenantId());
-    if (logOnlyProperties.isLogOnly()) {
-      logger.info("Log-only mode enabled; acknowledging toggle without persistence");
+    if (devIsolatedProperties.isDevIsolated()) {
+      logger.info("Dev-isolated mode enabled; acknowledging toggle without persistence");
       return new FeatureFlagDto(null, request.tenantId(), request.name(), request.enabled());
     }
 

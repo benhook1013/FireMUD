@@ -9,6 +9,7 @@
 
 # Node.js dependencies
 **/node_modules/
+**/bin/
 
 # Logs and temporary files
 *.log

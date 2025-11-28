@@ -10,7 +10,7 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
-import net.firedevops.firemud.config.LogOnlyProperties;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.entity.GameInstance;
@@ -28,7 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are not exposed externally")
 @Service
-@ConditionalOnProperty(name = "game-session.log-only", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
 public final class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
 
@@ -40,7 +40,7 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
   private final EntityManagementClient entityManagementClient;
   private final SagaRunner sagaRunner;
   private final MeterRegistry meterRegistry;
-  private final LogOnlyProperties logOnlyProperties;
+  private final DevIsolatedProperties devIsolatedProperties;
 
   public GameInstanceServiceImpl(
       GameInstanceRepository repository,
@@ -51,7 +51,7 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
       EntityManagementClient entityManagementClient,
       SagaRunner sagaRunner,
       MeterRegistry meterRegistry,
-      LogOnlyProperties logOnlyProperties) {
+      DevIsolatedProperties devIsolatedProperties) {
     this.repository = repository;
     this.mapper = mapper;
     this.sessionStateService = sessionStateService;
@@ -60,7 +60,7 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
     this.entityManagementClient = entityManagementClient;
     this.sagaRunner = sagaRunner;
     this.meterRegistry = meterRegistry;
-    this.logOnlyProperties = logOnlyProperties;
+    this.devIsolatedProperties = devIsolatedProperties;
   }
 
   // Constructor used in unit tests
@@ -77,16 +77,16 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
         null,
         null,
         new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-        new LogOnlyProperties(false));
+        new DevIsolatedProperties(false));
   }
 
   @Override
   @Timed(value = "gamesession.start")
   @Transactional
   public GameInstanceDto startSession(StartSessionRequest request) {
-    if (logOnlyProperties.isLogOnly()) {
+    if (devIsolatedProperties.isDevIsolated()) {
       logger.info(
-          "Log-only mode enabled; acknowledging start for tenant {} version {} patch {}", 
+          "Dev-isolated mode enabled; acknowledging start for tenant {} version {} patch {}", 
           request.tenantId(),
           request.runtimeVersion(),
           request.scriptPatchVersion());
@@ -157,9 +157,9 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
   @Timed(value = "gamesession.stop")
   @Transactional
   public GameInstanceDto stopSession(long sessionId) {
-    if (logOnlyProperties.isLogOnly()) {
-      logger.info("Log-only mode enabled; acknowledging stop for session {}", sessionId);
-      return new GameInstanceDto(sessionId, 0L, "log-only", null, 0L, "STOPPED");
+    if (devIsolatedProperties.isDevIsolated()) {
+      logger.info("Dev-isolated mode enabled; acknowledging stop for session {}", sessionId);
+      return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "STOPPED");
     }
 
     GameInstance instance =
@@ -195,9 +195,9 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
   @Timed(value = "gamesession.restart")
   @Transactional
   public GameInstanceDto restartSession(long sessionId) {
-    if (logOnlyProperties.isLogOnly()) {
-      logger.info("Log-only mode enabled; acknowledging restart for session {}", sessionId);
-      return new GameInstanceDto(sessionId, 0L, "log-only", null, 0L, "RUNNING");
+    if (devIsolatedProperties.isDevIsolated()) {
+      logger.info("Dev-isolated mode enabled; acknowledging restart for session {}", sessionId);
+      return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "RUNNING");
     }
 
     GameInstance instance =

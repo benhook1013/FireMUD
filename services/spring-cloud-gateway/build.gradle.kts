@@ -39,11 +39,11 @@ tasks.named<BootRun>("bootRun") {
     }
 }
 
-tasks.register<BootRun>("bootRunLogOnly") {
+tasks.register<BootRun>("bootRunDevIsolated") {
     group = "application"
-    description = "Start the gateway in dev with log-only WebSocket handling"
+    description = "Start the gateway in dev with dev-isolated WebSocket handling"
     mainClass.set("net.firedevops.firemud.SpringCloudGatewayApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
-    environment("TCP_PROXY_LOG_ONLY", "true")
+    environment("TCP_PROXY_DEV_ISOLATED", "true")
 }

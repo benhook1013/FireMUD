@@ -31,6 +31,17 @@ All clients — whether connecting via Telnet or WebSocket — authenticate usin
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
+### Mapping to the Account Service
+
+#### Plain-text `LOGIN`/`LOGON` command mapping
+
+1. The Telnet/WebSocket client emits `LOGIN <username> <password> [otp]` (or the `LOGON` alias).
+2. The Game Session Service parses the line, normalizes casing, and issues a synchronous call to the Account Service `/auth/login` REST endpoint or the `Authenticate` gRPC method with a payload containing `username`, `password`, and the optional `otp`.
+3. The Account Service validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded.
+4. Success responses cause the Game Session Service to store the JWT and claims in Redis, bind the socket to the authenticated session, and emit `OK LOGIN Logged in as <username>` on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
+
+Gameplay commands such as `LOOK` and `SAY` are gated by this authentication handshake. Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, except in explicitly documented development/test bypass modes that grant temporary access. Once the login-and-session vertical slice ships, these commands are no longer processed for anonymous sessions, keeping the gameplay queue free of unauthenticated traffic.
+
 Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and
 not tied to a single game or tenant; the same account is used across all worlds. Tenant context is
 bound later when the client selects a world, and the Game Session Service derives the `tenantId`
@@ -39,6 +50,8 @@ from that world selection to enforce isolation when creating Redis session entri
 Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss).
 If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes
 gameplay seamlessly.
+
+**Note:** This slice treats `playerId` as the authenticated `accountId` because explicit character selection is not yet implemented. Once characters land, the service will map `playerId` to the selected avatar instead of the raw account identifier so session resumption aligns with actual player context.
 
 > 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 

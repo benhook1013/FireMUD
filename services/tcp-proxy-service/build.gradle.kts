@@ -25,11 +25,18 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     testImplementation(libs.testcontainers.junit.jupiter)
+    testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.micrometer.registry.prometheus)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     testImplementation(libs.spring.boot.starter.webflux)
     testImplementation(libs.spring.cloud.gateway)
+    testImplementation(libs.spring.boot.starter.test)
+    testImplementation(libs.spring.boot.starter.data.redis)
+    testImplementation(libs.spring.boot.starter.data.jpa)
+    testImplementation(libs.spring.boot.starter.jdbc)
+    testImplementation(project(":game-session-service"))
     testImplementation(project(":spring-cloud-gateway"))
+    testRuntimeOnly(libs.postgresql)
 }
 
 tasks.named<BootRun>("bootRun") {
@@ -41,13 +48,13 @@ tasks.named<BootRun>("bootRun") {
     }
 }
 
-tasks.register<BootRun>("bootRunLogOnly") {
+tasks.register<BootRun>("bootRunDevIsolated") {
     group = "application"
-    description = "Start the TCP proxy in dev with log-only Telnet handling"
+    description = "Start the TCP proxy in dev with dev-isolated Telnet handling"
     mainClass.set("net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
-    environment("TCP_PROXY_LOG_ONLY", "true")
+    environment("TCP_PROXY_DEV_ISOLATED", "true")
     environment("GATEWAY_WS_URL", "ws://localhost:8080/dev/echo")
 }
 
