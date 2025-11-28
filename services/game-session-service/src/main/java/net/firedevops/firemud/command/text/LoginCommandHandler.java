@@ -174,7 +174,7 @@ public final class LoginCommandHandler {
         MDC.MDCCloseable player = MDC.putCloseable("playerId", String.valueOf(playerId))) {
       if (existing.sessionId() == incomingSessionId) {
         resumeCounter.increment();
-        recordLabeledMetric("gamesession.session.resume", tenantId, accountId, playerId);
+        recordTenantMetric("gamesession.session.resume", tenantId);
         logger.debug(
             "Session resumed for tenant {} account {} player {} session {}",
             tenantId,
@@ -183,7 +183,7 @@ public final class LoginCommandHandler {
             incomingSessionId);
       } else {
         takeoverCounter.increment();
-        recordLabeledMetric("gamesession.session.takeover", tenantId, accountId, playerId);
+        recordTenantMetric("gamesession.session.takeover", tenantId);
         logger.info(
             "Taking over session {} for tenant {} account {} player {}; new session {}",
             existing.sessionId(),
@@ -196,18 +196,8 @@ public final class LoginCommandHandler {
     }
   }
 
-  private void recordLabeledMetric(
-      String name, long tenantId, long accountId, long playerId) {
-    meterRegistry
-        .counter(
-            name,
-            "tenantId",
-            String.valueOf(tenantId),
-            "accountId",
-            String.valueOf(accountId),
-            "playerId",
-            String.valueOf(playerId))
-        .increment();
+  private void recordTenantMetric(String name, long tenantId) {
+    meterRegistry.counter(name, "tenantId", String.valueOf(tenantId)).increment();
   }
 
   private Optional<LoginResult> buildLoginResult(GameInstance instance, long accountId, String jwt) {
