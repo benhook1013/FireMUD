@@ -80,16 +80,8 @@ flowchart TD
 
 The Web client is built with React and Material‑UI. For component layout and state management details see [Frontend Architecture](./system-architecture-frontend.md).
 
-Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
-The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications. It also embeds Kibana and Grafana dashboards via their APIs to power moderation workflows.
-
-Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design) for details.
-
-All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, emit metrics to Prometheus, and send structured logs to Elasticsearch.
-
-All datastores are shared across games. Tenant-scoped tables include a `tenantId` column (or reference a tenant-keyed parent), and Redis keys use a matching prefix. This isolates per-game data while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
-
 All services run as Docker containers inside a shared Kubernetes cluster. They reuse a [common shared library](./system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and metrics helpers. See [Deployment Environments](./infrastructure/deployment-environments.md) for how the cluster is configured.
+
 
 ## 🧩 Core Services Shown
 
@@ -107,6 +99,11 @@ The diagram covers every microservice in the repository:
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
 - **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with dashboards built from Elasticsearch logs, Prometheus metrics, and Jaeger traces to support moderation.
 
+
+Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
+
+All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, emit metrics to Prometheus, and send structured logs to Elasticsearch.
+
 ## 🗄️ Datastore Layer
 
 Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
@@ -117,7 +114,13 @@ Databases and caches shared across all services capture authoritative world stat
 
 These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis`, `Elasticsearch`) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
 
+All datastores are shared across games. Tenant-scoped tables include a `tenantId` column (or reference a tenant-keyed parent), and Redis keys use a matching prefix, which isolates per-game data while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
+
+
 ## 🔍 Observability Components
+
+Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
+The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications. It also embeds Kibana and Grafana dashboards via their APIs to power moderation workflows.
 
 The diagram also illustrates the monitoring stack shared by every service:
 
