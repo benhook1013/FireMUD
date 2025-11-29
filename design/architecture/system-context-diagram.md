@@ -3,12 +3,12 @@
 This document gives a high-level view of how FireMUD's clients, gateways, internal services, and infrastructure fit together. Use it as an orientation map before diving into the more detailed architecture and microservice design documents.
 
 ```plaintext
-                     +------------+                          +---------------+
-                     | Web Client |                          | Telnet Client |
-                     +------------+                          +---------------+
-                            |                                        |
-                            | HTTP/WebSocket                         | TCP
-                            v                                        v
+                +----------------------+                  +-------------------+
+                |      Web Client      |                  |   Telnet Client   |
+                +----------------------+                  +-------------------+
+                            |                                       |
+                            | HTTP/WebSocket                        | TCP
+                            v                                       v
                 +----------------------+                  +-------------------+
                 | Spring Cloud Gateway | <--------------- | TCP Proxy Service |
                 |         (DMZ)        |  HTTP/WebSocket  |       (DMZ)       |
@@ -16,43 +16,32 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
                             |
                             | gRPC/WebSocket
                             v
-      +-------------------------------------------+
-      |             Internal Services             |
-      |                                           |
-      | - Game Session Service                    |
-      | - Account Service                         |
-      | - Entity Management Service               |
-      | - Game Logic Service                      |
-      | - World Management Service                |
-      | - Automation & Scripting Service          |
-      | - Social & Groups Service                 |
-      | - Logging & Admin Service                 |
-      | - Game Design Service                     |
-      +-------------------------------------------+
-                            |
-                            | DB/Cache/Logs/Metrics/Traces
-                            v
-       +-------------------------------------------+
-       |               Datastore Layer             |
-       |                                           |
-       | - PostgreSQL (per service)                |
-       | - Redis (sessions, ticks)                 |
-       | - Elasticsearch (logs)                    |
-       | - S3-compatible object storage (assets)   |
-       +-------------------------------------------+
-                            |
-                            | Metrics/Traces/Alerts
-                            v
-       +-------------------------------------------+
-       |            Observability Stack            |
-       |                                           |
-       | - Prometheus (metrics)                    |
-       | - OpenTelemetry Collector (traces)        |
-       | - Jaeger (trace UI)                       |
-       | - Grafana (metrics dashboards)            |
-       | - Kibana (log UI)                         |
-       | - Alertmanager (alerts)                   |
-       +-------------------------------------------+
+      +-------------------------------------------+          +-------------------------------------------+
+      |             Internal Services             |--------->|           Email / SMTP Provider           |
+      |                                           |  Email   +-------------------------------------------+
+      | - Game Session Service                    |                         ^
+      | - Account Service                         |                         |
+      | - Entity Management Service               |                         |
+      | - Game Logic Service                      |                         |
+      | - World Management Service                |                         |
+      | - Automation & Scripting Service          |                         |
+      | - Social & Groups Service                 |                         | Alerts → Email / SMTP Provider
+      | - Logging & Admin Service                 |                         |
+      | - Game Design Service                     |                         |
+      +-------------------------------------------+                         |
+                            |                                               |
+                            | DB/Cache/Logs                                 |
+                            v                                               |
+      +-------------------------------------------+          +-------------------------------------------+
+      |               Datastore Layer             |--------->|            Observability Stack            |
+      |                                           | Metrics/ |                                           |
+      | - PostgreSQL (per service)                | Traces   | - Prometheus (metrics)                    |
+      | - Redis (sessions, ticks)                 |          | - OpenTelemetry Collector (traces)        |
+      | - Elasticsearch (logs)                    |          | - Jaeger (trace UI)                       |
+      | - S3-compatible object storage (assets)   |          | - Grafana (metrics dashboards)            |
+      +-------------------------------------------+          | - Kibana (log UI)                         |
+                                                             | - Alertmanager (alerts)                   |
+                                                             +-------------------------------------------+
 ```
 
 ## 📚 Related Documentation
