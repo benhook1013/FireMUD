@@ -21,6 +21,7 @@ import net.firedevops.firemud.command.text.LookTextRenderer;
 import net.firedevops.firemud.command.text.LoginCommandHandler;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.command.text.SayCommandHandler;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.config.DevIsolatedProperties;
@@ -59,6 +60,7 @@ class SessionResumptionFlowTest {
   private SessionAuthenticationService sessionAuthenticationService;
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
+  private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
@@ -114,7 +116,7 @@ class SessionResumptionFlowTest {
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");
     interpreter =
         new TextCommandInterpreter(
-            commandService, lookHandler, loginHandler, sessionAuthenticationService);
+            commandService, lookHandler, loginHandler, sessionAuthenticationService, sayHandler);
   }
 
   @Test

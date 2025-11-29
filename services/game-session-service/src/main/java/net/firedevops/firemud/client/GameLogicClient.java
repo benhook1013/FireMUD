@@ -8,10 +8,14 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.File;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.config.GrpcClientProperties;
+import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
+import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
+import net.firedevops.firemud.gamelogic.v1.ChatAlias;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
@@ -69,8 +73,38 @@ public class GameLogicClient implements AutoCloseable {
     return stub.resolveLook(request);
   }
 
+  public BroadcastSayResponse broadcastSay(
+      String tenantId,
+      String sessionId,
+      String playerId,
+      String roomId,
+      String aliasToken,
+      String text) {
+    BroadcastSayRequest request =
+        BroadcastSayRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setSessionId(sessionId)
+            .setPlayerId(playerId)
+            .setRoomId(roomId)
+            .setAlias(mapAlias(aliasToken))
+            .setText(text)
+            .build();
+    return stub.broadcastSay(request);
+  }
+
   public PingResponse ping() {
     return stub.ping(PingRequest.getDefaultInstance());
+  }
+
+  private ChatAlias mapAlias(String token) {
+    if (token == null || token.isBlank()) {
+      return ChatAlias.SAY;
+    }
+    return switch (token.toUpperCase(Locale.ROOT)) {
+      case "YELL" -> ChatAlias.YELL;
+      case "WHISPER" -> ChatAlias.WHISPER;
+      default -> ChatAlias.SAY;
+    };
   }
 
   @PreDestroy

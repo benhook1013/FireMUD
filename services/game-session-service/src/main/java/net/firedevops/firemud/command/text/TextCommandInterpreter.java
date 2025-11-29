@@ -2,6 +2,12 @@ package net.firedevops.firemud.command.text;
 
 import java.util.Objects;
 import net.firedevops.firemud.command.text.LoginCommandHandlingResult;
+import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.command.text.LoginCommandHandler;
+import net.firedevops.firemud.command.text.SayCommandHandler;
+import net.firedevops.firemud.command.text.SayCommandHandlingResult;
+import net.firedevops.firemud.command.text.TextCommandType;
+import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -14,6 +20,7 @@ public class TextCommandInterpreter {
   private final LookCommandHandler lookHandler;
   private final LoginCommandHandler loginHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
+  private final SayCommandHandler sayHandler;
   private final TextCommandParser parser;
 
   @Autowired
@@ -21,12 +28,14 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
-      SessionAuthenticationService sessionAuthenticationService) {
+      SessionAuthenticationService sessionAuthenticationService,
+      SayCommandHandler sayHandler) {
     this(
         commandService,
         lookHandler,
         loginHandler,
         sessionAuthenticationService,
+        sayHandler,
         new TextCommandParser());
   }
 
@@ -35,6 +44,7 @@ public class TextCommandInterpreter {
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
       SessionAuthenticationService sessionAuthenticationService,
+      SayCommandHandler sayHandler,
       TextCommandParser parser) {
     this.commandService =
         Objects.requireNonNull(commandService, "commandService must not be null");
@@ -43,6 +53,7 @@ public class TextCommandInterpreter {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
+    this.sayHandler = Objects.requireNonNull(sayHandler, "sayHandler must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
   }
 
@@ -66,6 +77,12 @@ public class TextCommandInterpreter {
           loginHandler.handle(sessionId, command, requiresSoloTick);
       return new TextCommandInterpretationResult(
           loginResult.commandResult(), loginResult.responseText());
+    }
+
+    if (command.type() == TextCommandType.SAY) {
+      SayCommandHandlingResult sayResult = sayHandler.handle(sessionId, command);
+      return new TextCommandInterpretationResult(
+          sayResult.commandResult(), sayResult.responseText());
     }
 
     if (requiresGameplayAuthentication(command.type())

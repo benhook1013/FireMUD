@@ -21,6 +21,8 @@ import net.firedevops.firemud.command.text.LoginCommandHandler;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.command.text.SayCommandHandler;
+import net.firedevops.firemud.command.text.SayCommandHandlingResult;
 import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.config.DevIsolatedProperties;
@@ -64,6 +66,7 @@ class TextCommandInterpreterTest {
           lookCacheService,
           devIsolatedProperties);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler loginHandler;
@@ -99,7 +102,7 @@ class TextCommandInterpreterTest {
     when(sessionAuthenticationService.resolveSessionContext("123")).thenReturn(Optional.of(sessionContext));
     interpreter =
         new TextCommandInterpreter(
-            commandService, lookHandler, loginHandler, sessionAuthenticationService);
+            commandService, lookHandler, loginHandler, sessionAuthenticationService, sayHandler);
   }
 
   @Test
@@ -138,6 +141,20 @@ class TextCommandInterpreterTest {
     TextCommandInterpretationResult interpretation = interpreter.interpret("123", command, false);
 
     assertEquals("OK LOOK constructed", interpretation.responseText());
+  }
+
+  @Test
+  void sayCommandDelegatesToHandler() {
+    SayCommandHandlingResult sayResult =
+        new SayCommandHandlingResult(CommandEnqueueResult.success(), "OK SAY text");
+    when(sayHandler.handle(Mockito.anyString(), Mockito.any())).thenReturn(sayResult);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("123", "SAY Hello", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals("OK SAY text", interpretation.responseText());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test

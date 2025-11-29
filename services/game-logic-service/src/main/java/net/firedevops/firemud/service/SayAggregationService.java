@@ -20,6 +20,7 @@ import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.gamelogic.v1.ChatAlias;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -130,9 +131,10 @@ public class SayAggregationService {
     return match.orElse(speakerId);
   }
 
-  private ChatType mapAlias(BroadcastSayRequest.ChatAlias alias) {
+  private ChatType mapAlias(ChatAlias alias) {
     return switch (alias) {
-      case YELL, WHISPER -> ChatType.CHAT_TYPE_SAY;
+      case YELL -> ChatType.CHAT_TYPE_SAY;
+      case WHISPER -> ChatType.CHAT_TYPE_SAY;
       case SAY -> ChatType.CHAT_TYPE_SAY;
       default -> ChatType.CHAT_TYPE_SAY;
     };

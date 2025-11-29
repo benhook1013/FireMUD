@@ -61,13 +61,13 @@ These transcripts demonstrate how both transports serialize the canonical `OK SA
 
 ## 3. Game Session Service: Wiring Text SAY to Game Logic
 
-- [ ] Extend the `TextCommandInterpreter` / `LookCommandHandler` neighborhood so `SAY` (and `YELL`/`WHISPER`) text commands route to a new `SayCommandHandler` that translates tokens+session context into `BroadcastSay` gRPC calls while the interpreter enforces the authenticated session guard.
-- [ ] Map Game Logic chat errors (`ERR_ROOM_SILENCED`, `ERR_SOCIAL_UNAVAILABLE`, etc.) into the text protocol (`ERROR SAY_NOT_DELIVERED ...`), preserve `OK SAY` when delivery succeeds, and emit `gamesession.command.say.invocations`/`gamesession.command.say.failures` metrics/logs tagged by tenant and error codes.
-- [ ] Add unit/integration tests for `SayCommandHandler` using stubbed Game Logic clients to cover success and error branches, and verify the interpreter still handles aliases (`YELL`/`WHISPER`).
+- [x] Extend the `TextCommandInterpreter` / `LookCommandHandler` neighborhood so `SAY` (and `YELL`/`WHISPER`) text commands route to a new `SayCommandHandler` that translates tokens+session context into `BroadcastSay` gRPC calls while the interpreter enforces the authenticated session guard.
+- [x] Map Game Logic chat errors (`ERR_ROOM_SILENCED`, `ERR_SOCIAL_UNAVAILABLE`, etc.) into the text protocol (`ERROR SAY_NOT_DELIVERED ...`), preserve `OK SAY` when delivery succeeds, and emit `gamesession.command.say.invocations`/`gamesession.command.say.failures` metrics/logs tagged by tenant and error codes.
+- [x] Add unit/integration tests for `SayCommandHandler` using stubbed Game Logic clients to cover success and error branches, and verify the interpreter still handles aliases (`YELL`/`WHISPER`).
 
 ## 4. Cross-Service Chat Regression Tests
 
-- [ ] Extend the WebSocket cross-service suite so a second WebSocket client (or Telnet proxy replay) joins the room, a `SAY` command is issued, and all participants observe the canonical transcript plus `gamesession.command.say.*` metrics (reuse a shared fixture for the transcript).
+- [x] Extend the WebSocket cross-service suite so a second WebSocket client (or Telnet proxy replay) joins the room, a `SAY` command is issued, and all participants observe the canonical transcript plus `gamesession.command.say.*` metrics (reuse a shared fixture for the transcript).
 - [ ] Add a Telnet variant that runs `SESSION` + `LOGIN` + `SAY`, verifying the Telnet transcript matches the WebSocket output up to framing differences and that `ERROR SAY_NOT_DELIVERED` appears exactly once when the Game Logic backend rejects the message.
 - [ ] Capture the canonical SAY transcript fixture (similar to LOOK) so both WebSocket and Telnet suites assert the same reference output.
 - [ ] Instrument these flows (via log capture/metrics) to assert the chat command traversed Game Session → Game Logic and triggered Social/Group service calls, ensuring `gamesession.command.say.invocations`/`failures` counters move for both success and failure paths.
