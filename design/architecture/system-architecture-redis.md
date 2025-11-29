@@ -264,6 +264,88 @@ Redis in FireMUD is:
 
 ---
 
+## Future Cache Design and Versioned Aggregates
+
+Redis is already used for transient coordination (ticks, sessions, locks), and will eventually back selected read-side caches as a performance optimization. This section outlines the future design principles for deciding what to cache and how to validate those caches; it does not describe an implemented feature set yet.
+
+### Core Principles
+
+- Database and domain services remain authoritative. PostgreSQL and the owning microservices define the source of truth for entities, rooms, inventories, and configuration; Redis is a helper, not a primary store.
+- Static/topology vs dynamic/runtime state:
+  - Static or topology data (world geometry, room/zone graphs, published templates, configuration) changes infrequently and is a good fit for aggressive caching with long TTLs or manual invalidation.
+  - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
+- Purpose-driven caching only. Objects should be cached because they are expensive to compute or fetch and appear on hot paths, not “just in case.” Profiling and production telemetry will drive what actually lands in Redis.
+
+### Candidate Cacheable Object Types
+
+This list is planning-only; it documents candidate categories rather than a final decision. Concrete cache choices will be revisited once profiling data and cross-service load metrics are available.
+
+- Static or rarely changing data:
+  - World topology slices (room adjacency, precomputed path segments, region metadata that rarely changes).
+  - Published templates and configuration (ability definitions, item templates, world-generation parameters) copied from the Game Design Service into runtime schemas.
+  - Feature-flag and version metadata that is read frequently but updated only at publish/activation time.
+- Dynamic aggregates that are expensive to compute:
+  - “Current view” of a room or instance: an aggregate combining world topology, visible entities, and room-ground inventory assembled for LOOK and similar commands.
+  - Cross-entity aggregates such as “all entities in a shard/region with a given tag” used for scripted world events or analytics-style queries.
+- Dynamic but localized aggregates:
+  - Inventories and containers (player inventory, equipment, banks, room-ground containers) where reads are common and writes are scoped to a single aggregate root.
+  - Per-entity views (for example, “effective stats” after applying all modifiers) that are expensive to recompute but naturally tied to a single character or NPC.
+
+### Version-Based Cache Validation
+
+Some dynamic aggregates will be easier to cache if the authoritative store exposes a version or `lastModified` field per aggregate root:
+
+- The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
+- Redis entries for that aggregate store both version and payload together, typically inside a single serialized object.
+- When fetching, callers can:
+  - Read the current version from the authoritative store or a lighter-weight index.
+  - Compare it with the version in Redis.
+  - Reuse the cached payload if versions match, or recompute and overwrite the cache if they differ.
+- Versioning is applied per aggregate root (for example `inventory:{tenantId}:{containerId}` or `roomDynamic:{tenantId}:{roomId}`) rather than being added indiscriminately to every table or DTO.
+
+This pattern keeps cache correctness bounded to clearly defined aggregates and avoids random, hard-to-reason-about version fields scattered across the schema.
+
+### Invalidation Strategies
+
+Future cache layers are expected to combine several invalidation mechanisms, tuned per aggregate:
+
+- TTL-based expiry:
+  - Primary role is as a safety valve and memory-bloat control, not the main correctness mechanism.
+  - Long TTLs may be acceptable for static/topology slices; short TTLs can bound staleness for dynamic aggregates in low-risk flows.
+- Event-based invalidation:
+  - When authoritative state changes, the owning service emits domain events (for example: inventory changed, room-dynamic state changed, entity moved, template version activated).
+  - A cache layer or a dedicated listener reacts to those events and either deletes affected keys or overwrites them with fresh values.
+- Version check (where applicable):
+  - For aggregates that expose versions, application code may choose to read version and payload from Redis and compare with the current authoritative version.
+  - On mismatch, the cache entry is recomputed and updated atomically (value plus TTL) before being reused.
+
+For correctness-critical dynamic data (movement, inventories, visibility), the design will favor events plus versions as the primary correctness mechanisms and treat TTL as a backstop for forgotten keys or operational anomalies.
+
+### Key Naming and Overwrite Expectations
+
+Cached aggregates in Redis will follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Examples (subject to refinement):
+
+- `inventory:{tenantId}:{containerId}` – cached view of a single inventory or container (including room-ground containers).
+- `worldDynamic:{tenantId}:{aggregateId}` – cached view of room-level dynamic state or other world-scoped aggregates.
+- `view:roomLook:{tenantId}:{roomId}` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
+
+Expectations:
+
+- Writing a new value for a key overwrites the previous entry. Cache writers do not attempt to merge old and new payloads inside Redis.
+- Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.
+- Future implementations should prefer single atomic commands or scripts (set value and TTL together, optionally with version) over multi-step delete plus set sequences unless there is a very specific, documented reason (such as maintaining backward-compatible behavior during a migration).
+
+### Future Work / TODO
+
+This section captures design intent only; concrete decisions are explicitly deferred. Before caching is implemented broadly, we need to:
+
+- Decide which aggregates (if any) are actually cached for each service (Entity Management, World Management, Game Session, Game Logic, and others).
+- Decide which aggregates receive a dedicated version or `lastModified` field for cache validation and how those fields are surfaced in their APIs.
+- Define the domain events required to drive event-based invalidation (including payload shape, routing, and delivery guarantees).
+- Add concrete examples, diagrams, and per-service subsections that show exactly how the chosen aggregates use Redis (key shapes, TTLs, version semantics, and listeners) once profiling and production telemetry justify their introduction.
+
+---
+
 ## 📚 Related Documentation
 
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
