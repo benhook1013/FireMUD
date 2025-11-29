@@ -50,8 +50,8 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, auth, monitoring |
 | **[Game Session Service](./microservices/game-session-service/README.md)** | Manages player sessions, tick orchestration, stores runtime flags, input validation |
 | **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, login, auth, subscription status; ban workflows are available |
-| **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all entity data: players, NPCs, items, stats, inventories |
-| **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides geometry and world snapshots |
+| **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all runtime entity data: players, NPCs, items, stats, and all inventories/containment (player inventory/equipment, containers, and items on the ground in rooms keyed by room ID) |
+| **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides geometry and static world snapshots (topology and ambient world state only, not live entities/items/inventories) |
 | **[Game Logic Service](./microservices/game-logic-service/README.md)** | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
 | **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** | Triggers AI and scripted behaviors |
 | **[Social & Groups Service](./microservices/social-groups-service/README.md)** | Manages chat, mail, guilds, and social features |

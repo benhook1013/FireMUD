@@ -65,8 +65,9 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
   - **Scheduled events** (e.g., daily resets, seasonal world changes, NPC schedules) should be configurable.
   - NPC actions and environmental changes should **continue in a believable way even if no players are online**.
-  - Persistent storage for **player, NPC, and item data**.
-  See [World Management Service](../architecture/microservices/world-management-service/README.md) for additional details.
+- Persistent storage for **player, NPC, and item data** across services:
+  - The [Entity Management Service](../architecture/microservices/entity-management-service/README.md) owns all runtime entities and inventories, including player gear, containers, and items on the ground in rooms.
+  - The [World Management Service](../architecture/microservices/world-management-service/README.md) owns world topology and ambient world state (rooms, regions, instances, environmental state) but does **not** store live items or inventory contents.
 
 ### 2.5 Game Logic & Automation
 

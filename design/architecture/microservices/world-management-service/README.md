@@ -2,7 +2,7 @@
 
 ## Overview
 
-The World Management Service stores and manages game world data such as rooms, regions, and maps. It persists world state beyond player sessions, handles scheduled world events, and notifies other services over gRPC when the environment changes.
+The World Management Service stores and manages game world topology and content such as rooms, regions, and maps. It persists world state beyond player sessions, handles scheduled world events, and notifies other services over gRPC when the environment changes. Live entities, items, and inventories are always owned by the Entity Management Service; World Management never stores room inventory or item instances.
 
 ### Responsibilities
 
@@ -12,6 +12,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - Expose geometry and region metadata; pathfinding is handled by the Movement/Travel subsystem (Game Logic Service) via gRPC with navmesh support.
 - Notify Game Session and Automation services when the world changes
 - Track character locations and instance occupancy
+- Do not store or manage live item or inventory state; room inventory and ground items are derived from Entity Management queries scoped by room/instance identifiers.
 
 ## Architecture / Design Notes
 
@@ -47,14 +48,14 @@ The World Management Service stores and manages game world data such as rooms, r
 - Instance-based zones are treated as regular rooms; this service records which
   characters occupy each instance so private dungeons or housing do not affect
   the shared world map.
-- Persistent world state with incremental saves.
+- Persistent world state with incremental saves (rooms, regions, instances, and environmental state), excluding live entities, item instances, and inventories which are persisted by the Entity Management Service.
 - Procedural generation tools for rooms and terrain.
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
 - The Movement/Travel subsystem in the Game Logic Service performs Dijkstra-based pathfinding using the `room_exit` table and exposes results via gRPC.
 - Event scheduling for world-wide holidays or timed modifiers. A `world_event` table
   stores pending events and a scheduled task processes them, updating regional weather
   or other state. Emitting gRPC notifications keeps other services synchronized.
-- Chunk-based world snapshots for backup and recovery.
+- Chunk-based world snapshots for backup and recovery. These snapshots cover world topology and ambient world metadata only; live entities, items, and inventories are restored from the Entity Management Service.
 
 ### Data Model
 
@@ -64,8 +65,7 @@ The World Management Service stores and manages game world data such as rooms, r
 - `expires_at` column defines when instances are cleaned up by a scheduled job.
 - `generation_rule` table stores per-tenant procedural generation parameters used
   by the [Procedural Generation Rules API](#procedural-generation-rules-api).
-- `character_location` table  records the current room for each character,
-  including which instance they are in.
+- `character_location` table  records the current room for each character, including which instance they are in; item locations and containment are modeled and stored by the Entity Management Service rather than this table.
 - `world_event` table stores timed changes such as weather updates.
 - `region.weather` column records the current weather state.
 - `region.shard_id` indicates which server shard hosts the region.
@@ -99,6 +99,8 @@ specified region.
 - Optional `roomFlags` (for example `isQuestArea` or `isInstanceEntry`) so `LOOK` can warn players before they step into special zones.
 
 Game Logic caches snapshots for the duration of a tick but refreshes them after movement. World Management publishes change events when rooms mutate so downstream caches remain consistent and `LOOK` clients never read stale text.
+
+Room snapshots deliberately exclude live entities, items, and inventory contents; those are retrieved from the Entity Management Service using room- and instance-scoped queries when composing `LOOK` results.
 
 The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this lifecycle (Candle-lit Antechamber and Crafting Hall of Ember) so integration tests and the LOOK transcripts stay stable. Developers can locate and extend that migration when the sample world needs more exits or environmental trivia.
 
