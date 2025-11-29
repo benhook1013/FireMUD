@@ -17,30 +17,38 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 ## Start Here
 
-For an overview of all architecture and design documents, see [Architecture Directory ReadMe](design/architecture/README.md).
+For an overview of all architecture and design documents, see [Architecture Directory README](design/architecture/README.md).
 See [Repository Structure](design/architecture/repository-structure.md) for module layout.
 
 ---
 
 ## 📚 Table of Contents
 
-- [Purpose](#purpose)
-- [Project Overview](#project-overview)
-  - [Key Features](#key-features)
-  - [Tech Stack](#tech-stack)
-  - [Design Goals](#design-goals)
-- [Architecture](#architecture)
-  - [Microservices](#microservices)
-  - [Service Interactions](#service-interactions)
-- [Developer Setup](./DEVELOPER_SETUP.md)
-- [Repository Structure](design/architecture/repository-structure.md)
-- [Getting Started and Contributing](#getting-started-and-contributing)
-  - [Learn About the Platform](#learn-about-the-platform)
-  - [Ways to Contribute](#ways-to-contribute)
-  - [Additional Guidelines](#additional-guidelines)
-- [Support Us](#support-us)
-- [Contact](#contact)
-- [Acknowledgments](#acknowledgments)
+- [FireMUD Game Platform](#firemud-game-platform)
+  - [Start Here](#start-here)
+  - [📚 Table of Contents](#-table-of-contents)
+  - [Purpose](#purpose)
+  - [Project Overview](#project-overview)
+    - [Key Features](#key-features)
+    - [Tech Stack](#tech-stack)
+      - [Backend](#backend)
+      - [Frontend](#frontend)
+      - [Deployment \& Infrastructure](#deployment--infrastructure)
+      - [Monetization](#monetization)
+      - [Testing](#testing)
+    - [Design Goals](#design-goals)
+  - [Architecture](#architecture)
+    - [Microservices](#microservices)
+    - [Service Interactions](#service-interactions)
+  - [Getting Started and Contributing](#getting-started-and-contributing)
+    - [Learn About the Platform](#learn-about-the-platform)
+    - [Ways to Contribute](#ways-to-contribute)
+    - [Additional Guidelines](#additional-guidelines)
+  - [Running Locally](#running-locally)
+  - [Tooling](#tooling)
+  - [Support Us](#support-us)
+  - [Contact](#contact)
+  - [Acknowledgments](#acknowledgments)
 
 ---
 
