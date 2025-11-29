@@ -107,6 +107,16 @@ The diagram covers every microservice in the repository:
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
 - **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with dashboards built from Elasticsearch logs, Prometheus metrics, and Jaeger traces to support moderation.
 
+## 🗄️ Datastore Layer
+
+Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
+
+- **PostgreSQL** – Primary persistent store for world topology, entities, characters, items, and transactional metadata (tenant-scoped tables include `tenantId` so data never mixes across games).
+- **Redis** – Volatile session, tick, and cache state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient.
+- **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.
+
+These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis`, `Elasticsearch`) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
+
 ## 🔍 Observability Components
 
 The diagram also illustrates the monitoring stack shared by every service:
