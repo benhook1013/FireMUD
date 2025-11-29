@@ -270,6 +270,12 @@ The `TextCommandInterpreter` currently returns a result that includes both enque
 3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload (or a stubbed notification) to the Social & Groups Service for delivery and logging. Upon success it returns the deterministic recipient list, which Game Session uses to render the canonical `OK SAY` response and emit `gamesession.command.say.invocations`/`failures` instrumentation.
 4. Backend failures (e.g., delivery blocked, Social service unavailable) propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED` while `ERROR NOT_AUTHENTICATED` remains the consistent pre-flight guard for untrusted requests.
 
+### Chat slice status
+
+- **Live:** `SAY`/`YELL`/`WHISPER` commands now route through `SayCommandHandler`, which enforces the shared session guard, forwards normalized payloads to Game Logic's `BroadcastSay`, and renders the canonical `OK SAY` transcript while emitting the `gamesession.command.say.*` meters documented in `design/project-management/look-instrumentation.md`.
+- **Stubbed:** Delivery relies on the Social & Groups Service stub used by the regression suites, which currently records webhook contexts and returns success so both Telnet and WebSocket regression runs observe deterministic `Delivered-To` lists (see `SayWebSocketCrossServiceTest` and `TelnetGatewayGameSessionAccountCrossServiceIntegrationTest`).
+- **Deferred:** Future slices will enrich the Social backend with NPC roleplay responses, listening-area heuristics, and localized channel filters once the core `BroadcastSay` path proves stable and well-instrumented.
+
 ### LOOK slice status
 
 - **Live:** Data-driven `LOOK` flows now route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in `design/project-management/look-instrumentation.md` before replying over Telnet or WebSocket.
