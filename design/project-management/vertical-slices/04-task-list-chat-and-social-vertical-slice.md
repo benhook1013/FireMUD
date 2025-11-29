@@ -4,9 +4,9 @@ After `LOOK` flows through the new Game Logic + World + Entity path, the next sm
 
 ## 1. Protocol, UX, and Design Alignment for SAY
 
-- [x] Update the Minimal Text Command Protocol section so `SAY` (and aliases like `YELL`/`WHISPER`) document the required arguments, the canonical response shape (`OK SAY`, speaker annotations, delivered-to list), and how edge cases (empty message, overly long text) report `ERROR INVALID_ARGUMENT`.
+- [x] Update the [Minimal Text Command Protocol](../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section so `SAY` (and aliases like `YELL`/`WHISPER`) document the required arguments, the canonical response shape (`OK SAY`, speaker annotations, delivered-to list), and how edge cases (empty message, overly long text) report `ERROR INVALID_ARGUMENT`.
 - [x] Decide and document the order of appearance for in-room chat lines, speaker attribution, and how co-located listeners see the `SAY` payload (e.g., prefixed with nick vs. `PlayerName says ...`). Capture at least one Telnet and one WebSocket transcript showing `SAY` reaching two clients plus a nearby NPC echo.
-- [x] Add a short subsection to the Game Session and Game Logic design docs describing how `SAY` requests flow through Game Session → Game Logic → Social/Group services (or a stub for now) and how we guard the pathway with authentication/session context.
+- [x] Add a short subsection to the [Game Session Service](../architecture/microservices/game-session-service/README.md) and [Game Logic Service](../architecture/microservices/game-logic-service/README.md) design docs (noting the [Social/Groups Service](../architecture/microservices/social-groups-service/README.md) stub) describing how `SAY` requests flow through Game Session -> Game Logic -> Social/Group services and how we guard the pathway with authentication/session context.
 - [x] Confirm the design docs reiterate `SAY` requires the same authenticated session guard already pulled into `LOOK` and that unauthenticated clients receive `ERROR NOT_AUTHENTICATED`.
 
 ### In-room `SAY` ordering and transcripts
@@ -31,6 +31,8 @@ Telnet - Sora's client (listener) displays only the shared payload rendered in n
 Emberline says, "Hello travelers"
 Kobold Scout echoes: "Kobold Scout nods and replies, `Stay awhile.`"
 ```
+
+The Telnet `OK SAY` block above is the canonical structured payload (even though it is rendered as plain text), and the narrative lines that follow (`Emberline says…`, the NPC echo, etc.) are derived from that payload for readability, mirroring the same distinction the LOOK slice makes between the canonical output and flavored rendering.
 
 WebSocket - Emberline's connection (emitter) observes the same structured response, while Sora's connection consumes a mirrored packet. The NPC echo can be represented as an automated webhook from the Social service:
 
@@ -57,11 +59,11 @@ These transcripts demonstrate how both transports serialize the canonical `OK SA
 - [x] Introduce a Game Logic gRPC entry for chat, e.g., `BroadcastSay`, that accepts tenant/session/player context plus the message text and returns `Ok`/`Error` with optional delivery metadata (list of recipient IDs or locations).
 - [x] Implement the handler to validate message length, call the Social/Group facades (or stubbed in-memory broadcaster), and emit failure statuses when the service refuses (e.g., `PERMISSION_DENIED` for silenced players).
 - [x] Add unit tests covering successful `SAY` (single recipient + multiple recipients), message validation failures, and propagation of backend errors (Social service unavailable).
-- [x] Document the new chat API in the Game Logic design doc with its responsibilities, especially how it differs from future channel/combat output formats.
+- [x] Document the new chat API in the Game Logic design doc with its responsibilities, especially how it differs from future channel/combat output formats, and spell out that logical failures such as `PERMISSION_DENIED` or backend `UNAVAILABLE` return structured `ErrorDetail` objects so Game Session can map them to `ERROR SAY_NOT_DELIVERED ...` while keeping `gamesession.command.say.*` metrics aligned.
 
 ## 3. Game Session Service: Wiring Text SAY to Game Logic
 
-- [x] Extend the `TextCommandInterpreter` / `LookCommandHandler` neighborhood so `SAY` (and `YELL`/`WHISPER`) text commands route to a new `SayCommandHandler` that translates tokens+session context into `BroadcastSay` gRPC calls while the interpreter enforces the authenticated session guard.
+- [x] Extend the `TextCommandInterpreter` / `LookCommandHandler` neighborhood so `SAY` (and `YELL`/`WHISPER`) text commands route to a new `SayCommandHandler` that translates tokens+session context into `BroadcastSay` gRPC calls while the interpreter reuses the same authenticated session guard (via the `LookCommandHandler` validation) before issuing chat requests.
 - [x] Map Game Logic chat errors (`ERR_ROOM_SILENCED`, `ERR_SOCIAL_UNAVAILABLE`, etc.) into the text protocol (`ERROR SAY_NOT_DELIVERED ...`), preserve `OK SAY` when delivery succeeds, and emit `gamesession.command.say.invocations`/`gamesession.command.say.failures` metrics/logs tagged by tenant and error codes.
 - [x] Add unit/integration tests for `SayCommandHandler` using stubbed Game Logic clients to cover success and error branches, and verify the interpreter still handles aliases (`YELL`/`WHISPER`).
 
@@ -105,11 +107,11 @@ ERROR SAY_NOT_DELIVERED Unable to reach chat service
 }
 ```
 
-These transcripts make it easy to add regression assertions for failure paths and ensure both transports handle backend outages in the same way.
+These transcripts make it easy to add regression assertions for failure paths and ensure both transports handle backend outages in the same way, explicitly ensuring the flow is documented as: Social service returns `UNAVAILABLE` → Game Logic responds with an application error carrying `ErrorDetail`(code=`UNAVAILABLE`) → Game Session translates that into `ERROR SAY_NOT_DELIVERED ...` for Telnet and `"command": "ERROR SAY_NOT_DELIVERED", "error": {"code":"UNAVAILABLE", ...}` for WebSocket.
 
 ## 5. Developer Workflows and Instrumentation
 
-- [x] Create a WebSocket + Telnet example script (or documented sequence) that demonstrates `LOGIN` + `SAY` against the sample world and references the canonical transcript used by the regression suites (`design/project-management/chat-say-developer-guide.md`).
+- [x] Create or update the WebSocket + Telnet example script (or documented sequence) that demonstrates `LOGIN` + `SAY` against the sample world and references the canonical transcript fixture described in `design/project-management/chat-say-developer-guide.md`.
 - [x] Update logging/monitoring docs (look instrumentation, logging & admin sections) to mention the new `gamesession.command.say.*` metrics.
 - [x] Add a short "Implementation status" note to the Game Session/Game Logic/Social design docs so folks know what of this slice is live, stubbed, or deferred (e.g., channel filters, listening area heuristics).
 
