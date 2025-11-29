@@ -1,9 +1,11 @@
 # 📊 FireMUD System Context Diagram
 
+This document gives a high-level view of how FireMUD's clients, gateways, internal services, and infrastructure fit together. Use it as an orientation map before diving into the more detailed architecture and microservice design documents.
+
 ```plaintext
-                      +------------+                         +---------------+
-                      | Web Client |                         | Telnet Client |
-                      +------------+                         +---------------+
+                     +------------+                          +---------------+
+                     | Web Client |                          | Telnet Client |
+                     +------------+                          +---------------+
                             |                                        |
                             | HTTP/WebSocket                         | TCP
                             v                                        v
@@ -28,15 +30,29 @@
       | - Game Design Service                     |
       +-------------------------------------------+
                             |
-                            | DB/Cache/Logs
+                            | DB/Cache/Logs/Metrics/Traces
                             v
-      +-------------------------------------------+
-      |               Datastore Layer             |
-      |                                           |
-      | - PostgreSQL (per service)                |
-      | - Redis (sessions, ticks)                 |
-      | - Elasticsearch (logs)                    |
-      +-------------------------------------------+
+       +-------------------------------------------+
+       |               Datastore Layer             |
+       |                                           |
+       | - PostgreSQL (per service)                |
+       | - Redis (sessions, ticks)                 |
+       | - Elasticsearch (logs)                    |
+       | - S3-compatible object storage (assets)   |
+       +-------------------------------------------+
+                            |
+                            | Metrics/Traces/Alerts
+                            v
+       +-------------------------------------------+
+       |            Observability Stack            |
+       |                                           |
+       | - Prometheus (metrics)                    |
+       | - OpenTelemetry Collector (traces)        |
+       | - Jaeger (trace UI)                       |
+       | - Grafana (metrics dashboards)            |
+       | - Kibana (log UI)                         |
+       | - Alertmanager (alerts)                   |
+       +-------------------------------------------+
 ```
 
 ## 📚 Related Documentation
