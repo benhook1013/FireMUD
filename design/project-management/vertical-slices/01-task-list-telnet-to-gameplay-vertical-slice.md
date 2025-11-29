@@ -37,7 +37,7 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ### 6.1 Protocol definition and docs
 
-Link to the [Minimal Text Command Protocol](../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section, which defines the initial MVP gameplay command set shared by Telnet and WebSocket clients in this vertical slice.
+Link to the [Minimal Text Command Protocol](../../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section, which defines the initial MVP gameplay command set shared by Telnet and WebSocket clients in this vertical slice.
 
 - [x] Add a "Minimal Text Command Protocol" section to `design/architecture/microservices/game-session-service/README.md` describing a line-based command protocol for Telnet/WebSocket clients (for example `LOGIN <user> <password>`, `LOOK`, `SAY <text>`), including at least one concrete example per command.
 - [x] In that section, define the expected response format for commands (plain text lines, how errors are reported, behavior for unknown commands, and how multiple responses are separated).

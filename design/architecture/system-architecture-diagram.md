@@ -40,6 +40,8 @@ flowchart TD
         Jaeger[Jaeger]
     end
 
+    SMTP[Email / SMTP Provider]
+
     MUD -- TCP --> TCPProxy
     Web -- wss/HTTP --> Gateway
     TCPProxy -- wss --> Gateway
@@ -73,8 +75,12 @@ flowchart TD
     Prom -- metrics --> Logging
     Jaeger -- traces --> Logging
     Alertmgr -- alerts --> Logging
+    Alertmgr -- alerts/email --> SMTP
     Kibana -- dashboards --> Logging
     Grafana -- dashboards --> Logging
+
+    Account -- email --> SMTP
+    Logging -- email --> SMTP
 
 ```
 
