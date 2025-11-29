@@ -2,7 +2,7 @@
 
 ## Telnet Bridge
 
-> **Note:** The Telnet `SESSION` + `LOGIN` + `LOOK` parity and reconnection flows are tracked in [design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md](task-list-login-and-session-vertical-slice.md) so we avoid duplicating the same tasks here.
+> **Note:** The Telnet `SESSION` + `LOGIN` + `LOOK` parity and reconnection flows are tracked in [design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md](vertical-slices/02-task-list-login-and-session-vertical-slice.md) so we avoid duplicating the same tasks here.
 
 - [x] Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway
 - [x] Define Telnet bridge gRPC APIs for TCP Proxy Service

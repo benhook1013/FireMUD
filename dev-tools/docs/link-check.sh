@@ -32,4 +32,4 @@ if [[ "${CHECK_EXTERNAL_LINKS:-}" == 1 ]]; then
   OPTIONS+=(--scheme https --scheme http)
 fi
 
-"$BIN" --no-progress --verbose "${OPTIONS[@]}" "${FILES[@]}"
+"$BIN" --no-progress "${OPTIONS[@]}" "${FILES[@]}"
