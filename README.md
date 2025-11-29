@@ -17,7 +17,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 ## Start Here
 
-For an overview of all architecture and design documents, see [Architecture Overview](design/architecture/README.md).
+For an overview of all architecture and design documents, see [Architecture Directory ReadMe](design/architecture/README.md).
 See [Repository Structure](design/architecture/repository-structure.md) for module layout.
 
 ---
