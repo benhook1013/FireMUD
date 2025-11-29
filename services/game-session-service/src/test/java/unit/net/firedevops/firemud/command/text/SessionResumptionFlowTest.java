@@ -106,7 +106,8 @@ class SessionResumptionFlowTest {
             sessionAuthenticationService,
             gameLogicProperties,
             meterRegistry,
-            lookCacheService);
+            lookCacheService,
+            devIsolatedProperties);
     LookResult lookResult = LookResult.newBuilder().setRoomId("1021").build();
     when(gameLogicClient.resolveLook(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);

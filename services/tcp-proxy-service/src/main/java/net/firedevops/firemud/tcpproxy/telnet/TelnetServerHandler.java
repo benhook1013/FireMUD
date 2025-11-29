@@ -80,6 +80,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private String clientIp;
   private boolean connectEventRecorded;
   private final LookCacheService lookCacheService;
+  private volatile boolean loginAcknowledged;
+  private volatile boolean cachedLookDelivered;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -203,6 +205,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     reconnecting = false;
     startHeartbeat();
     touchActivity();
+    loginAcknowledged = false;
+    cachedLookDelivered = false;
     if (reconnected) {
       List<String> drained = consumeBuffer();
       pushBufferedInputAsync(drained);
@@ -580,11 +584,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     eventService.recordConnectEvent(sessionContext.sessionId(), sessionContext.tenantId(), clientIp);
     connectEventRecorded = true;
-    sendCachedLookIfPresent();
   }
 
   private void sendCachedLookIfPresent() {
-    if (lookCacheService == null || context == null || !sessionContext.isReady()) {
+    if (lookCacheService == null
+        || context == null
+        || !sessionContext.isReady()
+        || !loginAcknowledged
+        || cachedLookDelivered) {
       return;
     }
     String sessionId = sessionContext.sessionId();
@@ -595,7 +602,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       lookCacheService
           .get(tenant, session)
           .map(LookCacheService.CachedLook::renderedText)
-          .ifPresent(text -> context.writeAndFlush(text + "\n\n"));
+          .ifPresent(
+              text -> {
+                context.writeAndFlush(text + "\n\n");
+                cachedLookDelivered = true;
+              });
     } catch (NumberFormatException ex) {
       logger.debug(
           "Invalid cached LOOK identifiers tenant={} session={}", tenantId, sessionId, ex);
@@ -712,6 +723,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         }
         if (context != null) {
           context.writeAndFlush(data.toString() + "\n");
+        }
+        String payload = data.toString().trim();
+        if (payload.startsWith("OK LOGIN")) {
+          loginAcknowledged = true;
+          sendCachedLookIfPresent();
         }
         webSocket.request(1);
         return null;

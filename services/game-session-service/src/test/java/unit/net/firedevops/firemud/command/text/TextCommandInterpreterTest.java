@@ -45,6 +45,7 @@ class TextCommandInterpreterTest {
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
+  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final SessionContextService sessionContextService =
@@ -60,9 +61,9 @@ class TextCommandInterpreterTest {
           sessionAuthenticationService,
           gameLogicProperties,
           meterRegistry,
-          lookCacheService);
+          lookCacheService,
+          devIsolatedProperties);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
-  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler loginHandler;

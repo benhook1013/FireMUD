@@ -6,6 +6,8 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
+import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
@@ -13,6 +15,7 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import net.firedevops.firemud.service.SayAggregationService;
 import net.firedevops.firemud.logic.dto.CommandResult;
 import net.firedevops.firemud.logic.service.CommandService;
 import net.firedevops.firemud.service.LookAggregationService;
@@ -26,6 +29,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   private final PingService pingService;
   private final CommandService commandService;
   private final LookAggregationService lookAggregationService;
+  private final SayAggregationService sayAggregationService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -36,10 +40,12 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       PingService pingService,
       CommandService commandService,
       LookAggregationService lookAggregationService,
+      SayAggregationService sayAggregationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.commandService = commandService;
     this.lookAggregationService = lookAggregationService;
+    this.sayAggregationService = sayAggregationService;
     this.meterRegistry = meterRegistry;
   }
 
@@ -82,5 +88,14 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     } catch (Exception ex) {
       responseObserver.onError(Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
     }
+  }
+
+  @Override
+  @Timed(value = "gamelogicGrpc.broadcastSay")
+  public void broadcastSay(
+      BroadcastSayRequest request, StreamObserver<BroadcastSayResponse> responseObserver) {
+    BroadcastSayResponse response = sayAggregationService.broadcast(request);
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 }

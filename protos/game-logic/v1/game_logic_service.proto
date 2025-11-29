@@ -11,6 +11,7 @@ service GameLogicService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
   rpc ResolveLook(LookRequest) returns (LookResult);
+  rpc BroadcastSay(BroadcastSayRequest) returns (BroadcastSayResponse);
 }
 
 message PingRequest {}
@@ -47,6 +48,30 @@ message LookResult {
   repeated RoomEntity entities = 6;
   map<string, string> ambient_state = 7;
   repeated string room_flags = 8;
+}
+
+message BroadcastSayRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string player_id = 3;
+  string room_id = 4;
+  ChatAlias alias = 5;
+  string text = 6;
+}
+
+message BroadcastSayResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string delivered_to = 3;
+  repeated string npc_echoes = 4;
+  shared.v1.ErrorDetail error = 5;
+}
+
+enum ChatAlias {
+  CHAT_ALIAS_UNSPECIFIED = 0;
+  SAY = 1;
+  YELL = 2;
+  WHISPER = 3;
 }
 
 message LookExit {

@@ -91,6 +91,7 @@ This service is largely stateless. It relies on:
 
 - `Ping` – basic connectivity check.
 - `ExecuteCommand` – evaluates a parsed command and returns the outcome.
+- `BroadcastSay` – accepts `tenant_id`, `session_id`, `player_id`, `room_id`, normalized `text`, and an alias indicator (`SAY`/`YELL`/`WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response. Failures populate `shared.v1.ErrorDetail` while the gRPC status remains `OK`, keeping `gamesession.command.say.*` metrics aligned with the existing instrumentation.
 - All responses include a `shared.v1.ErrorDetail` field for standardized error handling.
   Application errors are returned in this field while the gRPC status remains
   `OK`, and a `grpc.app_error` metric is recorded with the error code.

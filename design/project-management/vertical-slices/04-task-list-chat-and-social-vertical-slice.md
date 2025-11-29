@@ -54,10 +54,10 @@ These transcripts demonstrate how both transports serialize the canonical `OK SA
 
 ## 2. Game Logic Service: Chat Aggregation
 
-- [ ] Introduce a Game Logic gRPC entry for chat, e.g., `BroadcastSay`, that accepts tenant/session/player context plus the message text and returns `Ok`/`Error` with optional delivery metadata (list of recipient IDs or locations).
-- [ ] Implement the handler to validate message length, call the Social/Group facades (or stubbed in-memory broadcaster), and emit failure statuses when the service refuses (e.g., `PERMISSION_DENIED` for silenced players).
-- [ ] Add unit tests covering successful `SAY` (single recipient + multiple recipients), message validation failures, and propagation of backend errors (Social service unavailable).
-- [ ] Document the new chat API in the Game Logic design doc with its responsibilities, especially how it differs from future channel/combat output formats.
+- [x] Introduce a Game Logic gRPC entry for chat, e.g., `BroadcastSay`, that accepts tenant/session/player context plus the message text and returns `Ok`/`Error` with optional delivery metadata (list of recipient IDs or locations).
+- [x] Implement the handler to validate message length, call the Social/Group facades (or stubbed in-memory broadcaster), and emit failure statuses when the service refuses (e.g., `PERMISSION_DENIED` for silenced players).
+- [x] Add unit tests covering successful `SAY` (single recipient + multiple recipients), message validation failures, and propagation of backend errors (Social service unavailable).
+- [x] Document the new chat API in the Game Logic design doc with its responsibilities, especially how it differs from future channel/combat output formats.
 
 ## 3. Game Session Service: Wiring Text SAY to Game Logic
 

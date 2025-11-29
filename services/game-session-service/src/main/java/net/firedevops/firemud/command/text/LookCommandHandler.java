@@ -6,7 +6,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.client.GameLogicClient;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameLogicProperties;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -29,6 +31,7 @@ public final class LookCommandHandler {
   private final GameLogicProperties gameLogicProperties;
   private final MeterRegistry meterRegistry;
   private final LookCacheService lookCacheService;
+  private final DevIsolatedProperties devIsolatedProperties;
 
   public String describe(String sessionId) {
     Optional<SessionContext> maybeContext = sessionAuthenticationService.resolveSessionContext(sessionId);
@@ -39,10 +42,15 @@ public final class LookCommandHandler {
     SessionContext context = maybeContext.get();
     String tenantTag = Long.toString(context.tenantId());
     meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+    if (devIsolatedProperties.isDevIsolated()) {
+      return LookCommandConstants.ROOM_DESCRIPTION;
+    }
     try {
       LookResult lookResult = resolveLook(context);
       String rendered = lookTextRenderer.render(lookResult);
-      cacheLook(context, lookResult, rendered);
+      if (!devIsolatedProperties.isDevIsolated()) {
+        cacheLook(context, lookResult, rendered);
+      }
       return rendered;
     } catch (StatusRuntimeException ex) {
       String errorCode = mapStatusToError(ex);
@@ -96,6 +104,9 @@ public final class LookCommandHandler {
   }
 
   public Optional<String> cachedLook(String tenantIdHeader, String sessionIdHeader) {
+    if (devIsolatedProperties.isDevIsolated()) {
+      return Optional.empty();
+    }
     if (!StringUtils.hasText(tenantIdHeader) || !StringUtils.hasText(sessionIdHeader)) {
       return Optional.empty();
     }

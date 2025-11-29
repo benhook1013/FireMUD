@@ -11,8 +11,10 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.command.text.LookCommandHandler;
 import net.firedevops.firemud.command.text.LookTextRenderer;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameLogicProperties;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -30,6 +32,7 @@ class LookCommandHandlerTest {
       Mockito.mock(SessionAuthenticationService.class);
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
+  private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final LookCommandHandler handler =
       new LookCommandHandler(
@@ -38,7 +41,8 @@ class LookCommandHandlerTest {
           sessionAuthenticationService,
           gameLogicProperties,
           meterRegistry,
-          lookCacheService);
+          lookCacheService,
+          devIsolatedProperties);
   private final SessionContext sessionContext =
       new SessionContext(1L, 22L, 123L, 911L, 0L, "jwt");
   private final LookResult lookResult = LookResult.newBuilder().setRoomId("1021").build();
@@ -105,5 +109,21 @@ class LookCommandHandlerTest {
     when(lookTextRenderer.render(lookResult)).thenReturn("fresh text");
     assertEquals("fresh text", handler.describe("123"));
     verify(gameLogicClient).resolveLook("22", "1", "911", "1021");
+  }
+
+  @Test
+  void devIsolatedReturnsLegacyDescription() {
+    LookCommandHandler devHandler =
+        new LookCommandHandler(
+            gameLogicClient,
+            lookTextRenderer,
+            sessionAuthenticationService,
+            gameLogicProperties,
+            new SimpleMeterRegistry(),
+            lookCacheService,
+            new DevIsolatedProperties(true));
+    String response = devHandler.describe("123");
+    assertEquals(LookCommandConstants.ROOM_DESCRIPTION, response);
+    Mockito.verifyNoInteractions(gameLogicClient, lookCacheService);
   }
 }

@@ -23,8 +23,13 @@ public class LookTextRenderer {
           .append(" \"")
           .append(entity.getDisplayName())
           .append("\"")
-          .append(entity.getRole().isEmpty() ? "" : " (" + entity.getRole() + ")")
-          .append("\n");
+          .append(entity.getRole().isEmpty() ? "" : " (" + entity.getRole() + ")");
+      if (!entity.getStateFlagsList().isEmpty()) {
+        out.append(" [")
+            .append(String.join(",", entity.getStateFlagsList()))
+            .append("]");
+      }
+      out.append("\n");
     }
     return out.toString().trim();
   }

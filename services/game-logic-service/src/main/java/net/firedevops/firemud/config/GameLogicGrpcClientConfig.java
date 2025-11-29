@@ -10,6 +10,7 @@ import java.io.File;
 import java.nio.file.Path;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.WorldManagementServiceBlockingStub;
@@ -26,11 +27,13 @@ public class GameLogicGrpcClientConfig {
 
   private ManagedChannel worldChannel;
   private ManagedChannel entityChannel;
+  private ManagedChannel socialChannel;
 
   @PostConstruct
   void init() throws Exception {
     worldChannel = buildChannel(endpoints.getWorldManagementService(), 6565);
     entityChannel = buildChannel(endpoints.getEntityManagementService(), 6565);
+    socialChannel = buildChannel(endpoints.getSocialGroupsService(), 6565);
   }
 
   @PreDestroy
@@ -40,6 +43,9 @@ public class GameLogicGrpcClientConfig {
     }
     if (entityChannel != null) {
       entityChannel.shutdownNow();
+    }
+    if (socialChannel != null) {
+      socialChannel.shutdownNow();
     }
   }
 
@@ -53,6 +59,12 @@ public class GameLogicGrpcClientConfig {
   @Lazy(false)
   public EntityManagementServiceBlockingStub entityManagementStub() {
     return EntityManagementServiceGrpc.newBlockingStub(entityChannel).withCompression("gzip");
+  }
+
+  @Bean
+  @Lazy(false)
+  public SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialGroupsStub() {
+    return SocialGroupsServiceGrpc.newBlockingStub(socialChannel).withCompression("gzip");
   }
 
   private ManagedChannel buildChannel(String target, int defaultPort) throws Exception {
