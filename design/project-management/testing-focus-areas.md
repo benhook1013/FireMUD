@@ -38,6 +38,7 @@ This document lists recurring problem domains and testing focus areas for FireMU
 - Refer to `design/project-management/look-cross-service-tests.md` for the detailed test plan, transcripts, and Gradle task once the automation is implemented.
 - Look-instrumentation test notes: the plan now includes stub wiring and observability assertions described in `design/project-management/look-cross-service-tests.md` so metrics/log captures stay aligned with the documented transcripts.
 - Look instrumentation: the new `design/project-management/look-instrumentation.md` summarizes the metrics/logs to monitor during the `LOOK` path.
+- SAY command traces: the new WebSocket/Telnet cross-service flows source the canonical `OK SAY` transcript, exercise the Social/Groups stub, and emit the `gamesession.command.say.*` metrics documented in `design/project-management/vertical-slices/04-task-list-chat-and-social-vertical-slice.md`. Run them through `./gradlew crossServiceTest` (which now aggregates Game Session and TCP proxy cross-service suites) so both transports stay aligned.
 - Version skew: older services can interact safely with newer ones during incremental rollouts.
 
 ## 5. Command Parsing, Input Validation, and Game Logic
