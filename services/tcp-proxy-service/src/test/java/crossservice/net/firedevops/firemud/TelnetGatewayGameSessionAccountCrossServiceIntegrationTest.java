@@ -36,8 +36,11 @@ import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.service.GatewayRoute;
 import net.firedevops.firemud.service.GatewayRouteService;
 import net.firedevops.firemud.service.GameInstanceService;
+import net.firedevops.firemud.test.ChatTestFixtures;
 import net.firedevops.firemud.test.LookTestFixtures;
+import net.firedevops.firemud.test.stubs.ChatEntityManagementStubServer;
 import net.firedevops.firemud.test.stubs.EntityManagementStubServer;
+import net.firedevops.firemud.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
@@ -106,7 +109,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private static AccountServiceStub ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
+  private static ChatEntityManagementStubServer CHAT_ENTITY_STUB;
   private static EntityManagementStubServer ENTITY_STUB;
+  private static SocialGroupsStubServer SOCIAL_STUB;
   private static GameLogicHolder GAME_LOGIC;
   private static GameSessionHolder GAME_SESSION;
   private static GatewayHolder GATEWAY;
@@ -146,9 +151,17 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       WORLD_STUB.close();
       WORLD_STUB = null;
     }
+    if (CHAT_ENTITY_STUB != null) {
+      CHAT_ENTITY_STUB.close();
+      CHAT_ENTITY_STUB = null;
+    }
     if (ENTITY_STUB != null) {
       ENTITY_STUB.close();
       ENTITY_STUB = null;
+    }
+    if (SOCIAL_STUB != null) {
+      SOCIAL_STUB.close();
+      SOCIAL_STUB = null;
     }
   }
 
@@ -196,6 +209,37 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                     && request.getTenantId().equals(String.valueOf(TENANT_ID)));
   }
 
+  @Test
+  void telnetSayReturnsCanonicalTranscriptAndSocialCall() throws Exception {
+    ensureTestServicesStarted();
+    String telnetSayResponse;
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1), true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      writer.println("SESSION " + GAME_SESSION.sessionId() + " " + TENANT_ID);
+      writer.println("LOGIN demo@example.com swordfish");
+      reader.readLine(); // consume login response
+      writer.println("SAY Hello travelers");
+      telnetSayResponse = readMultiLineResponse(reader);
+    }
+
+    assertThat(telnetSayResponse.trim()).isEqualTo(ChatTestFixtures.canonicalSayText());
+    assertThat(SOCIAL_STUB.lastRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getContent()).isEqualTo("Hello travelers");
+              assertThat(request.getChatType())
+                  .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+            });
+
+    assertMetricEventually("gamesession_command_say_invocations_total{tenantId=\"1\"}", 1.0);
+  }
+
   private static synchronized void ensureTestServicesStarted() {
     if (ACCOUNT_STUB == null) {
       try {
@@ -211,6 +255,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         throw new IllegalStateException("Failed to start world stub", e);
       }
     }
+    if (CHAT_ENTITY_STUB == null) {
+      try {
+        CHAT_ENTITY_STUB = startChatEntityStub();
+      } catch (IOException e) {
+        throw new IllegalStateException("Failed to start chat entity stub", e);
+      }
+    }
     if (ENTITY_STUB == null) {
       try {
         ENTITY_STUB = startEntityStub();
@@ -218,8 +269,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         throw new IllegalStateException("Failed to start entity stub", e);
       }
     }
+    if (SOCIAL_STUB == null) {
+      try {
+        SOCIAL_STUB = startSocialStub();
+      } catch (IOException e) {
+        throw new IllegalStateException("Failed to start social stub", e);
+      }
+    }
     if (GAME_LOGIC == null) {
-      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port());
+      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port(), SOCIAL_STUB.port());
     }
     if (GAME_SESSION == null) {
       GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
@@ -242,7 +300,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
   }
 
-  private static GameLogicHolder startGameLogic(int worldPort, int entityPort) {
+  private static ChatEntityManagementStubServer startChatEntityStub() throws IOException {
+    return new ChatEntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
+  }
+
+  private static SocialGroupsStubServer startSocialStub() throws IOException {
+    return new SocialGroupsStubServer(TestSocketUtils.findAvailableTcpPort());
+  }
+
+  private static GameLogicHolder startGameLogic(int worldPort, int entityPort, int socialPort) {
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("server.port", "0");
@@ -251,6 +317,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("firemud.grpc.plaintext", "true");
     props.put("firemud.services.worldManagementService", "localhost:" + worldPort);
     props.put("firemud.services.entityManagementService", "localhost:" + entityPort);
+    props.put("firemud.services.socialGroupsService", "localhost:" + socialPort);
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(GameLogicServiceApplication.class).properties(props).run();
     return new GameLogicHolder(context, grpcPort);

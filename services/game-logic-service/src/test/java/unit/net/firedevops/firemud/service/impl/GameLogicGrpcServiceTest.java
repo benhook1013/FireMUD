@@ -17,6 +17,7 @@ import net.firedevops.firemud.logic.script.NoOpScriptingHook;
 import net.firedevops.firemud.logic.service.CommandServiceImpl;
 import net.firedevops.firemud.service.LookAggregationService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.SayAggregationService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -28,9 +29,14 @@ class GameLogicGrpcServiceTest {
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
     LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
     GameLogicGrpcService service =
         new GameLogicGrpcService(
-            pingService, commandService, lookAggregationService, new SimpleMeterRegistry());
+            pingService,
+            commandService,
+            lookAggregationService,
+            sayAggregationService,
+            new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> holder = new AtomicReference<>();
     service.ping(
@@ -60,9 +66,14 @@ class GameLogicGrpcServiceTest {
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
     LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
     GameLogicGrpcService service =
         new GameLogicGrpcService(
-            pingService, commandService, lookAggregationService, new SimpleMeterRegistry());
+            pingService,
+            commandService,
+            lookAggregationService,
+            sayAggregationService,
+            new SimpleMeterRegistry());
 
     AtomicReference<ExecuteCommandResponse> holder = new AtomicReference<>();
     service.executeCommand(
