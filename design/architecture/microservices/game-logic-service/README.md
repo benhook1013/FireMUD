@@ -58,7 +58,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 ### LOOK aggregation & formatting
 
-- `ResolveLook` orchestrates World Management and Entity Management snapshots to build a deterministic `LookResult` that Game Session renders for clients.
+- `ResolveLook` orchestrates World Management and Entity Management: World provides room topology and ambient world state, while Entity provides the live entities and items (including room/ground inventory) associated with that room/instance, to build a deterministic `LookResult` that Game Session renders for clients.
 - A dedicated `LookResultRenderer` keeps the canonical textual output in sync with the documented protocol transcripts (room name/desc/exits/entities) so the service can log or inspect the text while keeping the structured DTO clean.
 - Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet/WebSocket clients.
 

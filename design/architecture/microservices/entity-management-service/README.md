@@ -2,13 +2,13 @@
 
 ## Overview
 
-Handles player characters, NPCs, items, and inventory. Provides CRUD operations for entities and exposes them to other services.
+Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as item entities associated to a room or instance by ID rather than being stored in the World Management Service.
 
 ### Responsibilities
 
 - Persist characters, NPCs, and items with optimistic locking
 - Provide CRUD and query APIs for other services
-- Manage inventories; location and instance data live in the World Management Service
+- Own and manage all inventories and item containment; character location and instance metadata live in the World Management Service
 - Coordinate deferred writes through Game Session Service
 
 ## Architecture / Design Notes
@@ -53,9 +53,9 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
-- Many-to-many tables define inventory and equipment relationships.
+- Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory modeled as items whose container or location references a room/instance identifier.
 - Character location and instance membership are stored by the World Management
-  Service rather than this service.
+  Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
 
 ### gRPC APIs
@@ -68,7 +68,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 
 ### LOOK entity listing contract
 
-`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters and NPCs occupy a room. The response includes:
+`ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The response includes:
 
 - `roomId`, `tenantId`, and a `snapshotId` so consumers can cache or invalidate entity lists deterministically.
 - `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
@@ -76,7 +76,7 @@ Handles player characters, NPCs, items, and inventory. Provides CRUD operations 
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
 - `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output (for example, “Someone just entered from the east.”).
 
-Room-entity data is currently seeded through the `firemud.look.rooms` configuration (per-tenant/room entries in `services/entity-management-service/src/main/resources/application.yml`). Each room definition lists the `entities` with their `entity-id`, `entity-type`, friendly display name, `state-flags`, `vision-priority`, and visibility hints so the recorded LOOK transcripts stay deterministic during this vertical slice. Once the shared location cache is reliable, the configuration can be replaced with live reads from `character_location`/`npc_location` tables.
+Room-entity data is currently seeded through the `firemud.look.rooms` configuration (per-tenant/room entries in `services/entity-management-service/src/main/resources/application.yml`). Each room definition lists the `entities` with their `entity-id`, `entity-type`, friendly display name, `state-flags`, `vision-priority`, and visibility hints so the recorded LOOK transcripts stay deterministic during this vertical slice. Once the shared location cache is reliable, the configuration can be replaced with live reads from `character_location`/`npc_location` tables while item instances and room/ground inventory continue to live in this service.
 
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 
