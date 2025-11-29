@@ -87,7 +87,7 @@ Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from t
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, emit metrics to Prometheus, and send structured logs to Elasticsearch.
 
-All datastores are shared across games, but each table includes a `tenantId` column and Redis keys use a matching prefix. This isolates data per game while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
+All datastores are shared across games. Tenant-scoped tables include a `tenantId` column (or reference a tenant-keyed parent), and Redis keys use a matching prefix. This isolates per-game data while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 
 All services run as Docker containers inside a shared Kubernetes cluster. They reuse a [common shared library](./system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and metrics helpers. See [Deployment Environments](./infrastructure/deployment-environments.md) for how the cluster is configured.
 
