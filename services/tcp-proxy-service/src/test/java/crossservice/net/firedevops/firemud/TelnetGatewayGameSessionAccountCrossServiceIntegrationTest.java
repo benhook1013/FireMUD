@@ -13,6 +13,8 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
@@ -233,8 +235,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         .hasValueSatisfying(
             request -> {
               assertThat(request.getContent()).isEqualTo("Hello travelers");
-              assertThat(request.getChatType())
-                  .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+      assertThat(request.getType())
+          .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
             });
 
     assertMetricEventually("gamesession_command_say_invocations_total{tenantId=\"1\"}", 1.0);
@@ -411,6 +413,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       }
     }
     return builder.toString();
+  }
+
+  private void assertMetricEventually(String metric, double expectedValue) throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    URI uri = URI.create("http://localhost:" + GAME_SESSION.port() + "/actuator/prometheus");
+    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
+    while (System.currentTimeMillis() < deadline) {
+      HttpRequest request = HttpRequest.newBuilder(uri).GET().build();
+      HttpResponse<String> response =
+          client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      if (response.body().contains(metric + " " + expectedValue)) {
+        return;
+      }
+      Thread.sleep(100);
+    }
+    throw new AssertionError("Metric " + metric + " did not reach " + expectedValue);
   }
 
   private List<String> runGatewayWebSocketCommands(String loginCommand, String lookCommand)

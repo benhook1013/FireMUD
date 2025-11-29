@@ -93,7 +93,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private void sendCachedLook(WebSocketSession session, String text) {
     try {
-      session.sendMessage(new TextMessage(text + "\n\n"));
+      session.sendMessage(new TextMessage(text));
     } catch (IOException ex) {
       logger.warn("Failed to send cached LOOK text", ex);
     }

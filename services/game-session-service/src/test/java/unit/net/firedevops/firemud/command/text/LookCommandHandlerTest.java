@@ -88,22 +88,32 @@ class LookCommandHandlerTest {
   void cachesRenderedLook() {
     handler.describe("123");
     verify(lookCacheService)
-        .cache(eq(22L), eq(1L), eq("1021"), eq("OK LOOK text"));
+        .cache(
+            eq(22L),
+            eq(1L),
+            eq("1021"),
+            eq("OK LOOK text"),
+            eq("OK LOOK\nOK LOOK text\n\n"));
   }
 
   @Test
   void cachedLookProxy() {
     when(lookCacheService.get(22L, 1L))
-        .thenReturn(Optional.of(new LookCacheService.CachedLook("R-1021", "text", 0)));
-    assertThat(handler.cachedLook("22", "1")).contains("text");
+        .thenReturn(
+            Optional.of(
+                new LookCacheService.CachedLook("R-1021", "text", "OK LOOK\ntext\n\n", 0)));
+    assertThat(handler.cachedLook("22", "1")).contains("OK LOOK\ntext\n\n");
   }
 
   @Test
   void cachedLookReplaysThenFallbacksToFreshLookWhenMissing() {
     when(lookCacheService.get(22L, 1L))
-        .thenReturn(Optional.of(new LookCacheService.CachedLook("R-1021", "cached text", 0)))
+        .thenReturn(
+            Optional.of(
+                new LookCacheService.CachedLook(
+                    "R-1021", "cached text", "OK LOOK\ncached text\n\n", 0)))
         .thenReturn(Optional.empty());
-    assertThat(handler.cachedLook("22", "1")).contains("cached text");
+    assertThat(handler.cachedLook("22", "1")).contains("OK LOOK\ncached text\n\n");
     Mockito.verifyNoInteractions(gameLogicClient);
     Mockito.clearInvocations(gameLogicClient);
     when(lookTextRenderer.render(lookResult)).thenReturn("fresh text");

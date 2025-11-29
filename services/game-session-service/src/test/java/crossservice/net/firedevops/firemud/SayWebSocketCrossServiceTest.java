@@ -110,7 +110,7 @@ class SayWebSocketCrossServiceTest {
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(request -> {
           assertThat(request.getContent()).isEqualTo("Hello travelers");
-          assertThat(request.getChatType()).isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+          assertThat(request.getType()).isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
         });
 
     assertMetricEventually(

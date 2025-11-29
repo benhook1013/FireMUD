@@ -19,8 +19,15 @@ public class LookCacheTestConfiguration {
     private final Map<String, CachedLook> cache = new ConcurrentHashMap<>();
 
     @Override
-    public void cache(long tenantId, long sessionId, String roomId, String renderedText) {
-      cache.put(key(tenantId, sessionId), new CachedLook(roomId, renderedText, System.currentTimeMillis()));
+    public void cache(
+        long tenantId,
+        long sessionId,
+        String roomId,
+        String renderedText,
+        String protocolText) {
+      cache.put(
+          key(tenantId, sessionId),
+          new CachedLook(roomId, renderedText, protocolText, System.currentTimeMillis()));
     }
 
     @Override

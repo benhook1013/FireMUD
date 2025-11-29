@@ -97,7 +97,11 @@ public final class LookCommandHandler {
   private void cacheLook(SessionContext context, LookResult lookResult, String rendered) {
     try {
       lookCacheService.cache(
-          context.tenantId(), context.sessionId(), lookResult.getRoomId(), rendered);
+          context.tenantId(),
+          context.sessionId(),
+          lookResult.getRoomId(),
+          rendered,
+          buildProtocolResponse(rendered));
     } catch (RuntimeException ex) {
       LOG.warn("Failed to cache LOOK for session {}", context.sessionId(), ex);
     }
@@ -127,6 +131,10 @@ public final class LookCommandHandler {
     if (maybeContext.isEmpty() || maybeContext.get().tenantId() != tenantId) {
       return Optional.empty();
     }
-    return lookCacheService.get(tenantId, sessionId).map(LookCacheService.CachedLook::renderedText);
+    return lookCacheService.get(tenantId, sessionId).map(LookCacheService.CachedLook::protocolText);
+  }
+
+  private String buildProtocolResponse(String rendered) {
+    return "OK LOOK\n" + rendered + "\n\n";
   }
 }

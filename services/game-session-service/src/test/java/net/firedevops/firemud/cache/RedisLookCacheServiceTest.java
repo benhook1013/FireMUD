@@ -31,7 +31,8 @@ class RedisLookCacheServiceTest {
 
   @Test
   void cacheWritesSerializedPayload() {
-    cacheService.cache(22L, 1L, "R-1021", "OK LOOK text");
+    cacheService.cache(
+        22L, 1L, "R-1021", "OK LOOK text", "OK LOOK\nOK LOOK text\n\n");
 
     ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
@@ -43,11 +44,13 @@ class RedisLookCacheServiceTest {
   @Test
   void getReturnsCachedLook() {
     when(valueOperations.get(any(String.class)))
-        .thenReturn("{\"roomId\":\"R-1021\",\"renderedText\":\"OK LOOK\",\"cachedAtMs\":123}");
+        .thenReturn(
+            "{\"roomId\":\"R-1021\",\"renderedText\":\"OK LOOK\",\"protocolText\":\"OK LOOK\\nOK LOOK\\n\\n\",\"cachedAtMs\":123}");
     Optional<LookCacheService.CachedLook> result = cacheService.get(22L, 1L);
     assertThat(result).isPresent();
     assertThat(result.get().roomId()).isEqualTo("R-1021");
     assertThat(result.get().renderedText()).isEqualTo("OK LOOK");
+    assertThat(result.get().protocolText()).isEqualTo("OK LOOK\nOK LOOK\n\n");
   }
 
   @Test

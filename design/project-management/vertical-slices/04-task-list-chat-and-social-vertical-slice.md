@@ -79,6 +79,12 @@ These transcripts demonstrate how both transports serialize the canonical `OK SA
 - [x] Update logging/monitoring docs (look instrumentation, logging & admin sections) to mention the new `gamesession.command.say.*` metrics.
 - [x] Add a short "Implementation status" note to the Game Session/Game Logic/Social design docs so folks know what of this slice is live, stubbed, or deferred (e.g., channel filters, listening area heuristics).
 
+## 6. Final QA Checklist
+
+- Run the canonical Telnet and WebSocket flows manually (`SESSION`, `LOGIN`, `LOOK`, `SAY`) and verify the transcripts match the documented samples plus the `gamesession.command.say.*` counters increment.
+- Inspect `/actuator/prometheus` during regression runs to confirm both `gamesession.command.look.*` and `gamesession.command.say.*` metrics move as expected.
+- Mention the new SAY regression suites in the PR/README so reviewers know to run `./gradlew crossServiceTest` before merging.
+
 ---
 
 Note: After completing tasks in this checklist, reconcile any overlapping items in the existing per-service task lists and design docs so the architecture docs reflect the new chat slice instead of duplicating details.

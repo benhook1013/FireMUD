@@ -98,6 +98,7 @@ class SessionResumptionFlowTest {
             instanceRepository,
             sessionContextService,
             accountClient,
+            commandService,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);

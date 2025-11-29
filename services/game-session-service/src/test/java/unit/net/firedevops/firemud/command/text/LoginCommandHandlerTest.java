@@ -31,6 +31,7 @@ import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
+import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +48,7 @@ class LoginCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final CommandService commandService = Mockito.mock(CommandService.class);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
@@ -64,11 +66,14 @@ class LoginCommandHandlerTest {
                 .setAccountId("77")
                 .build());
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
+    when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
+        .thenReturn(CommandEnqueueResult.success());
     handler =
         new LoginCommandHandler(
             gameInstanceRepository,
             sessionContextService,
             accountClient,
+            commandService,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
@@ -87,6 +92,7 @@ class LoginCommandHandlerTest {
     assertEquals("Logged in as demo@example.com", result.responseText());
     verify(accountClient)
         .authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"), eq(""));
+    verify(commandService).enqueue("1", command.rawLine(), false);
   }
 
   @Test
@@ -100,6 +106,7 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
     verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
@@ -112,6 +119,7 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("SESSION_NOT_FOUND", result.commandResult().errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test

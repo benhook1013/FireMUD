@@ -13,6 +13,7 @@ import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
+import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -32,6 +33,7 @@ public final class LoginCommandHandler {
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
+  private final CommandService commandService;
   private final DevIsolatedProperties devIsolatedProperties;
   private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
   private final MeterRegistry meterRegistry;
@@ -43,6 +45,7 @@ public final class LoginCommandHandler {
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService,
       AccountClient accountClient,
+      CommandService commandService,
       DevIsolatedProperties devIsolatedProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
@@ -51,6 +54,7 @@ public final class LoginCommandHandler {
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
+    this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.devIsolatedProperties =
         Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
     this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
@@ -115,7 +119,11 @@ public final class LoginCommandHandler {
     Optional<LoginResult> loginResult =
         buildLoginResult(instance, authenticatedAccountId, authResponse.getAuthToken());
 
-    CommandEnqueueResult enqueueResult = CommandEnqueueResult.success();
+    CommandEnqueueResult enqueueResult =
+        commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
+    if (!enqueueResult.accepted()) {
+      return new LoginCommandHandlingResult(enqueueResult, null);
+    }
     loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
     String responseText = "Logged in as " + args.get(0);
     return new LoginCommandHandlingResult(enqueueResult, responseText);

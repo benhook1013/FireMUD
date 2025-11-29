@@ -25,14 +25,17 @@ public class RedisLookCacheService implements LookCacheService {
   private static final class CachedPayload {
     public String roomId;
     public String renderedText;
+    public String protocolText;
     public long cachedAtMs;
   }
 
   @Override
-  public void cache(long tenantId, long sessionId, String roomId, String renderedText) {
+  public void cache(
+      long tenantId, long sessionId, String roomId, String renderedText, String protocolText) {
     CachedPayload payload = new CachedPayload();
     payload.roomId = roomId;
     payload.renderedText = renderedText;
+    payload.protocolText = protocolText;
     payload.cachedAtMs = System.currentTimeMillis();
     try {
       redisTemplate.opsForValue().set(
@@ -50,7 +53,9 @@ public class RedisLookCacheService implements LookCacheService {
     }
     try {
       CachedPayload cached = objectMapper.readValue(payload, CachedPayload.class);
-      return Optional.of(new CachedLook(cached.roomId, cached.renderedText, cached.cachedAtMs));
+      return Optional.of(
+          new CachedLook(
+              cached.roomId, cached.renderedText, cached.protocolText, cached.cachedAtMs));
     } catch (JsonProcessingException e) {
       redisTemplate.delete(key(tenantId, sessionId));
       return Optional.empty();

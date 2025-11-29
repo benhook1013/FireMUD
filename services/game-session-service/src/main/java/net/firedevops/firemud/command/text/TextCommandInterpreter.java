@@ -95,12 +95,41 @@ public class TextCommandInterpreter {
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     String response = null;
     if (enqueueResult.accepted() && command.type() == TextCommandType.LOOK) {
-      response = lookHandler.describe(sessionId);
+      String lookText = lookHandler.describe(sessionId);
+      if (isLookError(lookText)) {
+        enqueueResult = failureForLookError(lookText);
+      } else {
+        response = lookText;
+      }
     }
     return new TextCommandInterpretationResult(enqueueResult, response);
   }
 
   private static boolean requiresGameplayAuthentication(TextCommandType type) {
     return type == TextCommandType.LOOK || type == TextCommandType.SAY;
+  }
+
+  private boolean isLookError(String text) {
+    return text != null && text.startsWith("ERROR ");
+  }
+
+  private CommandEnqueueResult failureForLookError(String errorText) {
+    String payload = errorText.substring("ERROR ".length());
+    String code;
+    String message = "";
+    int firstSpace = payload.indexOf(' ');
+    if (firstSpace >= 0) {
+      code = payload.substring(0, firstSpace);
+      message = payload.substring(firstSpace + 1).trim();
+    } else {
+      code = payload;
+    }
+    if (code.isBlank()) {
+      code = "LOOK_UNAVAILABLE";
+    }
+    if (message.isBlank()) {
+      message = "Look unavailable";
+    }
+    return CommandEnqueueResult.failure(code, message);
   }
 }

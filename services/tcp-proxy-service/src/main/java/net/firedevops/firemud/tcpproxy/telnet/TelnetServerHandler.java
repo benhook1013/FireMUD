@@ -601,10 +601,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       long session = Long.parseLong(sessionId);
       lookCacheService
           .get(tenant, session)
-          .map(LookCacheService.CachedLook::renderedText)
+          .map(LookCacheService.CachedLook::protocolText)
           .ifPresent(
               text -> {
-                context.writeAndFlush(text + "\n\n");
+                context.writeAndFlush(text);
                 cachedLookDelivered = true;
               });
     } catch (NumberFormatException ex) {

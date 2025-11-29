@@ -2,6 +2,7 @@ package unit.net.firedevops.firemud.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -84,11 +85,14 @@ class TextCommandInterpreterTest {
                 .setAccountId("123")
                 .build());
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
+    when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
+        .thenReturn(CommandEnqueueResult.success());
     loginHandler =
         new LoginCommandHandler(
             gameInstanceRepository,
             sessionContextService,
             accountClient,
+            commandService,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
@@ -115,6 +119,25 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     verify(commandService).enqueue("123", "LOOK", false);
+  }
+
+  @Test
+  void lookErrorReturnsFailure() {
+    LookCommandHandler mockLookHandler = Mockito.mock(LookCommandHandler.class);
+    TextCommandInterpreter interpreterWithMockLook =
+        new TextCommandInterpreter(
+            commandService, mockLookHandler, loginHandler, sessionAuthenticationService, sayHandler);
+    when(commandService.enqueue("123", "LOOK", false)).thenReturn(CommandEnqueueResult.success());
+    when(mockLookHandler.describe("123"))
+        .thenReturn("ERROR ROOM_NOT_FOUND mysterious room");
+
+    TextCommandInterpretationResult interpretation =
+        interpreterWithMockLook.interpret("123", "LOOK", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("ROOM_NOT_FOUND", interpretation.commandResult().errorCode());
+    assertEquals("mysterious room", interpretation.commandResult().errorMessage());
+    assertNull(interpretation.responseText());
   }
 
   @Test
@@ -185,7 +208,7 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals("Logged in as demo", interpretation.responseText());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+    verify(commandService).enqueue("123", "LOGIN demo demo", false);
   }
 
   @Test
