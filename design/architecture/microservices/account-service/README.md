@@ -222,7 +222,7 @@ The Game Session Service translates these codes into the text-protocol `ERROR <C
 
 ## REST & gRPC Endpoints
 
-#### REST
+### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /accounts` – create a new account and profile.

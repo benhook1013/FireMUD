@@ -19,7 +19,7 @@ LOOK
 
 Expected output (two newline-separated responses):
 
-```
+```text
 OK LOGIN Logged in as demo@example.com
 
 OK LOOK
@@ -42,7 +42,7 @@ LOOK
 
 Telnet should display the redacted login acknowledgement followed by the same `LOOK` payload:
 
-```
+```text
 OK LOGIN Logged in as demo@example.com
 
 OK LOOK
