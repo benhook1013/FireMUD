@@ -2,7 +2,7 @@
 
 ## Overview
 
-Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as item entities associated to a room or instance by ID rather than being stored in the World Management Service.
+Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by room or instance ID rather than being stored in the World Management Service.
 
 ### Responsibilities
 
@@ -53,7 +53,7 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
-- Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory modeled as items whose container or location references a room/instance identifier.
+- Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory. Room/ground inventory is modeled as items whose container references a synthetic room-ground container entity keyed by room/instance identifier so limits such as max items on the ground or special container rules can be enforced consistently.
 - Character location and instance membership are stored by the World Management
   Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
