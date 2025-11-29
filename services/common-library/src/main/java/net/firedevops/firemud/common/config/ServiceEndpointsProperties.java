@@ -14,4 +14,5 @@ public class ServiceEndpointsProperties {
   private String entityManagementService;
   private String loggingAdminService;
   private String automationScriptingService;
+  private String socialGroupsService;
 }

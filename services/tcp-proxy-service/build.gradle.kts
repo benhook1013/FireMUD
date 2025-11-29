@@ -17,7 +17,9 @@ dependencies {
     implementation(libs.spring.boot.starter.actuator)
     implementation("io.netty:netty-all:4.2.7.Final")
     implementation(libs.spring.boot.starter.websocket)
+    implementation(libs.spring.boot.starter.data.redis)
     implementation(project(":common-library"))
+    implementation(project(":game-session-service"))
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.micrometer.core)
     implementation(libs.micrometer.registry.prometheus)
@@ -35,6 +37,8 @@ dependencies {
     testImplementation(libs.spring.boot.starter.data.jpa)
     testImplementation(libs.spring.boot.starter.jdbc)
     testImplementation(project(":game-session-service"))
+    testImplementation(testFixtures(project(":game-session-service")))
+    testImplementation(project(":game-logic-service"))
     testImplementation(project(":spring-cloud-gateway"))
     testRuntimeOnly(libs.postgresql)
 }
@@ -90,4 +94,11 @@ tasks.withType<BootRun>().configureEach {
 
 tasks.withType<Test>().configureEach {
     dependsOn(generateTcpProxyDevCerts)
+}
+
+tasks.register<Test>("crossServiceTest") {
+    description = "Runs TELNET/WebSocket cross-service LOOK regression suites."
+    useJUnitPlatform()
+    include("**/crossservice/**")
+    mustRunAfter(tasks.test)
 }

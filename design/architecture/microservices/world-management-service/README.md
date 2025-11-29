@@ -85,7 +85,43 @@ specified region.
 ### gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
+- `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room id, names, descriptions, exit metadata, ambient state) scoped by `tenantId` and `roomId`.
 - `UpdateWorldState` – applies pending world updates and notifies other services.
+
+### LOOK snapshot contract
+
+`GetRoomSnapshot` is the canonical endpoint feeding Game Logic’s `ResolveLook`. It should return:
+
+- `roomId`, `tenantId`, and a stable `roomName` (plus optional slug) so the caller can cache or deduplicate snapshots.
+- `shortDescription` and `longDescription` text; descriptions longer than the `LOOK_MAX_DESCRIPTION_CHARS` config should be truncated with an ellipsis so clients don’t wrap aggressively.
+- `exits`, each annotated with `label` (e.g., `NORTH`), `targetRoomId`, and a human-friendly direction string (e.g., “arched passage toward the cavern mouth”). Game Logic renders this list into the `LOOK` exits line.
+- `ambientState` fields such as `lighting`, `weather`, or `hazardLevel` to enrich the narrative without extra queries.
+- Optional `roomFlags` (for example `isQuestArea` or `isInstanceEntry`) so `LOOK` can warn players before they step into special zones.
+
+Game Logic caches snapshots for the duration of a tick but refreshes them after movement. World Management publishes change events when rooms mutate so downstream caches remain consistent and `LOOK` clients never read stale text.
+
+The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this lifecycle (Candle-lit Antechamber and Crafting Hall of Ember) so integration tests and the LOOK transcripts stay stable. Developers can locate and extend that migration when the sample world needs more exits or environmental trivia.
+
+### Implementation status (LOOK slice)
+
+- **Live:** `GetRoomSnapshot` returns the room metadata, descriptions, and exit labels that Game Logic needs to render the canonical `LOOK` transcript, and the telemetry for this pipeline is documented in `../../project-management/look-instrumentation.md`.
+- **Stubbed:** The current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
+- **Deferred:** Future work will enrich snapshots with ambient metadata (weather, hazard warnings) and push updates through `/ws/game/**` so Gateway/TCP Proxy clients can react to world changes as soon as they happen.
+
+### `/ws/game/**` LOOK contract and local overrides
+
+- Telnet and WebSocket clients both route through the `/ws/game/**` WebSocket predicate on the Gateway and TCP Proxy stacks, so `LOOK` commands hit the same `LookCommandHandler` regardless of transport.
+- Each authenticated success response follows the canonical contract:
+  - The first line is `OK LOOK`.
+  - `Room: <name> (ID: <roomId>)`
+  - `Short: <short description>`
+  - `Long: <long description>`
+  - `Exits: <comma-separated direction labels and descriptions>`
+  - `Entities:` followed by a bulleted list of visible NPCs/players/items.
+  - A blank line separates the response from subsequent commands so the transport remains stateless.
+- Game Session aggregates the `LookResult` from Game Logic with cached Redis metadata (session context, last room snapshot) and renders the textual transcript via `LookResultRenderer`, emitting the `gamesession.command.look.*` meters referenced in `../../project-management/look-instrumentation.md` before replying to `/ws/game/**` clients or caching the payload for reconnection.
+- Error responses emit `ERROR <CODE> <message>` in the same stream, covering `ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`, `LOOK_UNAVAILABLE`, and `NOT_AUTHENTICATED`.
+- Override the World Management endpoint locally via the `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` environment variable (some developer helpers refer to this value as `WORLD_SERVICE_ENDPOINT`) when running the Gateway or Game Session stack against custom world servers; the same override is wired into the `look` cross-service tests so the sample world and entity fixtures stay consistent.
 
 ## Dependencies
 

@@ -17,7 +17,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 ## Start Here
 
-For an overview of all architecture and design documents, see [Architecture Overview](design/architecture/README.md).
+For an overview of all architecture and design documents, see [Architecture Directory ReadMe](design/architecture/README.md).
 See [Repository Structure](design/architecture/repository-structure.md) for module layout.
 
 ---
@@ -104,6 +104,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
   To run the audit locally, install Chrome as described in
   [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility)
   before executing `npm run accessibility`.
+- **Cross-Service Regression**: Run `./gradlew crossServiceTest` (covers WebSocket/Telnet `LOOK` + `SAY`, including the new SAY regression suites) so reviewers can verify the canonical transcripts plus `gamesession.command.*` metrics before merging.
 
 ### Design Goals
 

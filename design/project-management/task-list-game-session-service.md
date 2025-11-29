@@ -2,7 +2,7 @@
 
 ## Session Lifecycle
 
-> **Note:** Login, session resumption, and reconnect details are now tracked in [design/project-management/task-list-login-and-session-vertical-slice.md](task-list-login-and-session-vertical-slice.md). Use that checklist for the active vertical slice instead of duplicating items here.
+> **Note:** Login, session resumption, and reconnect details are now tracked in [design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md](task-list-login-and-session-vertical-slice.md). Use that checklist for the active vertical slice instead of duplicating items here.
 
 - [x] Implement game instance lifecycle (start, stop, restart)
 - [x] Support multi-tenancy for hosted games
@@ -140,7 +140,7 @@ participate in CI.
 - [x] Seed minimal test data for local workflows
 - [x] Run `./gradlew check` in CI to execute all tests
 - [x] *(When workflows span services)* add cross-service integration tests
-- [ ] Revisit the dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) after the real Account/Redis/GameInstance wiring lands; they are currently disabled via `@Disabled` with a TODO pointing to `design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`.
+- [ ] Revisit the dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) after the real Account/Redis/GameInstance wiring lands; they are currently disabled via `@Disabled` with a TODO pointing to `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`.
 
 ---
 

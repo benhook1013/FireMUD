@@ -15,8 +15,11 @@ import net.firedevops.firemud.logic.command.SimpleCommandProcessor;
 import net.firedevops.firemud.logic.event.EventDispatcher;
 import net.firedevops.firemud.logic.script.NoOpScriptingHook;
 import net.firedevops.firemud.logic.service.CommandServiceImpl;
+import net.firedevops.firemud.service.LookAggregationService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.SayAggregationService;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class GameLogicGrpcServiceTest {
   @Test
@@ -25,8 +28,15 @@ class GameLogicGrpcServiceTest {
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
     GameLogicGrpcService service =
-        new GameLogicGrpcService(pingService, commandService, new SimpleMeterRegistry());
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            lookAggregationService,
+            sayAggregationService,
+            new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> holder = new AtomicReference<>();
     service.ping(
@@ -55,8 +65,15 @@ class GameLogicGrpcServiceTest {
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
     GameLogicGrpcService service =
-        new GameLogicGrpcService(pingService, commandService, new SimpleMeterRegistry());
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            lookAggregationService,
+            sayAggregationService,
+            new SimpleMeterRegistry());
 
     AtomicReference<ExecuteCommandResponse> holder = new AtomicReference<>();
     service.executeCommand(

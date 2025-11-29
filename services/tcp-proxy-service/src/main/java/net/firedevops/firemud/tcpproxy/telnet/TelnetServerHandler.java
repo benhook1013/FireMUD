@@ -26,6 +26,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import org.slf4j.Logger;
@@ -76,6 +79,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
+  private final LookCacheService lookCacheService;
+  private volatile boolean loginAcknowledged;
+  private volatile boolean cachedLookDelivered;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -99,7 +105,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         meterRegistry,
         TelnetServerHandler::createWebSocket,
         eventService,
-        bufferDepth);
+        bufferDepth,
+        null);
   }
 
   TelnetServerHandler(
@@ -114,6 +121,34 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       WebSocketConnector webSocketConnector,
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth) {
+    this(
+        gatewayWsUrl,
+        devIsolated,
+        onConnect,
+        onDisconnect,
+        connectionCounter,
+        discardedCommandCounter,
+        advertiseMcp,
+        meterRegistry,
+        webSocketConnector,
+        eventService,
+        bufferDepth,
+        null);
+  }
+
+  TelnetServerHandler(
+      String gatewayWsUrl,
+      boolean devIsolated,
+      Runnable onConnect,
+      Runnable onDisconnect,
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry,
+      WebSocketConnector webSocketConnector,
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth,
+      LookCacheService lookCacheService) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.devIsolated = devIsolated;
     this.onConnect = onConnect;
@@ -132,6 +167,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.reconnectCounter = meterRegistry.counter("tcpproxy.websocket.reconnects");
     this.reconnectCounter.increment(0.0);
     updateBufferDepthGauge();
+    this.lookCacheService = lookCacheService;
   }
 
   @FunctionalInterface
@@ -144,7 +180,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         Listener listener);
   }
 
-  private static CompletableFuture<WebSocket> createWebSocket(
+  static CompletableFuture<WebSocket> createWebSocket(
       String gatewayWsUrl, String clientIp, String sessionId, String tenantId, Listener listener) {
     HttpClient client = HttpClient.newHttpClient();
     var builder = client.newWebSocketBuilder();
@@ -169,6 +205,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     reconnecting = false;
     startHeartbeat();
     touchActivity();
+    loginAcknowledged = false;
+    cachedLookDelivered = false;
     if (reconnected) {
       List<String> drained = consumeBuffer();
       pushBufferedInputAsync(drained);
@@ -299,7 +337,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     logger.info(
         "Telnet client connected from {} targeting {}", clientIp != null ? clientIp : remote, gatewayWsUrl);
     if (devIsolated) {
-      logger.info("Dev-isolated mode enabled; skipping WebSocket bridge for {}", gatewayWsUrl);
+      logger.info(
+          "Dev-isolated mode enabled; bridging Telnet commands to {} (echo/dev stub)", gatewayWsUrl);
     }
   }
 
@@ -316,8 +355,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       logTelnetInput(sanitized);
       touchActivity();
 
+      // continue processing even in dev mode so the bridge forwards commands
       if (devIsolated) {
-        return;
+        logger.debug("Dev-isolated Telnet input still flows through the gateway bridge");
       }
 
       if (!sessionContext.isReady()) {
@@ -411,14 +451,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void ensureGatewayConnected() {
-    if (devIsolated || closing || webSocket != null || reconnecting) {
+    if (closing || webSocket != null || reconnecting) {
       return;
     }
     connectToGateway();
   }
 
   private void connectToGateway() {
-    if (closing || devIsolated) {
+    if (closing) {
       return;
     }
     reconnecting = true;
@@ -440,7 +480,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void handleGatewayDisconnect() {
-    if (closing || devIsolated) {
+    if (closing) {
       return;
     }
     cancelOutstandingSends();
@@ -539,21 +579,87 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void notifyConnectIfReady() {
-    if (connectEventRecorded || !sessionContext.isReady()) {
+    if (devIsolated || connectEventRecorded || !sessionContext.isReady()) {
       return;
     }
     eventService.recordConnectEvent(sessionContext.sessionId(), sessionContext.tenantId(), clientIp);
     connectEventRecorded = true;
   }
 
+  private void sendCachedLookIfPresent() {
+    if (lookCacheService == null
+        || context == null
+        || !sessionContext.isReady()
+        || !loginAcknowledged
+        || cachedLookDelivered) {
+      return;
+    }
+    String sessionId = sessionContext.sessionId();
+    String tenantId = sessionContext.tenantId();
+    try {
+      long tenant = Long.parseLong(tenantId);
+      long session = Long.parseLong(sessionId);
+      lookCacheService
+          .get(tenant, session)
+          .map(LookCacheService.CachedLook::protocolText)
+          .ifPresent(
+              text -> {
+                context.writeAndFlush(text);
+                cachedLookDelivered = true;
+              });
+    } catch (NumberFormatException ex) {
+      logger.debug(
+          "Invalid cached LOOK identifiers tenant={} session={}", tenantId, sessionId, ex);
+    } catch (RuntimeException ex) {
+      logger.debug("Unable to read cached LOOK for session {}", sessionId, ex);
+    }
+  }
+
   private void notifyDisconnectAsync() {
     if (devIsolated || !sessionContext.isReady()) {
       return;
     }
-    CompletableFuture.runAsync(
-        () ->
-            eventService.notifyDisconnect(
-                sessionContext.sessionId(), sessionContext.tenantId()));
+    CompletableFuture.supplyAsync(
+            () ->
+                eventService.notifyDisconnect(
+                    sessionContext.sessionId(), sessionContext.tenantId()))
+        .thenAccept(
+            response ->
+                handleDisconnectResponse(
+                    response, sessionContext.sessionId(), sessionContext.tenantId()))
+        .exceptionally(
+            failure -> {
+              logger.warn(
+                  "Failed to notify Game Session Service about disconnect for session {} tenant {}",
+                  sessionContext.sessionId(),
+                  sessionContext.tenantId(),
+                  failure);
+              meterRegistry.counter("tcpproxy.disconnect.notify.failure").increment();
+              return null;
+            });
+  }
+
+  private void handleDisconnectResponse(
+      NotifyDisconnectResponse response, String sessionId, String tenantId) {
+    if (response == null) {
+      logger.warn(
+          "Disconnect notification returned no response for session {} tenant {}",
+          sessionId,
+          tenantId);
+      meterRegistry.counter("tcpproxy.disconnect.notify.failure").increment();
+      return;
+    }
+    ErrorDetail detail = response.hasError() ? response.getError() : null;
+    if (detail == null || OK.equals(detail.getCode())) {
+      return;
+    }
+    logger.warn(
+        "Disconnect notification rejected for session {} tenant {}: {} {}",
+        sessionId,
+        tenantId,
+        detail.getCode(),
+        detail.getMessage());
+    meterRegistry.counter("tcpproxy.disconnect.notify.failure").increment();
   }
 
   private void logTelnetInput(String sanitized) {
@@ -617,6 +723,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         }
         if (context != null) {
           context.writeAndFlush(data.toString() + "\n");
+        }
+        String payload = data.toString().trim();
+        if (payload.startsWith("OK LOGIN")) {
+          loginAcknowledged = true;
+          sendCachedLookIfPresent();
         }
         webSocket.request(1);
         return null;

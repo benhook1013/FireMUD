@@ -89,7 +89,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               request.getOtp());
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
-              .setAuthToken(result.token())
+              .setAuthToken(result.authToken())
               .setAccountId(String.valueOf(result.accountId()))
               .build();
       responseObserver.onNext(response);

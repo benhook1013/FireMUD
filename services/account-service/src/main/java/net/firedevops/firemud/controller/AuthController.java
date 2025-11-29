@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.dto.AccountRefRequest;
+import net.firedevops.firemud.dto.AuthenticationResult;
 import net.firedevops.firemud.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.dto.LoginRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
@@ -29,10 +30,12 @@ public class AuthController {
   }
 
   @PostMapping("/login")
-  public ResponseEntity<ApiResponse<Void>> login(@Valid @RequestBody LoginRequest request) {
-    accountService.authenticate(
-        request.tenantId(), request.username(), request.password(), request.otp());
-    return ResponseEntity.ok(ApiResponse.success(null));
+  public ResponseEntity<ApiResponse<AuthenticationResult>> login(
+      @Valid @RequestBody LoginRequest request) {
+    AuthenticationResult auth =
+        accountService.authenticate(
+            request.tenantId(), request.username(), request.password(), request.otp());
+    return ResponseEntity.ok(ApiResponse.success(auth));
   }
 
   @PostMapping("/request-password-reset")

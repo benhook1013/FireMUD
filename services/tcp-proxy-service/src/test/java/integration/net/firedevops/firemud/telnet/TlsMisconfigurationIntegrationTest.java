@@ -4,15 +4,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 
 class TlsMisconfigurationIntegrationTest {
 
@@ -50,6 +51,11 @@ class TlsMisconfigurationIntegrationTest {
     }
 
     @Bean
+    LookCacheService lookCacheService() {
+      return Mockito.mock(LookCacheService.class);
+    }
+
+    @Bean
     TelnetServer telnetServer(
         @Value("${TCP_PROXY_PORT:2323}") int port,
         @Value("${GATEWAY_WS_URL:ws://localhost/ws}") String gatewayWsUrl,
@@ -59,7 +65,8 @@ class TlsMisconfigurationIntegrationTest {
         @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
         @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
         MeterRegistry meterRegistry,
-        TcpProxyEventService tcpProxyEventService) {
+        TcpProxyEventService tcpProxyEventService,
+        LookCacheService lookCacheService) {
       return new TelnetServer(
           port,
           gatewayWsUrl,
@@ -69,7 +76,8 @@ class TlsMisconfigurationIntegrationTest {
           keyPath,
           advertiseMcp,
           meterRegistry,
-          tcpProxyEventService);
+          tcpProxyEventService,
+          lookCacheService);
     }
   }
 }

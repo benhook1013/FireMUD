@@ -10,14 +10,20 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.dto.RoomDto;
+import net.firedevops.firemud.dto.RoomSnapshotDto;
+import net.firedevops.firemud.dto.RoomSnapshotDto.RoomExitSnapshotDto;
 import net.firedevops.firemud.mapper.RoomMapper;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.RoomService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomResponse;
+import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
+import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
+import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -94,6 +100,35 @@ public class WorldManagementGrpcService
   }
 
   @Override
+  @Timed(value = "worldGrpc.getRoomSnapshot")
+  public void getRoomSnapshot(
+      GetRoomSnapshotRequest request, StreamObserver<GetRoomSnapshotResponse> responseObserver) {
+    try {
+      Long roomId = Long.valueOf(request.getRoomId());
+      Long tenantId = Long.valueOf(request.getTenantId());
+      RoomSnapshotDto snapshot = roomService.getRoomSnapshot(tenantId, roomId);
+      GetRoomSnapshotResponse response =
+          GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      GetRoomSnapshotResponse response =
+          GetRoomSnapshotResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", "invalid id"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetRoomSnapshotResponse response =
+          GetRoomSnapshotResponse.newBuilder()
+              .setError(error("NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "worldGrpc.updateState")
   public void updateWorldState(
       UpdateWorldStateRequest request, StreamObserver<UpdateWorldStateResponse> responseObserver) {
@@ -115,6 +150,38 @@ public class WorldManagementGrpcService
       responseObserver.onError(
           Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
     }
+  }
+
+  private RoomSnapshot toProto(RoomSnapshotDto snapshot) {
+    RoomSnapshot.Builder builder =
+        RoomSnapshot.newBuilder()
+            .setRoomId(snapshot.roomId().toString())
+            .setTenantId(snapshot.tenantId().toString())
+            .setRoomName(snapshot.roomName())
+            .setShortDescription(snapshot.shortDescription())
+            .setLongDescription(snapshot.longDescription());
+    snapshot.exits().forEach(exit -> builder.addExits(toProto(exit)));
+    if (snapshot.ambientState() != null) {
+      builder.putAllAmbientState(snapshot.ambientState());
+    }
+    if (snapshot.roomFlags() != null) {
+      builder.addAllRoomFlags(snapshot.roomFlags());
+    }
+    return builder.build();
+  }
+
+  private RoomExitSnapshot toProto(RoomExitSnapshotDto exit) {
+    RoomExitSnapshot.Builder builder =
+        RoomExitSnapshot.newBuilder()
+            .setExitId(exit.exitId().toString())
+            .setTargetRoomId(exit.targetRoomId().toString())
+            .setTargetRoomName(exit.targetRoomName())
+            .setLabel(exit.label())
+            .setDescription(exit.description());
+    if (exit.cost() != null) {
+      builder.setCost(exit.cost());
+    }
+    return builder.build();
   }
 
   private String toJson(RoomDto dto) {

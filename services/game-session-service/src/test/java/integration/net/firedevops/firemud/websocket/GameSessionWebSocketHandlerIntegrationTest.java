@@ -33,7 +33,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @Disabled(
     "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
         + "test currently depends on dev-isolated stubs "
-        + "(design/project-management/task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
+        + "(design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
 @SpringBootTest(
     classes = GameSessionServiceApplication.class,
     webEnvironment = WebEnvironment.RANDOM_PORT,

@@ -24,6 +24,8 @@ game:
   tick-duration-ms: 1000
   tick-budget-ms: 100
   tick-max-commands: 50
+  logic:
+    default-room-id: "1021"
 firemud:
   services:
     game-logic-service: game-logic-service:6565

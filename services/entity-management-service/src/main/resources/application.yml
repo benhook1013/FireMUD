@@ -48,6 +48,48 @@ firemud:
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
   conflict:
     ttlSeconds: 300
+  look:
+    rooms:
+      "1:R-1021":
+        entities:
+          - entity-id: "P-1183"
+            display-name: "Sora"
+            entity-type: PLAYER
+            role: "Adventurer"
+            state-flags:
+              - isVisible
+            vision-priority: 10
+            reload-hint: STABLE
+            visible: true
+          - entity-id: "NPC-09"
+            display-name: "Kobold Scout"
+            entity-type: NPC
+            role: "Guard"
+            state-flags:
+              - isAlert
+            vision-priority: 8
+            reload-hint: STABLE
+            visible: true
+      "1:R-2045":
+        entities:
+          - entity-id: "NPC-42"
+            display-name: "Master Smith Torga"
+            entity-type: NPC
+            role: "Guildmaster"
+            state-flags:
+              - isFocused
+            vision-priority: 7
+            reload-hint: STABLE
+            visible: true
+          - entity-id: "P-1183"
+            display-name: "Sora"
+            entity-type: PLAYER
+            role: "Engineer"
+            state-flags:
+              - isWaving
+            vision-priority: 10
+            reload-hint: STABLE
+            visible: true
 entity:
   cache:
     character-graph-ttl-seconds: 60

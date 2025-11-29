@@ -30,10 +30,10 @@ import org.springframework.stereotype.Component;
 public final class LoginCommandHandler {
   private static final Logger logger = LoggerFactory.getLogger(LoginCommandHandler.class);
 
-  private final CommandService commandService;
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
+  private final CommandService commandService;
   private final DevIsolatedProperties devIsolatedProperties;
   private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
   private final MeterRegistry meterRegistry;
@@ -42,20 +42,19 @@ public final class LoginCommandHandler {
 
   @Autowired
   public LoginCommandHandler(
-      CommandService commandService,
       GameInstanceRepository gameInstanceRepository,
       SessionContextService sessionContextService,
       AccountClient accountClient,
+      CommandService commandService,
       DevIsolatedProperties devIsolatedProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
-    this.commandService =
-        Objects.requireNonNull(commandService, "commandService must not be null");
     this.gameInstanceRepository =
         Objects.requireNonNull(gameInstanceRepository, "gameInstanceRepository must not be null");
     this.sessionContextService =
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
+    this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.devIsolatedProperties =
         Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
     this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
@@ -122,11 +121,11 @@ public final class LoginCommandHandler {
 
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
-    String responseText = null;
-    if (enqueueResult.accepted()) {
-      loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
-      responseText = "Logged in as " + args.get(0);
+    if (!enqueueResult.accepted()) {
+      return new LoginCommandHandlingResult(enqueueResult, null);
     }
+    loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
+    String responseText = "Logged in as " + args.get(0);
     return new LoginCommandHandlingResult(enqueueResult, responseText);
   }
 

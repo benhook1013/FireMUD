@@ -6,6 +6,7 @@ import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
+import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +40,19 @@ public final class SessionAuthenticationService {
                 devIsolatedGameInstanceRegistryProvider,
                 "devIsolatedGameInstanceRegistryProvider must not be null")
             .getIfAvailable();
+  }
+
+  public Optional<SessionContext> resolveSessionContext(String sessionIdText) {
+    Optional<Long> maybeSessionId = parseSessionId(sessionIdText);
+    if (maybeSessionId.isEmpty()) {
+      return Optional.empty();
+    }
+    long sessionId = maybeSessionId.get();
+    Optional<Long> maybeTenantId = findTenantId(sessionId);
+    if (maybeTenantId.isEmpty()) {
+      return Optional.empty();
+    }
+    return sessionContextService.findByTenantAndSessionId(maybeTenantId.get(), sessionId);
   }
 
   public boolean isAuthenticated(String sessionIdText) {

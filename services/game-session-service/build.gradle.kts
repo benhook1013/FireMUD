@@ -1,4 +1,8 @@
+plugins {
+    `java-test-fixtures`
+}
 
+import org.gradle.api.tasks.testing.Test
 import org.springframework.boot.gradle.tasks.run.BootRun
 
 val gameSessionProto = rootDir.resolve("protos/game-session/v1/game_session_service.proto")
@@ -28,9 +32,21 @@ dependencies {
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
     runtimeOnly(libs.postgresql)
+    testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
+    testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
+    testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
+    testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
+    testImplementation(project(":game-logic-service"))
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
+}
+
+tasks.register<Test>("crossServiceTest") {
+    description = "Runs cross-service regression tests only."
+    useJUnitPlatform()
+    include("**/crossservice/**")
+    mustRunAfter(tasks.test)
 }
 
 tasks.named<BootRun>("bootRun") {

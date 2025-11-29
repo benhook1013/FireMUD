@@ -40,6 +40,15 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesAliasesAsSay() {
+    TextCommand command = parser.parse("YELL Hello");
+
+    assertEquals(TextCommandType.SAY, command.type());
+    assertEquals(List.of("Hello"), command.args());
+    assertEquals("YELL Hello", command.rawLine());
+  }
+
+  @Test
   void blankInputIsIgnored() {
     TextCommand command = parser.parse("    ");
 

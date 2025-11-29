@@ -33,6 +33,7 @@ This document consolidates the platform's observability architecture.
 - Distributed traces are exported via OTLP and correlated with logs using the same `traceId` value.
 - Metrics reuse the `traceId` label via the `MetricsInterceptor`, making it easy to correlate latency spikes with specific traces and log entries.
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT` environment variable ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).
+- For the new data-driven `LOOK` path, see `../project-management/look-instrumentation.md` for the specific `gamesession.command.look.*` meters, log conventions, and tracing guidance that operators should monitor while the slice stabilizes.
 
 ## 🩺 Health Checks
 

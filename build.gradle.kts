@@ -64,7 +64,7 @@ subprojects {
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
             if (name.contains("Test")) {
-                // Ignore the current @MockBean removal warnings until Spring 4.0 lands so tests stay clean.
+                // Ignore the current @MockBean removal warnings until Spring Boot 4.0 lands so tests stay clean.
                 options.compilerArgs.add("-Xlint:-removal")
             }
         }
@@ -228,6 +228,12 @@ tasks.named("check") {
             "linkCheck"
         )
     }
+}
+
+tasks.register("crossServiceTest") {
+    group = "verification"
+    description = "Runs the cross-service LOOK regression suites."
+    dependsOn(":game-session-service:crossServiceTest", ":tcp-proxy-service:crossServiceTest")
 }
 
 tasks.register<Exec>("buildBaseImage") {

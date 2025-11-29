@@ -56,6 +56,29 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Scripting hooks let creators inject custom actions into the command engine.
 - Optimized rule evaluation supports large-scale battles.
 
+### LOOK aggregation & formatting
+
+- `ResolveLook` orchestrates World Management and Entity Management snapshots to build a deterministic `LookResult` that Game Session renders for clients.
+- A dedicated `LookResultRenderer` keeps the canonical textual output in sync with the documented protocol transcripts (room name/desc/exits/entities) so the service can log or inspect the text while keeping the structured DTO clean.
+- Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet/WebSocket clients.
+
+### Implementation status (LOOK slice)
+
+- **Live:** The data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`; it orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to the `LookResultRenderer`, and publishes the telemetry described in `../../project-management/look-instrumentation.md`.
+- **Stubbed:** Room and entity context still comes from the seeded demo world and entity fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
+- **Deferred:** Future slices will expand the renderer with richer prose, annotate `LookResult` with combat/effect metadata, and surface additional visibility hints once the core text shape proves stable.
+
+### Implementation status (chat slice)
+
+- **Live:** `BroadcastSay` accepts authenticated `SAY`/`YELL`/`WHISPER` payloads, validates length, aggregates recipient/NPC metadata, and forwards the normalized message to the Social & Groups Service stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
+- **Stubbed:** Delivery currently uses the regression stubbed Social & Groups Service that records `SendMessage` calls and echoes success while the cross-service WebSocket/Telnet tests assert the structured response before adding a narrative layer for listeners.
+- **Deferred:** Richer behavior (NPC roleplay replies, localized listening areas, channel filters, profanity escalation) will arrive in later slices once the foundational flow proves stable and the instrumentation captures both success and failure paths.
+
+### SAY broadcast flow
+- Game Session channels authenticated commands through `BroadcastSay`, supplying the same `tenantId`/`sessionId`/`playerId`/`roomId` context that guards `LOOK`. The command parser normalizes `SAY`/`YELL`/`WHISPER` aliases before forwarding trimmed text so downstream services can enforce consistent validation.
+- Game Logic validates message length/whitelist checks, determines the occupied room, and delegates delivery (currently via a stubbed Social & Groups Service hook) rather than rendering the chat locally. The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session while failures populate `shared.v1.ErrorDetail` so TextCommandInterpreter can emit `ERROR SAY_NOT_DELIVERED` or similar protocol responses.
+- This pathway mirrors the `LOOK` guard: unauthenticated requests never reach BroadcastSay, and any Social/Group service outage is surfaced as a structured `PERMISSION_DENIED`/`UNAVAILABLE` error so Game Session can keep its `ERROR NOT_AUTHENTICATED` gating predictable for Telnet and WebSocket clients.
+
 ### Data Model
 
 This service is largely stateless. It relies on:
@@ -74,6 +97,7 @@ This service is largely stateless. It relies on:
 
 - `Ping` – basic connectivity check.
 - `ExecuteCommand` – evaluates a parsed command and returns the outcome.
+- `BroadcastSay` – accepts `tenant_id`, `session_id`, `player_id`, `room_id`, normalized `text`, and an alias indicator (`SAY`/`YELL`/`WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response. Failures populate `shared.v1.ErrorDetail` while the gRPC status remains `OK`, keeping `gamesession.command.say.*` metrics aligned with the existing instrumentation.
 - All responses include a `shared.v1.ErrorDetail` field for standardized error handling.
   Application errors are returned in this field while the gRPC status remains
   `OK`, and a `grpc.app_error` metric is recorded with the error code.
