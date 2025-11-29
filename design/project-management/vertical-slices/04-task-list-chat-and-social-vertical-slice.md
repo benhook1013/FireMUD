@@ -72,6 +72,40 @@ These transcripts demonstrate how both transports serialize the canonical `OK SA
 - [x] Capture the canonical SAY transcript fixture (similar to LOOK) so both WebSocket and Telnet suites assert the same reference output.
 - [x] Instrument these flows (via log capture/metrics) to assert the chat command traversed Game Session → Game Logic and triggered Social/Group service calls, ensuring `gamesession.command.say.invocations`/`failures` counters move for both success and failure paths.
 - [x] Wire the chat regression suites into the existing `crossServiceTest` targets and mention the new tests in the README/test docs so they can be run locally and in CI.
+- [x] Capture a failure-mode transcript (Social/Groups unavailable or other backend error) so the regression docs show what `ERROR SAY_NOT_DELIVERED` looks like over both transports.
+
+### Failure-mode transcript
+
+Document a short Telnet + WebSocket transcript triggered by a backend failure (e.g., Social & Groups stub returns `PERMISSION_DENIED` or is unreachable) so regression suites can assert the error response shape:
+
+- **Telnet emitter (Emberline)**:
+
+```text
+SAY Hello travelers
+ERROR SAY_NOT_DELIVERED Backend unavailable
+```
+
+- **Telnet listener (Sora)**:
+
+```text
+ERROR SAY_NOT_DELIVERED Unable to reach chat service
+```
+
+- **WebSocket emitter/listener**:
+
+```json
+{
+  "event": "chat",
+  "command": "ERROR SAY_NOT_DELIVERED",
+  "speaker": "Emberline",
+  "error": {
+    "code": "UNAVAILABLE",
+    "message": "Social service unreachable"
+  }
+}
+```
+
+These transcripts make it easy to add regression assertions for failure paths and ensure both transports handle backend outages in the same way.
 
 ## 5. Developer Workflows and Instrumentation
 
