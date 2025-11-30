@@ -12,6 +12,17 @@ Install the following tools before building the services:
 - **Docker** and **Docker Compose** – run the full stack locally.
 - **Git** – version control for cloning and contributing.
 
+## Optional Developer Tooling
+
+The following tools are not strictly required to build or run the stack, but they make development and collaboration smoother. Install whichever are relevant to your workflow:
+
+- **GitHub CLI (`gh`)** – recommended for managing pull requests from the command line and enabling AI tooling (such as Codex) to inspect or update PR metadata. See [GitHub CLI Integration for PRs](#github-cli-integration-for-prs) for setup details.
+- **Python 3**, **`pip`**, and **`pre-commit`** – used to run the repository’s pre-commit hooks (`pip install pre-commit && pre-commit install`) as described in `CONTRIBUTING.md`.
+- **Insomnia** – a desktop client for REST and WebSocket testing. An Insomnia project is provided in `dev-tools/insomnia/` to exercise login, registration, and gateway admin routes.
+- **Kreya** – a gRPC client configured via `dev-tools/kreya/.kreya-project.yaml` for calling services like `AccountService`, `EntityService`, and `PlayerService` on `localhost:6565`.
+- **Redis CLI (`redis-cli`)** and **RedisInsight** – useful for inspecting transient gameplay/session state in the local Redis instance and browsing keys like `session:*`, `tick:*`, and `timer:*`.
+- **Kubernetes CLI (`kubectl`)** and optionally **Helm** – recommended if you plan to interact with development or production clusters using the manifests and runbooks under `design/architecture/infrastructure/`.
+
 ## Building Services
 
 Each microservice includes a `Dockerfile` and a Gradle build script. After cloning the repository, generate the Gradle wrapper scripts if they are not already present:
@@ -56,6 +67,16 @@ Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will
 ### Spring Profiles for Testing
 
 Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
+
+## GitHub CLI Integration for PRs
+
+Install and authenticate the GitHub CLI so you can manage pull requests locally and allow AI tooling to operate on PR metadata when requested:
+
+```bash
+gh auth login
+```
+
+Use `GitHub.com` as the host and choose HTTPS with browser login or a personal access token. Once authenticated, commands like `gh pr list`, `gh pr view`, and `gh pr edit --body-file <file>` work from this repository and can be safely invoked by AI assistants as part of an explicit task.
 
 ## 🐳 Building Docker Images
 
