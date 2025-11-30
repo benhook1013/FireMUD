@@ -23,3 +23,6 @@ certs/
 **/.terraform/
 *.tfstate
 design/erd/
+
+# Local PR helper files (not committed)
+pr-summary.md
