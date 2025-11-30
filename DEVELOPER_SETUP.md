@@ -12,6 +12,17 @@ Install the following tools before building the services:
 - **Docker** and **Docker Compose** – run the full stack locally.
 - **Git** – version control for cloning and contributing.
 
+## Optional Developer Tooling
+
+The following tools are not strictly required to build or run the stack, but they make development and collaboration smoother. Install whichever are relevant to your workflow:
+
+- **GitHub CLI (`gh`)** – recommended for managing pull requests from the command line and enabling AI tooling (such as Codex) to inspect or update PR metadata. See [GitHub CLI Integration for PRs](#github-cli-integration-for-prs) for setup details.
+- **Python 3**, **`pip`**, and **`pre-commit`** – used to run the repository’s pre-commit hooks (`pip install pre-commit && pre-commit install`) as described in `CONTRIBUTING.md`.
+- **Insomnia** – a desktop client for REST and WebSocket testing. An Insomnia project is provided in `dev-tools/insomnia/` to exercise login, registration, and gateway admin routes.
+- **Kreya** – a gRPC client configured via `dev-tools/kreya/.kreya-project.yaml` for calling services like `AccountService`, `EntityService`, and `PlayerService` on `localhost:6565`.
+- **Redis CLI (`redis-cli`)** and **RedisInsight** – useful for inspecting transient gameplay/session state in the local Redis instance and browsing keys like `session:*`, `tick:*`, and `timer:*`.
+- **Kubernetes CLI (`kubectl`)** and optionally **Helm** – recommended if you plan to interact with development or production clusters using the manifests and runbooks under `design/architecture/infrastructure/`.
+
 ## Building Services
 
 Each microservice includes a `Dockerfile` and a Gradle build script. After cloning the repository, generate the Gradle wrapper scripts if they are not already present:
@@ -56,6 +67,16 @@ Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will
 ### Spring Profiles for Testing
 
 Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
+
+## GitHub CLI Integration for PRs
+
+Install and authenticate the GitHub CLI so you can manage pull requests locally and allow AI tooling to operate on PR metadata when requested:
+
+```bash
+gh auth login
+```
+
+Use `GitHub.com` as the host and choose HTTPS with browser login or a personal access token. Once authenticated, commands like `gh pr list`, `gh pr view`, and `gh pr edit --body-file <file>` work from this repository and can be safely invoked by AI assistants as part of an explicit task.
 
 ## 🐳 Building Docker Images
 
@@ -321,7 +342,10 @@ These documents explain how the compose setup differs from production and provid
 
 ### Dev-isolated stubbed services
 
-- When `game-session.dev-isolated` (or `GAME_SESSION_DEV_ISOLATED`) is `true`, the Game Session Service (and dependent tests) uses in-memory replacements (`DevIsolatedSessionContextService`, `DevIsolatedGameInstanceService`, and `DevIsolatedGameInstanceRegistry`) instead of hitting Redis/JPA. This keeps LOGIN + LOOK flows runnable on a developer laptop that lacks PostgreSQL/Redis/Account Service dependencies.
+- Several services expose a **dev-isolated mode** that keeps core flows testable without standing up the full dependency graph. These modes are wired through Gradle `bootRunDevIsolated` tasks and corresponding environment variables, and are intended strictly for local smoke tests and debugging—not for production.
+- When `game-session.dev-isolated` (or `GAME_SESSION_DEV_ISOLATED`) is `true`, the Game Session Service (and dependent tests) uses in-memory replacements (`DevIsolatedSessionContextService`, `DevIsolatedGameInstanceService`, and `DevIsolatedGameInstanceRegistry`) instead of hitting Redis/JPA. This keeps LOGIN + LOOK flows runnable on a developer laptop that lacks PostgreSQL/Redis/Account Service dependencies. You can start this mode with `./gradlew :game-session-service:bootRunDevIsolated` (see `services/game-session-service/README.md` and `design/architecture/microservices/game-session-service/README.md#dev-isolated-mode` for details).
+- The TCP Proxy Service exposes a similar dev-isolated forwarding mode controlled by `TCP_PROXY_DEV_ISOLATED`. The `./gradlew :tcp-proxy-service:bootRunDevIsolated` task and the `docker/docker-compose.tcp-proxy-devisolated.yml` profile both set this flag so you can smoke-test Telnet input against the built-in echo handler without starting the full gateway or game stack (see `design/architecture/microservices/tcp-proxy-service/README.md#local-development-and-echo-loop`).
+- Spring Cloud Gateway also provides a `./gradlew :spring-cloud-gateway:bootRunDevIsolated` task that runs with the `dev` profile and enables `TCP_PROXY_DEV_ISOLATED` for local WebSocket debugging that mirrors the proxy’s dev-isolated behavior.
 - The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, and `SessionResumptionFlowTest`) are currently annotated with `@Disabled` and reference the TODO in `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`. They should be revisited and re-enabled once the real Account/Redis/GameInstance wiring is available so Gradle runs against production services instead of the stubbed dev-isolated path.
 
 ### Syncing the repo into WSL

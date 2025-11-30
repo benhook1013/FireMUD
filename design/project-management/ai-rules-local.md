@@ -136,3 +136,4 @@ Monetization:
 - Run `pre-commit run --all-files` or `./gradlew check` before committing to verify formatting, tests, and coverage.
 - Avoid returning nulls; use transactions for DB consistency.
 - When suppressing SpotBugs warnings, use `@SuppressFBWarnings(value = "<WARNING>", justification = "<reason>")`.
+- The GitHub CLI (`gh`) is available in the development environment and may be used to inspect or update pull request metadata as part of an assigned task, following the global AI rules.

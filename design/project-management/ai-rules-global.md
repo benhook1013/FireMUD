@@ -70,3 +70,9 @@
 - Verify coverage with JaCoCo by running `./gradlew check` before committing.
 - Instrument new code with Micrometer metrics and OpenTelemetry tracing following `design/architecture/system-architecture-logging-monitoring.md`.
 - Use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from the shared library when adding new gRPC endpoints so logs, metrics, and spans are recorded consistently.
+
+## 10. Tooling Available to AI
+
+- The development environment includes the GitHub CLI (`gh`) configured for this repository.
+- AI tools may use `gh` to inspect and manage pull requests (for example, listing PRs, viewing diffs, and editing descriptions) when explicitly asked.
+- Do not create, merge, or close pull requests with `gh` unless a human contributor requests that action for a specific task.
