@@ -76,3 +76,6 @@
 - The development environment includes the GitHub CLI (`gh`) configured for this repository.
 - AI tools may use `gh` to inspect and manage pull requests (for example, listing PRs, viewing diffs, and editing descriptions) when explicitly asked.
 - Do not create, merge, or close pull requests with `gh` unless a human contributor requests that action for a specific task.
+- When working on a feature branch that has (or will have) an open PR, always keep a brief, accurate PR summary up to date as part of the change:
+  - Maintain the current summary in the PR body and, when a local `pr-summary.md` file exists, keep that file in sync with the implemented changes.
+  - When the user explicitly asks to refresh the PR description, prefer using `gh pr edit --body-file pr-summary.md` to apply the local summary to the PR; if no summary file exists, update the PR body directly via `gh` instead.
