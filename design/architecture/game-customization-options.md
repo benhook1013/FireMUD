@@ -1,4 +1,4 @@
-# 🎮 Game Customization Options
+# Game Customization Options
 
 This brief document summarizes optional ways a hosted game can change its look and feel without modifying FireMUD source code. FireMUD runs out of the box with default settings, so none of these customizations are required.
 
@@ -58,12 +58,12 @@ Example `manifest.json`:
 
 These options allow extensive personalization while keeping the underlying platform maintainable.
 
-## 📚 Related Documentation
+## Related Documentation
 
+- [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
 - [Frontend Architecture](./system-architecture-frontend.md)
+- [Game Creator Guide](../user-guides/game-creator-guide.md)
+- [Game Design Service](./microservices/game-design-service/README.md)
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [System Architecture Overview](./system-architecture-overview.md)
-- [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
-- [Game Design Service](./microservices/game-design-service/README.md)
 - [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)
-- [Game Creator Guide](../user-guides/game-creator-guide.md)
