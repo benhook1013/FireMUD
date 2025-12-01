@@ -105,7 +105,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Integration Testing**: Spring Test
 - **Load Testing**: Gatling (see `dev-tools/load-testing` module)
 - **Accessibility Audit**: axe-core CLI (see [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility)
-- **Cross-Service Regression**: `./gradlew crossServiceTest`.
+- **Cross-Service Regression**: `./gradlew crossServiceTest`
 
 ### Design Goals
 
