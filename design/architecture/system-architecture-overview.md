@@ -22,7 +22,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 
-See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
+> 🔗 See [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md).
 
 ---
 
@@ -82,7 +82,7 @@ For a full list of responsibilities and APIs, refer to the [Microservices Docume
 - **Redis** is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
 - **Tick regions** are shard-aligned in Redis to preserve atomicity
 
-📌 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
+> 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
 ---
 
