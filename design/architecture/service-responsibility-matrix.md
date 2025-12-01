@@ -39,6 +39,8 @@
 | Admin panel and feature flag toggling | | | | | | | | | ✔ | | |
 | Game moderation tools | | | | | | | | | ✔ | | |
 | Game moderation policy definition | | | | | | | | | ✔ | | |
+| API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
+| Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |
 | Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
 | WebSocket upgrade, routing, and auth gateway | | | | | | | | | | | ✔ |
