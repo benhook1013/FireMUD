@@ -1,10 +1,10 @@
-# 🚀 FireMUD System Architecture: CI/CD Pipeline
+# FireMUD System Architecture: CI/CD Pipeline
 
 This document describes the continuous integration strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and images are pushed to the registry. Deployment to Kubernetes runs through a separate workflow so both local and cloud-hosted clusters use the same pipeline.
 
 ---
 
-## 🎯 Goals
+## Goals
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
@@ -23,7 +23,7 @@ A GitHub Actions step posts a summary comment on pull requests showing whether t
 
 ---
 
-## 🛠️ Workflow Structure
+## Workflow Structure
 
 Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch. A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
 
@@ -74,7 +74,7 @@ Other workflows support additional automation:
 
 ---
 
-## 🐳 Building and Pushing Images
+## Building and Pushing Images
 
 After tests pass, each service is packaged into a Docker image:
 
@@ -111,7 +111,7 @@ The firemud-base image provides a consistent OS and JVM setup across all service
 
 ---
 
-## 🚢 Deploying to Kubernetes
+## Deploying to Kubernetes
 
 Kubernetes rollouts are triggered through the
 [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow.
@@ -148,7 +148,7 @@ removed. Automated rollback and canary deployments handle this process.
 
 ---
 
-## 📝 Automated Release Notes
+## Automated Release Notes
 
 When a version tag like `v1.2.3` is pushed, the `release-notes.yml` workflow
 creates a GitHub release and uses the `generate_release_notes` option to produce
@@ -157,7 +157,7 @@ manual steps.
 
 ---
 
-## 🔍 PR Preview Environments
+## PR Preview Environments
 
 Pull requests spin up a short-lived Docker Compose stack so reviewers can test changes interactively. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow uses Docker Buildx to build service images with cached layers, copies `.env.sample` to `.env`, generates development certificates, and launches the stack via Docker Compose.
 A status comment is posted once the gateway passes its health check, and the
@@ -166,7 +166,7 @@ automatically.
 
 ---
 
-## ➕ Optional Add-Ons
+## Optional Add-Ons
 
 - **Nightly builds or scheduled jobs** for integration testing.
 - **Security scanning** using tools like Trivy. The [`weekly-security-scan.yml`](../../.github/workflows/weekly-security-scan.yml) workflow runs weekly on Sundays at 03:00 UTC to scan dependencies and container images for vulnerabilities.
@@ -176,11 +176,11 @@ These can be added as separate workflows or additional jobs in the main pipeline
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [Infrastructure Overview](./infrastructure/README.md)
-- [Deployment Environments](./infrastructure/deployment-environments.md)
-- [Testing Strategy](./system-architecture-testing.md)
-- [Developer Tools & Scripting](./system-architecture-scripting.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
+- [Deployment Environments](./infrastructure/deployment-environments.md)
+- [Developer Tools & Scripting](./system-architecture-scripting.md)
+- [Infrastructure Overview](./infrastructure/README.md)
+- [Testing Strategy](./system-architecture-testing.md)
 - [User Journeys – Testing & Continuous Delivery](./user-journeys.md#17-testing--continuous-delivery)
