@@ -38,8 +38,8 @@ FireMUD is a modern engine for classic text-based online RPGs: creators use it t
     - [Learn About the Platform](#learn-about-the-platform)
     - [Ways to Contribute](#ways-to-contribute)
     - [Additional Guidelines](#additional-guidelines)
-  - [Running Locally](#running-locally)
-  - [Tooling](#tooling)
+    - [Running Locally](#running-locally)
+    - [Tooling](#tooling)
   - [Support Us](#support-us)
   - [Contact](#contact)
   - [Acknowledgments](#acknowledgments)
@@ -176,7 +176,7 @@ Before contributing, we recommend reviewing the following key documents:
 See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and [Global Rules](design/project-management/ai-rules-global.md).
 The CI pipeline runs `./gradlew check`, which compiles and tests all modules while also running Spotless, Checkstyle, SpotBugs, **Hadolint**, and coverage reporting.
 
-## Running Locally
+### Running Locally
 
 Build all services and start the Docker stack:
 
@@ -192,7 +192,7 @@ Stop the stack with:
 
 ---
 
-## Tooling
+### Tooling
 
 Use explicit paths for helper scripts:
 
