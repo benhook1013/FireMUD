@@ -180,7 +180,9 @@ The CI pipeline runs `./gradlew check`, which compiles and tests all modules whi
 
 ### Running Locally
 
-Build all services and start the Docker stack:
+For full-stack local development (all services, PostgreSQL, and Redis), use the Docker Compose workflow described in [Developer Setup](DEVELOPER_SETUP.md#running-with-docker-compose).
+
+Build all services and start the stack:
 
 ```bash
 ./gradlew devUp
@@ -196,13 +198,15 @@ Stop the stack with:
 
 ### Tooling
 
-Use explicit paths for helper scripts:
+Common helper commands:
 
-- `npm --prefix config/openapi run openapi:lint`
-- `./gradlew erd`
-- `./gradlew seed`
+- `./gradlew check` – compile, test, and run static analysis (Spotless, Checkstyle, SpotBugs, Hadolint, coverage).
+- `./gradlew crossServiceTest` – run cross-service regression tests.
+- `./gradlew lintMarkdown` – lint Markdown docs; see [Developer Setup](DEVELOPER_SETUP.md#-markdown-linting-via-gradle) for details.
+- `npm --prefix config/openapi run openapi:lint` – lint OpenAPI specs.
+- `./dev-tools/docs/link-check.sh` – run the link checker over Markdown docs.
 
-The `.pre-commit-config.yaml` and `.editorconfig` files stay at the repository root for automatic discovery.
+The `.pre-commit-config.yaml` and `.editorconfig` files live at the repository root so editors and pre-commit hooks can pick them up automatically. See [Developer Setup](DEVELOPER_SETUP.md) and [Contributing Guidelines](CONTRIBUTING.md) for more tooling and workflow details.
 
 ## Support Us
 
