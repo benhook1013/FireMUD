@@ -1,10 +1,10 @@
-# 🔄 FireMUD User Journeys
+# FireMUD User Journeys
 
 This guide summarizes typical workflows for creators and players. Each numbered step links to the microservice or design document that manages that portion of the flow. Use it alongside the [Architecture Overview](./README.md), the [System Architecture Overview](./system-architecture-overview.md), the [System Architecture Diagram](./system-architecture-diagram.md), and the [System Context Diagram](./system-context-diagram.md) to understand how users traverse the platform. For a breakdown of every service see the [Microservices Overview](./microservices/README.md) and the [Service Responsibility Matrix](./service-responsibility-matrix.md). Detailed tooling instructions live in the [Game Creator Guide](../user-guides/game-creator-guide.md).
 
 Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-multi-tenancy.md) model explains how characters and worlds remain isolated under a single platform account.
 
-## 🎯 Goals
+## Goals
 
 - Provide a quick reference for how a user moves through the system.
 - Map each step to the microservice that owns the logic or data.
@@ -12,7 +12,7 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 
 ---
 
-## 📑 Quick Reference
+## Quick Reference
 
 - [1. Sign Up](#1-sign-up)
 - [2. Game Creation](#2-game-creation)
@@ -387,7 +387,7 @@ GitHub → Container Registry → Kubernetes → Service Startup (Flyway)
 
 These flows complement the architecture diagrams in [System Architecture Overview](./system-architecture-overview.md).
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md)
 - [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
