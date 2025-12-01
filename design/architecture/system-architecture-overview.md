@@ -94,7 +94,7 @@ FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 - **Region-scoped ticks** execute independently for parallelism
 - **Tick state** (locks, queues, timers) is stored and coordinated via Redis
 
-> 🔗 Tick execution, staging/rollback, retry policies, and crash recovery are detailed in [Tick System and Runtime Design](./system-architecture-ticks.md)
+> 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) for tick execution, staging/rollback, retry policies, and crash recovery.
 
 ---
 
@@ -112,7 +112,7 @@ Session state is stored in Redis and reused for recovery.
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the full pipeline, including Fluent Bit, Prometheus, and related dashboards.
 
-🔗 Additional Redis metrics are noted in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability).
+> 🔗 See additional Redis metrics in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability).
 
 ---
 
