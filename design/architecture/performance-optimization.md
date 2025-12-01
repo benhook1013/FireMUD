@@ -20,51 +20,12 @@ These notes summarize typical optimizations applied across FireMUD services.
 
 ## Runtime Processing
 
-- Tick execution in the Game Session Service relies on Redis Lua scripts for
-  atomic command staging, commit and rollback. This minimizes network round
-  trips and guarantees consistent state across crashes. See
-  [Tick System and Runtime Design](./system-architecture-ticks.md) for
-  details.
-- Distributed tick locks in Redis use short TTLs to prevent deadlocks. Failed
-  actions are rolled back and retried automatically.
-- Tick regions execute independently so work can be parallelized across
-  threads and servers for better scalability and fault isolation. See
-  [Tick Regions and Parallel Execution](./system-architecture-ticks.md#%F0%9F%8C%8D-tick-regions-and-parallel-execution).
-- The Automation & Scripting Service evaluates scripts on its own schedule and
-  injects resulting commands into tick queues. Per-script quotas are enforced
-  via Redis before queuing to avoid runaway automation. See
-  [Scripting Architecture](./system-architecture-scripting.md) for details.
-  Quota enforcement metrics (`script_quota_allowed_total`,
-  `script_quota_denied_total`) and automation queue metrics
-  (`automation_queue_enqueued_total`, `automation_queue_drained_total`) provide
-  visibility into heavy script load.
-  - A Redis exporter exposes command latency and memory metrics via the
-    [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment.
-    See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for
-    details. The Game Session Service records Lua latency and retry queue depth
-    metrics for visibility into Redis performance.
-- The Game Session Service exposes `tick_retry_queue_depth`,
-  `tick_requeued_action_total`, and `tick_retry_backoff_count_total` metrics for
-  per-region visibility into retries and backoff behavior.
-- Graceful degradation logic in the Game Session Service retries failed
-  Redis operations so stalled ticks do not block gameplay.
-- The Game Session Service records the
-  `game_session_commands_enqueued_total` and `game_session_tick_duration_ms`
-  metrics so operators can monitor throughput and tick performance.
-- Service methods across all microservices use `@Timed` annotations so
-  Prometheus can track request latency and call frequency.
-- Redis runs with **AOF persistence** and synchronous replication via `WAIT` (see [Backup & Disaster Recovery](./system-architecture-backup-recovery.md))
-  so tick state can be recovered quickly after failover. The Game Session
-  Service automatically replays staged commands on restart.
-- Each tick enforces a **soft execution budget** (~100ms) (see the
-  [Timeout and Fairness Policy](./system-architecture-ticks.md#%E2%8F%B0-timeout-and-fairness-policy)).
-  Slow actions are deferred to follow-up ticks so long-running commands never
-  block the game loop. Conflict metadata collected during retries highlights
-  hotspots for operators.
-- Lua staging scripts move only a limited number of commands or events per tick
-  (configurable via `game.tick-max-commands` and `automation.tick-max-events`).
-  This prevents runaway loops and keeps work evenly distributed across ticks.
-- The Game Session Service centrally enforces per-IP connection limits and per-session message rate limiting via Redis-backed throttlers. Edge services like the TCP Proxy and Gateway forward client IP headers and may perform lightweight checks but defer to the Game Session Service for authoritative enforcement.
+- Tick execution uses Redis (including Lua scripts) to stage, commit, and roll back commands atomically, minimizing network round trips and keeping state consistent across crashes. See [Tick System and Runtime Design](./system-architecture-ticks.md) for details.
+- Tick regions execute independently so work can be parallelized across threads and servers for better scalability and fault isolation. Short‑lived Redis locks and retries avoid deadlocks and stalled regions.
+- Automation and scripting run on their own schedule and inject commands into tick queues. Per‑script quotas and queue backpressure prevent runaway automation or infinite loops. See [Scripting Architecture](./system-architecture-scripting.md) for the detailed model.
+- Redis runs with persistence and replication tuned for fast recovery so tick state can be replayed after failover (see [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)).
+- Each tick enforces a soft execution budget and limits the number of commands/events processed to keep the game loop responsive; slow or conflicting work is deferred to later ticks instead of blocking the current frame.
+- Central throttling (rate limits, per‑session limits) is enforced in the gameplay/session layer rather than at every edge, while all services expose Micrometer/Prometheus metrics so operators can monitor latency, throughput, and retry behavior.
 
 ## Network Traffic
 
