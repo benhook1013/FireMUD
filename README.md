@@ -61,7 +61,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Key Features
 
 - **Microservice Architecture**: Modular services for scalability and maintainability.
-- **Multi-Server Hosting**: Support for hosting multiple MUD games simultaneously.
+- **Concurrent Multi-Server Hosting**: Support for hosting multiple MUD games simultaneously.
 - **Real-Time Game Server**: Backend for gameplay mechanics, player actions, and world state management.
 - **Extensible Command Parsing**: Flexible system to interpret player commands.
 - **Dynamic Scripting Support**: For events and interactions within the game world.
