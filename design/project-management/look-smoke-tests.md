@@ -8,7 +8,7 @@ Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
 
 1. Connect to the Gateway stub pointing at the Game Session service:
 
-   ```
+   ```bash
    wscat -c ws://localhost:8080/ws/game
    ```
 
@@ -26,7 +26,7 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 
 1. Use a Telnet client such as `telnet` or `nc` to connect to the proxy port:
 
-   ```
+   ```bash
    telnet localhost 4000
    ```
 

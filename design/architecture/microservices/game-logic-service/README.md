@@ -75,6 +75,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 - **Deferred:** Richer behavior (NPC roleplay replies, localized listening areas, channel filters, profanity escalation) will arrive in later slices once the foundational flow proves stable and the instrumentation captures both success and failure paths.
 
 ### SAY broadcast flow
+
 - Game Session channels authenticated commands through `BroadcastSay`, supplying the same `tenantId`/`sessionId`/`playerId`/`roomId` context that guards `LOOK`. The command parser normalizes `SAY`/`YELL`/`WHISPER` aliases before forwarding trimmed text so downstream services can enforce consistent validation.
 - Game Logic validates message length/whitelist checks, determines the occupied room, and delegates delivery (currently via a stubbed Social & Groups Service hook) rather than rendering the chat locally. The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session while failures populate `shared.v1.ErrorDetail` so TextCommandInterpreter can emit `ERROR SAY_NOT_DELIVERED` or similar protocol responses.
 - This pathway mirrors the `LOOK` guard: unauthenticated requests never reach BroadcastSay, and any Social/Group service outage is surfaced as a structured `PERMISSION_DENIED`/`UNAVAILABLE` error so Game Session can keep its `ERROR NOT_AUTHENTICATED` gating predictable for Telnet and WebSocket clients.
