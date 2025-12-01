@@ -1,14 +1,9 @@
 # Repository Structure
 
-This repository uses a hierarchical Gradle layout. All microservices and the shared
-`common-library` live under a top-level `services/` folder to keep the root tidy. The
-React UI resides in `web-client/` and various infrastructure manifests sit under
-`k8s/`. Additional build tooling and documentation live at the root.
-Hidden configuration files used by the CI pipeline and generated build output
-directories are included for completeness.
+This repository uses a hierarchical Gradle layout. All microservices and the shared `common-library` live under a top-level `services/` folder to keep the root tidy. The React UI resides in `web-client/` and various infrastructure manifests sit under `k8s/`. Additional build tooling and documentation live at the root.
+Hidden configuration files used by the CI pipeline and generated build output directories are included for completeness.
 
-The tree and summary below follow a Windows Explorer style sort: directories appear
-before files, and items within each group are alphabetized.
+The tree and summary below follow a Windows Explorer style sort: directories appear before files, and items within each group are alphabetized.
 
 ```text
 root
