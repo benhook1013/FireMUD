@@ -1,4 +1,4 @@
-# 🚀 Performance Optimization Guidelines
+# Performance Optimization Guidelines
 
 These notes summarize typical optimizations applied across FireMUD services.
 
@@ -86,7 +86,7 @@ These notes summarize typical optimizations applied across FireMUD services.
   checking) are gated behind the `fullCheck` flag so routine local builds stay
   quick while CI can still run the full suite when needed.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Redis Architecture](./system-architecture-redis.md)
 - [System Architecture Overview](./system-architecture-overview.md)

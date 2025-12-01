@@ -17,3 +17,4 @@ This document captures formatting conventions that AI tooling should apply when 
 ## Link Callouts
 
 - When adding short cross-reference notes (e.g., “See also …”), prefer a blockquote line using the arrow link style: `> 🔗 See [Document](./path.md) for details.` Keep phrasing consistent across docs.
+- This arrow style is meant for inline callouts added within or after a section; keep the more conventional bullet lists for standard “Related Documentation” sections at the bottom of most docs so they stay easy to scan.
