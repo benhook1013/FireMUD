@@ -6,7 +6,7 @@
 | Custom in-game scripting authoring | ✔ | | | | | | | | | | |
 | Game version publishing | ✔ | | | | | | | | | | |
 | Design-time feature flag definitions | ✔ | | | | | | | | | | |
-| Room and zone editing | | ✔ | | | | | | | | | |
+| Room and zone editing | ✔ | | | | | | | | | | |
 | World map region layout | | ✔ | | | | | | | | | |
 | Room state persistence | | ✔ | | | | | | | | | |
 | Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
