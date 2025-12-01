@@ -105,7 +105,7 @@ root
 - `README.md` – High-level project overview and quick-start.
 - `SECURITY.md` – Responsible disclosure and security reporting guidance.
 
-## ðŸ“š Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Microservices Overview](./microservices/README.md)
