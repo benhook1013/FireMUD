@@ -21,14 +21,7 @@ Example `manifest.json`:
 }
 ```
 
-- **Self-hosted S3**: For local development or private deployments, run an
-  S3-compatible service such as MinIO. Docker Compose provides a `minio` service
-  preconfigured with the `firemud-assets` bucket. In Kubernetes, apply the
-  manifests under `k8s/minio/` and proxy `/assets/**` through the gateway
-  instead of exposing MinIO directly. Set `ASSET_STORE_ENDPOINT` to
-  `https://<gateway-domain>/assets` and supply the bucket and credentials via
-  `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`, `ASSET_STORE_SECRET_KEY`, and
-  `ASSET_STORE_REGION`.
+- **Self-hosted S3**: For local development or private deployments, run an S3-compatible service such as MinIO; Docker Compose provides a `minio` service preconfigured with the `firemud-assets` bucket, while the Kubernetes manifests under `k8s/minio/` proxy `/assets/**` through the gateway instead of exposing MinIO directly. Set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` and supply the bucket and credentials via `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`, `ASSET_STORE_SECRET_KEY`, and `ASSET_STORE_REGION`.
 
 - The React client loads theme and asset files per tenant at runtime; see [Frontend Architecture](./system-architecture-frontend.md) for details.
 
