@@ -41,9 +41,9 @@
 | Game moderation policy definition | | | | | | | | | ✔ | | |
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |
 | Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
-| API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
-| Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | WebSocket upgrade, routing, and auth gateway | | | | | | | | | | | ✔ |
+| Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
+| API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
 ## 📚 Related Documentation
 
