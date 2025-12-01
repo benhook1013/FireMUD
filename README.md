@@ -11,7 +11,7 @@
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
-Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [FireDevOps.net](https://firedevops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
+Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [FireDevOps.net](https://firedevops.net) umbrella for creating and running [Multi-User Dungeon (MUD) games](https://en.wikipedia.org/wiki/Multi-user_dungeon).
 
 *This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
 
