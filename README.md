@@ -15,17 +15,9 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 *This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
 
-## Start Here
-
-For an overview of all architecture and design documents, see [Architecture Directory README](design/architecture/README.md).
-See [Repository Structure](design/architecture/repository-structure.md) for module layout.
-
----
-
 ## Table of Contents
 
 - [FireMUD Game Platform](#firemud-game-platform)
-  - [Start Here](#start-here)
   - [Table of Contents](#table-of-contents)
   - [Purpose](#purpose)
   - [Project Overview](#project-overview)
@@ -137,6 +129,7 @@ The platform is composed of multiple Spring Boot services that communicate over 
 
 For detailed architecture diagrams and explanations, refer to the [System Architecture Overview](design/architecture/system-architecture-overview.md).
 For an overview of service responsibilities, see the [Service Responsibility Matrix](design/architecture/service-responsibility-matrix.md).
+For a complete view of the repository layout and Gradle modules, see [Repository Structure](design/architecture/repository-structure.md).
 
 ---
 
