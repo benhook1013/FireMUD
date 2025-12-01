@@ -22,11 +22,11 @@ See [Repository Structure](design/architecture/repository-structure.md) for modu
 
 ---
 
-## 📚 Table of Contents
+## Table of Contents
 
 - [FireMUD Game Platform](#firemud-game-platform)
   - [Start Here](#start-here)
-  - [📚 Table of Contents](#-table-of-contents)
+  - [Table of Contents](#table-of-contents)
   - [Purpose](#purpose)
   - [Project Overview](#project-overview)
     - [Key Features](#key-features)
