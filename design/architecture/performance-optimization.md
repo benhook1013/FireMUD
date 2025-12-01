@@ -20,12 +20,29 @@ These notes summarize typical optimizations applied across FireMUD services.
 
 ## Runtime Processing
 
-- Tick execution uses Redis (including Lua scripts) to stage, commit, and roll back commands atomically, minimizing network round trips and keeping state consistent across crashes. See [Tick System and Runtime Design](./system-architecture-ticks.md) for details.
-- Tick regions execute independently so work can be parallelized across threads and servers for better scalability and fault isolation. Short‑lived Redis locks and retries avoid deadlocks and stalled regions.
-- Automation and scripting run on their own schedule and inject commands into tick queues. Per‑script quotas and queue backpressure prevent runaway automation or infinite loops. See [Scripting Architecture](./system-architecture-scripting.md) for the detailed model.
-- Redis runs with persistence and replication tuned for fast recovery so tick state can be replayed after failover (see [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)).
-- Each tick enforces a soft execution budget and limits the number of commands/events processed to keep the game loop responsive; slow or conflicting work is deferred to later ticks instead of blocking the current frame.
-- Central throttling (rate limits, per‑session limits) is enforced in the gameplay/session layer rather than at every edge, while all services expose Micrometer/Prometheus metrics so operators can monitor latency, throughput, and retry behavior.
+- Tick execution uses Redis (including Lua scripts) to stage, commit, and roll
+  back commands atomically, minimizing network round trips and keeping state
+  consistent across crashes. See
+  [Tick System and Runtime Design](./system-architecture-ticks.md) for details.
+- Tick regions execute independently so work can be parallelized across threads
+  and servers for better scalability and fault isolation. Short‑lived Redis
+  locks and retries avoid deadlocks and stalled regions.
+- Automation and scripting run on their own schedule and inject commands into
+  tick queues. Per‑script quotas and queue backpressure prevent runaway
+  automation or infinite loops. See
+  [Scripting Architecture](./system-architecture-scripting.md) for the detailed
+  model.
+- Redis runs with persistence and replication tuned for fast recovery so tick
+  state can be replayed after failover (see
+  [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)).
+- Each tick enforces a soft execution budget and limits the number of
+  commands/events processed to keep the game loop responsive; slow or
+  conflicting work is deferred to later ticks instead of blocking the current
+  frame.
+- Central throttling (rate limits, per‑session limits) is enforced in the
+  gameplay/session layer rather than at every edge, while all services expose
+  Micrometer/Prometheus metrics so operators can monitor latency, throughput,
+  and retry behavior.
 
 ## Network Traffic
 
