@@ -12,26 +12,26 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
                 +----------------------+                  +-------------------+
                 | Spring Cloud Gateway | <--------------- | TCP Proxy Service |
                 |         (DMZ)        |  HTTP/WebSocket  |       (DMZ)       |
-                +-----------+----------+                  +-------------------+
+                +----------------------+                  +-------------------+
                             |
                             | gRPC/WebSocket
                             v
       +-------------------------------------------+          +-------------------------------------------+
       |             Internal Services             |--------->|           Email / SMTP Provider           |
       |                                           |  Email   +-------------------------------------------+
-      | - Game Session Service                    |                         ^
-      | - Account Service                         |                         |
-      | - Entity Management Service               |                         |
-      | - Game Logic Service                      |                         |
-      | - World Management Service                |                         |
-      | - Automation & Scripting Service          |                         |
-      | - Social & Groups Service                 |                         | Alerts → Email / SMTP Provider
-      | - Logging & Admin Service                 |                         |
-      | - Game Design Service                     |                         |
-      +-------------------------------------------+                         |
-                            |                                               |
-                            | DB/Cache/Logs                                 |
-                            v                                               |
+      | - Game Session Service                    |                                ^
+      | - Account Service                         |                                |
+      | - Entity Management Service               |                                |
+      | - Game Logic Service                      |                                |
+      | - World Management Service                |                                |
+      | - Automation & Scripting Service          |                                |
+      | - Social & Groups Service                 |                                | Alerts → Email /
+      | - Logging & Admin Service                 |                                |          SMTP Provider
+      | - Game Design Service                     |                                |
+      +-------------------------------------------+                                |
+                            |                                                      |
+                            | DB/Cache/Logs                                        |
+                            v                                                      |
       +-------------------------------------------+          +-------------------------------------------+
       |               Datastore Layer             |--------->|            Observability Stack            |
       |                                           | Metrics/ |                                           |
