@@ -125,9 +125,11 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 ## Session and Identity Management
 
 - The Game Session Service is responsible for:
+
   - Authenticating sockets and binding identity context
   - Managing Redis session state (e.g. `playerId`, `tenantId`, tick region)
   - Managing JWTs for backend interactions
+
 - Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds so abandoned sessions cannot linger indefinitely. The default value is `3600000` ms as defined by `AuthProperties.sessionExpirationMs`.
 
 > 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
