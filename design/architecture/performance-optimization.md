@@ -11,14 +11,10 @@ These notes summarize typical optimizations applied across FireMUD services.
   Management service uses `@EntityGraph` for inventory lookups.
 - Prefer pagination for large result sets. Core services expose pageable
   endpoints so huge lists are avoided.
-- Use Spring Cache backed by Redis for expensive queries. The Entity Management
-  Service caches character inventory graphs (TTL controlled by
-  `entity.cache.character-graph-ttl-seconds`) and the World Management Service
-  caches hot rooms with TTL-based eviction (`world.room.cache-ttl-seconds`).
+- Use Spring Cache backed by Redis for expensive queries.
 - Database writes during gameplay are **deferred and batched**. The Game Session
-  Service coordinates commits at the end of each tick so the Entity Management
-  Service only persists changes once per tick. This reduces write frequency and
-  lock contention.
+  Service coordinates commits at the end of each tick so domain services only
+  persists changes once per tick. This reduces write frequency and lock contention.
 - The Entity Management Service uses optimistic locking with `@Version` columns
   on all entity tables to prevent lost updates.
 
