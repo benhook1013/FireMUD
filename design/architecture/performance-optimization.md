@@ -70,7 +70,8 @@ These notes summarize typical optimizations applied across FireMUD services.
   - **Tells:** 48 hours or 50 messages per player
   - **Guild/City:** 48 hours or 50 messages per guild or city
   - **Account messages:** 48 hours or 50 messages
-- High concurrency load tests with Gatling, located under `dev-tools/load-testing`, help determine scaling limits and guide database indexing improvements.
+- High concurrency load tests with Gatling, located under `dev-tools/load-testing`,
+  help determine scaling limits and guide database indexing improvements.
 
 ## Build Pipeline
 
@@ -89,3 +90,7 @@ These notes summarize typical optimizations applied across FireMUD services.
 
 - [Redis Architecture](./system-architecture-redis.md)
 - [System Architecture Overview](./system-architecture-overview.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [Scripting & Automation Framework](./system-architecture-scripting.md)
+- [Logging & Monitoring](./system-architecture-logging-monitoring.md)
+- [CI/CD Pipeline](./system-architecture-cicd.md)
