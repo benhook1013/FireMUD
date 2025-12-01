@@ -67,6 +67,8 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Dynamic Scripting Support**: For events and interactions within the game world.
 - **Integrated Game Editor**: Tools for designing rooms, entities, quests, and dialogues.
 - **Web Frontend**: React-based interface for players and creators.
+- **Legacy Telnet Support**: Compatible with traditional Telnet MUD clients while sharing the same backend as the web UI.
+- **Accessible Text UX**: Verbose, high-contrast text output with optional ANSI color, written to work well with screen readers and blind or low-vision players.
 - **Moderation Tools**: Comprehensive tools for administrators and moderators.
 
 ### Tech Stack
