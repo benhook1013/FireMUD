@@ -96,8 +96,8 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 #### Monetization
 
-- **Payment Gateway**: Stripe
-- **Subscription Management**: Custom integration
+- **Payment Gateway**: [Stripe Integration](design/architecture/microservices/account-service/stripe-integration.md)
+- **Subscription Management**: Custom integration (see [Subscription Management Design](design/architecture/microservices/account-service/subscription-management.md))
 
 #### Testing
 
