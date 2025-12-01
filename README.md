@@ -131,7 +131,6 @@ The platform is composed of multiple Spring Boot services that communicate over 
 - [System Architecture Overview](design/architecture/system-architecture-overview.md) – narrative explanation of how services interact.
 - [Service Responsibility Matrix](design/architecture/service-responsibility-matrix.md) – which service owns which responsibilities.
 - [System Context Diagram](design/architecture/system-context-diagram.md) – high-level view of clients, DMZ components, and services.
-- [Repository Structure](design/architecture/repository-structure.md) – layout of Gradle modules and top-level files.
 
 ---
 
