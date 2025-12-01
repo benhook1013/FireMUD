@@ -36,6 +36,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-tracing.md**](./system-architecture-tracing.md) – Deploying the OpenTelemetry Collector and Jaeger.
 - [**system-architecture-database-migrations.md**](./system-architecture-database-migrations.md) – Managing schema changes per service.
 - [**system-architecture-testing.md**](./system-architecture-testing.md) – Unit, integration, and load testing strategy.
+- [**system-architecture-transactions.md**](./system-architecture-transactions.md) – Transaction strategies and sagas for cross-service workflows.
 - [**game-customization-options.md**](./game-customization-options.md) – Ways hosted games can change appearance and behavior.
 - [**performance-optimization.md**](./performance-optimization.md) – Database and network tuning tips.
 
