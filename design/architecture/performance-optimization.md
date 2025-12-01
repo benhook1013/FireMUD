@@ -72,8 +72,6 @@ These notes summarize typical optimizations applied across FireMUD services.
   - **Account messages:** 48 hours or 50 messages
 - High concurrency load tests with Gatling, located under `dev-tools/load-testing`, help determine scaling limits and guide database indexing improvements.
 
-Following these patterns keeps resource usage low even as player counts grow.
-
 ## Build Pipeline
 
 - Gradle's **configuration cache** and **parallel execution** are enabled via
