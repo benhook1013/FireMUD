@@ -23,4 +23,3 @@ For current requirements and high-level behavior, see:
 
 - [Core Requirements – Monetization](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization)
 - [Account Service README](./README.md)
-

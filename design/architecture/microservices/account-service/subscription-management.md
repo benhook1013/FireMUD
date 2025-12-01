@@ -24,4 +24,3 @@ For related context, see:
 - [Core Requirements – Monetization](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization)
 - [Stripe Integration Design](./stripe-integration.md)
 - [Account Service README](./README.md)
-
