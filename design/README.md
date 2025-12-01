@@ -3,6 +3,7 @@
 This directory contains all architecture and project-management documentation for the FireMUD Game Platform.
 
 - [**architecture/**](./architecture/) – Infrastructure, microservice designs, and system overviews.
+- [**developer-workflows/**](./developer-workflows/) – Hands-on walkthroughs and smoke tests for key vertical slices.
 - [**project-management/**](./project-management/) – Requirements, task lists, and AI rule sets.
 - [**user-guides/**](./user-guides/) – Documentation for game creators and integration testing.
 
