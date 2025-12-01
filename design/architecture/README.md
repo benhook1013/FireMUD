@@ -4,16 +4,16 @@ The architecture section describes the platform infrastructure and each microser
 
 ## High-Level Diagrams
 
-- [**system-architecture-diagram.md**](./system-architecture-diagram.md) – Component relationships.
 - [**system-architecture-overview.md**](./system-architecture-overview.md) – High-level diagrams and interactions.
+- [**system-architecture-diagram.md**](./system-architecture-diagram.md) – Component relationships.
 - [**system-context-diagram.md**](./system-context-diagram.md) – Shows clients, DMZ components, services, and datastores.
+- [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
 
-## Directories & Responsibilities
+## Directories
 
 - [**infrastructure/**](./infrastructure/) – Deployment environments and secrets management.
 - [**microservices/**](./microservices/) – Individual service responsibilities and APIs.
 - [**repository-structure.md**](./repository-structure.md) – Layout of Gradle modules and repository files.
-- [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
 
 ## Runtime Architecture
 
