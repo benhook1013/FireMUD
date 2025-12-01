@@ -1,10 +1,10 @@
-# 🏗️ FireMUD System Architecture: Overview
+# FireMUD System Architecture: Overview
 
 This document provides a high-level view of FireMUD’s system architecture, showing how major services, protocols, and data flows interact across the platform.
 
 ---
 
-## 🧩 Core Architecture Principles
+## Core Architecture Principles
 
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
@@ -26,7 +26,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ---
 
-## 🔁 Reconnection Strategy
+## Reconnection Strategy
 
 FireMUD supports seamless gameplay recovery through a layered reconnection model:
 
@@ -40,7 +40,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 
 ---
 
-## 🔗 Major Components and Their Roles
+## Major Components and Their Roles
 
 | Component | Purpose |
 | --- | --- |
@@ -61,7 +61,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 ---
 For a full list of responsibilities and APIs, refer to the [Microservices Documentation](./microservices/README.md).
 
-## 🌐 Communication Flows
+## Communication Flows
 
 | Flow | Protocol |
 | --- | --- |
@@ -75,7 +75,7 @@ For a full list of responsibilities and APIs, refer to the [Microservices Docume
 
 ---
 
-## 📦 Data and State Management
+## Data and State Management
 
 - **Persistent data** (accounts, entities, rooms) is stored in PostgreSQL by domain-aligned services
 - **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service
@@ -86,7 +86,7 @@ For a full list of responsibilities and APIs, refer to the [Microservices Docume
 
 ---
 
-## ⏱️ Game Loop / Tick Model
+## Game Loop / Tick Model
 
 FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
@@ -98,7 +98,7 @@ FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
 ---
 
-## 🔐 Authentication and Authorization Flow
+## Authentication and Authorization Flow
 
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
 On disconnect, clients must reauthenticate to resume gameplay.
@@ -108,7 +108,7 @@ Session state is stored in Redis and reused for recovery.
 
 ---
 
-## 📊 Observability and Monitoring
+## Observability and Monitoring
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the full pipeline, including Fluent Bit, Prometheus, and related dashboards.
 
@@ -116,7 +116,7 @@ See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the 
 
 ---
 
-## 🗂️ Deployment Layers
+## Deployment Layers
 
 | Layer | Technology |
 | --- | --- |
@@ -139,7 +139,7 @@ for how the `dev` and `prod` profiles differ between Docker Compose and Kubernet
 
 ---
 
-## 🔎 Notes on Responsibility Alignment
+## Notes on Responsibility Alignment
 
 - Functional responsibilities are defined in the [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - **Game Session Service** orchestrates tick lifecycles, retries, and session management
@@ -154,7 +154,7 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 ### Diagrams
 
