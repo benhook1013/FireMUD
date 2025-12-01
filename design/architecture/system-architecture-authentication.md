@@ -16,7 +16,7 @@ Issued JWTs are stored in Redis using keys `session:{tenantId}:{token}` with an 
 
 ---
 
-## 🔁 Login and Session Flow
+## Login and Session Flow
 
 All clients — whether connecting via Telnet or WebSocket — authenticate using the `LOGIN` command:
 
@@ -45,7 +45,7 @@ Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss). If
 
 ---
 
-## 👥 Multi-Client Behavior and Session Takeover
+## Multi-Client Behavior and Session Takeover
 
 Each character can only be controlled by one session at a time.
 
@@ -66,11 +66,11 @@ This enables:
 
 ---
 
-## 🧾 JWT Format and Role Claims
+## JWT Format and Role Claims
 
 Internal JWTs are issued by the Account Service and used for backend gRPC authorization. Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are validated by the Logging & Admin Service or other admin consumers. The Gateway forwards tokens without validating them, and the Game Session Service forwards tokens on behalf of connected clients.
 
-### 🧠 Claims
+### Claims
 
 | Field | Description |
 | --- | --- |
@@ -78,7 +78,7 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 | `globalRoles` | Cross-game privileges (e.g., `platformAdmin`, `moderator`) |
 | `scopedRoles` | Map of `tenantId` → roles (e.g., `"tenant-abc": ["admin", "designer"]`) |
 
-### 🧾 Example JWT Payload
+### Example JWT Payload
 
 - `accountId`: `"user-123"`
 - `globalRoles`: `["moderator"]`
@@ -90,7 +90,7 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 
 ---
 
-## 👮 Role-Based Authorization
+## Role-Based Authorization
 
 Access to services is governed by roles from the JWT:
 
@@ -108,7 +108,7 @@ All meta services use a shared `AuthTokenInterceptor` that extracts claims from 
 
 ---
 
-## 🔄 Mid-Session Role Updates
+## Mid-Session Role Updates
 
 If roles change during an active session (e.g., a player is promoted to admin):
 
@@ -122,7 +122,7 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 
 ---
 
-## 🧠 Session and Identity Management
+## Session and Identity Management
 
 - The Game Session Service is responsible for:
   - Authenticating sockets and binding identity context
@@ -134,7 +134,7 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 
 ---
 
-## ✅ Summary
+## Summary
 
 | Topic | Description |
 | --- | --- |
