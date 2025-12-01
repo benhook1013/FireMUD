@@ -58,8 +58,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service |
 | **[Game Design Service](./microservices/game-design-service/README.md)** | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services |
 
----
-For a full list of responsibilities and APIs, refer to the [Microservices Documentation](./microservices/README.md).
+> 🔗 See [Microservices Documentation](./microservices/README.md) for the full list of responsibilities and APIs.
 
 ## Communication Flows
 
