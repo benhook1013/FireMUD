@@ -127,15 +127,9 @@ See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the 
 | Service Layer | Microservices (Account, Entity, World, Logic, etc.) |
 | Infrastructure Layer | Kubernetes with IPVS, Docker Compose (for local development) |
 
-Deployment health checks (readiness and liveness probes) for these layers are
-described in detail in
-[Deployment Environments](./infrastructure/deployment-environments.md).
+Deployment health checks (readiness and liveness probes) for these layers are described in detail in [Deployment Environments](./infrastructure/deployment-environments.md).
 
-Environment-specific routing is configured via Spring profiles defined in
-`application.yml` and selected by the `SPRING_PROFILES_ACTIVE` environment
-variable. See
-[Deployment Environments](./infrastructure/deployment-environments.md#🔁-spring-profile-configuration)
-for how the `dev` and `prod` profiles differ between Docker Compose and Kubernetes.
+Environment-specific routing is configured via Spring profiles defined in `application.yml` and selected by the `SPRING_PROFILES_ACTIVE` environment variable. See [Deployment Environments](./infrastructure/deployment-environments.md#🔁-spring-profile-configuration) for how the `dev` and `prod` profiles differ between Docker Compose and Kubernetes.
 
 ---
 
