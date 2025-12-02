@@ -27,7 +27,7 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 - [x] Implement `PushBufferedInput` in `TcpProxyServiceImpl` to validate inputs and enqueue the provided commands into the per-session command queue in Redis, reusing the existing command enqueue logic used for WebSocket-driven input.
 - [x] Add unit tests for `TcpProxyServiceImpl` covering happy paths and validation failures for both `NotifyDisconnect` and `PushBufferedInput`, ensuring `ErrorDetail` codes and `grpc.app_error` metrics are set correctly.
 
-## 5. Telnet → Gateway → Game Session Cross-Service Flow
+## 5. Telnet Gateway Game Session Cross-Service Flow
 
 - [x] Add a cross-service integration test (in `services/tcp-proxy-service` or a shared test module) that starts tcp-proxy-service, Spring Cloud Gateway, and game-session-service together using Testcontainers or Spring Boot test harnesses.
 - [x] In that test, open a Telnet socket, send a valid `SESSION` envelope and a simple command, and assert that the command arrives at the Game Session command queue (or an observable stub) and that an expected response can be read back over the Telnet connection.

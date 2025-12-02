@@ -1,4 +1,4 @@
-# 🚀 MUD Game Platform Development To-Do List
+# MUD Game Platform Development To-Do List
 
 This checklist is structured to **build foundational features first**, followed by **gameplay mechanics, multiplayer, administration, and optimizations**.
 Service-specific tasks are tracked in separate files within this folder. Quick links:
@@ -18,7 +18,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 - Common microservice tasks are included in each service list.
 
-## 📋 Phase 0: Project Planning
+## Phase 0: Project Planning
 
 - [x] **Define Vision & Scope of the Platform**
   - [x] Write a high-level product vision and key goals
@@ -104,7 +104,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 
 ---
 
-## 🛠️ Phase 1: Core Infrastructure & Basic Services
+## Phase 1: Core Infrastructure & Basic Services
 
 ### Behavior and Orchestration Planning
 
@@ -268,13 +268,13 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [ ] Propagate `traceId` labels to Prometheus metrics via `MetricsInterceptor`
 - [ ] Capture `playerId` in structured JSON logs across all services
 
-### ✅ Common Steps for All Microservices (Non-Infrastructure)
+### Common Steps for All Microservices (Non-Infrastructure)
 
 The standard microservice checklist is now copied into each service task list.
 
 ---
 
-## 🛠️ Phase 2: Testing & Pre-Launch Preparations
+## Phase 2: Testing & Pre-Launch Preparations
 
 - [x] **Write Developer Documentation for Game Creators**
   - [x] Provide API references for scripting & integration
@@ -292,7 +292,7 @@ The standard microservice checklist is now copied into each service task list.
 
 ---
 
-## 🛠️ Phase 3: Deployment & Post-Launch Iteration
+## Phase 3: Deployment & Post-Launch Iteration
 
 - [x] **Iterate on Features & Add More Game Customization**
   - [x] Expand game customization options for hosted games
@@ -302,7 +302,7 @@ The standard microservice checklist is now copied into each service task list.
   - [x] Gather feedback from early users & iterate on UI/UX
   - [ ] Add MCP support for AI assisted game creation
 
-### ⚙️ Load Testing, Operations & Scaling
+### Load Testing, Operations & Scaling
 
 - [x] **Conduct Load & Security Testing**
   - [x] Simulate high-concurrency scenarios to identify bottlenecks
@@ -324,7 +324,7 @@ The standard microservice checklist is now copied into each service task list.
   - [x] Deploy **Velero** for scheduled Kubernetes manifest backups
   - [x] Configure the `pg_dump` CronJob for PostgreSQL data as described in [Backup & Disaster Recovery Plan](../architecture/system-architecture-backup-recovery.md)
 
-## 🛠️ Phase 4: Community & Funding
+## Phase 4: Community & Funding
 
 - [x] Set up financial contribution options
   - [x] Add PayPal donation link
@@ -334,7 +334,7 @@ The standard microservice checklist is now copied into each service task list.
 
 ---
 
-## ➕ Additional Tasks
+## Additional Tasks
 
 - [x] Provide command-line tooling for local game and session management
 - [x] Plan for **end-to-end UI testing** using Cypress or Playwright once the
