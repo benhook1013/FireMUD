@@ -1,4 +1,4 @@
-# 🧭 Microservices Responsibility Matrix
+# Microservices Responsibility Matrix
 
 | Function | Game Design Service | World Management Service | Account Service | Game Session Service | Entity Management Service | Game Logic Service | Automation & Scripting Service | Social & Groups Service | Logging & Admin Service | TCP Proxy Service | Spring Cloud Gateway |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -45,7 +45,7 @@
 | Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Microservices Overview](./microservices/README.md)
 - [System Architecture Overview](./system-architecture-overview.md)
