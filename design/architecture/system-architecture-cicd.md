@@ -22,7 +22,18 @@ This document describes the continuous integration strategy for FireMUD using **
 
 ## Workflow Structure
 
-Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch. The main [`ci.yml`](../../.github/workflows/ci.yml) workflow performs a **Buf breaking change check**, runs formatting and lint steps, executes a matrix of Gradle `check` tasks (one per microservice), runs JaCoCo coverage and Trivy scans, and uses Node 20 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome. A dedicated `generate-erd` job invokes [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations, and a final step posts a summary comment on pull requests with test status and coverage. Documentation links are verified in the `docs.yml` workflow before publishing to GitHub Pages.
+Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch.
+
+The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
+
+- Performs a **Buf breaking change check** to keep protobuf APIs compatible.
+- Runs formatting and lint steps (Spotless, markdownlint, link checks).
+- Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
+- Generates coverage with JaCoCo and runs Trivy scans over the workspace.
+- Uses Node 20 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
+- Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
+- Verifies documentation links in the `docs.yml` workflow before publishing to GitHub Pages.
+- Posts a summary comment on pull requests with test status and coverage.
 
 A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
 
