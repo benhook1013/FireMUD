@@ -7,9 +7,10 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 ## Migration Tool
 
 - **Flyway** is used for all schema migrations.
-- Each service's `build.gradle.kts` applies the `org.flywaydb.flyway` plugin.
-  Most services explicitly depend on `flyway-core`, while others rely on the
-  plugin's default dependency.
+- The root `build.gradle.kts` applies the `org.flywaydb.flyway` plugin and adds
+  `flyway-core`, `flyway-database-postgresql`, and the PostgreSQL driver for
+  every service module under `services/` (excluding the `common-library`
+  module, which does not run Flyway itself).
 - Versioned SQL files live under each service in `src/main/resources/db/migration/`.
 - Migrations follow the `V<version>__<description>.sql` naming convention.
 - Every module begins with a `V1__init.sql` baseline and numbers sequentially from there.

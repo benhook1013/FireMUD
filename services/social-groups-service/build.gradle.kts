@@ -6,7 +6,6 @@ dependencies {
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.lombok.mapstruct.binding)
     compileOnly(libs.lombok)
-    implementation(libs.flyway.core)
     implementation(libs.mapstruct)
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
@@ -27,5 +26,4 @@ dependencies {
     testImplementation(libs.testcontainers.postgresql)
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 }
-
 
