@@ -1,10 +1,10 @@
-# 🔀 Gateway Architecture
+# Gateway Architecture
 
 This document describes the role and configuration of **Spring Cloud Gateway** in the FireMUD platform, including routing, filtering, WebSocket support, and how it integrates with both modern and legacy clients.
 
 ---
 
-## 🚪 Gateway Pattern
+## Gateway Pattern
 
 **Spring Cloud Gateway** serves as the **single entry point** into the FireMUD system for all **external client traffic**:
 
@@ -36,7 +36,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 ---
 
-## 🔷 WebSocket Support
+## WebSocket Support
 
 - WebSocket is used by modern clients (e.g., browser-based interfaces) for real-time interaction
 - Spring Cloud Gateway supports **WebSocket proxying**, allowing connections to be routed to backend services (e.g., `game-session-service`)
@@ -62,7 +62,7 @@ The gateway uses the `ws://` scheme so Spring Cloud Gateway upgrades HTTP reques
 
 ---
 
-## 🔌 Telnet / TCP Bridging
+## Telnet / TCP Bridging
 
 - Traditional MUD clients connect via **raw TCP** (Telnet protocol)
 - These connections are terminated by a **dedicated TCP Proxy Service** outside of Spring Cloud Gateway
@@ -73,7 +73,7 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 ---
 
-## 🔐 Centralized Gateway Benefits
+## Centralized Gateway Benefits
 
 Spring Cloud Gateway provides centralized management of client traffic, offering:
 
@@ -85,7 +85,7 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - Easy expansion of routes for new microservices
 - TLS termination and mTLS between services are described in [Security Architecture](./system-architecture-security.md).
 
-## ⚙️ Dynamic Route Management
+## Dynamic Route Management
 
 The gateway supports **runtime configuration** of custom routes. Operators can
 add, update, or remove routes using either the REST API (`/routes`) or the
@@ -96,13 +96,13 @@ for example requests and supported fields. The gRPC interface is defined in [`ga
 Dynamic routes are stored only in memory and are lost on service restart. A PostgreSQL `route_config` table stores persistent routes.
 The gRPC management API listens on port `6565` as configured in `application.yml`.
 
-## 📈 Observability
+## Observability
 
 All gateway gRPC endpoints are instrumented with the shared `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor`.
 WebSocket traffic is tracked using the `ConnectionMetricsFilter`. Full request and response tracing for WebSocket sessions is enabled.
 These interceptors and filters record structured logs, Prometheus metrics, and OpenTelemetry spans so usage and performance can be monitored across the cluster.
 
-## 🔗 Internal gRPC Communication
+## Internal gRPC Communication
 
 Internal services communicate directly with each other over **gRPC**.
 Spring Cloud Gateway does not handle these calls. Each service discovers
@@ -124,10 +124,10 @@ Spring profiles defined in `application.yml` and selected via
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
+- [Infrastructure Overview](./infrastructure/README.md)
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Spring Cloud Gateway Service Details](./microservices/spring-cloud-gateway/README.md)

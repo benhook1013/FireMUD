@@ -2,13 +2,13 @@
 
 This document outlines how FireMUD incorporates the Mud Client Protocol (MCP) to enable richer tooling for AI-assisted game creation. The protocol reference can be found at <https://www.moo.mud.org/mcp/mcp2.html>.
 
-## 🎯 Goals
+## Goals
 
 - Allow editors and automated tools to communicate with the server using structured MCP messages.
 - Enable scripted workflows where the AI can create rooms, items, and NPCs via standardized commands.
 - Maintain backward compatibility with traditional Telnet clients that do not understand MCP.
 
-## 📘 MCP Basics
+## MCP Basics
 
 The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for sending out-of-band messages on the same channel as normal Telnet traffic. Lines are delimited with `\r\n` and there is no fixed line-length limit. Both connection endpoints are treated symmetrically, and the protocol itself maintains no state; higher-level packages define application behavior. Message names and keywords are case-insensitive, while authentication keys and data tags must preserve their exact case. Lines beginning with the `#$#` marker are interpreted as MCP messages, while other lines remain in-band for legacy clients. Each session uses an authentication key supplied by the client; although the key travels in cleartext, implementations must reject any message with an unexpected key to guard against spoofing.
 
@@ -19,7 +19,7 @@ When MCP is enabled, JSON payloads are exchanged inside MCP packages.
 The Game Design Service exposes REST and gRPC commands for creating and updating content.
 These commands are wrapped in MCP messages so external tools, including AI assistants, drive world creation.
 
-## 🔌 Protocol Handshake
+## Protocol Handshake
 
 When a client connects, the server begins with an `mcp` version line advertising a minimum and maximum supported protocol version. The client replies with its own `mcp` line that includes the session’s `authentication-key` along with its version range. Both sides pick the highest overlapping version and tag all subsequent messages with the agreed key; if no overlap exists, MCP cannot be used and the connection must fall back to plain Telnet or close. The authentication key may be any unquoted string but should be hard to guess, as the server will discard any message whose key does not match the one negotiated at startup.
 
@@ -37,7 +37,7 @@ Example handshake:
 #$#mcp-negotiate-end
 ```
 
-## 📨 Message Format
+## Message Format
 
 MCP treats any line starting with `#$#` as an out-of-band message. Other lines remain in-band Telnet traffic. Lines beginning with `#$#` or `#$"` must be quoted with the prefix `#$"` to preserve their literal content. Each message contains a case-insensitive name, the session’s authentication key, and case-insensitive keywords. Authentication keys and data tags are case-sensitive. Simple values that include spaces, quotes, backslashes, colons, or asterisks must be enclosed in double quotes, escaping `\"` and `\\` as needed. Multiline values append `*` to the keyword and include an `_data-tag` argument whose value is echoed on subsequent `* datatag keyword:` lines and closed with `#: datatag`. Continuation lines may be interleaved with other traffic but must arrive in order for a given data tag. MCP relies on the underlying session for ordering and reliability. Malformed or unrecognized messages are silently discarded, allowing traditional Telnet clients to coexist with MCP-aware tooling.
 
@@ -50,7 +50,7 @@ Example multiline message:
 #$#: desc1
 ```
 
-## 📦 Optional Packages
+## Optional Packages
 
 FireMUD supports the `mcp-cord` package (version 1.0) to multiplex additional channels over the same connection. The package defines:
 
@@ -69,10 +69,10 @@ These primitives let stateful conversations—such as room editing sessions—be
 
 Bulk import and transaction support for batch creation expand this workflow and are tracked separately.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Game Design Service](./microservices/game-design-service/README.md)
-- [TCP Proxy Service](./microservices/tcp-proxy-service/README.md)
-- [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [Modding Framework](./microservices/game-design-service/modding-framework.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
+- [TCP Proxy Service](./microservices/tcp-proxy-service/README.md)
 - [User Journeys – Extensibility & External Tools](./user-journeys.md#21-extensibility--external-tools)
