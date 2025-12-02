@@ -117,7 +117,7 @@ After edits, run `./gradlew generateProto` to regenerate gateway stubs.
 The `gateway_management_service.proto` file defines gRPC endpoints for remotely
 adding or removing routes at runtime.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Reconnection Strategy](../../system-architecture-reconnection.md)

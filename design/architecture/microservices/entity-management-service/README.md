@@ -125,7 +125,7 @@ Service interface definitions are stored in
 [../../../../protos/entity-management/v1](../../../../protos/entity-management/v1). After editing the
 proto files, run `./gradlew generateProto` to update generated sources.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Tick System and Runtime Design](../../system-architecture-ticks.md)

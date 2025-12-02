@@ -27,7 +27,7 @@ The web-based editor described in [Web-Based Visual Design Interface](web-visual
 3. Each revision becomes part of a published version through `PublishVersion`.
 4. When a version is published, abilities are copied to the Game Logic Service using the `version_id`.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [World Editing & Customization Tools](world-editing-tools.md)

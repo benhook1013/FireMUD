@@ -167,7 +167,7 @@ The gRPC contract for world operations is located in
 [../../../../protos/world-management/v1](../../../../protos/world-management/v1).
 Run `./gradlew generateProto` to regenerate sources after editing these files.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)

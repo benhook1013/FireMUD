@@ -147,7 +147,7 @@ API definitions are located in
 Run `./gradlew generateProto` after modifying these schemas to update the gRPC
 stubs.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture: Scripting & Automation](../../system-architecture-scripting.md)
 - [Tick System and Runtime Design](../../system-architecture-ticks.md)

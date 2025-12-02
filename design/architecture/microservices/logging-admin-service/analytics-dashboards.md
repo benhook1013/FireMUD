@@ -1,4 +1,4 @@
-# 📊 Operator Analytics Dashboards
+# Operator Analytics Dashboards
 
 This document describes the default Grafana and Kibana dashboards shipped with the
 **Logging & Admin Service**. These dashboards provide operators with visibility

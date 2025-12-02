@@ -1,4 +1,4 @@
-# 🛡️ Moderation Policies
+# Moderation Policies
 
 This file outlines recommended moderation rules for hosted FireMUD games.
 Operators can adapt these policies based on community needs while maintaining a safe environment for players. Automated enforcement, moderation dashboards, and detection tooling support these policies alongside manual bans via the `ApplyModerationAction` API.

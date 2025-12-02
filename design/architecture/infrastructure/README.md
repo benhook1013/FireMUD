@@ -1,10 +1,10 @@
-# 📚 FireMUD Infrastructure Documentation
+# FireMUD Infrastructure Documentation
 
 This directory contains core documentation for the shared infrastructure that powers the FireMUD platform. These documents provide architecture, deployment, and integration guidance across all services.
 
 ---
 
-## 🔀 Core Infrastructure Docs
+## Core Infrastructure Docs
 
 | Document | Description |
 | --- | --- |
@@ -23,23 +23,23 @@ This directory contains core documentation for the shared infrastructure that po
 
 ---
 
-### 🌐 Network Boundary and Certificates
+### Network Boundary and Certificates
 
 The **Spring Cloud Gateway** and **TCP Proxy Service** sit in a DMZ behind the external load balancer. TLS and mTLS certificates for all services are issued by **cert-manager** and stored as Kubernetes Secrets.
 
-### 🏢 Multi-Tenant Deployment
+### Multi-Tenant Deployment
 
 All games share the same Kubernetes cluster and infrastructure. Databases use per-service schemas keyed by `tenantId`; no tenant-specific clusters exist. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
 
-## 📜 Logging Stack
+## Logging Stack
 
 The log aggregation pipeline is summarized in [Logging & Monitoring](../system-architecture-logging-monitoring.md).
 
-## 🧭 Usage
+## Usage
 
 All service-level design documents should refer to this directory for shared infrastructure context, rather than duplicating gateway, deployment, or protocol behavior.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Deployment Environments](./deployment-environments.md)

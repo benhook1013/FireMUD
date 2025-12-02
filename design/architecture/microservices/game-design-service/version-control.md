@@ -18,7 +18,7 @@ Design assets are versioned to enable rollback and collaborative workflows. This
 - Patch notes are automatically generated from commit messages.
 - Downstream services continue to consume only published versions so runtime stability is preserved.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)

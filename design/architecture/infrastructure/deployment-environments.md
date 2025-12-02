@@ -1,10 +1,10 @@
-# 🚀 Deployment Environments
+# Deployment Environments
 
 This document outlines how FireMUD is deployed across different environments, focusing on **Docker Compose** for local development and **Kubernetes** for production. It includes discovery mechanisms, health check strategies, and environment-specific configurations.
 
 ---
 
-## 🧪 Local Development: Docker Compose
+## Local Development: Docker Compose
 
 FireMUD uses Docker Compose for local development and testing:
 
@@ -25,7 +25,7 @@ FireMUD uses Docker Compose for local development and testing:
   Standard ports include **8080** for HTTP, **6565** for gRPC, and **2323** for
   the TCP proxy.
 
-### 🩺 Docker Health Checks
+### Docker Health Checks
 
 - Services expose Spring Boot’s `/actuator/health` for basic health status.
 - Docker Compose can monitor health using `healthcheck` blocks in `docker/docker-compose.yml`.
@@ -45,7 +45,7 @@ pause startup until PostgreSQL and Redis are reachable.
 
 ---
 
-## ☁️ Production: Kubernetes
+## Production: Kubernetes
 
 In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, or self-managed clusters).
 
@@ -73,13 +73,13 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 
 - All tenants share this cluster with data separated by `tenantId` per service. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for more.
 
-### 🩺 Kubernetes Health Monitoring
+### Kubernetes Health Monitoring
 
 - Kubernetes uses Spring Boot’s `/actuator/health` for both:
   - **Readiness probes** — to determine if a service is ready to handle requests.
   - **Liveness probes** — to detect and restart stuck or unresponsive containers.
 
-### 🔄 Kubernetes Auto Recovery
+### Kubernetes Auto Recovery
 
 - Kubernetes automatically:
   - Removes unready pods from Services
@@ -89,7 +89,7 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 
 ---
 
-## 📈 Monitoring & Logging
+## Monitoring & Logging
 
 FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes. The Docker Compose environment omits these components.
 Example manifests for the collector and dashboards live under [`k8s/monitoring`](../../../k8s/monitoring).
@@ -104,7 +104,7 @@ Docker Compose and Kubernetes rely on the following monitoring tools:
 - OpenTelemetry spans are emitted by services for distributed tracing.
 - Jaeger stores these traces for debugging and analysis.
 
-### 📜 Log Aggregation
+### Log Aggregation
 
 - **Fluent Bit** agents collect container logs from each pod.
 - **Elasticsearch** stores structured log data for long-term retention.
@@ -116,7 +116,7 @@ See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for det
 
 ---
 
-## 🔁 Spring Profile Configuration
+## Spring Profile Configuration
 
 Spring Boot services define `dev` and `prod` profiles inside `application.yml`.
 Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable.
@@ -131,14 +131,14 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
   - DNS-based routing to Kubernetes Services
   - Integration with persistent infrastructure such as the PostgreSQL cluster
 
-## 🎮 Staging Environment for Playtesting
+## Staging Environment for Playtesting
 
 A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
 For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/playtesting-feedback.md).
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Infrastructure Overview](./README.md)
 - [Gateway Architecture](../system-architecture-gateway.md)

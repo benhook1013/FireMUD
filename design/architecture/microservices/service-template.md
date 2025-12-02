@@ -61,6 +61,6 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 - `GET /ping` – health check.
 - `{{ RPC Method }}` – {{ brief description }}
 
-## 📚 Related Documentation
+## Related Documentation
 
 - {{ Links to other design docs that expand on this service. }}

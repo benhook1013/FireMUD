@@ -137,7 +137,7 @@ The service API contract resides in
 [../../../../protos/game-design/v1](../../../../protos/game-design/v1). Generate
 stubs with `./gradlew generateProto` whenever these files are updated.
 
-## 📚 Related Documentation
+## Related Documentation
 
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
 

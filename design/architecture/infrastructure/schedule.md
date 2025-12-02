@@ -1,4 +1,4 @@
-# ⏰ Scheduled Jobs
+# Scheduled Jobs
 
 This document lists automated jobs that run on a schedule. Each entry links to the main design reference and the configuration that defines the schedule. Jobs are grouped by the environment where they run.
 

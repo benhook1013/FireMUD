@@ -160,7 +160,7 @@ The gRPC schemas for this service live in
 [../../../../protos/account/v1](../../../../protos/account/v1). Use
 `./gradlew generateProto` to regenerate Java stubs when the definitions change.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Authentication & Authorization](../../system-architecture-authentication.md)
 - [Security Architecture](../../system-architecture-security.md)

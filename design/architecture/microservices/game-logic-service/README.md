@@ -149,7 +149,7 @@ gRPC service definitions can be found in
 [../../../../protos/game-logic/v1](../../../../protos/game-logic/v1). Rebuild
 the generated code with `./gradlew generateProto` after making changes.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Tick System and Runtime Design](../../system-architecture-ticks.md)

@@ -15,7 +15,7 @@ This document describes the **visual editing front end** for the Game Design Ser
 3. The visual scripting editor represents nodes and connections in JSON which maps directly to the Automation & Scripting Service DSL.
 4. Authentication relies on credentials exchanged with the Account Service. The resulting JWT is used internally for gRPC calls and is not stored in the browser. Requests include the `tenantId` to isolate data per project.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [Asset Storage Setup](asset-storage.md)

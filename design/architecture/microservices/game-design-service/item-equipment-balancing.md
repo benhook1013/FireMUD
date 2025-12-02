@@ -20,7 +20,7 @@ These capabilities are available in the current implementation.
 2. Balancing views aggregate stats and show graphs for cost vs. power.
 3. Finalized changes are published as part of a game version and copied to the Entity Management Service.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [World Editing & Customization Tools](world-editing-tools.md)

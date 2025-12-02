@@ -142,7 +142,7 @@ The social APIs are defined in
 Regenerate the service stubs with `./gradlew generateProto` whenever the proto
 files change.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
