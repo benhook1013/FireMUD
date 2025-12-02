@@ -1,4 +1,4 @@
-# 📑 FireMUD System Architecture: Versioning & Runtime Configuration
+# FireMUD System Architecture: Versioning & Runtime Configuration
 
 This document explains how game data is versioned and activated at runtime. It also shows where runtime feature flags live and how they are edited.
 
@@ -6,7 +6,7 @@ This document explains how game data is versioned and activated at runtime. It a
 
 ---
 
-## 🎮 Game Version Publishing
+## Game Version Publishing
 
 The **Game Design Service** stores the authoritative game configuration (world layouts, scripts, item templates, etc.). Designers iterate on this data and periodically **publish** a new version.
 
@@ -53,7 +53,7 @@ game instance starts or reloads scripts for patch versions. See
 [Database Migrations](./system-architecture-database-migrations.md) for the
 Flyway workflow.
 
-## 🚀 Version Activation & Rollback
+## Version Activation & Rollback
 
 The **Game Session Service** controls which published version is active for each live game instance. See the [User Journeys](./user-journeys.md#5-publish-and-start-a-game-instance) document for the high level flow.
 
@@ -82,7 +82,7 @@ when a version is published. The definitions table and copy steps manage this wo
 - During each tick cycle the active flags are applied before executing game logic.
   See [Tick System](./system-architecture-ticks.md) for details.
 
-## 🗺️ Flow Summary
+## Flow Summary
 
 ```mermaid
 flowchart TD
@@ -98,12 +98,12 @@ By decoupling published versions from runtime flags, FireMUD can rapidly iterate
 
 For API versioning conventions see [gRPC Protocol Guidelines](./system-architecture-grpc.md).
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [System Architecture Overview](./system-architecture-overview.md)
-- [Service Responsibility Matrix](./service-responsibility-matrix.md)
-- [Transaction Strategies](./system-architecture-transactions.md)
-- [Testing Strategy](./system-architecture-testing.md)
 - [Database Migrations](./system-architecture-database-migrations.md)
 - [Game Customization Options](./game-customization-options.md)
 - [Game Session Service](./microservices/game-session-service/README.md)
+- [Service Responsibility Matrix](./service-responsibility-matrix.md)
+- [System Architecture Overview](./system-architecture-overview.md)
+- [Testing Strategy](./system-architecture-testing.md)
+- [Transaction Strategies](./system-architecture-transactions.md)
