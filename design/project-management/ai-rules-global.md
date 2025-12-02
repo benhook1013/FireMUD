@@ -70,6 +70,7 @@
 - Verify coverage with JaCoCo by running `./gradlew check` before committing.
 - Instrument new code with Micrometer metrics and OpenTelemetry tracing following `design/architecture/system-architecture-logging-monitoring.md`.
 - Use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from the shared library when adding new gRPC endpoints so logs, metrics, and spans are recorded consistently.
+- When editing `.proto` files or gRPC APIs, follow the conventions in `design/architecture/system-architecture-grpc.md` for schema layout, versioning, and error-handling rules.
 
 ## 10. Tooling Available to AI
 
