@@ -10,11 +10,11 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
-- For admin APIs the Gateway forwards JWTs to backend services without validating them. Gameplay login is processed by the **Game Session Service**; see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the detailed flow.
+- For admin APIs the Gateway forwards JWTs to backend services without validating them. Player login and session binding are processed by the **Game Session Service**; see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the detailed flow.
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
-- Auto‑scaling policies handle high concurrency.
+- Auto‑scaling policies handle high concurrency
 - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
 - Gateway restarts automatically re-establish WebSocket connections to backend services. See [Reconnection Strategy](./system-architecture-reconnection.md).
