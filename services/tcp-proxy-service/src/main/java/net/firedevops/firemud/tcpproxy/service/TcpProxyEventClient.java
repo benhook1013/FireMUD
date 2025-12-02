@@ -89,17 +89,18 @@ public class TcpProxyEventClient implements AutoCloseable {
     }
   }
 
+  private static final String DEFAULT_CHANNEL_TARGET = "dns:///game-session-service:6565";
+
   private void reloadChannel() throws SSLException, IOException {
     String target = endpoints.getGameSessionService();
-    if (target == null || target.isEmpty()) {
-      target = "game-session-service:6565";
+    if (!StringUtils.hasText(target)) {
+      target = DEFAULT_CHANNEL_TARGET;
+    } else if (!target.contains("://")) {
+      target = "dns:///" + target;
     }
-    String[] parts = target.split(":");
-    String host = parts[0];
-    int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
     TlsFiles resolved = resolveTlsFiles();
     NettyChannelBuilder builder =
-        NettyChannelBuilder.forAddress(host, port)
+        NettyChannelBuilder.forTarget(target)
             .keepAliveTime(30, TimeUnit.SECONDS)
             .keepAliveTimeout(5, TimeUnit.SECONDS)
             .keepAliveWithoutCalls(true);
@@ -118,12 +119,11 @@ public class TcpProxyEventClient implements AutoCloseable {
       builder = builder.usePlaintext();
     }
     ManagedChannel newChannel = builder.build();
-    if (channel != null) {
-      channel.shutdown();
-    }
+    ManagedChannel previousChannel = channel;
     channel = newChannel;
     stub = TcpProxyServiceGrpc.newBlockingStub(channel).withCompression("gzip");
     tlsFiles = resolved;
+    shutdownChannel(previousChannel);
   }
 
   public NotifyDisconnectResponse notifyDisconnect(String sessionId, String tenantId) {
@@ -149,8 +149,21 @@ public class TcpProxyEventClient implements AutoCloseable {
     if (watcher != null) {
       watcher.close();
     }
-    if (channel != null) {
-      channel.shutdown();
+    shutdownChannel(channel);
+  }
+
+  private static void shutdownChannel(ManagedChannel channel) {
+    if (channel == null) {
+      return;
+    }
+    channel.shutdown();
+    try {
+      if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+        channel.shutdownNow();
+      }
+    } catch (InterruptedException e) {
+      channel.shutdownNow();
+      Thread.currentThread().interrupt();
     }
   }
 

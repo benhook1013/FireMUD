@@ -182,8 +182,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   static CompletableFuture<WebSocket> createWebSocket(
       String gatewayWsUrl, String clientIp, String sessionId, String tenantId, Listener listener) {
-    HttpClient client = HttpClient.newHttpClient();
-    var builder = client.newWebSocketBuilder();
+    var builder = SHARED_HTTP_CLIENT.newWebSocketBuilder();
     if (clientIp != null) {
       builder.header("X-Client-IP", clientIp);
     }
@@ -787,6 +786,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       Set.of((byte) 240, (byte) 241, (byte) 249, (byte) 251, (byte) 252, (byte) 253, (byte) 254);
 
   private static final Set<Byte> SUPPORTED_OPTIONS = Set.of((byte) 1, (byte) 3);
+  private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder().build();
 
   boolean isMcpNegotiated() {
     return mcpNegotiated;
