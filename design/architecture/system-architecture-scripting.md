@@ -4,13 +4,13 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 
 ---
 
-## 🎯 Goals
+## Goals
 
 - Enable **event-driven scripting** and **NPC automation** so worlds feel alive even without active players.
 - Keep the system **extensible** while preventing malicious or abusive scripts.
 - Support **persistence** and versioned updates so game creators can iterate safely.
 
-## 🧩 Component‑Based Scripting DSL
+## Scripting DSL
 
 - Scripts are authored in a **visual editor** where designers assemble **predefined components** (conditions, actions, timers, etc.).
 - Each component maps to a safe, well-defined operation in the Automation & Scripting Service.
@@ -38,13 +38,13 @@ Scripts may register handlers for a set of standard lifecycle events. The Automa
 - `NpcFormationService` coordinates squad positioning for groups of NPCs.
 Refer to the Automation & Scripting Service README for implementation details.
 
-## 🔒 Sandboxing & Security
+## Sandboxing & Security
 
 - Script execution occurs in a **sandbox** with restricted APIs and resource limits.
 - Components interact with the **Game Logic Service** through validated gRPC calls.
 - The service enforces **per-script quotas** via `ScriptQuotaService`. **CPU and memory limits** are enforced automatically.
 
-## ⚙️ Integration with Game Logic & Tick System
+## Integration with Game Logic & Tick System
 
 - **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and enqueues the resulting commands into each entity's command queue.
 - These queued commands run during the **next tick cycle** via the normal Game Session and Game Logic flow, ensuring deterministic, replayable behavior that follows the tick system's fairness and retry rules.
@@ -53,7 +53,7 @@ Refer to the Automation & Scripting Service README for implementation details.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 - **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:lock:{tenantId}:{scriptId}` to ensure only one script tick runs at a time. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
 
-## 🔄 Deployment & Versioning
+## Deployment & Versioning
 
 - Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is supported.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
@@ -62,7 +62,7 @@ Refer to the Automation & Scripting Service README for implementation details.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
-## 🛡️ Fairness & Abuse Prevention
+## Fairness & Abuse Prevention
 
 The Automation & Scripting Service enforces several safeguards to prevent runaway
 scripts and ensure fair resource usage:
@@ -98,7 +98,7 @@ See the [Automation & Scripting Service README](./microservices/automation-scrip
 
 By constraining scripts to curated components and enforcing strict quotas, FireMUD delivers powerful automation tools while maintaining security and fair resource usage across all hosted games.
 
-## 🛠️ Developer Tools
+## Developer Tools
 
 Several helper scripts streamline common tasks:
 

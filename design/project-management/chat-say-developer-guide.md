@@ -5,10 +5,10 @@ This quick guide shows example commands for both WebSocket and Telnet clients so
 ## WebSocket Example
 
 1. Start the services needed for the cross-service regression (Account, World, Entity, Social, Game Logic, Redis, Postgres, Game Session).
-2. Connect to the Game Session WebSocket at `/ws/game` and include `X-Session-Id` after running `SESSION <sessionId>`.
-3. Send `LOGIN demo@example.com swordfish`.
-4. Once you receive `OK LOGIN ...`, send `SAY Hello travelers`.
-5. Expect the structured `OK SAY` response:
+1. Connect to the Game Session WebSocket at `/ws/game` and include `X-Session-Id` after running `SESSION <sessionId>`.
+1. Send `LOGIN demo@example.com swordfish`.
+1. Once you receive `OK LOGIN ...`, send `SAY Hello travelers`.
+1. Expect the structured `OK SAY` response:
 
 ```text
 OK SAY
@@ -17,14 +17,14 @@ Delivered-To: Emberline, Kobold Scout, Sora
 Message: Hello travelers
 ```
 
-6. The Telnet regression suite renders the same metadata as `Emberline says, "Hello travelers"` and observes a `Kobold Scout` NPC echo, so treat the above payload as the canonical reference for both transports.
+1. The Telnet regression suite renders the same metadata as `Emberline says, "Hello travelers"` and observes a `Kobold Scout` NPC echo, so treat the above payload as the canonical reference for both transports.
 
 ## Telnet Example
 
 1. Connect via Telnet to the TCP proxy port.
-2. Issue `SESSION <sessionId> <tenantId>`, then `LOGIN demo@example.com swordfish`.
-3. After the `OK LOGIN` acknowledgment, send `SAY Hello travelers`.
-4. Compare the Telnet transcript to the canonical response above and confirm the Social stub recorded `SendMessage` with `content="Hello travelers"` and `chatType=CHAT_TYPE_SAY`.
+1. Issue `SESSION <sessionId> <tenantId>`, then `LOGIN demo@example.com swordfish`.
+1. After the `OK LOGIN` acknowledgment, send `SAY Hello travelers`.
+1. Compare the Telnet transcript to the canonical response above and confirm the Social stub recorded `SendMessage` with `content="Hello travelers"` and `chatType=CHAT_TYPE_SAY`.
 
 ## Running the Automation
 

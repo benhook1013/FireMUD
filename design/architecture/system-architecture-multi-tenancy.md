@@ -1,4 +1,4 @@
-# 🏢 FireMUD System Architecture: Multi-Tenancy
+# FireMUD System Architecture: Multi-Tenancy
 
 This document explains how FireMUD hosts many independent games on shared infrastructure.
 It complements the [System Architecture Overview](./system-architecture-overview.md) and
@@ -7,7 +7,7 @@ the multi-tenant requirements in the
 
 ---
 
-## 🔗 Account-to-Game Relationships
+## Account-to-Game Relationships
 
 - Players have a **single platform account** managed by the **Account Service**.
 - The same account can join multiple games. Each game is identified by a `tenantId`.
@@ -22,7 +22,7 @@ the multi-tenant requirements in the
 - Per-game friendships store `tenantId` and player IDs.
 - Account-to-account friendships reference global account IDs.
 
-## 🗂️ Data Separation per Service
+## Data Separation per Service
 
 - All microservices connect to a single PostgreSQL instance and store data in
   service-specific schemas.
@@ -39,7 +39,7 @@ the multi-tenant requirements in the
 - See [Game Customization Options](./game-customization-options.md) and the
   [Frontend Architecture](./system-architecture-frontend.md) for details.
 
-## ⚙️ Tenant Configuration & Scaling
+## Tenant Configuration & Scaling
 
 - Game-specific settings—such as world size and tick intervals—are stored in
   configuration tables keyed by `tenantId`.

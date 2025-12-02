@@ -1,10 +1,10 @@
-# 💾 FireMUD System Architecture: Backup & Disaster Recovery
+# FireMUD System Architecture: Backup & Disaster Recovery
 
 This document defines the backup schedule and disaster recovery procedures for FireMUD. Backups are taken only for **production**. Development and staging environments rely on ad hoc snapshots as needed.
 
 ---
 
-## 📦 PostgreSQL Logical Backups
+## PostgreSQL Logical Backups
 
 - A `firemud-pg-dump` CronJob (defined in `k8s/postgres/pg-dump-cronjob.yaml`) runs **every 15 minutes** and stores compressed SQL dumps.
 - The production Terraform modules automatically deploy this CronJob. See [`k8s/terraform-production`](../../k8s/terraform-production).
@@ -70,7 +70,7 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
   2. Restart services to resume operation.
   3. Redis repopulates transient state from PostgreSQL on access.
 
-## 🗃️ Redis Persistence
+## Redis Persistence
 
 - Redis stores only **transient gameplay state**.
 - **AOF (Append‑Only File)** is enabled for crash recovery while the cluster is running.
@@ -88,7 +88,7 @@ During each Helm install or upgrade, a Kubernetes Job (`k8s/helm/firemud/templat
 
 Because Redis is not a source of truth, this strategy guarantees a clean, deterministic runtime state on every deployment.
 
-## ☁️ Kubernetes Production
+## Kubernetes Production
 
 - **Velero** backs up Deployments, StatefulSets, ConfigMaps, and Secrets (but not volume snapshots).
   - Restoration process:
@@ -98,7 +98,7 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
     4. Operators can run `dev-tools/restores/restore-cluster.sh <backup-name>` to automate these steps in production.
        Set `FIREMUD_K8S_NAMESPACE` if restoring to a different namespace.
 
-## 🐳 Local Development
+## Local Development
 
 - Backups are restored using `dev-tools/restores/restore-db.sh` with a snapshot file.
 - `dev-tools/restores/restore-latest-db.sh` can fetch the newest dump from the object
@@ -113,7 +113,7 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 ---
 
-## ✅ Backup Verification & Restoration Testing
+## Backup Verification & Restoration Testing
 
 - The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs nightly at **04:00**
   and executes `dev-tools/backups/verify-backups.sh` to ensure recent snapshots are present in
@@ -129,7 +129,7 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 ---
 
-## 🔄 Restore Workflow Summary
+## Restore Workflow Summary
 
 | Environment | Steps |
 | --- | --- |
@@ -138,7 +138,7 @@ Because Redis is not a source of truth, this strategy guarantees a clean, determ
 
 Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. Gameplay resumes after services restart and Redis repopulates from PostgreSQL.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [CI/CD Pipeline](./system-architecture-cicd.md)
 - [Database Migrations](./system-architecture-database-migrations.md)

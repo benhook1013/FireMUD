@@ -1,4 +1,4 @@
-# 🖥️ Role-Based Admin UI
+# Role-Based Admin UI
 
 This document outlines the administration interface delivered as a
 lightweight React application. The `web-client` module provides the main

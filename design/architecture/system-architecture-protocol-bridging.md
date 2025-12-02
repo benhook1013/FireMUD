@@ -1,10 +1,10 @@
-# 🔌 Protocol Bridging: WebSocket and Telnet (TCP)
+# Protocol Bridging: WebSocket and Telnet (TCP)
 
 This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **raw TCP (Telnet)**. Both are routed into a unified backend session service for shared logic and scalability.
 
 ---
 
-## 🎯 Bridging Overview
+## Bridging Overview
 
 FireMUD enables real-time interaction through two types of client connections:
 
@@ -17,7 +17,7 @@ Despite their differences, both protocols are normalized into the same internal 
 
 ---
 
-## 🔷 WebSocket Client Flow (Modern Clients)
+## WebSocket Client Flow (Modern Clients)
 
 - Used by browser-based MUD clients or modern tools.
 - Connections are initiated using the WebSocket protocol.
@@ -25,14 +25,14 @@ Despite their differences, both protocols are normalized into the same internal 
 - Forwarded to `game-session-service`, which maintains the gameplay session.
 - Gateway restarts automatically re-establish backend WebSocket connections.
 
-### 🌟 WebSocket Flow Benefits
+### WebSocket Flow Benefits
 
 - Leverages Spring Cloud Gateway’s routing, auth, logging, and rate limiting.
 - Ideal for web UIs, admin tools, or companion clients.
 
 ---
 
-## 🔶 Telnet / TCP Client Flow (Legacy Clients)
+## Telnet / TCP Client Flow (Legacy Clients)
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible).
@@ -83,7 +83,7 @@ they both traverse the same filters, metrics, and downstream `game-session-servi
 Override `GATEWAY_WS_URL` only when the gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
 whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point.
 
-### 🌟 TCP Flow Benefits
+### TCP Flow Benefits
 
 - Maintains full compatibility with legacy tools and the wider MUD ecosystem.
 - Allows reuse of the same backend infrastructure and logic.
@@ -91,7 +91,7 @@ whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSoc
 
 ---
 
-## 🧱 Unified Backend Session Logic
+## Unified Backend Session Logic
 
 The `game-session-service` is the central component responsible for:
 
@@ -105,11 +105,11 @@ The `game-session-service` is the central component responsible for:
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [Infrastructure Overview](./infrastructure/README.md)
-- [Gateway Architecture](./system-architecture-gateway.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
-- [Reconnection Strategy](./system-architecture-reconnection.md)
-- [MCP Support](./system-architecture-mcp-support.md)
 - [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)
+- [Gateway Architecture](./system-architecture-gateway.md)
+- [MCP Support](./system-architecture-mcp-support.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Infrastructure Overview](./infrastructure/README.md)

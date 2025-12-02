@@ -187,7 +187,7 @@ Even though the proxy has no public API, supporting event messages are defined
 in [../../../../protos/tcp-proxy/v1](../../../../protos/tcp-proxy/v1). Stubs are
 regenerated via `./gradlew generateProto` when the proto files change.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Reconnection Strategy](../../system-architecture-reconnection.md)

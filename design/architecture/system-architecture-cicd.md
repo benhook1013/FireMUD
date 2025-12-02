@@ -1,10 +1,10 @@
-# 🚀 FireMUD System Architecture: CI/CD Pipeline
+# FireMUD System Architecture: CI/CD Pipeline
 
 This document describes the continuous integration strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and images are pushed to the registry. Deployment to Kubernetes runs through a separate workflow so both local and cloud-hosted clusters use the same pipeline.
 
 ---
 
-## 🎯 Goals
+## Goals
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
@@ -12,20 +12,31 @@ This document describes the continuous integration strategy for FireMUD using **
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
-- **Scan for vulnerabilities** with Trivy during CI runs.
+- **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans.
 - **Publish documentation** to GitHub Pages after successful builds.
 - **Create release PRs automatically** using the `release-please` workflow.
 - **Generate database ERD diagrams** as build artifacts after each run. The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script writes them to `design/erd/`, and the workflow uploads this directory as artifacts.
-- **Cancel previous runs for the same branch** using a concurrency group so CI resources are conserved.
-
-The main [`ci.yml`](../../.github/workflows/ci.yml) workflow first performs a **Buf breaking change check** to ensure protobuf APIs remain compatible. It then runs formatting and lint steps followed by a matrix of Gradle `check` tasks—one per microservice—which compile and test each module while running Spotless, Checkstyle, and SpotBugs. **Hadolint** checks Dockerfiles and **ShellCheck** validates shell scripts. Coverage reports are generated with JaCoCo and a Trivy security scan runs on the workspace. Node 20 is also configured so the pipeline can lint OpenAPI definitions, run the React client’s linters, and execute an accessibility audit using headless Chrome. After the `build-and-test` and `trivy-scan` jobs finish, a dedicated `generate-erd` job runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from the service migrations and uploads them as artifacts. Documentation links are verified in the `docs.yml` workflow before publishing to GitHub Pages. Docker images are built in a separate workflow. See [System Architecture Testing](./system-architecture-testing.md) for additional details.
-A GitHub Actions step posts a summary comment on pull requests showing whether tests passed and what the overall coverage percentage was.
+- **Cancel previous runs for the same branch** using a concurrency group so CI resources are conserved and deployment jobs do not race each other for the same environment.
 
 ---
 
-## 🛠️ Workflow Structure
+## Workflow Structure
 
-Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch. A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
+Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch.
+
+The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
+
+- Performs a **Buf breaking change check** to keep protobuf APIs compatible.
+- Runs formatting and lint steps (Spotless, markdownlint, link checks).
+- Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
+- Generates coverage with JaCoCo and runs Trivy scans over the workspace.
+- Uses Node 20 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
+- Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
+- Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
+- Runs docs and link linting in `ci.yml` and verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
+- Posts a summary comment on pull requests with test status and coverage.
+
+A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
 
 ```yaml
 name: CI — Build and Security
@@ -74,7 +85,7 @@ Other workflows support additional automation:
 
 ---
 
-## 🐳 Building and Pushing Images
+## Building and Pushing Images
 
 After tests pass, each service is packaged into a Docker image:
 
@@ -111,7 +122,7 @@ The firemud-base image provides a consistent OS and JVM setup across all service
 
 ---
 
-## 🚢 Deploying to Kubernetes
+## Deploying to Kubernetes
 
 Kubernetes rollouts are triggered through the
 [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow.
@@ -148,7 +159,7 @@ removed. Automated rollback and canary deployments handle this process.
 
 ---
 
-## 📝 Automated Release Notes
+## Automated Release Notes
 
 When a version tag like `v1.2.3` is pushed, the `release-notes.yml` workflow
 creates a GitHub release and uses the `generate_release_notes` option to produce
@@ -157,7 +168,7 @@ manual steps.
 
 ---
 
-## 🔍 PR Preview Environments
+## PR Preview Environments
 
 Pull requests spin up a short-lived Docker Compose stack so reviewers can test changes interactively. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow uses Docker Buildx to build service images with cached layers, copies `.env.sample` to `.env`, generates development certificates, and launches the stack via Docker Compose.
 A status comment is posted once the gateway passes its health check, and the
@@ -166,21 +177,11 @@ automatically.
 
 ---
 
-## ➕ Optional Add-Ons
+## Related Documentation
 
-- **Nightly builds or scheduled jobs** for integration testing.
-- **Security scanning** using tools like Trivy. The [`weekly-security-scan.yml`](../../.github/workflows/weekly-security-scan.yml) workflow runs weekly on Sundays at 03:00 UTC to scan dependencies and container images for vulnerabilities.
-- **Notifications** via email when workflows fail.
-
-These can be added as separate workflows or additional jobs in the main pipeline.
-
----
-
-## 📚 Related Documentation
-
-- [Infrastructure Overview](./infrastructure/README.md)
-- [Deployment Environments](./infrastructure/deployment-environments.md)
-- [Testing Strategy](./system-architecture-testing.md)
-- [Developer Tools & Scripting](./system-architecture-scripting.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
+- [Deployment Environments](./infrastructure/deployment-environments.md)
+- [Developer Tools & Scripting](./system-architecture-scripting.md)
+- [Infrastructure Overview](./infrastructure/README.md)
+- [Testing Strategy](./system-architecture-testing.md)
 - [User Journeys – Testing & Continuous Delivery](./user-journeys.md#17-testing--continuous-delivery)

@@ -1,11 +1,11 @@
-# ⏱️ FireMUD System Architecture: Tick System and Runtime Design
+# FireMUD System Architecture: Tick System and Runtime Design
 
 📄 This document expands on the [Game Loop / Tick Model](./system-architecture-overview.md#⏱️-game-loop--tick-model) section of the FireMUD System Architecture Overview. It defines how ticks execute, resolve concurrency, handle crashes, and preserve deterministic, fair game logic under load. Cross-service operations triggered by ticks rely on Redis scripts and gRPC; sagas are unnecessary for these gameplay actions as explained in [Transaction Strategies](./system-architecture-transactions.md).
 
 > 🔗 For Redis keys, Lua-based atomicity, and operational guarantees, see the [Redis Architecture](./system-architecture-redis.md).
 ---
 
-## 🧠 Hybrid Tick Model
+## Hybrid Tick Model
 
 FireMUD uses a **Hybrid Tick Model** to balance real-time responsiveness with deterministic action resolution:
 
@@ -28,7 +28,7 @@ This model ensures:
 
 ---
 
-## 🔐 Distributed Locking
+## Distributed Locking
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
@@ -48,11 +48,11 @@ Conflict metadata is recorded and reported to the Game Session Service, which **
 
 ---
 
-## 🔁 Smart Retry and Conflict Resolution
+## Smart Retry and Conflict Resolution
 
 FireMUD includes a robust system for **lock contention**, **timeouts**, and **retries**, coordinated by the Game Session Service and powered by Redis.
 
-### 🧠 Retry Scheduling
+### Retry Scheduling
 
 When an action fails due to contention:
 
@@ -71,7 +71,7 @@ The system also provides:
 
 ---
 
-## 🌍 Tick Regions and Parallel Execution
+## Tick Regions and Parallel Execution
 
 Ticks are **region-scoped**, not globally synchronized. Each **tick region** (typically a room or room cluster) runs its own independent cycle, enabling:
 
@@ -99,7 +99,7 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 > 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
 ---
 
-## 🔄 Tick Execution Flow
+## Tick Execution Flow
 
 Each tick proceeds as follows:
 
@@ -121,7 +121,7 @@ The **Game Session Service** manages orchestration, while gameplay rules are res
 
 ---
 
-## 🧮 Tick Staging and Commit Flow
+## Tick Staging and Commit Flow
 
 State changes are first **staged in Redis** under keys like `tick:pending:{tenantId}:{regionId}`:
 
@@ -137,7 +137,7 @@ This ensures:
 
 ---
 
-## ⏳ Timeout and Fairness Policy
+## Timeout and Fairness Policy
 
 Each tick enforces a **soft execution budget** (e.g., 100ms):
 
@@ -164,7 +164,7 @@ detects this flag and schedules the command alone in its own tick, allowing up t
 
 ---
 
-## 🔍 Isolation and Replay Safety
+## Isolation and Replay Safety
 
 To prevent cross-tick contamination and support deterministic replay:
 
@@ -177,7 +177,7 @@ This guarantees **clean, deterministic ticks** and safe replays after crash or r
 
 ---
 
-## ⏱️ Timers and Time Scaling
+## Timers and Time Scaling
 
 Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time timers in milliseconds**, stored as:
 
@@ -185,7 +185,7 @@ Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time 
 
 Each tick scans timers for expirations and triggers corresponding events. If delayed, multiple may fire at once.
 
-### 🕒 Dynamic Time Scaling
+### Dynamic Time Scaling
 
 Durations can be modified on the fly:
 
@@ -199,7 +199,7 @@ Durations can be modified on the fly:
 
 ---
 
-## 💥 Crash Recovery and Replay
+## Crash Recovery and Replay
 
 If a tick crashes mid-flight (e.g., Game Session Service restart), Redis preserves:
 
@@ -218,7 +218,7 @@ This supports **idempotent, replayable** ticks — without risk of duplicate eff
 
 ---
 
-## 📡 Cross-Region Command Execution and Result Relay
+## Cross-Region Command Execution and Result Relay
 
 Some commands originate in one region but affect targets in another — for
 example, remote attacks, cross-world spells, or administrative inventory moves.
@@ -243,7 +243,7 @@ Players experience a smooth flow:
 No region waits synchronously for another shard, preserving responsiveness and
 deterministic replay.
 
-### ⛓️ Tick Chaining and Reentrant Effect Control
+### Tick Chaining and Reentrant Effect Control
 
 Each action carries a `tickChainDepth`. When follow-up effects (stuns,
 explosions, scripted traps) spawn additional actions, the depth is incremented.
@@ -253,7 +253,7 @@ may be notified that the chain was halted.
 
 ---
 
-## 🧠 Service Responsibilities
+## Service Responsibilities
 
 | Service | Role |
 | --- | --- |
@@ -267,7 +267,7 @@ may be notified that the chain was halted.
 
 ---
 
-## ✅ Model Benefits
+## Model Benefits
 
 - ✅ Parallel, fault-isolated tick execution with room-level isolation
 - ✅ Lock-on-demand using Redis avoids fixed thread ownership
@@ -281,7 +281,7 @@ may be notified that the chain was halted.
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Redis Architecture](./system-architecture-redis.md)
 - [Transaction Strategies](./system-architecture-transactions.md)

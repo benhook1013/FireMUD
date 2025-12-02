@@ -1,10 +1,10 @@
-# 📊 FireMUD Logging & Monitoring Overview
+# FireMUD Logging & Monitoring Overview
 
 This document consolidates the platform's observability architecture.
 
 ---
 
-## 🔍 Logging Pipeline
+## Logging Pipeline
 
 - **Fluent Bit** sidecars collect service logs from every microservice.
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
@@ -17,7 +17,7 @@ This document consolidates the platform's observability architecture.
 - The local Docker Compose stack includes Fluent Bit, Prometheus, Grafana, and Jaeger in addition to streaming logs to the console.
 - Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). The Logging & Admin Service provides a dedicated UI for moderation and audit trails.
 
-## 📈 Metrics & Tracing
+## Metrics & Tracing
 
 - **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**.
 - **Grafana** dashboards visualize performance data.
@@ -35,19 +35,19 @@ This document consolidates the platform's observability architecture.
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT` environment variable ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).
 - For the new data-driven `LOOK` path, see `../project-management/look-instrumentation.md` for the specific `gamesession.command.look.*` meters, log conventions, and tracing guidance that operators should monitor while the slice stabilizes.
 
-## 🩺 Health Checks
+## Health Checks
 
 - Spring Boot `/actuator/health` endpoints feed Kubernetes readiness and liveness probes.
 - See [Deployment Environments](./infrastructure/deployment-environments.md#🩺-kubernetes-health-monitoring) for probe behavior.
 
-## 🚑 Error Tracking and Hotfixes
+## Error Tracking and Hotfixes
 
 Logs in Kibana are searched daily for uncaught exceptions or repeated crashes. Alerts from Prometheus trigger on high error rates. When issues arise, operators follow the runbooks to deploy a hotfix image built from the `main` branch.
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [System Architecture Overview](./system-architecture-overview.md)
-- [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability)
-- [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [Infrastructure Overview](./infrastructure/README.md)
+- [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
+- [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability)
+- [System Architecture Overview](./system-architecture-overview.md)

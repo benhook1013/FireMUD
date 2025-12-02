@@ -132,7 +132,7 @@ Service definitions reside in
 `./gradlew generateProto` after modifying these files to regenerate stubs.
 The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `build/generated/sources/proto/main/{grpc,java}` and are wired into `services/game-session-service/src/main/java/net/firedevops/firemud/service/impl/GameSessionGrpcService.java` so the module compiles the gRPC contract directly when it is built.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) — how game instances load published versions and runtime flags.
 - [Reconnection Strategy](../../system-architecture-reconnection.md)

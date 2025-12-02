@@ -160,7 +160,7 @@ The gRPC schemas for this service live in
 [../../../../protos/account/v1](../../../../protos/account/v1). Use
 `./gradlew generateProto` to regenerate Java stubs when the definitions change.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Authentication & Authorization](../../system-architecture-authentication.md)
 - [Security Architecture](../../system-architecture-security.md)
@@ -187,7 +187,7 @@ The gRPC schemas for this service live in
 ### Monetization Design
 
 The Account Service also manages billing records for purchases and subscriptions. Payment processing is handled through **Stripe** as outlined in the [Core Requirements](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization). Entities include `payment_transaction` and `subscription` tables with Flyway migrations. gRPC endpoints and REST controllers expose operations for creating payment intents and managing subscriptions. The proto definitions live in [`payment_service.proto`](../../../../protos/account/v1/payment_service.proto).
-Donations are stored as one-time `payment_transaction` records with the `donation` flag set to `true`. A dedicated `CreateDonation` gRPC method issues a Stripe payment intent for these cases. Refunds call Stripe's API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows.
+Donations are stored as one-time `payment_transaction` records with the `donation` flag set to `true`. A dedicated `CreateDonation` gRPC method issues a Stripe payment intent for these cases. Refunds call Stripe's API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows. More detailed designs for payments and recurring subscriptions will live in the dedicated [Stripe Integration Design](./stripe-integration.md) and [Subscription Management Design](./subscription-management.md) documents as the implementation matures.
 
 ### Virtual Currency & Revenue Sharing
 

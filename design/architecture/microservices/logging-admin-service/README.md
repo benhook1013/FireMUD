@@ -133,7 +133,7 @@ API schemas are kept in
 [../../../../protos/logging-admin/v1](../../../../protos/logging-admin/v1). When
 these change, run `./gradlew generateProto` to refresh generated sources.
 
-## 📚 Related Documentation
+## Related Documentation
 
 See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for details on the shared observability stack.
 

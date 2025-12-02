@@ -1,4 +1,4 @@
-# 🎮 Game Customization Options
+# Game Customization Options
 
 This brief document summarizes optional ways a hosted game can change its look and feel without modifying FireMUD source code. FireMUD runs out of the box with default settings, so none of these customizations are required.
 
@@ -21,14 +21,7 @@ Example `manifest.json`:
 }
 ```
 
-- **Self-hosted S3**: For local development or private deployments, run an
-  S3-compatible service such as MinIO. Docker Compose provides a `minio` service
-  preconfigured with the `firemud-assets` bucket. In Kubernetes, apply the
-  manifests under `k8s/minio/` and proxy `/assets/**` through the gateway
-  instead of exposing MinIO directly. Set `ASSET_STORE_ENDPOINT` to
-  `https://<gateway-domain>/assets` and supply the bucket and credentials via
-  `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`, `ASSET_STORE_SECRET_KEY`, and
-  `ASSET_STORE_REGION`.
+- **Self-hosted S3**: For local development or private deployments, run an S3-compatible service such as MinIO; Docker Compose provides a `minio` service preconfigured with the `firemud-assets` bucket, while the Kubernetes manifests under `k8s/minio/` proxy `/assets/**` through the gateway instead of exposing MinIO directly. Set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` and supply the bucket and credentials via `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`, `ASSET_STORE_SECRET_KEY`, and `ASSET_STORE_REGION`.
 
 - The React client loads theme and asset files per tenant at runtime; see [Frontend Architecture](./system-architecture-frontend.md) for details.
 
@@ -58,12 +51,12 @@ Example `manifest.json`:
 
 These options allow extensive personalization while keeping the underlying platform maintainable.
 
-## 📚 Related Documentation
+## Related Documentation
 
+- [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
 - [Frontend Architecture](./system-architecture-frontend.md)
+- [Game Creator Guide](../user-guides/game-creator-guide.md)
+- [Game Design Service](./microservices/game-design-service/README.md)
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [System Architecture Overview](./system-architecture-overview.md)
-- [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
-- [Game Design Service](./microservices/game-design-service/README.md)
 - [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)
-- [Game Creator Guide](../user-guides/game-creator-guide.md)

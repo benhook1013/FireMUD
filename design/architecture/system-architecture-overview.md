@@ -1,10 +1,10 @@
-# 🏗️ FireMUD System Architecture: Overview
+# FireMUD System Architecture: Overview
 
 This document provides a high-level view of FireMUD’s system architecture, showing how major services, protocols, and data flows interact across the platform.
 
 ---
 
-## 🧩 Core Architecture Principles
+## Core Architecture Principles
 
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
@@ -22,11 +22,11 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 
-🖼️ See also: [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md)
+> 🔗 See [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md).
 
 ---
 
-## 🔁 Reconnection Strategy
+## Reconnection Strategy
 
 FireMUD supports seamless gameplay recovery through a layered reconnection model:
 
@@ -40,7 +40,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 
 ---
 
-## 🔗 Major Components and Their Roles
+## Major Components and Their Roles
 
 | Component | Purpose |
 | --- | --- |
@@ -58,10 +58,9 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service |
 | **[Game Design Service](./microservices/game-design-service/README.md)** | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services |
 
----
-For a full list of responsibilities and APIs, refer to the [Microservices Documentation](./microservices/README.md).
+> 🔗 See [Microservices Documentation](./microservices/README.md) for the full list of responsibilities and APIs.
 
-## 🌐 Communication Flows
+## Communication Flows
 
 | Flow | Protocol |
 | --- | --- |
@@ -75,18 +74,18 @@ For a full list of responsibilities and APIs, refer to the [Microservices Docume
 
 ---
 
-## 📦 Data and State Management
+## Data and State Management
 
 - **Persistent data** (accounts, entities, rooms) is stored in PostgreSQL by domain-aligned services
 - **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service
 - **Redis** is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
 - **Tick regions** are shard-aligned in Redis to preserve atomicity
 
-📌 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
+> 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
 ---
 
-## ⏱️ Game Loop / Tick Model
+## Game Loop / Tick Model
 
 FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
@@ -94,11 +93,11 @@ FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 - **Region-scoped ticks** execute independently for parallelism
 - **Tick state** (locks, queues, timers) is stored and coordinated via Redis
 
-> 🔗 Tick execution, staging/rollback, retry policies, and crash recovery are detailed in [Tick System and Runtime Design](./system-architecture-ticks.md)
+> 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) for tick execution, staging/rollback, retry policies, and crash recovery.
 
 ---
 
-## 🔐 Authentication and Authorization Flow
+## Authentication and Authorization Flow
 
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
 On disconnect, clients must reauthenticate to resume gameplay.
@@ -108,15 +107,15 @@ Session state is stored in Redis and reused for recovery.
 
 ---
 
-## 📊 Observability and Monitoring
+## Observability and Monitoring
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the full pipeline, including Fluent Bit, Prometheus, and related dashboards.
 
-🔗 Additional Redis metrics are noted in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability).
+> 🔗 See additional Redis metrics in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability).
 
 ---
 
-## 🗂️ Deployment Layers
+## Deployment Layers
 
 | Layer | Technology |
 | --- | --- |
@@ -127,19 +126,13 @@ See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the 
 | Service Layer | Microservices (Account, Entity, World, Logic, etc.) |
 | Infrastructure Layer | Kubernetes with IPVS, Docker Compose (for local development) |
 
-Deployment health checks (readiness and liveness probes) for these layers are
-described in detail in
-[Deployment Environments](./infrastructure/deployment-environments.md).
+Deployment health checks (readiness and liveness probes) for these layers are described in detail in [Deployment Environments](./infrastructure/deployment-environments.md).
 
-Environment-specific routing is configured via Spring profiles defined in
-`application.yml` and selected by the `SPRING_PROFILES_ACTIVE` environment
-variable. See
-[Deployment Environments](./infrastructure/deployment-environments.md#🔁-spring-profile-configuration)
-for how the `dev` and `prod` profiles differ between Docker Compose and Kubernetes.
+Environment-specific routing is configured via Spring profiles defined in `application.yml` and selected by the `SPRING_PROFILES_ACTIVE` environment variable. See [Deployment Environments](./infrastructure/deployment-environments.md#🔁-spring-profile-configuration) for how the `dev` and `prod` profiles differ between Docker Compose and Kubernetes.
 
 ---
 
-## 🔎 Notes on Responsibility Alignment
+## Notes on Responsibility Alignment
 
 - Functional responsibilities are defined in the [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - **Game Session Service** orchestrates tick lifecycles, retries, and session management
@@ -154,7 +147,7 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 ### Diagrams
 
@@ -163,29 +156,29 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 
 ### Infrastructure & Deployment
 
-- [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
-- [Protocol Bridging](./system-architecture-protocol-bridging.md)
+- [Infrastructure Overview](./infrastructure/README.md)
 - [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
 
 ### Runtime & Security
 
-- [Redis Architecture](./system-architecture-redis.md)
-- [Tick System and Runtime Design](./system-architecture-ticks.md)
-- [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Authentication & Authorization](./system-architecture-authentication.md)
-- [Security Architecture](./system-architecture-security.md)
-- [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 - [Database Migrations](./system-architecture-database-migrations.md)
+- [Logging & Monitoring](./system-architecture-logging-monitoring.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Security Architecture](./system-architecture-security.md)
 - [Testing Strategy](./system-architecture-testing.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
 
 ### Gameplay & Tools
 
-- [Scripting & Automation Framework](./system-architecture-scripting.md)
-- [Procedural Generation](./system-architecture-procedural-generation.md)
-- [MCP Support](./system-architecture-mcp-support.md)
 - [Frontend Architecture](./system-architecture-frontend.md)
+- [MCP Support](./system-architecture-mcp-support.md)
+- [Procedural Generation](./system-architecture-procedural-generation.md)
+- [Scripting & Automation Framework](./system-architecture-scripting.md)
 
 ### Responsibilities
 

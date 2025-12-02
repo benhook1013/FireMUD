@@ -7,7 +7,7 @@ Management APIs for enabling or disabling plugins reside in the Logging & Admin 
 
 Plugin bundles are uploaded through the Game Design Service and stored in the same asset repository used for other design files.
 
-## 🎯 Goals
+## Goals
 
 - Enable runtime loading of approved plugins written in the same **component‑based** scripting DSL used for automation.
 - Provide a secure sandbox so plugins cannot access unauthorized data or system resources.
@@ -25,7 +25,7 @@ Plugin bundles are uploaded through the Game Design Service and stored in the sa
 6. Execution metrics and error logs are forwarded to the Logging & Admin Service for monitoring.
 7. Plugin bundles are versioned along with other design assets and distributed when a new game version is published.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Automation & Scripting Service](../automation-scripting-service/README.md)
 - [Game Design Service Architecture](README.md)

@@ -1,4 +1,4 @@
-# 🧭 Microservices Responsibility Matrix
+# Microservices Responsibility Matrix
 
 | Function | Game Design Service | World Management Service | Account Service | Game Session Service | Entity Management Service | Game Logic Service | Automation & Scripting Service | Social & Groups Service | Logging & Admin Service | TCP Proxy Service | Spring Cloud Gateway |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -6,14 +6,14 @@
 | Custom in-game scripting authoring | ✔ | | | | | | | | | | |
 | Game version publishing | ✔ | | | | | | | | | | |
 | Design-time feature flag definitions | ✔ | | | | | | | | | | |
-| Room and zone editing | | ✔ | | | | | | | | | |
+| Room and zone editing | ✔ | | | | | | | | | | |
 | World map region layout | | ✔ | | | | | | | | | |
 | Room state persistence | | ✔ | | | | | | | | | |
 | Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
 | Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
-| Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
 | Email and system notifications | | | ✔ | | | | | | | | |
 | Payment, subscriptions, and bans | | | ✔ | | | | | | | | |
+| Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
 | WebSocket connection/session lifecycle | | | | ✔ | | | | | | | |
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
@@ -42,8 +42,10 @@
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |
 | Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
 | WebSocket upgrade, routing, and auth gateway | | | | | | | | | | | ✔ |
+| Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
+| API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Microservices Overview](./microservices/README.md)
 - [System Architecture Overview](./system-architecture-overview.md)

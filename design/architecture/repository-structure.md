@@ -1,14 +1,9 @@
 # Repository Structure
 
-This repository uses a hierarchical Gradle layout. All microservices and the shared
-`common-library` live under a top-level `services/` folder to keep the root tidy. The
-React UI resides in `web-client/` and various infrastructure manifests sit under
-`k8s/`. Additional build tooling and documentation live at the root.
-Hidden configuration files used by the CI pipeline and generated build output
-directories are included for completeness.
+This repository uses a hierarchical Gradle layout. All microservices and the shared `common-library` live under a top-level `services/` folder to keep the root tidy. The React UI resides in `web-client/` and various infrastructure manifests sit under `k8s/`. Additional build tooling and documentation live at the root.
+Hidden configuration files used by the CI pipeline and generated build output directories are included for completeness.
 
-The tree and summary below follow a Windows Explorer style sort: directories appear
-before files, and items within each group are alphabetized.
+The tree and summary below follow a Windows Explorer style sort: directories appear before files, and items within each group are alphabetized.
 
 ```text
 root
@@ -27,18 +22,18 @@ root
 ├── node_modules/
 ├── protos/
 ├── services/
-│   ├── account-service
-│   ├── automation-scripting-service
-│   ├── common-library
-│   ├── entity-management-service
-│   ├── game-design-service
-│   ├── game-logic-service
-│   ├── game-session-service
-│   ├── logging-admin-service
-│   ├── social-groups-service
-│   ├── spring-cloud-gateway
-│   ├── tcp-proxy-service
-│   └── world-management-service
+│   ├── account-service/
+│   ├── automation-scripting-service/
+│   ├── common-library/
+│   ├── entity-management-service/
+│   ├── game-design-service/
+│   ├── game-logic-service/
+│   ├── game-session-service/
+│   ├── logging-admin-service/
+│   ├── social-groups-service/
+│   ├── spring-cloud-gateway/
+│   ├── tcp-proxy-service/
+│   └── world-management-service/
 ├── web-client/
 ├── .editorconfig
 ├── .env.sample
@@ -48,21 +43,21 @@ root
 ├── .pre-commit-config.yaml
 ├── .windsurfrules
 ├── AGENTS.md
+├── build.gradle.kts
 ├── CODE_OF_CONDUCT.md
+├── codex-maintenance.sh
+├── codex-setup.sh
 ├── CONTRIBUTING.md
+├── copilot-instructions.md
 ├── DEVELOPER_SETUP.md
 ├── FAQ.md
+├── gradle.properties
+├── gradlew
+├── gradlew.bat
 ├── LICENSE.md
 ├── NOTICE.md
 ├── README.md
-├── SECURITY.md
-├── build.gradle.kts
-├── codex-maintenance.sh
-├── codex-setup.sh
-├── copilot-instructions.md
-├── gradle.properties
-├── gradlew
-└── gradlew.bat
+└── SECURITY.md
 ```
 
 ## Directory summary
@@ -80,8 +75,8 @@ root
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs, network policies, and sample Terraform modules for local and production clusters.
 - `node_modules/` – Installed JavaScript dependencies for the `web-client` and tooling (ignored by source control).
-- `protos/` – Versioned gRPC definitions for every service.
-- `services/` – Spring Boot microservices plus the shared `common-library` Gradle module.
+- `protos/` – Versioned gRPC definitions for every service, organized by service and version as described in the [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
+- `services/` – Spring Boot microservices plus the shared `common-library` Gradle module, including Flyway database migration scripts under `services/<service>/src/main/resources/db/migration/`.
 - `web-client/` – React web application.
 - `.editorconfig` – Consistent indentation and newline settings across editors.
 - `.env.sample` – Example environment variables loaded by `docker compose` and the test suites.
@@ -91,26 +86,21 @@ root
 - `.pre-commit-config.yaml` – Configuration for automated formatting and lint checks.
 - `.windsurfrules` – Compatibility link to the local AI rules.
 - `AGENTS.md` – Contribution guide pointing to project AI rules.
+- `build.gradle.kts` – Root Gradle build file that aggregates all modules.
 - `CODE_OF_CONDUCT.md` – Community conduct expectations.
+- `codex-maintenance.sh` and `codex-setup.sh` – Setup and maintenance helpers for Codex CLI workflows and AI tooling.
 - `CONTRIBUTING.md` – Developer onboarding and contribution workflow.
+- `copilot-instructions.md` – Usage notes and conventions for GitHub Copilot in this project.
 - `DEVELOPER_SETUP.md` – Step-by-step project setup instructions.
 - `FAQ.md` – Frequently asked questions for contributors.
+- `gradle.properties` – Shared Gradle settings.
+- `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
 - `LICENSE.md` – Licensing terms for the project.
 - `NOTICE.md` – Third-party notices required by the license.
 - `README.md` – High-level project overview and quick-start.
 - `SECURITY.md` – Responsible disclosure and security reporting guidance.
-- `build.gradle.kts` – Root Gradle build file that aggregates all modules.
-- `codex-maintenance.sh` and `codex-setup.sh` – Setup and maintenance helpers for Codex CLI workflows and AI tooling.
-- `copilot-instructions.md` – Usage notes and conventions for GitHub Copilot in this project.
-- `gradle.properties` – Shared Gradle settings.
-- `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
 
-Proto definitions live under `protos/` organized by service and version as described in the
-[gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
-Database migration scripts for each service reside in
-`services/<service>/src/main/resources/db/migration/`.
-
-## ðŸ“š Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Microservices Overview](./microservices/README.md)

@@ -53,7 +53,7 @@ Management exists via REST and gRPC. Use `POST /templates` to create templates,
 `GET /templates?tenantId=<id>` to list them, and the gRPC endpoints to create,
 list, update, or delete templates.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Game Design Service Architecture](README.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)

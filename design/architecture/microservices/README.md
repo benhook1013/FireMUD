@@ -1,10 +1,10 @@
-# 📚 FireMUD Microservices Documentation
+# FireMUD Microservices Documentation
 
 This directory contains detailed design documents for each core microservice in the FireMUD Game Platform. These documents outline the responsibilities, APIs, data models, and interactions of each service.
 
 ---
 
-## 🧩 Core Microservices
+## Core Microservices
 
 | Microservice | Purpose |
 | --- | --- |
@@ -25,7 +25,7 @@ All services share the same cluster and databases. Each table stores a `tenantId
 
 ---
 
-## 🧭 Usage
+## Usage
 
 Each microservice document follows a consistent structure, covering:
 
@@ -45,7 +45,7 @@ All gRPC schema files are organized under the top-level
 [`protos/`](../../../protos) directory. Individual service documents link to their
 corresponding versioned proto folders.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](../system-architecture-overview.md)
 - [Service Responsibility Matrix](../service-responsibility-matrix.md)

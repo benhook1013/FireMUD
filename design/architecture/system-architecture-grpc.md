@@ -1,8 +1,8 @@
-# 📦 FireMUD System Architecture: gRPC API Style & Versioning Guidelines
+# FireMUD System Architecture: gRPC API Style & Versioning Guidelines
 
 These guidelines define how FireMUD microservices design and document their gRPC APIs. Following a consistent structure makes it easier for teams to evolve services over time and share tooling.
 
-## ✅ Service and RPC Naming
+## Service and RPC Naming
 
 - Use **PascalCase** for all service names (e.g., `PlayerService`).
 - RPC method names may use either:
@@ -11,7 +11,7 @@ These guidelines define how FireMUD microservices design and document their gRPC
 - Avoid vague or overloaded verbs like `Execute`, `Process`, or `Do`.
 - Always define explicit `Request` and `Response` messages, even if they are empty.
 
-## ✅ Versioning Strategy
+## Versioning Strategy
 
 - Declare the API version in the package name inside the proto file:
 
@@ -25,7 +25,7 @@ These guidelines define how FireMUD microservices design and document their gRPC
   protos/player/v1/player_service.proto
   ```
 
-## 📁 Proto File Layout
+## Proto File Layout
 
 All protobuf definitions live in a top‑level `protos/` directory outside service source trees. Files are organized by service folder and versioned subdirectory:
 
@@ -57,7 +57,7 @@ Directory names may use hyphens (for example `game-design`), while proto package
 
 All proto files use `syntax = "proto3"` and set `java_package` and `java_multiple_files` options so Java packages remain consistent across services.
 
-## 🛠️ Tooling
+## Tooling
 
 - **Buf** ([buf.yaml](../../protos/buf.yaml)) — Lints proto files, detects breaking changes, and drives code generation. The repository stores this configuration under `protos/`. The workspace file [buf.work.yaml](../../config/protobuf/buf.work.yaml) and [buf.gen.yaml](../../config/protobuf/buf.gen.yaml) specify modules and plugins for generation.
 - **`protoc-gen-grpc-java`** — Generates Java service stubs for gRPC communication. The generated code is included in service builds via Gradle.
@@ -65,18 +65,18 @@ All proto files use `syntax = "proto3"` and set `java_package` and `java_multipl
   `./dev-tools/docs/generate-grpc-docs.sh` after updating proto files to regenerate
   [`design/grpc-docs/grpc-api.md`](../grpc-docs/grpc-api.md).
 
-## 🚦 Shared Interceptors
+## Shared Interceptors
 
 Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from the [Shared Libraries](./system-architecture-shared-libraries.md). These interceptors add trace identifiers to logs, record request metrics, and create OpenTelemetry spans so observability is consistent across services.
 
-## 🔄 Schema Evolution Rules
+## Schema Evolution Rules
 
 - Never reuse or remove field numbers — use `reserved` to prevent reuse.
 - Only **add optional fields** or new enum values to avoid breaking compatibility.
 - Use the `reserved` keyword to block deprecated field numbers or names.
 - Avoid changing the type of an existing field.
 
-## ⚠️ Error Handling
+## Error Handling
 
 - Map application-level failures to appropriate gRPC status codes (`INVALID_ARGUMENT`, `NOT_FOUND`, etc.).
 - Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
@@ -93,7 +93,7 @@ private ErrorDetail error(String code, String message) {
 }
 ```
 
-## 🧪 Example Code Generation (Java)
+## Example Code Generation (Java)
 
 Services use **Buf** for linting and schema enforcement, while source generation
 is handled by the Gradle `com.google.protobuf` plugin:
@@ -117,7 +117,7 @@ sourceSets["main"].java.srcDirs(
 
 Running `./gradlew generateProto` compiles stubs into `build/generated/source/proto` for each service.
 
-## 🔒 TLS Requirements
+## TLS Requirements
 
 All internal gRPC calls use **mutual TLS**. Each service sets the following environment variables so certificates can be mounted from Secrets or local files:
 
@@ -131,8 +131,8 @@ The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#🤝-cross-service-trust) for mTLS design.
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [Microservices Overview](./microservices/README.md)
 - [Infrastructure Overview](./infrastructure/README.md)
+- [Microservices Overview](./microservices/README.md)
 - [System Architecture Overview](./system-architecture-overview.md)

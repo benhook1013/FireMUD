@@ -11,22 +11,16 @@
 [![Containerization: Docker](https://img.shields.io/badge/Containerization-Docker-blue)](https://www.docker.com/)
 [![Orchestration: Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-blue)](https://kubernetes.io/)
 
-Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [FireDevOps.net](https://firedevops.net) umbrella for creating and running Multi-User Dungeon (MUD) games.
+Welcome to the **FireMUD Game Platform**, a modular and scalable system under the [FireDevOps.net](https://firedevops.net) umbrella for creating and running [Multi-User Dungeon (MUD) games](https://en.wikipedia.org/wiki/Multi-user_dungeon).
+
+FireMUD is a modern engine for classic text-based online RPGs: creators use it to build persistent shared worlds with rooms, items, NPCs, and quests, and players connect over the web or Telnet to explore, chat, and adventure together in real time.
 
 *This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
 
-## Start Here
-
-For an overview of all architecture and design documents, see [Architecture Directory README](design/architecture/README.md).
-See [Repository Structure](design/architecture/repository-structure.md) for module layout.
-
----
-
-## 📚 Table of Contents
+## Table of Contents
 
 - [FireMUD Game Platform](#firemud-game-platform)
-  - [Start Here](#start-here)
-  - [📚 Table of Contents](#-table-of-contents)
+  - [Table of Contents](#table-of-contents)
   - [Purpose](#purpose)
   - [Project Overview](#project-overview)
     - [Key Features](#key-features)
@@ -44,8 +38,8 @@ See [Repository Structure](design/architecture/repository-structure.md) for modu
     - [Learn About the Platform](#learn-about-the-platform)
     - [Ways to Contribute](#ways-to-contribute)
     - [Additional Guidelines](#additional-guidelines)
-  - [Running Locally](#running-locally)
-  - [Tooling](#tooling)
+    - [Running Locally](#running-locally)
+    - [Tooling](#tooling)
   - [Support Us](#support-us)
   - [Contact](#contact)
   - [Acknowledgments](#acknowledgments)
@@ -67,12 +61,14 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 ### Key Features
 
 - **Microservice Architecture**: Modular services for scalability and maintainability.
-- **Multi-Server Hosting**: Support for hosting multiple MUD games simultaneously.
+- **Concurrent Multi-Server Hosting**: Support for hosting multiple MUD games simultaneously.
 - **Real-Time Game Server**: Backend for gameplay mechanics, player actions, and world state management.
 - **Extensible Command Parsing**: Flexible system to interpret player commands.
 - **Dynamic Scripting Support**: For events and interactions within the game world.
 - **Integrated Game Editor**: Tools for designing rooms, entities, quests, and dialogues.
 - **Web Frontend**: React-based interface for players and creators.
+- **Legacy Telnet Support**: Compatible with traditional Telnet MUD clients while sharing the same backend as the web UI.
+- **Accessible Text UX**: Verbose, high-contrast text output with optional ANSI color, written to work well with screen readers and blind or low-vision players.
 - **Moderation Tools**: Comprehensive tools for administrators and moderators.
 
 ### Tech Stack
@@ -80,7 +76,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 #### Backend
 
 - **Framework**: Java Spring Framework
-- **Database**: PostgreSQL for production; dev/test profiles default to an in-memory H2 database with Flyway disabled so `bootRun` and CI tests work without Postgres. Set `SPRING_PROFILES_ACTIVE=prod` when you want to run against PostgreSQL.
+- **Database**: PostgreSQL
 - **Caching**: Redis for transient session and gameplay state
 - **Networking**: WebSocket/TCP
 - **Inter-Service Communication**: gRPC
@@ -93,26 +89,23 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 #### Deployment & Infrastructure
 
-- **Containerization**: Docker
-- **Orchestration**: Kubernetes
+- **Containerization**: [Docker & Docker Compose](design/architecture/infrastructure/deployment-environments.md)
+- **Orchestration**: [Kubernetes deployments](design/architecture/infrastructure/deployment-environments.md)
 - **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
 - **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](design/architecture/system-architecture-logging-monitoring.md))
 
 #### Monetization
 
-- **Payment Gateway**: Stripe
-- **Subscription Management**: Custom integration
+- **Payment Gateway**: [Stripe Integration](design/architecture/microservices/account-service/stripe-integration.md)
+- **Subscription Management**: Custom integration (see [Subscription Management Design](design/architecture/microservices/account-service/subscription-management.md))
 
 #### Testing
 
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test
 - **Load Testing**: Gatling (see `dev-tools/load-testing` module)
-- **Accessibility Audit**: axe-core CLI (requires Google Chrome).
-  To run the audit locally, install Chrome as described in
-  [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility)
-  before executing `npm run accessibility`.
-- **Cross-Service Regression**: Run `./gradlew crossServiceTest` (covers WebSocket/Telnet `LOOK` + `SAY`, including the new SAY regression suites) so reviewers can verify the canonical transcripts plus `gamesession.command.*` metrics before merging.
+- **Accessibility Audit**: axe-core CLI (see [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility)
+- **Cross-Service Regression**: `./gradlew crossServiceTest`
 
 ### Design Goals
 
@@ -135,8 +128,9 @@ The platform is composed of multiple Spring Boot services that communicate over 
 
 ### Service Interactions
 
-For detailed architecture diagrams and explanations, refer to the [System Architecture Overview](design/architecture/system-architecture-overview.md).
-For an overview of service responsibilities, see the [Service Responsibility Matrix](design/architecture/service-responsibility-matrix.md).
+- [System Architecture Overview](design/architecture/system-architecture-overview.md) – narrative explanation of how services interact.
+- [Service Responsibility Matrix](design/architecture/service-responsibility-matrix.md) – which service owns which responsibilities.
+- [System Context Diagram](design/architecture/system-context-diagram.md) – high-level view of clients, DMZ components, and services.
 
 ---
 
@@ -180,11 +174,15 @@ Before contributing, we recommend reviewing the following key documents:
 ### Additional Guidelines
 
 See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and [Global Rules](design/project-management/ai-rules-global.md).
-The CI pipeline runs `./gradlew check`, which compiles and tests all modules while also running Spotless, Checkstyle, SpotBugs, **Hadolint**, and coverage reporting.
+The CI pipeline runs `./gradlew check`, which compiles and tests all modules while also running Spotless, Checkstyle, SpotBugs, Hadolint, and coverage reporting.
 
-## Running Locally
+---
 
-Build all services and start the Docker stack:
+### Running Locally
+
+For full-stack local development (all services, PostgreSQL, and Redis), use the Docker Compose workflow described in [Developer Setup](DEVELOPER_SETUP.md#running-with-docker-compose).
+
+Build all services and start the stack:
 
 ```bash
 ./gradlew devUp
@@ -198,15 +196,17 @@ Stop the stack with:
 
 ---
 
-## Tooling
+### Tooling
 
-Use explicit paths for helper scripts:
+Common helper commands:
 
-- `npm --prefix config/openapi run openapi:lint`
-- `./gradlew erd`
-- `./gradlew seed`
+- `./gradlew check` – compile, test, and run static analysis (Spotless, Checkstyle, SpotBugs, Hadolint, coverage).
+- `./gradlew crossServiceTest` – run cross-service regression tests.
+- `./gradlew lintMarkdown` – lint Markdown docs; see [Developer Setup](DEVELOPER_SETUP.md#-markdown-linting-via-gradle) for details.
+- `npm --prefix config/openapi run openapi:lint` – lint OpenAPI specs.
+- `./dev-tools/docs/link-check.sh` – run the link checker over Markdown docs.
 
-The `.pre-commit-config.yaml` and `.editorconfig` files stay at the repository root for automatic discovery.
+The `.pre-commit-config.yaml` and `.editorconfig` files live at the repository root so editors and pre-commit hooks can pick them up automatically. See [Developer Setup](DEVELOPER_SETUP.md) and [Contributing Guidelines](CONTRIBUTING.md) for more tooling and workflow details.
 
 ## Support Us
 

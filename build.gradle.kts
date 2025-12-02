@@ -183,11 +183,7 @@ tasks.register<NpxTask>("lintMarkdown") {
     command.set("markdownlint-cli2")
     args.set(listOf(
         "--config", "config/markdownlint/.markdownlint-cli2.jsonc",
-        "**/*.md",
-        "!**/node_modules/**",
-        "!**/build/**",
-        "!**/.gradle/**",
-        "!**/.git/**"
+        "**/*.md"
     ))
 }
 
@@ -197,11 +193,7 @@ tasks.register<NpxTask>("lintMarkdownFix") {
     args.set(listOf(
         "--config", "config/markdownlint/.markdownlint-cli2.jsonc",
         "--fix",
-        "**/*.md",
-        "!**/node_modules/**",
-        "!**/build/**",
-        "!**/.gradle/**",
-        "!**/.git/**"
+        "**/*.md"
     ))
 }
 

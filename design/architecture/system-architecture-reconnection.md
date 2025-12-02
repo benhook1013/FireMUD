@@ -1,16 +1,16 @@
-# 🔁 FireMUD System Architecture: Reconnection Strategy
+# FireMUD System Architecture: Reconnection Strategy
 
 FireMUD enables seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts — using a **layered reconnection model** and **Redis-backed session state**.
 
 ---
 
-## ✅ Implemented Status
+## Implemented Status
 
 - **Session takeover and resume** – Game Session now detects existing `accountId`/`playerId` links, emits `gamesession.session.takeover` and `gamesession.session.resume` counters, and rebinds Redis tick/command queues when the same character logs back in after a disconnect or another client takes over.
 - **Telnet/WebSocket parity** – The TCP Proxy → Gateway → Game Session path now shares the same login/resume flow so Telnet SESSION envelopes and WebSocket clients follow identical reconnection behavior.
 - **Remaining work** – Cross-region handoff, buffered-input replay after long outages, and admin-driven forced session transfers remain planned future steps.
 
-## 🧩 Reconnection Layers
+## Reconnection Layers
 
 | Layer | Responsibility |
 | --- | --- |
@@ -26,7 +26,7 @@ TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 
 ---
 
-## 🛰️ Layer Behavior Breakdown
+## Layer Behavior Breakdown
 
 ### TCP Proxy Service (Telnet Clients)
 
@@ -59,7 +59,7 @@ TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 
 ---
 
-## 🔐 When Reauthentication Is Required
+## When Reauthentication Is Required
 
 Clients must send a `LOGIN` command **after any disconnect**, such as:
 
@@ -74,7 +74,7 @@ Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milli
 
 ---
 
-## 👥 Multi-Client and Session Takeover
+## Multi-Client and Session Takeover
 
 Gameplay resumes cleanly when a session is resumed — whether due to reconnect or takeover.
 
@@ -82,7 +82,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 ---
 
-## 🔄 Resume vs Reload Scenarios
+## Resume vs Reload Scenarios
 
 | Event | Result |
 | --- | --- |
@@ -98,7 +98,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 ---
 
-## 🧠 Design Principles
+## Design Principles
 
 - Redis stores:
   - Socket bindings and session metadata
@@ -110,9 +110,9 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [Tick System and Runtime Design](./system-architecture-ticks.md)
-- [Redis Architecture](./system-architecture-redis.md)
 - [Authentication & Authorization](./system-architecture-authentication.md)
 - [Game Session Service README](./microservices/game-session-service/README.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)

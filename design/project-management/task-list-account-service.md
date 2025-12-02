@@ -52,7 +52,7 @@ participate in CI.
 
 ---
 
-## 📦 Project Setup & CI
+## Project Setup & CI
 
 - [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
 - [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
@@ -65,7 +65,7 @@ participate in CI.
 
 ---
 
-## 🧱 API Definition
+## API Definition
 
 - [x] Define gRPC service stubs with explicit `Request`/`Response` messages
 - [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
@@ -78,7 +78,7 @@ participate in CI.
 
 ---
 
-## 🔒 Authentication & Authorization
+## Authentication & Authorization
 
 - [x] Meta and admin services validate JWTs using helpers from `firemud-common`
 - [x] Check `globalRoles` and `scopedRoles` where applicable
@@ -86,7 +86,7 @@ participate in CI.
 
 ---
 
-## 🔁 Inter-Service Communication
+## Inter-Service Communication
 
 - [x] Use `firemud-common` protobuf types for shared messages
 - [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
@@ -96,7 +96,7 @@ participate in CI.
 
 ---
 
-## 📚 Shared Library Integration
+## Shared Library Integration
 
 - [x] Depend on `firemud-common` via Gradle
 - [x] Apply logging, tracing, and security interceptors from the library
@@ -105,7 +105,7 @@ participate in CI.
 
 ---
 
-## 🔄 Saga Participation *(if used)*
+## Saga Participation *(if used)*
 
 - [x] Use saga helpers from `firemud-common` for workflow steps
 - [x] Emit metrics and correlation IDs for compensation and retries
@@ -113,7 +113,7 @@ participate in CI.
 
 ---
 
-## 🔑 Redis Integration *(if used)*
+## Redis Integration *(if used)*
 
 - [x] Use Redis for transient gameplay state only
 - [x] Access Redis through helpers in `firemud-common`
@@ -125,7 +125,7 @@ participate in CI.
 
 ---
 
-## 🧪 Testing & Quality Gates
+## Testing & Quality Gates
 
 - [x] Add unit tests for gRPC, REST (if present), and startup behaviour
 - [x] Use Spring Boot Test and Testcontainers for integration tests
@@ -136,7 +136,7 @@ participate in CI.
 
 ---
 
-## 📈 Observability & Tracing
+## Observability & Tracing
 
 - [x] Use Micrometer for Prometheus metrics
 - [x] Enable OpenTelemetry tracing
@@ -146,7 +146,7 @@ participate in CI.
 
 ---
 
-## 📖 Documentation
+## Documentation
 
 - [x] Create `design/README.md` summarizing APIs and sample requests
 - [x] Document proto contracts and any Redis keys in the service README

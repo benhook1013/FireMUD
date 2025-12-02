@@ -1,10 +1,10 @@
-# ⚙️ FireMUD System Architecture: Transaction Strategies
+# FireMUD System Architecture: Transaction Strategies
 
 This document explains how FireMUD coordinates data consistency across its independent microservices. It distinguishes between **real-time gameplay commands** (executed within ticks using Redis) and **long-running business workflows** (executed via a Saga pattern using a shared orchestration library). It clarifies when sagas are needed — and when they are not.
 
 ---
 
-## 🧠 Terminology Clarification
+## Terminology Clarification
 
 | Term | Meaning |
 | --- | --- |
@@ -15,7 +15,7 @@ This document explains how FireMUD coordinates data consistency across its indep
 
 ---
 
-## 🎮 In-Game Command Transactions (No Sagas Needed)
+## In-Game Command Transactions (No Sagas Needed)
 
 All real-time gameplay logic — movement, combat, item use, AI — is executed inside **ticks**. Each command is:
 
@@ -36,7 +36,7 @@ This model provides:
 
 ---
 
-## 🧩 When Sagas *Are* Used (Out-of-Band Workflows)
+## When Sagas *Are* Used (Out-of-Band Workflows)
 
 Sagas are only used for **non-tick, multi-service workflows** involving persistent state changes that cannot be coordinated via Redis. These include:
 
@@ -55,7 +55,7 @@ These workflows:
 
 ---
 
-## ✅ FireMUD Saga Architecture
+## FireMUD Saga Architecture
 
 FireMUD uses a **shared saga orchestration library**, not a separate microservice.
 
@@ -110,7 +110,7 @@ and in the Logging & Admin Service README.
 
 ---
 
-## 🔁 When Not to Use Sagas
+## When Not to Use Sagas
 
 Do **not** use sagas for:
 
@@ -123,7 +123,7 @@ Use Redis rollback + tick retries for fast, fair, and consistent gameplay handli
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)

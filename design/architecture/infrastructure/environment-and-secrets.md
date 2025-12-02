@@ -1,17 +1,17 @@
-# 🔐 Environment Variables & Secrets Management
+# Environment Variables & Secrets Management
 
 This document explains how configuration values and sensitive secrets are supplied to FireMUD services in both development and production.
 
 ---
 
-## 🧪 Local Development
+## Local Development
 
 - Environment variables are loaded from a `.env` file when running `./gradlew devUp`.
 - The sample file `.env.sample` lists the variables described below with default credentials for PostgreSQL and Redis. Copy this file to `.env` and adjust values as needed; `.env` is git‑ignored so real credentials remain local.
 - Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
 - Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
 
-## ☁️ Production
+## Production
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. TLS certificates are issued by **cert-manager** and rotated automatically; JWT signing keys are rotated in the same manner.
@@ -22,7 +22,7 @@ This document explains how configuration values and sensitive secrets are suppli
   credentials. External secret stores like Vault are out of scope at this
   stage.
 
-## 🔄 Variable Prefixes
+## Variable Prefixes
 
 Shared libraries support overriding default settings with environment variables using the `FIREMUD_` prefix. For example:
 
@@ -179,7 +179,7 @@ Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional
 `FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults
 to `firemud` when unset.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Deployment Environments](./deployment-environments.md)
 - [System Architecture: Security](../system-architecture-security.md)

@@ -2,7 +2,7 @@
 
 This checklist covers optional manual steps to verify that development tooling and helper scripts work as expected.
 
-## 🛠 Environment & Pre-commit Hooks
+## Environment & Pre-commit Hooks
 
 - [ ] Install required command line tools
   - [ ] `Java 21+`
@@ -39,7 +39,7 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] `pre-commit run --all-files`
   - [ ] Copy `.env.sample` to `.env` and adjust values as needed
 
-## ✅ Build & Test Commands
+## Build & Test Commands
 
 - [ ] Run `./gradlew check` to execute unit tests, Spotless, Checkstyle and SpotBugs
 - [ ] Run `./gradlew build` to compile all services
@@ -50,7 +50,7 @@ This checklist covers optional manual steps to verify that development tooling a
   - [ ] Verify gRPC endpoints with `grpcurl -plaintext localhost:6565 list`
 - [ ] Stop services with `./gradlew devDown`
 
-## 📦 Node & OpenAPI Tasks
+## Node & OpenAPI Tasks
 
 - [ ] `npm ci` inside `web-client`
 - [ ] `npm --prefix config/openapi ci` to install doc tools
@@ -64,7 +64,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `npm run dev` to start the Vite development server
 - [ ] `npm run test` to execute frontend unit tests
 
-## 📜 Protobuf & Documentation Scripts
+## Protobuf & Documentation Scripts
 
 - [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint` for proto consistency
 - [ ] `BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main` to check for API changes
@@ -77,7 +77,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `hadolint` on all Dockerfiles
 - [ ] `shellcheck` on scripts under `dev-tools/`
 
-## 📂 Database & Backup Utilities
+## Database & Backup Utilities
 
 - [ ] `./dev-tools/backups/backup-db.sh` to create a snapshot
 - [ ] `./dev-tools/restores/restore-db.sh backups/<file>` to restore a backup
@@ -91,7 +91,7 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] Verify Redis access with `redis-cli -h localhost -p 6379 ping`
 - [ ] Verify RedisInsight UI at <http://localhost:8001>
 
-## ⚙️ Miscellaneous Helpers
+## Miscellaneous Helpers
 
 - [ ] `./dev-tools/firemud-cli.sh up|down|ping`
 - [ ] Generate TLS certificates with `./dev-tools/generate-dev-certs.sh`
@@ -101,18 +101,18 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] Test wait helper with `./dev-tools/wait-for-it.sh localhost 5432 -- echo ready`
 - [ ] Verify Docker entrypoint `docker/start-service.sh` runs with local JAR
 
-## 🌱 Data Seeding & API Clients
+## Data Seeding & API Clients
 
 - [ ] `./dev-tools/seed/seed-test-data.sh` to populate sample game data
 - [ ] `./dev-tools/seed/seed-automation-scripting-data.sh` to add scripting examples
 - [ ] Import `dev-tools/insomnia/firemud-insomnia.json` in Insomnia for REST API calls
 - [ ] Open `dev-tools/kreya/.kreya-project.yaml` in Kreya for gRPC testing
 
-## 🔒 Security & Scanning
+## Security & Scanning
 
 - [ ] `trivy fs --config config/security/trivy.yaml .` to scan dependencies and Dockerfiles
 
-## ☸ Kubernetes & Helm
+## Kubernetes & Helm
 
 - [ ] `helm dependency update k8s/helm/firemud` to pull chart dependencies
 - [ ] `helm lint k8s/helm/firemud` to validate charts
@@ -120,14 +120,14 @@ This checklist covers optional manual steps to verify that development tooling a
 - [ ] `helm install game-session k8s/helm/game-session-service -f k8s/helm/values-local.yaml`
 - [ ] `kubectl get pods -n firemud` to verify running services
 
-## 🌍 Terraform Modules
+## Terraform Modules
 
 - [ ] `terraform init` in `k8s/terraform-production`
 - [ ] `terraform plan` to preview infrastructure changes
 - [ ] `terraform fmt -check` to ensure formatting
 - [ ] `terraform validate` to check module syntax
 
-## 🔥 Service Smoke Tests
+## Service Smoke Tests
 
 - [ ] Run `services/account-service/smoke-test.sh`
 - [ ] Run `services/automation-scripting-service/smoke-test.sh`
