@@ -13,7 +13,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - In-flight command queues
 - Tick locks and staged results
 - Cooldowns and timer expirations (stored in milliseconds)
-- Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#-session-keys-and-gameplay-binding))
+- Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#session-keys-and-gameplay-binding))
 - Retry metadata and inter-tick conflict tracking
 - TTL-based service caches such as hot room lookups and recent chat history
   _(see [Performance Optimization Guidelines](./performance-optimization.md))_
@@ -94,7 +94,7 @@ Redis keys follow strict naming conventions to ensure:
 
 > 🔗 `remote:{tenantId}:{entityId}` keys route cross-region commands. See [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
 > for details.
-> 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#-session-keys-and-gameplay-binding)
+> 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
 
 ---
@@ -255,7 +255,7 @@ Redis in FireMUD is:
 
 - A **transient, high-performance coordination layer**
 - Used for **ticks, timers, locks, retries, and gameplay session state**
-  _(see [Session Keys](#-session-keys-and-gameplay-binding))_
+  _(see [Session Keys](#session-keys-and-gameplay-binding))_
 - Scripted via **Lua** for atomic tick and session control
 - Durable via **AOF** and `WAIT` guarantees
 - Always **shard-local** to avoid cross-node inconsistencies
