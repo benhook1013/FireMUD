@@ -1,10 +1,10 @@
-# 🛠️ FireMUD System Architecture: Database Migrations
+# FireMUD System Architecture: Database Migrations
 
 This document explains how FireMUD manages PostgreSQL schema changes across its microservices. Each service owns its tables and applies migrations independently.
 
 ---
 
-## 🚀 Migration Tool
+## Migration Tool
 
 - **Flyway** is used for all schema migrations.
 - Each service's `build.gradle.kts` applies the `org.flywaydb.flyway` plugin.
@@ -18,7 +18,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
 - Java-based callbacks are avoided; migrations remain SQL-only for portability.
 
-## 📂 Per-Service Organization
+## Per-Service Organization
 
 - Every microservice maintains its own migration folder and changelog.
 - Schemas are isolated: services never modify each other's tables.
@@ -34,7 +34,7 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   these migrations on startup.
 - New migrations are committed alongside service code so history stays with the owning service.
 
-## 🔄 CI/CD Execution
+## CI/CD Execution
 
 - Flyway runs automatically when a service container starts.
   If any migration fails, the application startup aborts so issues are caught early.
@@ -55,7 +55,7 @@ Migrations are therefore applied consistently in every environment without manua
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [CI/CD Pipeline](./system-architecture-cicd.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
+- [CI/CD Pipeline](./system-architecture-cicd.md)

@@ -1,4 +1,4 @@
-# 🎨 FireMUD System Architecture: Frontend Architecture
+# FireMUD System Architecture: Frontend Architecture
 
 This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. Compiled assets are served by the Spring Cloud Gateway so all frontends share a common entry point. Additional React modules for the admin tools and Game Design interface are available.
 
@@ -6,7 +6,7 @@ Other UIs include a role-based admin interface and a game design editor. See [Ro
 
 ---
 
-## 📐 Component Hierarchy
+## Component Hierarchy
 
 FireMUD uses React components with a **feature-first** organization. Each feature folder contains its own components, tests, and styling.
 
@@ -29,7 +29,7 @@ web-client/
 - Reusable UI elements live under a shared `components/` directory.
 - Material-UI provides the base widgets and theme customization.
 
-## ⚛️ State Management
+## State Management
 
 Application state is handled by **Redux Toolkit**, with **RTK Query** used for data fetching and mutations. RTK Query auto-generates hooks for API access and manages caching, invalidation, and loading/error states declaratively.
 
@@ -38,7 +38,7 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 - Components dispatch actions and select state using hooks (`useAppDispatch`, `useAppSelector`) from `src/hooks.ts`.
 - RTK Query hooks expose typed endpoints that components call directly.
 
-## 🔗 API Usage Patterns
+## API Usage Patterns
 
 All API communication is handled by **RTK Query** services defined in `src/api/`. Endpoints like login and character retrieval are implemented in `firemudApi.ts`, and additional APIs follow the same pattern.
 
@@ -51,7 +51,7 @@ RTK Query automatically handles:
 
 WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. Integration with RTK Query updates cached data in response to socket events.
 
-## 🛠️ Build Tooling
+## Build Tooling
 
 The frontend uses **Vite** for fast development and production builds:
 
@@ -69,7 +69,7 @@ TypeScript configuration lives in `tsconfig.json`, and ESLint/Prettier enforce c
 
 RTK Query works out of the box with Redux Toolkit and TypeScript. API code generation and mocking can be extended using **msw** (Mock Service Worker) for testing.
 
-## 🎨 Game-Specific Customization
+## Game-Specific Customization
 
 See [Game Customization Options](./game-customization-options.md) for the broader design.
 Game-specific themes rely on the multi-tenant model described in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
@@ -89,11 +89,11 @@ FireMUD aims to let each hosted game supply its own UI styling and layout tweaks
 - Core components remain shared so feature updates reach all games without
   forks.
 
-## 🌍 Internationalization Strategy
+## Internationalization Strategy
 
 The React client uses **react-i18next** to load translation JSON files at runtime. Players select a language in the settings menu, and the UI strings update without a page reload. Locale files live under `src/i18n/` and can be extended by hosted games.
 
-## 🧪 End-to-End Testing
+## End-to-End Testing
 
 **Playwright** tests exercise key flows by starting the Docker Compose stack and running a headless browser against the web client.
 

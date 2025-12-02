@@ -1,4 +1,4 @@
-# 📈 FireMUD System Architecture: Diagram
+# FireMUD System Architecture: Diagram
 
 ```mermaid
 flowchart TD
@@ -88,7 +88,7 @@ The Web client is built with React and Material‑UI. For component layout and s
 
 All services run as Docker containers inside a shared Kubernetes cluster. They reuse a [common shared library](./system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and metrics helpers. See [Deployment Environments](./infrastructure/deployment-environments.md) for how the cluster is configured.
 
-## 🧩 Core Services Shown
+## Core Services Shown
 
 The diagram covers every microservice in the repository:
 
@@ -108,7 +108,7 @@ Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from t
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, emit metrics to Prometheus, and send structured logs to Elasticsearch.
 
-## 🗄️ Datastore Layer
+## Datastore Layer
 
 Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
 
@@ -120,7 +120,7 @@ These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis
 
 All datastores are shared across games. Tenant-scoped tables include a `tenantId` column (or reference a tenant-keyed parent), and Redis keys use a matching prefix, which isolates per-game data while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 
-## 🔍 Observability Components
+## Observability Components
 
 Fluent Bit, Prometheus, and the OpenTelemetry Collector work together so logs, metrics, and traces share the same `traceId`. This makes it easy to correlate game events across Kibana, Grafana, and Jaeger dashboards.
 The Logging & Admin Service queries Elasticsearch, Prometheus, and Jaeger and consumes Alertmanager notifications. It also embeds Kibana and Grafana dashboards via their APIs to power moderation workflows.
@@ -138,15 +138,15 @@ The diagram also illustrates the monitoring stack shared by every service:
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for deployment details.
 
-## 📚 Related Documentation
+## Related Documentation
 
-- [System Context Diagram](./system-context-diagram.md)
-- [Microservices Overview](./microservices/README.md)
-- [Service Responsibility Matrix](./service-responsibility-matrix.md)
+- [Deployment Environments](./infrastructure/deployment-environments.md)
+- [Frontend Architecture](./system-architecture-frontend.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
 - [Infrastructure Overview](./infrastructure/README.md)
-- [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Logging & Monitoring](./system-architecture-logging-monitoring.md)
+- [Microservices Overview](./microservices/README.md)
 - [Multi-Tenancy](./system-architecture-multi-tenancy.md)
-- [Frontend Architecture](./system-architecture-frontend.md)
+- [Service Responsibility Matrix](./service-responsibility-matrix.md)
 - [Shared Libraries Overview](./system-architecture-shared-libraries.md)
+- [System Context Diagram](./system-context-diagram.md)
