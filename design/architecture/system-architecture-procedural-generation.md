@@ -1,4 +1,4 @@
-# 🧭 FireMUD System Architecture: Procedural Generation
+# FireMUD System Architecture: Procedural Generation
 
 This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features.
 
@@ -8,7 +8,7 @@ Procedural generation allows games to quickly bootstrap playable areas, spawn in
 
 ---
 
-## 🎯 Use Cases
+## Use Cases
 
 - 🏗️ **World Bootstrapping** – Initialize a new world map without manual design.
 - 🌀 **Dungeon Instances** – Generate instanced interiors on demand (e.g. for quests).
@@ -17,7 +17,7 @@ Procedural generation allows games to quickly bootstrap playable areas, spawn in
 
 ---
 
-## 🧩 Generator Types
+## Generator Types
 
 FireMUD supports the following generator types, and additional strategies can be plugged in through the registry:
 
@@ -70,7 +70,7 @@ Generates biome-aware terrain maps with elevation, water features, forest densit
 
 ---
 
-## 🧾 Output and Metadata (Common)
+## Output and Metadata (Common)
 
 All generators emit a normalized structure:
 
@@ -91,7 +91,7 @@ In **sparse mode**, only selected POIs and waypoints are emitted, and the distan
 
 ---
 
-## 🛠️ Integration Guidelines
+## Integration Guidelines
 
 The following rules align generators with the core runtime and tooling:
 
@@ -109,7 +109,7 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ---
 
-## 🧱 Service Responsibilities
+## Service Responsibilities
 
 ### Automation & Scripting Service
 
@@ -135,7 +135,7 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ---
 
-## ✅ Feature Overview
+## Feature Overview
 
 | Area | Status |
 | --- | --- |
@@ -152,10 +152,10 @@ Additional capabilities:
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
-- [World Management Service](./microservices/world-management-service/README.md)
-- [Tick System and Runtime Design](./system-architecture-ticks.md)
-- [Redis Architecture](./system-architecture-redis.md)
 - [Game Session Service](./microservices/game-session-service/README.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [World Management Service](./microservices/world-management-service/README.md)

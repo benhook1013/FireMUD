@@ -156,29 +156,29 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 
 ### Infrastructure & Deployment
 
-- [Infrastructure Overview](./infrastructure/README.md)
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
-- [Protocol Bridging](./system-architecture-protocol-bridging.md)
+- [Infrastructure Overview](./infrastructure/README.md)
 - [Multi-Tenancy Architecture](./system-architecture-multi-tenancy.md)
+- [Protocol Bridging](./system-architecture-protocol-bridging.md)
 
 ### Runtime & Security
 
-- [Redis Architecture](./system-architecture-redis.md)
-- [Tick System and Runtime Design](./system-architecture-ticks.md)
-- [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Authentication & Authorization](./system-architecture-authentication.md)
-- [Security Architecture](./system-architecture-security.md)
-- [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 - [Database Migrations](./system-architecture-database-migrations.md)
+- [Logging & Monitoring](./system-architecture-logging-monitoring.md)
+- [Reconnection Strategy](./system-architecture-reconnection.md)
+- [Redis Architecture](./system-architecture-redis.md)
+- [Security Architecture](./system-architecture-security.md)
 - [Testing Strategy](./system-architecture-testing.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
 
 ### Gameplay & Tools
 
-- [Scripting & Automation Framework](./system-architecture-scripting.md)
-- [Procedural Generation](./system-architecture-procedural-generation.md)
-- [MCP Support](./system-architecture-mcp-support.md)
 - [Frontend Architecture](./system-architecture-frontend.md)
+- [MCP Support](./system-architecture-mcp-support.md)
+- [Procedural Generation](./system-architecture-procedural-generation.md)
+- [Scripting & Automation Framework](./system-architecture-scripting.md)
 
 ### Responsibilities
 
