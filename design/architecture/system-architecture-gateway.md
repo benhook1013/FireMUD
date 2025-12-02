@@ -14,7 +14,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
-- Auto‑scaling policies handle high concurrency.
+- Auto‑scaling policies handle high concurrency
 - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
   itself does not hold session state between reconnects
 - Gateway restarts automatically re-establish WebSocket connections to backend services. See [Reconnection Strategy](./system-architecture-reconnection.md).
