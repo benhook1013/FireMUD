@@ -12,7 +12,7 @@ This document describes the continuous integration strategy for FireMUD using **
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
-- **Scan for vulnerabilities** with Trivy during CI runs.
+- **Scan for vulnerabilities** with Trivy during CI runs and scheduled security scans.
 - **Publish documentation** to GitHub Pages after successful builds.
 - **Create release PRs automatically** using the `release-please` workflow.
 - **Generate database ERD diagrams** as build artifacts after each run. The [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) script writes them to `design/erd/`, and the workflow uploads this directory as artifacts.
@@ -32,7 +32,8 @@ The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 - Generates coverage with JaCoCo and runs Trivy scans over the workspace.
 - Uses Node 20 to lint OpenAPI specs, run React linters, and execute an accessibility audit using headless Chrome.
 - Invokes a dedicated `generate-erd` job that runs [`dev-tools/docs/generate-erd.sh`](../../dev-tools/docs/generate-erd.sh) to build ERD diagrams from service migrations and upload them as artifacts.
-- Verifies documentation links in the `docs.yml` workflow before publishing to GitHub Pages.
+- Caches Buf modules, Node dependencies, Trivy database, and Gradle artifacts to speed up repeat workflow runs.
+- Runs docs and link linting in `ci.yml` and verifies links again in the `docs.yml` workflow before publishing to GitHub Pages.
 - Posts a summary comment on pull requests with test status and coverage.
 
 A separate `docker-images.yml` workflow builds and publishes Docker images for all services using Docker Buildx and the `docker/build-push-action`:
