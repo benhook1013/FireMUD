@@ -1,4 +1,4 @@
-# 🧠 FireMUD System Architecture: Redis
+# FireMUD System Architecture: Redis
 
 This document outlines FireMUD’s usage of Redis as a **transient, high-performance, distributed coordination layer**. It focuses on Redis's responsibilities, safety guarantees, key patterns, and operational practices.
 
@@ -6,7 +6,7 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
 
 ---
 
-## ⚠️ Redis as a Volatile State Layer
+## Redis as a Volatile State Layer
 
 Redis is used **exclusively for non-authoritative, transient data**, including:
 
@@ -29,7 +29,7 @@ Redis acts as a **coordinated real-time buffer**, not a source of truth — but 
 
 The **Game Session Service** is responsible for coordinating tick and session behavior using Redis as its execution substrate.
 
-### ✅ Benefits
+### Benefits
 
 - Low-latency access for gameplay-critical state
 - Enables stateless, horizontally scalable services
@@ -38,7 +38,7 @@ The **Game Session Service** is responsible for coordinating tick and session be
 
 ---
 
-## 🛡️ Redis Availability, Consistency, and Safety Guarantees
+## Redis Availability, Consistency, and Safety Guarantees
 
 Redis is a **non-persistent** layer — but FireMUD treats it as **essential** for consistent multiplayer behavior. Availability and deterministic recovery are prioritized.
 
@@ -70,7 +70,7 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 
 ---
 
-## 🗂️ Key Naming and Shard Discipline
+## Key Naming and Shard Discipline
 
 Redis keys follow strict naming conventions to ensure:
 
@@ -99,7 +99,7 @@ Redis keys follow strict naming conventions to ensure:
 
 ---
 
-## 🔒 Atomicity and Concurrency Control
+## Atomicity and Concurrency Control
 
 Redis’s single-threaded model is extended using **Lua scripts** for atomic operations:
 
@@ -127,7 +127,7 @@ All Lua scripts are:
 3. On successful commit the lock is released and staged data is flushed.
 4. If the lock expires, the next tick replays `tick:pending:{tenantId}:{regionId}` and attempts the workflow again.
 
-### 🔀 Shard Locality and Cross-Region Behavior
+### Shard Locality and Cross-Region Behavior
 
 Redis **does not support cross-shard operations**. All tick locks, Lua scripts,
 and queued commands execute on a **single shard** aligned to the tick region.
@@ -145,7 +145,7 @@ simultaneously across shard boundaries. See
 [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
 for how follow-up commands are routed.
 
-### 🌀 Global Effects and Region-Wide Coordination
+### Global Effects and Region-Wide Coordination
 
 Tick regions **do not execute unless explicitly triggered**. Idle regions never
 see scheduled global events on their own. To apply a world-wide effect — for
@@ -166,7 +166,7 @@ present.
 
 ---
 
-## ⏱️ Tick Integration (Resilience, Locking, Staging)
+## Tick Integration (Resilience, Locking, Staging)
 
 Redis is essential for **coordinating tick execution** across distributed worker services.
 
@@ -181,7 +181,7 @@ It provides:
 > 🔁 Ticks are replayable and deterministic due to Lua-based staging, lock control, and AOF durability.
 > 🔗 See [Tick Execution Flow](./system-architecture-ticks.md#🔄-tick-execution-flow)
 
-### 💥 Crash and Recovery Safety
+### Crash and Recovery Safety
 
 If a tick is interrupted:
 
@@ -198,7 +198,7 @@ All recovery is deterministic and safe.
 
 ---
 
-## 📈 Observability and Reliability
+## Observability and Reliability
 
 FireMUD actively monitors Redis performance and tick health:
 
@@ -222,7 +222,7 @@ FireMUD actively monitors Redis performance and tick health:
 
 ---
 
-## 🧠 Session Keys and Gameplay Binding
+## Session Keys and Gameplay Binding
 
 Redis stores transient gameplay session state for each connected player, including:
 
@@ -249,7 +249,7 @@ This state is used by the **Game Session Service** to:
 
 ---
 
-## ✅ Summary
+## Summary
 
 Redis in FireMUD is:
 
@@ -346,7 +346,7 @@ This section captures design intent only; concrete decisions are explicitly defe
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
 - [System Architecture Overview](./system-architecture-overview.md)

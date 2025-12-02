@@ -1,10 +1,10 @@
-# 🔍 FireMUD System Architecture: Tracing
+# FireMUD System Architecture: Tracing
 
 This document explains how distributed traces are collected and visualized across FireMUD services.
 
 ---
 
-## 📡 OpenTelemetry Collector
+## OpenTelemetry Collector
 
 All services emit spans using the [OpenTelemetry](https://opentelemetry.io/) SDK. A dedicated **OpenTelemetry Collector** runs inside the Kubernetes cluster to receive OTLP traffic and forward it to storage backends. A sample manifest is provided at `k8s/monitoring/otel-collector.yaml`.
 
@@ -32,7 +32,7 @@ requests are instrumented with logs, metrics, and spans consistently. See
 additional observability details. `TracingInterceptor` opens a span for each
 gRPC method and marks it successful or cancelled when the call completes.
 
-## 🎛️ Jaeger UI
+## Jaeger UI
 
 Traces are stored and visualized with **Jaeger**. A minimal Jaeger deployment is provided in `k8s/monitoring/jaeger.yaml`.
 
@@ -45,7 +45,7 @@ Traces are stored and visualized with **Jaeger**. A minimal Jaeger deployment is
   kubectl port-forward service/jaeger 16686:16686
   ```
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 - [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)

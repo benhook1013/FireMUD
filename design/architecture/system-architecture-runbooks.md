@@ -1,10 +1,10 @@
-# 🛠️ FireMUD Operational Runbooks
+# FireMUD Operational Runbooks
 
 This document summarizes routine procedures for deploying, scaling, and recovering FireMUD environments. Each step references existing architecture docs so operators can quickly locate details.
 
 ---
 
-## 🚀 Deployment
+## Deployment
 
 1. **CI Pipeline** builds Docker images and pushes them to GHCR. Kubernetes
    rollouts are triggered manually via the
@@ -26,7 +26,7 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
 For local development, use `./gradlew devUp` to start Docker Compose and
 `./gradlew devDown` when finished.
 
-## 📈 Scaling
+## Scaling
 
 1. Adjust replica counts in the Helm chart or use `kubectl scale`:
 
@@ -44,7 +44,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
 4. For database or Redis clusters, scale StatefulSets according to their
    respective runbooks.
 
-## 🔄 Recovery
+## Recovery
 
 1. **Database Failure**
    - Run `dev-tools/restores/restore-cluster.sh <backup-name>` to restore from the latest `pg_dump` and restart services.
@@ -91,7 +91,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
 
 See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for backup schedules and retention policies.
 
-## 📦 Asset Store
+## Asset Store
 
 1. A self-hosted MinIO cluster stores published game assets when an external CDN
    is unavailable. Deploy the manifests under `k8s/minio/` and create a
@@ -123,7 +123,7 @@ See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for b
      sh -c "mc rm -r --force local/firemud-assets/<tenant>/<version>/"
    ```
 
-## 🩹 Hotfix Procedure
+## Hotfix Procedure
 
 1. Identify the offending service via logs or alerts.
 2. Commit the fix to `main` and trigger the CI pipeline.
@@ -134,7 +134,7 @@ See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for b
 
 These runbooks provide a starting point for operators. Update them as new tooling or workflows evolve.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)

@@ -1,10 +1,10 @@
-# 🧪 FireMUD System Architecture: Testing Strategy
+# FireMUD System Architecture: Testing Strategy
 
 FireMUD employs a layered testing approach to keep services reliable while avoiding excessive CI/CD costs. This document describes the scope of each test type, the tooling in use, and how these tests fit into our development workflow.
 
 ---
 
-## 📝 Testing Scope
+## Testing Scope
 
 Each microservice has its own unit and integration tests. Cross‑service scenarios are also covered in a dedicated suite. Load tests run independently using Gatling in a separate `load-testing` module. The cross‑service directories contain example tests that can be expanded as needed.
 
@@ -18,7 +18,7 @@ Test data seeding strategies use the `dev-tools/seed/seed-test-data.sh` script t
 
 ---
 
-## 🛠 Tooling and Gradle Layout
+## Tooling and Gradle Layout
 
 - **JUnit & Mockito** provide the core framework for unit and integration tests.
 - **Spring Test** bootstraps service contexts and external resources.
@@ -34,7 +34,7 @@ The repository uses a hierarchical Gradle setup. The root `build.gradle.kts` del
 
 Unit and integration tests run automatically in GitHub Actions through a matrix of `:service-name:check` tasks. Cross-service tests run via the `crossServiceTest` Gradle task.
 
-## 💡 Cross-Service Integration Testing
+## Cross-Service Integration Testing
 
 For workflows that span multiple services, such as account creation and world provisioning, the suite starts several containers at once using **Testcontainers**. Each container joins a shared network so gRPC calls function just like in production.
 
@@ -56,7 +56,7 @@ These tests validate saga orchestration logic, and the `crossServiceTest` Gradle
 
 ---
 
-## 🚦 CI/CD Integration
+## CI/CD Integration
 
 GitHub Actions executes formatting and lint checks, builds the code, and runs all unit and integration tests via `:service-name:check` for each module. Coverage reports are generated and a Trivy security scan is executed. See the [CI/CD Pipeline](./system-architecture-cicd.md) document for the workflow definition.
 
@@ -72,7 +72,7 @@ OWASP ZAP crawls the web client and Gateway endpoints during CI to surface commo
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [CI/CD Pipeline](./system-architecture-cicd.md)
 - [System Architecture Overview](./system-architecture-overview.md)

@@ -1,4 +1,4 @@
-# 🛡️ FireMUD System Architecture: Security
+# FireMUD System Architecture: Security
 
 This document outlines how FireMUD secures service communication, manages authentication keys, protects network traffic, and tracks abuse attempts. It complements the [Authentication & Authorization](./system-architecture-authentication.md) document by focusing on secret management, TLS usage, abuse resistance, and operational trust guarantees.
 
@@ -9,7 +9,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 🔑 Token Issuance & Secret Storage
+## Token Issuance & Secret Storage
 
 - The **Account Service** signs JWTs used for internal gRPC authorization.
 - Signing keys are stored as **Kubernetes Secrets**. Rotation is can be performed manually or via **cert-manager** automation.
@@ -28,7 +28,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 🔒 TLS Termination & Internal Encryption
+## TLS Termination & Internal Encryption
 
 - External `https/wss` traffic is terminated at the load balancer.
 - The **Spring Cloud Gateway** communicates with backend services over **TLS** to protect gameplay traffic.
@@ -39,7 +39,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 🤝 Cross-Service Trust
+## Cross-Service Trust
 
 - Internal JWT validation uses the Account Service’s JWKS endpoint.
 - All internal traffic is authenticated using **mTLS** with cert-manager-issued certificates.
@@ -47,7 +47,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 🌐 Network Security & Boundary Design
+## Network Security & Boundary Design
 
 - The **Spring Cloud Gateway** and **TCP Proxy Service** reside in the **network DMZ** and serve as the only ingress points for client traffic.
 - Internal microservices are not directly exposed externally.
@@ -57,7 +57,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 🔐 Brute-Force Defense and Abuse Handling
+## Brute-Force Defense and Abuse Handling
 
 - The **Game Session Service** monitors login attempts **per IP** and enforces connection limits and per-session command rate limiting via Redis.
   - Repeated failures result in **connection closure** and **temporary IP blacklisting**.
@@ -69,7 +69,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 🧾 Audit Logging and Abuse Visibility
+## Audit Logging and Abuse Visibility
 
 - All failed logins, suspicious activity, and abuse attempts are captured in:
   - **Elasticsearch-backed logs**
@@ -79,14 +79,14 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 🔌 Telnet Command Handling and Controls
+## Telnet Command Handling and Controls
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ and **never contacts internal services directly**.
 - The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences. See [`TelnetServerHandler`](../../services/tcp-proxy-service/src/main/java/net/firedevops/firemud/tcpproxy/telnet/TelnetServerHandler.java) for the implementation.
 
 ---
 
-## 🧰 Admin Interface Access Model
+## Admin Interface Access Model
 
 - Admin functionality is **entirely controlled through JWT `roles`**, issued and managed by the **Account Service**.
 - There is **no special network-level access or infrastructure isolation** for admin features — this is an intentional design decision to rely solely on internal authentication and scoped authorization.
@@ -94,7 +94,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## ✅ Summary
+## Summary
 
 | Topic | Strategy |
 | --- | --- |
@@ -112,7 +112,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Authentication & Authorization](./system-architecture-authentication.md)
 - [Redis Architecture](./system-architecture-redis.md)

@@ -1,10 +1,10 @@
-# 📚 Shared Libraries Overview
+# Shared Libraries Overview
 
 FireMUD's microservices share a set of utility classes and data transfer objects so each service can stay lightweight and consistent. The common library is published as a Gradle artifact and reused by all modules. It is released under the **group ID** `net.firedevops.firemud` with the **artifact ID** `firemud-common`. The Gradle subproject lives under `services/common-library`.
 
 ---
 
-## 📖 Common DTOs & Error Handling
+## Common DTOs & Error Handling
 
 These classes define the basic request/response shapes recommended in [AI Project Rules](../project-management/ai-rules-local.md):
 
@@ -42,7 +42,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 ---
 
-## 🚚 Publishing Strategy
+## Publishing Strategy
 
 The shared code is built as a **Gradle Java library** and published to **GitHub Packages** so all services can depend on it.
 
@@ -103,7 +103,7 @@ These tables live in a shared `saga` schema so migrations only run once across s
 Flyway migrations packaged with the library create these tables automatically.
 `SagaRunner` executes the workflow, emitting metrics via `SagaMetrics` and adding a `correlationId` to logs for easier troubleshooting. `SagaMetrics` tracks the number of active sagas so the Logging & Admin Service dashboard can display progress.
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md)
 - [Transaction Strategies](./system-architecture-transactions.md)
