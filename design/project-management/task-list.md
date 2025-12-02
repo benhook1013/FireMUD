@@ -207,6 +207,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
 - [x] Create Gradle `devUp` task to build all services and start Docker Compose with sample data
 - [x] Verify each service starts via `./gradlew devUp` and shows `Started` logs
 - [ ] Seed development database with sample worlds and characters
+- [ ] Provide an installer/configuration helper (CLI or script) that walks contributors through initial setup steps (copying `.env.sample`, configuring local PostgreSQL/Redis, enabling optional Redis persistence, and wiring S3/MinIO buckets for asset storage and backups as described in the backup and asset storage docs)
 - [x] Create Gradle `devDown` task to stop the Docker Compose stack
 - [x] Create Gradle `buildDockerImages` task to build all service images
 - [x] Provision ephemeral preview environments for pull requests
