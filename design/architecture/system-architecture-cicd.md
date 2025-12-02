@@ -177,16 +177,6 @@ automatically.
 
 ---
 
-## Optional Add-Ons and Example Workflows
-
-- **Nightly builds or additional scheduled jobs** for integration testing or long-running checks.
-- **Security scanning** using tools like Trivy. This repository already includes [`weekly-security-scan.yml`](../../.github/workflows/weekly-security-scan.yml), which runs weekly on Sundays at 03:00 UTC to scan dependencies and container images for vulnerabilities.
-- **Notifications** via email or chat when workflows fail.
-
-Similar add-ons can be added as separate workflows or additional jobs in the main pipeline.
-
----
-
 ## Related Documentation
 
 - [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
