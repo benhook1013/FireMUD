@@ -245,22 +245,6 @@ This state is used by the **Game Session Service** to:
 
 > 🔐 Key formats are internal and subject to change. Services treat Redis as a coordination layer, not a persistent or public contract.
 
----
-
-## Summary
-
-Redis in FireMUD is:
-
-- A **transient, high-performance coordination layer**
-- Used for **ticks, timers, locks, retries, and gameplay session state** (see [Session Keys](#session-keys-and-gameplay-binding))
-- Scripted via **Lua** for atomic tick and session control
-- Durable via **AOF** and `WAIT` guarantees
-- Always **shard-local** to avoid cross-node inconsistencies
-- Tightly coupled with the **Game Session Service**, which orchestrates all tick-related flow
-- Not a source of truth — but treated as **critical infrastructure**
-
----
-
 ## Future Cache Design and Versioned Aggregates
 
 Redis is already used for transient coordination (ticks, sessions, locks), and will eventually back selected read-side caches as a performance optimization. This section outlines the future design principles for deciding what to cache and how to validate those caches; it does not describe an implemented feature set yet.
