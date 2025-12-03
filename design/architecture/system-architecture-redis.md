@@ -78,8 +78,7 @@ Redis keys follow strict naming conventions to ensure:
 - Clean atomic execution across tick regions
 - Conflict and retry isolation
 - Debuggable and traceable behavior
-- Tenant-based prefixes for multi-tenant isolation
-  _(see [Multi-Tenancy](./system-architecture-multi-tenancy.md))_
+- Tenant-based prefixes for multi-tenant isolation (see [Multi-Tenancy](./system-architecture-multi-tenancy.md))
 
 ### Key Format Examples
 
