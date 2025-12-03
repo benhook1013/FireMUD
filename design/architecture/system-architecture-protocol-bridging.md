@@ -21,8 +21,8 @@ Despite their differences, both protocols are normalized into the same internal 
 
 - Used by browser-based MUD clients or modern tools.
 - Connections are initiated using the WebSocket protocol.
-- Routed through **Spring Cloud Gateway**, which supports WebSocket proxying.
-- Forwarded to `game-session-service`, which maintains the gameplay session.
+- Routed through Spring Cloud Gateway, which supports WebSocket proxying.
+- Forwarded to the [Game Session Service](./microservices/game-session-service/README.md), which maintains the gameplay session.
 - Gateway restarts automatically re-establish backend WebSocket connections.
 
 ### WebSocket Flow Benefits
@@ -93,7 +93,7 @@ whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSoc
 
 ## Unified Backend Session Logic
 
-The `game-session-service` is the central component responsible for:
+The [Game Session Service](./microservices/game-session-service/README.md) is the central component responsible for:
 
 - Maintaining game session state per client connection.
 - Handling command parsing and game world interaction.
