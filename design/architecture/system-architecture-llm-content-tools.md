@@ -1,6 +1,6 @@
 # LLM-Assisted Content Authoring
 
-This document describes how FireMUD can use large language models (LLMs) as assistants for creating and refining game content such as room descriptions, NPC backstories, item flavor text, and quest dialogue. The focus is on design-time workflows that operate through the Game Design Service and related tooling, not on in-game chatbot behavior.
+This document describes a later-phase capability for using large language models (LLMs) as assistants for creating and refining game content such as room descriptions, NPC backstories, item flavor text, and quest dialogue. The focus is on design-time workflows that operate through the Game Design Service and related tooling, not on in-game chatbot behavior.
 
 > 🔗 See the [Game Design Service](./microservices/game-design-service/README.md) for the core content authoring APIs.
 
@@ -19,13 +19,38 @@ This document describes how FireMUD can use large language models (LLMs) as assi
 
 ## Integration Model
 
-LLM-assisted authoring is implemented as a set of small, composable tools that the LLM or a human can invoke:
+LLM-assisted authoring is implemented as a set of small, composable tools that humans or an LLM can invoke. The LLM primarily generates text or structured suggestions; FireMUD tools remain responsible for making edits and talking to backend services.
 
 - CLI commands that read and write design assets (for example, JSON, YAML, or Markdown files) and call the Game Design Service via REST or gRPC where appropriate.
 - Batch scripts that take a set of content snippets, send them to an LLM for suggestions, and write updated drafts to a working directory for review.
 - Editor or IDE extensions that surface these tools behind buttons or commands, keeping FireMUD-specific logic in the tool layer rather than inside prompts.
 
 From the platform’s perspective, these tools behave like any other design client: they create revisions, group them into versions, and rely on the existing publish workflow to promote changes to runtime.
+
+## Phased Implementation
+
+To keep complexity manageable, LLM-assisted workflows evolve in stages:
+
+1. **Direct draft generation** – Export a slice of design data, build a prompt, call an LLM (often running locally), and write the result into a draft file or revision that a human reviews and imports. The LLM is not aware of FireMUD’s APIs; it only sees text.
+2. **Tool-backed workflows** – Introduce a small set of CLI or HTTP tools that can:
+   - read world summaries, rooms, NPCs, and items in a structured format
+   - accept a structured “quest or content bundle” (for example, `quest_bundle.json`) and turn it into one or more design revisions
+   LLM prompts are updated to target these tools’ input and output formats, but FireMUD still owns all API calls.
+3. **Offline agent sandbox** – Optionally, run an LLM in a sandbox process that can call a handful of read-only tools plus one or two “write draft bundle” tools. The agent may chain tool calls to propose new quests or content using real world data, but the only outputs that matter are structured draft bundles that go through normal review and publish workflows.
+
+Each phase builds on the previous one and can be useful on its own; nothing requires deploying an agent before basic draft-generation tools exist.
+
+## Agent Sandbox Model
+
+For more powerful flows such as “generate a new quest based on existing characters and locations,” an offline agent can be introduced with strict boundaries:
+
+- The agent runs in its own sandboxed environment with access only to:
+  - read-only tools such as `list_world_overview`, `get_room_detail`, or `get_npc_profile`
+  - one or more tools that accept a well-typed draft artifact (for example, `quest_bundle.json`) and create corresponding design revisions
+- The agent may create temporary scratch files while reasoning, but the only contract with the rest of the system is a final structured artifact that passes validation.
+- Importing that artifact into FireMUD uses standard tooling (for example, a `firemud-import-quest-bundle` command or an HTTP endpoint) so all schema and business rules are enforced outside the LLM.
+
+This model allows the agent to query existing world data and propose coherent content while keeping all authoritative writes under the control of FireMUD’s design pipeline.
 
 ## Safety and Review
 
@@ -41,4 +66,3 @@ From the platform’s perspective, these tools behave like any other design clie
 - [Scripting & Automation Framework](./system-architecture-scripting.md)
 - [AI Rules – Global](../project-management/ai-rules-global.md)
 - [AI Formatting Rules](../project-management/ai-formatting-rules.md)
-
