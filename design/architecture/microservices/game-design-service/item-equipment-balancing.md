@@ -18,7 +18,7 @@ These capabilities are available in the current implementation.
 
 1. Items and equipment are defined through the Entity Designer (see [World Editing & Customization Tools](world-editing-tools.md)).
 2. Balancing views aggregate stats and show graphs for cost vs. power.
-3. Finalized changes are published as part of a game version and copied to the Entity Management Service.
+3. Finalized changes are published as part of a game version and persisted as versioned item records in the Entity Management Service, which uses the active `version_id` at runtime.
 
 ## Related Documentation
 

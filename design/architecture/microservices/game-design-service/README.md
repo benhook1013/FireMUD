@@ -2,7 +2,7 @@
 
 ## Overview
 
-Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It also maintains versioned game configurations and templates so new game instances can be created with predefined rules. Default administrator setup is available.
+Offers tools for building worlds, items, actions, and events that make up each game. Used by creators to design content without touching the underlying code. It maintains version metadata, configuration manifests, and templates so new game instances can be created with predefined rules. Default administrator setup is available.
 
 This service is used only at design time. Runtime clients never request logos,
 favicons, or themes from it; published assets are served from object storage via
@@ -10,27 +10,26 @@ manifest files.
 
 ### Responsibilities
 
-- Provide gRPC tools for editing game assets. A web UI is available.
-- Version and publish immutable game configurations
+- Provide REST/gRPC tools and a web UI for editing game assets.
+- Manage version metadata and publish immutable game configurations
 - Track revision history for rollback
-- Notify downstream services when new versions are available.
+- Orchestrate cross-service publish workflows and notify downstream services when new versions are available.
 - Upload branding assets to version-scoped object storage and generate a
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
 
 ## Architecture / Design Notes
 
-- Provides REST/gRPC APIs for editing game data.
-- Works closely with World Management and Automation & Scripting Service to apply changes.
-- Stores versioned configuration data so new game instances can be generated from templates.
+- Provides REST/gRPC APIs for editing game data and managing version metadata.
+- Coordinates with World Management, Entity Management, Game Logic, and Automation & Scripting Service to apply changes.
+- Stores version descriptors and manifests so new game instances can be generated from templates.
 - Maintains history of revisions so designers can roll back to prior versions.
-- Publishing a new game version triggers a Saga that copies data to other
-  services as outlined in
+- Publishing a new game version triggers a Saga that coordinates domain services as outlined in
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../../system-architecture-transactions.md).
   The workflow is implemented using the Saga utilities from `firemud-common`
-  with compensation steps to roll back if downstream copies fail. The workflow
-  persists the new version and copies data to downstream services.
+  with compensation steps to roll back if downstream steps fail. The workflow
+  persists the new version metadata and instructs domain services to finalize their versioned data for that `version_id`.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -141,6 +140,7 @@ stubs with `./gradlew generateProto` whenever these files are updated.
 
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
 
+- [LLM-Assisted Content Authoring](../../system-architecture-llm-content-tools.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
@@ -202,7 +202,7 @@ grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping
 
 ### Saga Participation
 
-Publishing a game version is coordinated using the Saga utilities from `firemud-common`. The `VersionServiceImpl` builds a workflow that first persists the new version and then copies design data to downstream services. If any step fails, previously executed actions are compensated so the database remains consistent. See the [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) document for the overall flow.
+Publishing a game version is coordinated using the Saga utilities from `firemud-common`. The `VersionServiceImpl` builds a workflow that first persists the new version metadata and then asks downstream services to finalize their versioned data for that `version_id`. If any step fails, previously executed actions are compensated so the database remains consistent. See the [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) document for the overall flow.
 
 ## Local Development Notes
 

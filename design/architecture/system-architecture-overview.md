@@ -176,7 +176,7 @@ Game Session Service governs pacing, conflict handling, and orchestration across
 ### Gameplay & Tools
 
 - [Frontend Architecture](./system-architecture-frontend.md)
-- [MCP Support](./system-architecture-mcp-support.md)
+- [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md)
 - [Procedural Generation](./system-architecture-procedural-generation.md)
 - [Scripting & Automation Framework](./system-architecture-scripting.md)
 

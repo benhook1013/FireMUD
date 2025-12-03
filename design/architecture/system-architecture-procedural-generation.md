@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Procedural Generation
 
-This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features.
+This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features. For long-lived overworld or static areas, generated layouts are typically treated as structural scaffolding that designers or LLM-assisted tools can refine with names, descriptions, and quests. For short-lived dungeon instances generated at runtime, the layouts are usually consumed as-is without additional authoring.
 
 Implemented generators include `SimpleDungeonGenerator` and `OverworldMapGenerator`.
 
@@ -44,7 +44,7 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked through `GenerationService`, which looks up the requested `Generator` from the `GeneratorRegistry`. The `GeneratorRegistry` lives inside the Automation & Scripting Service and is discovered via Spring bean scanning; scripted or DSL-based generators are supported. `GenerationService` then runs any registered `GenerationHook` implementations to populate newly created rooms. Current hooks include a simple logger and a basic spawn helper.
+Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as versioned world records. Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details.
 
 ---
 
@@ -111,23 +111,21 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ## Service Responsibilities
 
-### Automation & Scripting Service
-
-- Owns `GenerationService` and `GeneratorRegistry`; executes all generators
-- Runs `GenerationHook`s and post-gen population scripts
-- Exposes generation via API and scripting DSL
-- Returns a complete, validated room/region graph (or error)—no partial commits
-
 ### World Management Service
 
-- Persists generated rooms/biomes/regions; assigns canonical `roomId`s
+- Owns invocation of generators as pure functions and persists generated rooms/biomes/regions; assigns canonical `roomId`s
 - Persists generator metadata (`seed`, `generatorType`, params) and editor overlays
 - Provides read APIs for geometry, overlays, and region metadata
+
+### Automation & Scripting Service
+
+- Provides optional post-generation population scripts (for example, spawning NPCs or loot) that can be invoked by World Management based on tags, biome, and difficulty
+- Integrates procedural generation results with the broader scripting and automation framework where needed
 
 ### Game Session Service
 
 - Requests runtime instancing (portals/quests), schedules **solo ticks** for generation
-- Coordinates Redis tick isolation; hands generation to A&S
+- Coordinates Redis tick isolation and invokes World Management to run generation within isolated ticks
 
 ### Game Logic Service (Movement/Travel)
 
@@ -135,26 +133,11 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ---
 
-## Feature Overview
-
-| Area | Status |
-| --- | --- |
-| Biome-based gameplay | Movement cost and visibility adjustments |
-| Terrain traversal rules | Rules defined per biome and elevation delta |
-| Region-specific scripting | Integrated with spawn rules and lore |
-
-Additional capabilities:
-
-- Procedural POI lore naming and description generation
-- Seasonal or climate-based biome variations
-- The Game Editor displays procedural generation overlays with selectable layers
-- Runtime tuning parameters via scripting
-
----
-
 ## Related Documentation
 
 - [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
+- [Game Design Service](./microservices/game-design-service/README.md)
+- [LLM-Assisted Content Authoring](./system-architecture-llm-content-tools.md)
 - [Game Session Service](./microservices/game-session-service/README.md)
 - [Redis Architecture](./system-architecture-redis.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)

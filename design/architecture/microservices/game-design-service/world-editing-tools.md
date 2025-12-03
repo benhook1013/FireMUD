@@ -6,8 +6,8 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 
 ## Capabilities
 
-- **Room & Region Editor** – create regions, zones and rooms with exits and environmental settings.  The editor saves data through the Game Design Service which then propagates it to the World Management Service when a version is published.
-- **Entity Designer** – define NPCs, items and equipment with validation rules.  Entities are stored as design-time records and copied to runtime services by `version_id` during publishing.
+- **Room & Region Editor** – create regions, zones and rooms with exits and environmental settings. The editor saves data through the Game Design Service, which calls the World Management Service’s design APIs to update versioned world records for the target `tenantId` and draft `version_id`.
+- **Entity Designer** – define NPCs, items and equipment with validation rules. Entities are stored as versioned records in the Entity Management Service and associated with draft or published versions by `version_id` during design and publish workflows.
 - **Import/Export** – designers can upload JSON files representing rooms or entities for bulk editing.  Exporting a version provides the same format for external tools.
 
 ## Workflow
@@ -15,7 +15,7 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 1. Use the web UI to modify rooms, items or NPC definitions.
 2. Each change is stored as a **revision** linked to the author's account.
 3. Revisions are grouped into a **version** and published via the saga workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
-4. Downstream services load the data strictly by `version_id` so the design database is never queried at runtime.
+4. Domain services load their own versioned data strictly by `version_id` at runtime; the Game Design Service is not queried during gameplay.
 
 ## Related Documentation
 

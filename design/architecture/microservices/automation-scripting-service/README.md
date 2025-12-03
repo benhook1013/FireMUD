@@ -46,7 +46,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Faction reputation influences NPC aggression states. NPCs may become **FLEEING** or **SURRENDERED** when low on health or morale, allowing players to resolve encounters non-lethally.
 - Web UI for creating and testing scripts using a component-based DSL.
 - Advanced AI modules support formations, squads, and complex behaviors.
-- Procedural world generation hooks populate rooms with NPCs and loot based on biome and depth.
+- Procedural population hooks populate rooms with NPCs and loot based on biome and depth.
 - `ScriptQuotaService` enforces fairness quotas and per-script resource limits.
 
 ### PvE Mechanics
