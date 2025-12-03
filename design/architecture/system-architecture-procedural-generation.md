@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Procedural Generation
 
-This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features.
+This document outlines how FireMUD supports procedural generation of both dungeon-style and overworld-style layouts. These generators can be invoked during world creation or dynamically at runtime to produce rooms, exits, biomes, and terrain features. Generated layouts are typically treated as structural scaffolding that designers or LLM-assisted tools can refine with names, descriptions, and quests.
 
 Implemented generators include `SimpleDungeonGenerator` and `OverworldMapGenerator`.
 
@@ -155,6 +155,8 @@ Additional capabilities:
 ## Related Documentation
 
 - [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
+- [Game Design Service](./microservices/game-design-service/README.md)
+- [LLM-Assisted Content Authoring](./system-architecture-llm-content-tools.md)
 - [Game Session Service](./microservices/game-session-service/README.md)
 - [Redis Architecture](./system-architecture-redis.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)

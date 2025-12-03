@@ -18,7 +18,7 @@ This document describes a later-phase capability for using large language models
 
 ## Integration Model
 
-LLM-assisted authoring is implemented as a set of small, composable capabilities exposed only through the Game Design Service and its admin UI. The LLM’s role is to generate text or structured suggestions; FireMUD-owned services remain responsible for reading data, making edits, and talking to backend systems. The LLM never calls design APIs directly.
+LLM-assisted authoring is implemented as a set of small, composable capabilities exposed only through the Game Design Service and its admin UI. The LLM’s role is to generate text or structured suggestions on top of existing world data—often including procedurally generated layouts—while FireMUD-owned services remain responsible for reading data, making edits, and talking to backend systems. The LLM never calls design APIs directly.
 
 - The Game Design Service exposes “generate” endpoints (for example, generate room description, NPC backstory, or quest bundle) that:
   - accept structured instructions and context from the admin UI
