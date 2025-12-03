@@ -119,8 +119,8 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ### Automation & Scripting Service
 
-- Hosts reusable generator implementations and optional post-gen population hooks as shared code or scripting modules
-- Can trigger population scripts after World Management has persisted new regions based on tags, biome, and difficulty
+- Provides optional post-generation population scripts (for example, spawning NPCs or loot) that can be invoked by World Management based on tags, biome, and difficulty
+- Integrates procedural generation results with the broader scripting and automation framework where needed
 
 ### Game Session Service
 
