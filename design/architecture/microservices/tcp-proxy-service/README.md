@@ -18,7 +18,7 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 - Buffers incoming input while the client remains connected and discards it if the
   TCP session drops. After reconnect, buffered commands are resent automatically.
 - Handles Telnet negotiation and character encoding quirks.
-- Negotiates the Mud Client Protocol (MCP) when supported. See [MCP Support](../../system-architecture-mcp-support.md).
+- Negotiates the Mud Client Protocol (MCP) when supported. See [Mud Client Protocol (MCP) Support](../../system-architecture-mud-client-protocol.md).
 - Works with the Reconnection Strategy to resume sessions transparently.
 - Can optionally terminate Telnet-over-TLS. Forwarding to the gateway uses
   WebSocket connections and supports mutual TLS.

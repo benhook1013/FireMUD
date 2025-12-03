@@ -69,7 +69,7 @@ Creators refine the world and its inhabitants using several services:
 - **[World Management Service](./microservices/world-management-service/README.md)** – Stores zones and maps, generates new areas, and maintains pathfinding data. Scheduled world events notify other services when the environment changes.
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages characters, NPCs, items, and inventory with deferred writes coordinated by the Game Session Service
 - **Procedural Generation** – The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) provides dungeon seeds and templates. See [Procedural Generation](./system-architecture-procedural-generation.md).
-- **MCP Editing** – Connect external tools via the [Mud Client Protocol](./system-architecture-mcp-support.md) to automate room and NPC creation.
+- **MCP-Enhanced Clients** – Use the [Mud Client Protocol](./system-architecture-mud-client-protocol.md) to drive rich Telnet client features such as status panels, maps, and background notifications.
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 - **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
 - **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
@@ -357,11 +357,11 @@ Common troubleshooting steps are documented in the [Operational Runbooks](./syst
 
 Creators extend gameplay using external editors and runtime plugins:
 
-1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so tools can create rooms, items, and NPCs programmatically. See [MCP Support](./system-architecture-mcp-support.md).
+1. **Mud Client Protocol** – The [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) negotiates MCP so advanced clients can open auxiliary panes, structured notifications, and specialized views while keeping the main text protocol compatible with plain Telnet. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md).
 2. **Modding Framework** – Plugins packaged through the [Game Design Service](./microservices/game-design-service/modding-framework.md) inject custom logic at runtime. The [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) executes them in a sandbox.
 
 ```plaintext
-Editor/Tool → TCP Proxy Service → Game Design Service → Automation & Scripting Service
+MCP-Aware Client → TCP Proxy Service → Game Session Service and other backend services
 ```
 
 ---
@@ -406,7 +406,7 @@ These flows complement the architecture diagrams in [System Architecture Overvie
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md)
 - [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
-- [MCP Support](./system-architecture-mcp-support.md)
+- [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md)
 - [Microservices Overview](./microservices/README.md)
 - [Modding Framework](./microservices/game-design-service/modding-framework.md)
 - [Multi-Tenancy](./system-architecture-multi-tenancy.md)

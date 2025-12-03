@@ -110,6 +110,6 @@ The `game-session-service` is the central component responsible for:
 - [Deployment Environments](./infrastructure/deployment-environments.md)
 - [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)
 - [Gateway Architecture](./system-architecture-gateway.md)
-- [MCP Support](./system-architecture-mcp-support.md)
+- [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md)
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [Infrastructure Overview](./infrastructure/README.md)
