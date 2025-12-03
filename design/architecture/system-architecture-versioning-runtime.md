@@ -8,14 +8,14 @@ This document explains how game data is versioned and activated at runtime. It a
 
 ## Game Version Publishing
 
-The **Game Design Service** stores the authoritative game configuration (world layouts, scripts, item templates, etc.). Designers iterate on this data and periodically **publish** a new version.
+The **Game Design Service** manages version metadata and publish workflows for game configuration (world layouts, scripts, item templates, etc.). Domain services (World Management, Entity Management, Game Logic, and others) store the actual versioned domain data for each `tenantId`.
 
 1. When a version is ready, creators trigger a **Publish** action in the Game Design Service using the `PublishVersion` gRPC method.
-2. The service writes a new `version_id` and associated records to its database.
-3. Domain services (World Management, Entity Management, etc.) copy the relevant data into their own schemas using this `version_id`. Once copied, this data becomes read-only for that release so runtime services never pull directly from the design database. The copy workflow is orchestrated by sagas for cross‑service consistency.
-4. A notification or message informs the Game Session Service that a new version exists so game instances can be restarted or patched.
+2. The service writes a new `version_id` and associated records to its database, linking the version to each tenant and recording notes and base versions.
+3. A Saga coordinates all domain services so they validate and finalize their draft data for the given `tenantId` and `version_id`, marking that data as published and ready for runtime use. Domain services already host the versioned graphs for their domains; no separate design database is copied at publish time.
+4. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
 
-Published versions are immutable; further changes require publishing a new `version_id`.
+Published versions are immutable; further changes require publishing a new `version_id`. Services may keep additional draft or experimental versions internally, but only published versions are eligible to be activated for live game instances.
 
 ### Script-Only Patch Versions
 
@@ -87,7 +87,7 @@ when a version is published. The definitions table and copy steps manage this wo
 ```mermaid
 flowchart TD
     A[Designers publish version] --> B[Game Design Service stores new version_id]
-    B --> C[Domain services copy data using version_id]
+    B --> C[Domain services finalize draft data for version_id]
     C --> D[Game Session Service notified of new version]
     D --> E[Session starts game using chosen version_id]
     E --> F[Runtime flags loaded and applied]

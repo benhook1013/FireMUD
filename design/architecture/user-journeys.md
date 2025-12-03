@@ -101,7 +101,7 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 Once the world is ready:
 
 1. **Publish a Version** – Creators publish the current design in the Game Design Service.
-2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how design data is copied when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how initial world state is seeded from the published world data when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
 
 ```plaintext
 Game Design Service (publish) → Game Session Service (start instance)

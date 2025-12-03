@@ -27,7 +27,7 @@ the multi-tenant requirements in the
 - All microservices connect to a single PostgreSQL instance and store data in
   service-specific schemas.
   Migrations create tables directly inside dedicated service schemas rather than the `public` schema.
-- Databases are **shared across tenants**, with a `tenantId` column on each table to isolate data.
+- Databases are **shared across tenants**, with a `tenantId` column on each table to isolate data. Domain services also scope their versioned data by `version_id` so multiple published or draft configurations can coexist per tenant.
 - Services enforce the `tenantId` filter on all queries to prevent cross-game
   access.
 - Redis keys prefix the `tenantId` as described in the

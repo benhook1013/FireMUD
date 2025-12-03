@@ -23,8 +23,8 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Uses a modular command parser for extensibility.
 - Deterministic rule execution; random seeds come from the Game Session Service.
 - Fetches contextual world and entity data on demand via gRPC.
-- Gameplay rules are imported from the Game Design Service when a version is
-  published; the runtime service does not query design databases.
+- Gameplay rules are read from this service's own versioned data when a version
+  is activated; the runtime service does not query design or admin databases.
 - Integrates with the tick system described in [Tick System and Runtime Design](../../system-architecture-ticks.md) to ensure deterministic command ordering.
 - Cross-service combat or trade operations run within ticks and rely on Redis-based rollback, not sagas. See [Transaction Strategies](../../system-architecture-transactions.md).
 - All commands are scoped by `tenantId` so that rules execute only against data
