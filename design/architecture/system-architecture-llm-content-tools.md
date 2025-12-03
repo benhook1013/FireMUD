@@ -15,7 +15,6 @@ This document describes a later-phase capability for using large language models
 
 - No in-game NPC chatbots or live conversational agents. Runtime behavior remains scripted via the Automation & Scripting Service and related systems.
 - No direct write access from LLMs to production databases. All changes flow through versioned design workflows.
-- No reliance on Telnet or Mud Client Protocol for authoring; MCP is reserved for enhancing player clients, not for world editing.
 
 ## Integration Model
 
