@@ -15,8 +15,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - Cooldowns and timer expirations (stored in milliseconds)
 - Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#session-keys-and-gameplay-binding))
 - Retry metadata and inter-tick conflict tracking
-- TTL-based service caches such as hot room lookups and recent chat history
-  _(see [Performance Optimization Guidelines](./performance-optimization.md))_
+- TTL-based service caches such as hot room lookups and recent chat history (see [Performance Optimization Guidelines](./performance-optimization.md))
 - Automation queue keys for script events (`automation_queue:{tenantId}:{entityId}`)
 
 Services connect to Redis using the `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT`
@@ -253,8 +252,7 @@ This state is used by the **Game Session Service** to:
 Redis in FireMUD is:
 
 - A **transient, high-performance coordination layer**
-- Used for **ticks, timers, locks, retries, and gameplay session state**
-  _(see [Session Keys](#session-keys-and-gameplay-binding))_
+- Used for **ticks, timers, locks, retries, and gameplay session state** (see [Session Keys](#session-keys-and-gameplay-binding))
 - Scripted via **Lua** for atomic tick and session control
 - Durable via **AOF** and `WAIT` guarantees
 - Always **shard-local** to avoid cross-node inconsistencies
