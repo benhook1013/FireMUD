@@ -67,7 +67,7 @@
 ## 9. Architecture & Documentation Behavior
 
 - For any design or service documentation (architecture overviews, system slices, or per-microservice READMEs), describe the **target-state behavior as if fully implemented** in the main body. Avoid sprinkling “planned” or “will be implemented” caveats throughout flow descriptions.
-- If implementation is partial, capture that status in a dedicated section (for example, “Implemented Status” or “Implementation Notes”) near the top or bottom of the document, and keep that section up to date as behavior changes.
+- If implementation is partial, capture that status in a dedicated section (for example, “Implemented Status” or “Implementation Notes”) placed near the top of the document immediately after the main title/intro, and keep that section up to date as behavior changes.
 - When a feature or flow is fully implemented, collapse the status section for that area to a concise note such as “No further work pending for this section,” instead of removing it entirely.
 
 ## 10. Testing & Observability
