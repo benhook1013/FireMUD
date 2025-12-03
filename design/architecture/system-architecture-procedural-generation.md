@@ -125,7 +125,7 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 ### Game Session Service
 
 - Requests runtime instancing (portals/quests), schedules **solo ticks** for generation
-- Coordinates Redis tick isolation; hands generation to A&S
+- Coordinates Redis tick isolation and invokes World Management to run generation within isolated ticks
 
 ### Game Logic Service (Movement/Travel)
 
