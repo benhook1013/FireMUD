@@ -35,8 +35,8 @@ Despite their differences, both protocols are normalized into the same internal 
 ## Telnet / TCP Client Flow (Legacy Clients)
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
-- Handled by a dedicated **TCP Proxy Service**.
 - Clients connect using raw TCP (typically Telnet-compatible).
+- Handled by a dedicated **TCP Proxy Service**.
 - The proxy listens on port `2323` by default so Telnet clients can simply
   connect without additional configuration. This and the gateway WebSocket URL
   can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment
