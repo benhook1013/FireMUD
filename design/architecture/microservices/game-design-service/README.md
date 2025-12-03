@@ -141,6 +141,7 @@ stubs with `./gradlew generateProto` whenever these files are updated.
 
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
 
+- [LLM-Assisted Content Authoring](../../system-architecture-llm-content-tools.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)

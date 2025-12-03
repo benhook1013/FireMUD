@@ -25,6 +25,7 @@ The architecture section describes the platform infrastructure and each microser
 - [**system-architecture-gateway.md**](./system-architecture-gateway.md) – Spring Cloud Gateway routing and WebSocket support.
 - [**system-architecture-grpc.md**](./system-architecture-grpc.md) – Conventions for proto layout and versioning.
 - [**system-architecture-logging-monitoring.md**](./system-architecture-logging-monitoring.md) – Logging and observability stack.
+- [**system-architecture-llm-content-tools.md**](./system-architecture-llm-content-tools.md) – Design-time LLM-assisted content authoring workflows.
 - [**system-architecture-mud-client-protocol.md**](./system-architecture-mud-client-protocol.md) – Mud Client Protocol integration for external editors and scripted clients.
 - [**system-architecture-multi-tenancy.md**](./system-architecture-multi-tenancy.md) – Hosting multiple games on shared infrastructure.
 - [**system-architecture-procedural-generation.md**](./system-architecture-procedural-generation.md) – Basic dungeon generation used during world creation.
