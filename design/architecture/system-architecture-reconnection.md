@@ -113,6 +113,6 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 ## Related Documentation
 
 - [Authentication & Authorization](./system-architecture-authentication.md)
-- [Game Session Service README](./microservices/game-session-service/README.md)
+- [Game Session Service](./microservices/game-session-service/README.md)
 - [Redis Architecture](./system-architecture-redis.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
