@@ -8,7 +8,7 @@ This document describes a later-phase capability for using large language models
 
 - Help creators draft and iterate on narrative content (rooms, NPCs, items, quests, and lore).
 - Suggest alternative wordings, difficulty tuning notes, and accessibility improvements for existing text.
-- Operate through explicit tools (admin UI, CLI, or editor integrations) that call the Game Design Service; LLMs never modify design assets directly or offline.
+- Operate through explicit tools (admin UI or editor integrations) that call the Game Design Service; LLMs never modify design assets directly or offline.
 - Keep all LLM-assisted changes under creator control; humans review and commit content before it is published.
 
 ## Non-Goals
@@ -21,10 +21,9 @@ This document describes a later-phase capability for using large language models
 LLM-assisted authoring is implemented as a set of small, composable capabilities exposed through the Game Design Service and its admin UI. The LLM’s role is to generate text or structured suggestions; FireMUD-owned services remain responsible for reading data, making edits, and talking to backend systems. The LLM never calls design APIs directly.
 
 - The Game Design Service exposes “generate” endpoints (for example, generate room description, NPC backstory, or quest bundle) that:
-  - accept structured instructions and context from the admin UI or CLI
+  - accept structured instructions and context from the admin UI
   - call an LLM (directly or via a dedicated helper service)
   - turn the result into one or more design revisions or draft artifacts
-- CLI commands and batch scripts act as thin wrappers over these endpoints for local or automated workflows.
 - Editor or IDE extensions call the same endpoints so all world-editing logic stays in the Game Design Service layer, not inside prompts.
 
 From the platform’s perspective, these flows behave like any other design client: they create revisions, group them into versions, and rely on the existing publish workflow to promote changes to runtime.
@@ -38,7 +37,7 @@ To keep complexity manageable, LLM-assisted workflows evolve in stages:
    - read world summaries, rooms, NPCs, and items in a structured format
    - call an LLM (directly or via a helper service) using that context
    - accept a structured “quest or content bundle” (for example, `quest_bundle.json`) and turn it into one or more design revisions
-   CLI tools and the admin UI become thin clients over these endpoints.
+   The admin UI becomes a thin client over these endpoints.
 3. **Offline agent sandbox** – Optionally, run an LLM-driven agent in a sandbox process that can call a handful of read-only helper tools plus one or two “write draft bundle” endpoints on the Game Design Service. The agent may chain helper calls to propose new quests or content using real world data, but the only outputs that matter are structured draft bundles that go through normal review and publish workflows.
 
 Each phase builds on the previous one and can be useful on its own; nothing requires deploying an agent before basic draft-generation tools exist.
