@@ -94,8 +94,6 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 | Redis session expired/missing | Treated as fresh login; gameplay starts anew |
 | New client logs in as same character | Old session terminated; new one resumes control |
 
-> 🔑 Only **client disconnection** requires `LOGIN`. Game Session Service restarts are invisible if the socket stays open. TCP Proxy restarts drop Telnet clients, while Gateway restarts disconnect Web clients; Telnet clients proxied through the Gateway remain connected.
-
 ---
 
 ## Design Principles
