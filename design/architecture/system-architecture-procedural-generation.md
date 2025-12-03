@@ -44,7 +44,7 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked through `GenerationService`, which looks up the requested `Generator` from the `GeneratorRegistry`. The `GeneratorRegistry` lives inside the Automation & Scripting Service and is discovered via Spring bean scanning; scripted or DSL-based generators are supported. `GenerationService` then runs any registered `GenerationHook` implementations to populate newly created rooms. Current hooks include a simple logger and a basic spawn helper.
+Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as versioned world records. Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details.
 
 ---
 
@@ -111,18 +111,16 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ## Service Responsibilities
 
-### Automation & Scripting Service
-
-- Owns `GenerationService` and `GeneratorRegistry`; executes all generators
-- Runs `GenerationHook`s and post-gen population scripts
-- Exposes generation via API and scripting DSL
-- Returns a complete, validated room/region graph (or error)—no partial commits
-
 ### World Management Service
 
-- Persists generated rooms/biomes/regions; assigns canonical `roomId`s
+- Owns invocation of generators as pure functions and persists generated rooms/biomes/regions; assigns canonical `roomId`s
 - Persists generator metadata (`seed`, `generatorType`, params) and editor overlays
 - Provides read APIs for geometry, overlays, and region metadata
+
+### Automation & Scripting Service
+
+- Hosts reusable generator implementations and optional post-gen population hooks as shared code or scripting modules
+- Can trigger population scripts after World Management has persisted new regions based on tags, biome, and difficulty
 
 ### Game Session Service
 
