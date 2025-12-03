@@ -8,7 +8,7 @@ This document describes a later-phase capability for using large language models
 
 - Help creators draft and iterate on narrative content (rooms, NPCs, items, quests, and lore).
 - Suggest alternative wordings, difficulty tuning notes, and accessibility improvements for existing text.
-- Operate through explicit tools (admin UI or editor integrations) that call the Game Design Service; LLMs never modify design assets directly or offline.
+- Operate through the Game Design Service admin UI, which orchestrates all LLM-backed generation; LLMs never modify design assets directly or offline.
 - Keep all LLM-assisted changes under creator control; humans review and commit content before it is published.
 
 ## Non-Goals
@@ -18,13 +18,12 @@ This document describes a later-phase capability for using large language models
 
 ## Integration Model
 
-LLM-assisted authoring is implemented as a set of small, composable capabilities exposed through the Game Design Service and its admin UI. The LLM’s role is to generate text or structured suggestions; FireMUD-owned services remain responsible for reading data, making edits, and talking to backend systems. The LLM never calls design APIs directly.
+LLM-assisted authoring is implemented as a set of small, composable capabilities exposed only through the Game Design Service and its admin UI. The LLM’s role is to generate text or structured suggestions; FireMUD-owned services remain responsible for reading data, making edits, and talking to backend systems. The LLM never calls design APIs directly.
 
 - The Game Design Service exposes “generate” endpoints (for example, generate room description, NPC backstory, or quest bundle) that:
   - accept structured instructions and context from the admin UI
   - call an LLM (directly or via a dedicated helper service)
   - turn the result into one or more design revisions or draft artifacts
-- Editor or IDE extensions call the same endpoints so all world-editing logic stays in the Game Design Service layer, not inside prompts.
 
 From the platform’s perspective, these flows behave like any other design client: they create revisions, group them into versions, and rely on the existing publish workflow to promote changes to runtime.
 
