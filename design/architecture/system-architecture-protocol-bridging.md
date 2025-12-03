@@ -80,7 +80,7 @@ In production the bridge speaks directly to Spring Cloud Gateway through the Web
 [Gateway Architecture](./system-architecture-gateway.md) document (`Path=/api/session/**,/ws/game/**`). This keeps the Telnet flow and the web client flow aligned:
 they both traverse the same filters, metrics, and downstream `game-session-service` backend.
 
-Override `GATEWAY_WS_URL` only when the gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
+Override `GATEWAY_WS_URL` only when the Spring Cloud Gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
 whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point.
 
 ### TCP Flow Benefits
