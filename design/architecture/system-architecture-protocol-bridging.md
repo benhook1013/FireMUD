@@ -36,23 +36,23 @@ Despite their differences, both protocols are normalized into the same internal 
 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
-- The proxy listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
+- The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
 
-**Protocol handling and security**
+### Protocol handling and security
 
 - Accepts and parses Telnet line-based input and performs basic Telnet option negotiation for compatibility.
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
 - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
 
-**Bridging to the backend**
+### Bridging to the backend
 
 - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
 - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client; forwarding uses mutual TLS for this hop.
 - Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce connection limits and rate limiting centrally.
 - Proxies I/O between the TCP client and Spring Cloud Gateway.
 
-**Buffering, reconnection, and observability**
+### Buffering, reconnection, and observability
 
 - Buffers active input while the client remains connected and discards it if the TCP connection drops.
 - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and session recovery are handled as described in [Reconnection Strategy](./system-architecture-reconnection.md).
