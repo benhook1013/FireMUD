@@ -133,23 +133,6 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 ---
 
-## Feature Overview
-
-| Area | Status |
-| --- | --- |
-| Biome-based gameplay | Movement cost and visibility adjustments |
-| Terrain traversal rules | Rules defined per biome and elevation delta |
-| Region-specific scripting | Integrated with spawn rules and lore |
-
-Additional capabilities:
-
-- Procedural POI lore naming and description generation
-- Seasonal or climate-based biome variations
-- The Game Editor displays procedural generation overlays with selectable layers
-- Runtime tuning parameters via scripting
-
----
-
 ## Related Documentation
 
 - [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
