@@ -64,7 +64,13 @@
 - Use standard directory layout for the tech stack
 - Avoid one-off scripts unless reused
 
-## 9. Testing & Observability
+## 9. Architecture & Documentation Behavior
+
+- When editing architecture docs (for example, reconnection, protocol bridging, versioning, or procedural generation), describe the **target-state behavior as if fully implemented** in the main body. Avoid sprinkling “planned” or “will be implemented” caveats throughout flow descriptions.
+- If implementation is partial, capture that status in a dedicated section (for example, “Implemented Status” or “Implementation Notes”) near the top or bottom of the document, and keep that section up to date as behavior changes.
+- Service-level docs (per-microservice READMEs) may also include implementation status sections, but the architectural narrative should remain clean and present-tense.
+
+## 10. Testing & Observability
 
 - Provide unit tests for new logic and integration tests for features that touch databases or external services.
 - Verify coverage with JaCoCo by running `./gradlew check` before committing.
@@ -72,7 +78,7 @@
 - Use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from the shared library when adding new gRPC endpoints so logs, metrics, and spans are recorded consistently.
 - When editing `.proto` files or gRPC APIs, follow the conventions in `design/architecture/system-architecture-grpc.md` for schema layout, versioning, and error-handling rules.
 
-## 10. Tooling Available to AI
+## 11. Tooling Available to AI
 
 - The development environment includes the GitHub CLI (`gh`) configured for this repository.
 - AI tools may use `gh` to inspect and manage pull requests (for example, listing PRs, viewing diffs, and editing descriptions) when explicitly asked.
