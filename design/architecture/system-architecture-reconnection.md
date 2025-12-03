@@ -34,7 +34,7 @@ TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 - Buffers input **during connection**, but **clears on disconnect**
 - No gameplay state is preserved across reconnects — Game Session Service handles recovery
 - Provides gRPC hooks (`NotifyDisconnect`, `PushBufferedInput`) for session recovery integration
-- Runtime options such as the listening port and gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service README](./microservices/tcp-proxy-service/README.md#environment-variables)).
+- Runtime options such as the listening port and Spring Cloud Gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables)).
 
 ### Spring Cloud Gateway (Web Clients)
 
@@ -55,7 +55,7 @@ TCP Proxy restarts drop Telnet clients, who must reconnect manually.
   - Timers and in-flight actions
 
 > 🔗 Full structure of Redis session keys is documented in [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding).
-> See also the [Game Session Service README](./microservices/game-session-service/README.md#redis-keys) for how session state is stored for reconnect recovery.
+> See also the [Game Session Service design](./microservices/game-session-service/README.md#redis-keys) for how session state is stored for reconnect recovery.
 
 ---
 
