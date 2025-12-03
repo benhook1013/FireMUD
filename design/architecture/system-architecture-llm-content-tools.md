@@ -8,7 +8,7 @@ This document describes a later-phase capability for using large language models
 
 - Help creators draft and iterate on narrative content (rooms, NPCs, items, quests, and lore).
 - Suggest alternative wordings, difficulty tuning notes, and accessibility improvements for existing text.
-- Operate through explicit tools (CLI, scripts, or editor integrations) that call the Game Design Service or manipulate design assets offline.
+- Operate through explicit tools (admin UI, CLI, or editor integrations) that call the Game Design Service; LLMs never modify design assets directly or offline.
 - Keep all LLM-assisted changes under creator control; humans review and commit content before it is published.
 
 ## Non-Goals
