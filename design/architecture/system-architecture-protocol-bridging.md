@@ -21,7 +21,7 @@ Despite their differences, both protocols are normalized into the same internal 
 
 - Used by browser-based MUD clients or modern tools.
 - Connections are initiated using the WebSocket protocol.
-- Routed through Spring Cloud Gateway, which supports WebSocket proxying.
+- Routed through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md), which supports WebSocket proxying.
 - Forwarded to the [Game Session Service](./microservices/game-session-service/README.md), which maintains the gameplay session.
 - Gateway restarts automatically re-establish backend WebSocket connections.
 
