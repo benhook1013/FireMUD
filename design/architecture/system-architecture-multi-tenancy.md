@@ -16,8 +16,7 @@ the multi-tenant requirements in the
 - Database tables store this column as `VARCHAR(36)`.
 - Character data and progress are scoped per `tenantId`.
 - A player may have different characters in different games.
-- Authentication is global, but services always check the requested `tenantId`.
-- They enforce it when retrieving or updating game data.
+- Authentication is global, but services always check the requested `tenantId` and enforce it when retrieving or updating game data.
 - Friend lists and guilds are maintained by the Social & Groups Service. Per-game friendships store `tenantId` plus player IDs, while account-to-account friendships reference global account IDs.
 
 ## Data Separation per Service
