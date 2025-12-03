@@ -1,6 +1,6 @@
 # FireMUD Logging & Monitoring Overview
 
-This document consolidates the platform's observability architecture.
+This document describes how FireMUD collects logs, metrics, and traces across all services, and how operators use those signals for debugging, moderation, and performance analysis.
 
 ---
 
