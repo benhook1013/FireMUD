@@ -36,7 +36,7 @@ To prevent concurrent entity updates, ticks acquire **distributed locks** in Red
 - `SET NX PX` with expiry for exclusive ownership
 - Lua-based atomic checks to avoid race conditions
 
-Lock TTLs are configured as a **small multiple of the soft tick execution budget** (for example, 3× the per-region tick budget). This gives headroom for brief pauses (GC, CPU spikes) without letting the lock expire while work is still in progress. Ticks that approach this bound are treated as misbehaving and deferred or retried rather than allowed to run indefinitely under a single lock.
+Lock TTLs are derived from the **soft tick execution budget** using the formula described in the Redis architecture (`lock_ttl_ms = clamp(tick_budget_ms * 3, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`). This gives headroom for brief pauses (GC, CPU spikes) without letting the lock expire while work is still in progress, while still bounding how long a stale lock can block progress. Ticks that approach this bound are treated as misbehaving and deferred or retried rather than allowed to run indefinitely under a single lock.
 
 If a required lock is unavailable:
 
@@ -50,7 +50,12 @@ Conflict metadata is recorded and reported to the Game Session Service, which **
 
 ### Lock Token Semantics
 
-Each acquired lock stores a **unique token** (for example, a UUID) as its value. The Game Session Service records this token and only releases the lock via a Lua script that verifies the stored value still matches the original token before deleting the key. This prevents one worker from accidentally releasing another worker’s lock if the TTL expires and the lock is reacquired. Tick effects are designed to be idempotent so that if a lock expires mid-tick and staged work is replayed, the game state remains consistent.
+Each acquired lock stores a **unique token** (for example, a UUID) as its value. The Game Session Service records this token and only releases the lock via a Lua script that verifies the stored value still matches the original token before deleting the key. This prevents one worker from accidentally releasing another worker’s lock if the TTL expires and the lock is reacquired. Before applying any stateful work for a tick, workers:
+
+- Verify that `tick:{tenantId}:{regionId}:pending` either does not exist or, if it exists, corresponds to the `tickId` they are about to process.
+- Confirm that the currently held lock’s token still matches the value stored in Redis.
+
+If either check fails (for example, the lock token was lost and reacquired by another worker), the worker aborts processing for that tick and returns a retry outcome so the Game Session Service can reschedule the work. Tick effects are designed to be idempotent so that if a lock expires mid-tick and staged work is replayed, the game state remains consistent.
 
 ---
 
@@ -137,11 +142,19 @@ State changes are first **staged in Redis** under keys like `tick:pending:{tenan
 
 Each `tick:{tenantId}:{regionId}:pending` entry represents a **single tick** for that region and carries a monotonically increasing `tickId` plus the staged effects for that tick. If a crash or lock timeout leaves this key present, the next tick cycle treats it as “safe to reapply” and replays the staged effects. Domain updates are written to be idempotent so repeating the same `tickId` does not corrupt state, and successful completion both applies the effects and deletes the `tick:{tenantId}:{regionId}:pending` key.
 
+The **TickScheduler** in the Game Session Service enforces this **single in-flight tick per region** rule:
+
+- A region is considered **busy** while `tick:{tenantId}:{regionId}:pending` exists for its current `tickId`.
+- The scheduler does not start a new tick for that `{tenantId, regionId}` until the pending entry has been removed as part of a successful commit or explicitly handled during crash recovery.
+- Any additional work enqueued for the same region while a tick is in-flight is modeled as a retry or as follow-up work for a later `tickId`, not as a second concurrent tick.
+
 This ensures:
 
 - Atomic per-tick updates
 - Partial failure recovery
 - Conflict-free shared state across retries
+
+If FireMUD later introduces limited intra-region parallelism (for example, sharding a single region into multiple independent buckets of entities), this model will evolve to use **per-bucket pending keys** (for example, `tick:{tenantId}:{regionId}:{bucketId}:pending`) and matching idempotency/locking rules. Until such a change is explicitly designed, the invariant is **one `pending` entry and one in-flight tick per `{tenantId, regionId}`.**
 
 ---
 
@@ -191,6 +204,11 @@ Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time 
 
 - `timer:{tenantId}:{regionId}` – a ZSET where the score is the expiration timestamp (in ms) and each member encodes the target entity/effect (for example, `entityId:effectId` or a serialized descriptor).
 
+Timer scores are computed using a **single, consistent time source** on the application side:
+
+- The Game Session Service uses wall-clock time from NTP-synchronized application nodes when scheduling and evaluating timers.
+- Redis server time is not used for timer comparisons so clock skew is limited to the skew between application nodes, which is kept small via standard time synchronization.
+
 Each tick processes timers for its region by:
 
 - Using a bounded `ZRANGEBYSCORE`/`ZPOPMIN` up to the current time
@@ -239,6 +257,66 @@ Recovery is coordinated by Game Session Service and backed by:
 - `WAIT 1 100` for durable replication
 
 This supports **at-least-once, idempotent, replayable** ticks — ticks may be safely replayed after crash or failover without changing observable game state, even though individual effects may execute more than once under rare failure windows.
+
+---
+
+## Domain Idempotency Rules (TickId in PostgreSQL)
+
+Domain services treat `tickId` as the canonical idempotency token for every tick-side effect. Replays of the same `tick:{tenantId}:{regionId}:pending` entry must never apply a logically new effect to PostgreSQL.
+
+Every tick-driven effect MUST use one of the following strategies:
+
+- **Per-aggregate last-tick state**
+  - Each aggregate root that is updated at most once per tick (for example, a character’s core stats row or a room’s dynamic state row) maintains a shadow tick-state record such as `entity_tick_state` keyed by the aggregate identifier (for example `entity_id`).
+  - The shadow table stores at minimum:
+    - `tenant_id` / `region_id` (or a foreign key that implies them)
+    - `last_tick_id` (monotonic per `{tenantId, regionId}`)
+  - When applying a tick effect to the aggregate:
+    - The service reads the current tick state.
+    - If `last_tick_id >= currentTickId`, the update is treated as a **replay or out-of-order attempt** and becomes a no-op (or, in strict modes, a validation-only check).
+    - If `last_tick_id < currentTickId`, the service applies the change and updates `last_tick_id = currentTickId` in the same transaction.
+
+- **Operation-level effect guard**
+  - For operations that may touch multiple aggregates or may legitimately apply multiple distinct effects to the same aggregate in a single tick (for example, trades, AoE damage, or multi-target buffs), services use a small guard table such as `tick_effect_guard` keyed by:
+    - `tenant_id`
+    - `region_id`
+    - `tick_id`
+    - `effect_key` – a deterministic identifier describing the logical effect (for example `entity:{entityId}:award:achievement:{achievementId}` or `room:{roomId}:drop:item:{itemId}`).
+  - Inside the same database transaction as the domain update:
+    - The service attempts to insert `(tenant_id, region_id, tick_id, effect_key)` into the guard table.
+    - If the insert **succeeds**, the effect is considered **new** for this tick and the service applies all associated state changes.
+    - If the insert **conflicts on primary key**, the effect has already been applied for this `(tenantId, regionId, tickId, effectKey)` and the handler treats the call as a **replay**:
+      - In the simple case, the handler returns success without reapplying changes.
+      - In stricter flows, the handler may verify that current state is consistent with the previously applied effect before returning.
+
+### Examples
+
+- **Per-aggregate last-tick state – single-entity damage**
+  - A `ApplyDamage` handler in Entity Management receives `(tenantId, regionId, tickId, entityId, damageAmount)`.
+  - It reads `entity_tick_state` for `entityId` and compares `last_tick_id` to `tickId`.
+  - If `last_tick_id >= tickId`, the handler treats the request as a replay for this entity and returns without changing HP.
+  - If `last_tick_id < tickId`, the handler subtracts `damageAmount` from current HP and updates `last_tick_id = tickId` in `entity_tick_state` within the same transaction.
+
+- **Operation-level effect guard – trade between two entities**
+  - A `TradeItem` handler in Entity Management is called with `(tenantId, regionId, tickId, fromEntityId, toEntityId, itemId)`.
+  - It computes `effectKey = "trade:" + fromEntityId + ":" + toEntityId + ":" + itemId`.
+  - Inside a single transaction it:
+    - Attempts to insert `(tenantId, regionId, tickId, effectKey)` into `tick_effect_guard`.
+    - If the insert conflicts, it treats the call as a replay and returns success without modifying inventories.
+    - If the insert succeeds, it debits the item from `fromEntityId`’s inventory, credits it to `toEntityId`, and commits both the inventory changes and the guard-row insert together.
+
+### Replay Handling and Service Responsibilities
+
+- Tick replays are always driven by the **Game Session Service** based on the presence of `tick:{tenantId}:{regionId}:pending` in Redis and the `tickId` it carries.
+- Domain services (Entity Management, World Management, Game Logic hosts, Social Groups, etc.) are responsible for:
+  - Persisting tick idempotency state in their own PostgreSQL schema via shadow tables and guard tables.
+  - Ensuring that **every tick-driven write path** uses either the per-aggregate `last_tick_id` pattern or the operation-level guard pattern.
+- At least one concrete example per service should document:
+  - The name of its tick-state table(s).
+  - The fields used (`last_tick_id`, `tenant_id`, `region_id`, `effect_key`).
+  - How handlers behave when they detect a replay (no-op vs verify-then-no-op).
+
+Entity Management provides the reference example for per-aggregate tick state; see [Entity Management Service – Tick Idempotency](./microservices/entity-management-service/README.md#tick-idempotency) for details.
 
 ---
 
