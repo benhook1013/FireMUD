@@ -17,7 +17,7 @@ This document summarizes routine procedures for deploying, scaling, and recoveri
    helm install firemud ./k8s/helm/firemud -f k8s/helm/values-dev.yaml
    ```
 
-   See the [Helm Charts README](../../k8s/helm/README.md) for environment-specific values.
+   See the [Helm Charts guide](../../k8s/helm/README.md) for environment-specific values and the production `values-prod.yaml`.
 
 3. Verify pods are running with `kubectl get pods -n firemud`.
 4. Monitor rollout progress in the CI job summary. Grafana dashboards
@@ -43,39 +43,30 @@ For local development, use `./gradlew devUp` to start Docker Compose and
    the observability stack configuration.
 4. For database or Redis clusters, scale StatefulSets according to their
    respective runbooks.
+5. Production rollouts should reuse `k8s/helm/values-prod.yaml` or the per-service overrides defined in [Helm Charts guide](../../k8s/helm/README.md) instead of the dev values referenced above.
 
 ## Recovery
 
 1. **Database Failure**
-   - Run `dev-tools/restores/restore-cluster.sh <backup-name>` to restore from the latest `pg_dump` and restart services.
-     Set `FIREMUD_K8S_NAMESPACE` to restore into a custom namespace.
-   - Alternatively, restore manually:
+   - **Primary recovery**:
+     1. Run `dev-tools/restores/restore-cluster.sh <backup-name>` to restore from the latest `pg_dump` and restart services.
+     2. Export to a custom namespace by setting `FIREMUD_K8S_NAMESPACE` before restoring.
+   - **Manual recovery** (if the helper script is unavailable):
 
-   ```bash
-   kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
-   gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
-   kubectl rollout restart deployment -n firemud
-   kubectl rollout restart statefulset -n firemud
-   ```
+     ```bash
+     kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
+     gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
+     kubectl rollout restart deployment -n firemud
+     kubectl rollout restart statefulset -n firemud
+     ```
 
-   - If dumps are stored in an object bucket set via `PG_DUMP_BUCKET`, download
-      the desired file with `aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz`
-      (add `--endpoint-url` for MinIO) before running the above restore steps.
-
-   - For local development, run `dev-tools/restores/restore-db.sh <backup-file>` and then
-     restart containers with `docker compose restart`.
-   - Scheduled backups are created automatically by the Terraform modules using
-     `k8s/velero/schedule.yaml`.
-   - Daily backup checks are handled by the `verify-backups` CronJob deployed by Terraform (`k8s/velero/verify-backups-cronjob.yaml`).
-   - A manual workflow `manual-backup-restore.yml` can verify backups and
-     perform an optional restore test in a temporary namespace. Trigger it
-     from the GitHub Actions UI when needed.
-   - **Maintain dump volume**: the [`firemud-pg-dump` CronJob](../../k8s/postgres/pg-dump-cronjob.yaml) rotates files automatically,
-    but long-lived persistent volumes can still fill up. The Docker Compose
-    stack includes a `pg-dump-cron` service that runs the same rotation script
-    every 15 minutes. Periodically check the `firemud-pg-dumps` PVC and prune
-    old `*.sql.gz` files or run `dev-tools/backups/pg-dump-rotate.sh` manually if
-    additional cleanup is required.
+   - **Object bucket restore**: If dumps live in `PG_DUMP_BUCKET`, download with `aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz` (add `--endpoint-url` for MinIO) before running the restore steps above.
+   - **Local dev**: run `dev-tools/restores/restore-db.sh <backup-file>` and then `docker compose restart`.
+   - **Automation**:
+     - Terraform schedules backups via `k8s/velero/schedule.yaml`.
+     - The `verify-backups` CronJob (`k8s/velero/verify-backups-cronjob.yaml`) validates daily.
+     - Use `manual-backup-restore.yml` from GitHub Actions to test restores in a temporary namespace.
+   - **Maintain dump volume**: The [`firemud-pg-dump` CronJob](../../k8s/postgres/pg-dump-cronjob.yaml) rotates dumps, but PVCs can still fill. The Docker Compose stack runs `pg-dump-cron` every 15 minutes—periodically inspect the `firemud-pg-dumps` PVC and prune stale `*.sql.gz` files, or run `dev-tools/backups/pg-dump-rotate.sh` manually.
 2. **Redis Failure**
    - Redis nodes automatically resync using AOF and replication.
      Services reconnect on restart. See
@@ -96,6 +87,7 @@ See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for b
 1. A self-hosted MinIO cluster stores published game assets when an external CDN
    is unavailable. Deploy the manifests under `k8s/minio/` and create a
    `minio-credentials` Secret with `accessKey` and `secretKey` keys.
+   Rotate these credentials via the MinIO credentials manifest (`k8s/minio/credentials.yaml`) and follow the [Environment & Secrets Management](./infrastructure/environment-and-secrets.md#minio-credentials) guidelines when updating keys.
 2. Create the `firemud-assets` bucket with the MinIO client:
 
    ```bash
@@ -128,7 +120,7 @@ See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for b
 1. Identify the offending service via logs or alerts.
 2. Commit the fix to `main` and trigger the CI pipeline.
 3. Use `helm upgrade --install` with the new image tag to deploy only the affected service.
-4. Monitor metrics and logs to ensure the issue is resolved.
+4. Monitor metrics and logs to ensure the issue is resolved; if instability persists, run `helm rollback <release> <revision>` to revert.
 
 ---
 
