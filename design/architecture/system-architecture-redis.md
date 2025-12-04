@@ -120,10 +120,10 @@ All Lua scripts are:
 
 ### Example Lock Workflow
 
-1. Acquire `tick:lock:{tenantId}:{entityId}` using `SET NX PX` with a TTL equal to the tick duration.
+1. Generate a unique lock token (for example, a UUID) and acquire `tick:lock:{tenantId}:{entityId}` using `SET NX PX` with that token as the value and a TTL equal to (or slightly greater than) the expected tick duration.
 2. Stage updates under `tick:pending:{tenantId}:{regionId}` via Lua script while the lock is held.
-3. On successful commit the lock is released and staged data is flushed.
-4. If the lock expires, the next tick replays `tick:pending:{tenantId}:{regionId}` and attempts the workflow again.
+3. On successful commit, release the lock using a Lua script that verifies `GET tick:lock:{tenantId}:{entityId}` still matches the original token before deleting the key, and flush the staged data in the same script.
+4. If the lock expires, the next tick replays `tick:pending:{tenantId}:{regionId}` and attempts the workflow again, treating tick effects as idempotent so replays do not create inconsistent state.
 
 ### Shard Locality and Cross-Region Behavior
 
