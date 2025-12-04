@@ -65,10 +65,10 @@ Multiple leaders may exist for multi-tenant isolation (one leader per tenant sha
 
 Scripts bring configurable guards so workloads behave under load:
 
-- `intervalTicks` defines the target cadence (e.g., 10). The scheduler increments a counter and enqueues a run when the tick stream indicates the interval completed.
-- `concurrencyPolicy` is either `drop_new` (skip new triggers while the previous run is still active) or `queue_until_free` (retain the trigger in a short waiting queue until the running instance finishes). Running instances are never preempted; the policy only governs how new triggers are handled.
-- `maxConcurrent` restricts how many instances can execute simultaneously, helping you bound resource use for noisy background scripts.
-- `priorityTag` maps to simple tiers (High, Normal, Background). The scheduler maintains a limited budget of enqueues per tier per window and favors higher tiers when contention occurs, keeping critical NPC behaviors responsive while throttling lower-priority maintenance jobs.
+-- `intervalTicks` defines the target cadence (e.g., 10). The scheduler increments a counter and enqueues a run when the tick stream indicates the interval completed.
+-- `concurrencyPolicy` is either `drop_new` (skip new triggers while the previous run is still active) or `queue_until_free` (retain the trigger in a short waiting queue until the running instance finishes). Running instances are never preempted; the policy only governs how new triggers are handled. Queued triggers count toward the `ScriptQuotaService` window so scripts cannot keep backing up indefinitely—once the quota is reached the scheduler starts dropping the oldest pending trigger or refuses to queue more entries.
+-- `maxConcurrent` restricts how many instances can execute simultaneously, helping you bound resource use for noisy background scripts.
+-- `priorityTag` assigns a tier (`high`, `normal`, `background`). Each tier has a simple enqueue budget per minute; the scheduler prefers higher tiers when pending triggers accumulate. Background/maintenance scripts may be throttled or deferred when CPU/memory budgets are tight, while NPC behavior and critical world ticks keep their slot allocation so gameplay remains responsive.
 
 These settings can be updated via the Game Design Service’s script editor. Version metadata ensures the scheduler executes the configuration that matches the pinned `scriptPatchVersion`.
 
