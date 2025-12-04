@@ -78,8 +78,8 @@ interaction.
 - The sandboxed engine limits CPU time and memory for each script to prevent
   runaway behavior.
 - The service uses `ScriptTickService` to stage, commit, and roll back events in Redis.
-  This runs independently of the main game tick loop. Locks `tick:lock:{tenantId}:{scriptId}`
-  ensure only one script tick operates at a time. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed.
+  This runs independently of the main game tick loop. Locks `tick:{tenantId}:{regionId}:lock:{scriptId}`
+  ensure only one script tick per region operates at a time and share a hash tag with the region’s tick queues and pending state. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed.
 
 ### gRPC APIs
 

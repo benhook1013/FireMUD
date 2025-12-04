@@ -80,7 +80,7 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - `application.yml` defines `RequestRateLimiter` and `Retry` filters that apply to every route by default.
-  - The rate limiter stores tokens in Redis; the gateway reads `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT` for this connection.
+  - The rate limiter stores tokens in Redis; the gateway reads `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT` for this connection. Smaller deployments may use the same Redis cluster that coordinates ticks and sessions, while larger production environments are expected to run rate limiting against a **separate Redis cluster or logical instance** so noisy throttling traffic cannot impact tick latency.
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
 - TLS termination and mTLS between services are described in [Security Architecture](./system-architecture-security.md).

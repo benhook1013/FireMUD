@@ -187,11 +187,16 @@ This guarantees **clean, deterministic ticks** and safe replays after crash or r
 
 ## Timers and Time Scaling
 
-Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time timers in milliseconds**, stored as:
+Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time timers in milliseconds**, stored per region in a sorted set:
 
-- `timer:{tenantId}:{entityId}:{effectId}`
+- `timer:{tenantId}:{regionId}` – a ZSET where the score is the expiration timestamp (in ms) and each member encodes the target entity/effect (for example, `entityId:effectId` or a serialized descriptor).
 
-Each tick scans timers for expirations and triggers corresponding events. If delayed, multiple may fire at once.
+Each tick processes timers for its region by:
+
+- Using a bounded `ZRANGEBYSCORE`/`ZPOPMIN` up to the current time
+- Limiting the number of timers handled per tick via configuration (for example, `game.tick-max-timers`)
+
+If a tick is delayed, multiple timers may fire at once; the processing loop remains bounded by the configured per-tick limit to avoid O(N) scans even when a large number of timers are scheduled.
 
 ### Dynamic Time Scaling
 
@@ -222,8 +227,8 @@ Leaders lease Redis keys (`tick-events-lease:{tenantId}:{regionId}`) before cons
 
 If a tick crashes mid-flight (e.g., Game Session Service restart), Redis preserves:
 
-- Tick locks (`tick:lock:*`)
-- Staged effects (`tick:pending:*`)
+- Tick locks (`tick:{tenantId}:{regionId}:lock:*`)
+- Staged effects (`tick:{tenantId}:{regionId}:pending`)
 - Timers (`timer:*`)
 - Retry and conflict state
 
@@ -233,7 +238,7 @@ Recovery is coordinated by Game Session Service and backed by:
 - **AOF (Append-Only File)** persistence
 - `WAIT 1 100` for durable replication
 
-This supports **idempotent, replayable** ticks — without risk of duplicate effects or inconsistent state.
+This supports **at-least-once, idempotent, replayable** ticks — ticks may be safely replayed after crash or failover without changing observable game state, even though individual effects may execute more than once under rare failure windows.
 
 ---
 

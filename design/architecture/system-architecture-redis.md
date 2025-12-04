@@ -39,7 +39,7 @@ The **Game Session Service** is responsible for coordinating tick and session be
 
 ## Redis Availability, Consistency, and Safety Guarantees
 
-Redis is a **non-persistent** layer — but FireMUD treats it as **essential** for consistent multiplayer behavior. Availability and deterministic recovery are prioritized.
+Redis is a **non-persistent** layer — but FireMUD treats it as **essential** for consistent multiplayer behavior. Availability and deterministic, idempotent recovery are prioritized rather than strict exactly-once semantics.
 
 ### Cluster Deployment
 
@@ -49,7 +49,7 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 - Partitioning aligns with tick region boundaries (typically per-room or per-segment)
 - Kubernetes-native failover
 - **Failover behavior is tested under live tick loads**
-- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, ensuring ticks can resume safely after leadership handoff.
+- Tick lock and retry keys are **retained across failover** due to AOF and synchronous Lua-based commit policies, allowing ticks to be safely replayed or completed after leadership handoff without corrupting state.
 
 > For operational context on Docker Compose vs Kubernetes, see [Deployment Environments](./infrastructure/deployment-environments.md).
 
@@ -66,6 +66,14 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
   RedisInsight debugging UI.
 - Production wipes the AOF before pods start using
   [`redis-aof-reset-job.yaml`](../../k8s/helm/firemud/templates/redis-aof-reset-job.yaml).
+
+`WAIT 1 100` is issued by the Game Session Service immediately after critical Lua scripts complete. If at least one replica acknowledges the write within the timeout, the write is considered **durably replicated** for operational purposes. If `WAIT` returns with fewer than one ack:
+
+- The write is still treated as **committed** on the primary.
+- The service logs a warning with tick and region context.
+- A metric (for example `redis.critical_write_replica_acks_missing`) is incremented so operators can detect sustained replication issues and the platform’s graceful-degradation logic can react if needed.
+
+Taken together, AOF and `WAIT` provide **at-least-once durability** for tick-related writes. Any replay that occurs after crash or failover is absorbed by the idempotent tick and domain logic described in [Crash Recovery and Replay](./system-architecture-ticks.md#crash-recovery-and-replay).
 
 ---
 
@@ -88,7 +96,7 @@ Redis keys follow strict naming conventions to ensure:
 | `tick:{tenantId}:{regionId}:queue:{entityId}` | Per-entity command queue within a region |
 | `room:{tenantId}:{roomId}` | Hot room cache as JSON (occupants and metadata) |
 | `retry:{tenantId}:{regionId}` | Retry queue for failed actions |
-| `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms) |
+| `timer:{tenantId}:{regionId}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata |
 | `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
 
 > 🔗 `remote:{tenantId}:{entityId}` keys route cross-region commands. See [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
@@ -98,12 +106,13 @@ Redis keys follow strict naming conventions to ensure:
 
 ### Hash Tags and Redis Cluster Slotting
 
-FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. Tick-related keys (locks, queues, pending state, retries) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
+FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. Tick-related keys (locks, queues, pending state, retries, timers) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
 
 - `tick:{tenantId}:{regionId}:lock:{entityId}`
 - `tick:{tenantId}:{regionId}:pending`
 - `tick:{tenantId}:{regionId}:queue:{entityId}`
 - `retry:{tenantId}:{regionId}`
+- `timer:{tenantId}:{regionId}`
 
 The substring inside the braces (`{tenantId}:{regionId}`) forms the hash tag and is identical for all keys that a script may touch during a tick. This guarantees that:
 
@@ -238,7 +247,7 @@ FireMUD actively monitors Redis performance and tick health:
 - **Grafana dashboards** visualize tick throughput and hotspots
 - **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
-- Redis is the **single shared** volatile coordination layer — services do not maintain separate in-memory caches or alternative cache technologies
+- Redis is the primary volatile coordination and cache layer. Services do not introduce competing in-memory cache technologies, but deployments may run **separate Redis clusters or logical instances** for coordination vs caching/rate limiting to protect tick latency.
 - Local debugging tools such as the Redis CLI and RedisInsight are described in
   [Developer Setup](../../DEVELOPER_SETUP.md#redis-debugging)
 
@@ -341,6 +350,23 @@ Expectations:
 - Writing a new value for a key overwrites the previous entry. Cache writers do not attempt to merge old and new payloads inside Redis.
 - Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.
 - Future implementations should prefer single atomic commands or scripts (set value and TTL together, optionally with version) over multi-step delete plus set sequences unless there is a very specific, documented reason (such as maintaining backward-compatible behavior during a migration).
+
+### Workload Segmentation: Coordination vs Caching
+
+Redis workloads in FireMUD fall into three broad categories:
+
+- **Coordination:** tick locks, staging (`tick:{tenantId}:{regionId}:pending`), command queues, timers, retry metadata, and session state. These keys are latency-sensitive, relatively small, and must not be evicted.
+- **Rate limiting:** Spring Cloud Gateway’s `RequestRateLimiter` tokens and similar per-client throttles. These writes are bursty and less latency-sensitive than ticks.
+- **Read-side caching:** optional room views, inventory aggregates, and other precomputed results that can be recomputed on a cache miss.
+
+Recommended deployment patterns:
+
+- For **development and small deployments**, a single Redis cluster can serve all three workloads as long as cache value sizes and TTLs remain conservative and monitoring stays in place for memory pressure and latency.
+- For **production and large worlds**, operators are encouraged to **separate Redis responsibilities**:
+  - A **Coordination Redis** cluster dedicated to ticks, locks, timers, and sessions with strict latency SLOs, reserved memory headroom, and no large aggregates.
+  - A **Cache/Rate-Limit Redis** cluster for gateway rate limiting and read-side caches, where eviction and higher latency variance are acceptable.
+
+This separation keeps gameplay-critical tick coordination isolated from noisy cache or rate-limiter traffic while still standardizing on Redis as the shared volatile state technology.
 
 ### Future Work / TODO
 

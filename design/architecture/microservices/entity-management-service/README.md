@@ -168,7 +168,7 @@ grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/P
 
 ### Tick Locking
 
-This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{tenantId}:{entityId}` key described in the [Redis Architecture](../../system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantId}:{regionId}:lock:{entityId}` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

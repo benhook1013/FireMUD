@@ -86,7 +86,12 @@ During each Helm install or upgrade, a Kubernetes Job (`k8s/helm/firemud/templat
 - Ensures no stale gameplay state or tick locks remain
 - Does not affect Redis crash recovery during runtime
 
-Because Redis is not a source of truth, this strategy guarantees a clean, deterministic runtime state on every deployment.
+This behavior is distinct from **failover**:
+
+- **Failover (node crash or leader change):** Redis pods restart or leadership moves, but AOF files and replication state are preserved. Tick locks and `tick:{tenantId}:{regionId}:pending` entries survive so the Game Session Service can safely **replay or complete** in-flight ticks using idempotent domain logic.
+- **Deployment (Helm upgrade):** AOF files are intentionally wiped before pods start. Redis always starts empty and repopulates from PostgreSQL and new tick activity; in‑flight ticks are **not resumed** across deployments.
+
+Because Redis is not a source of truth, this strategy guarantees a clean, deterministic runtime state on every deployment while still enabling at‑least‑once, idempotent recovery within a given runtime via AOF.
 
 ## Kubernetes Production
 
