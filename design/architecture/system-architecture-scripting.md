@@ -42,6 +42,15 @@ Maintainers should update this section whenever major scripting features land or
 - **Complex predicates** such as “if reputation < X and HP < Y” are modeled as small subgraphs that compose simpler condition nodes. A typical pattern is `HealthCheck` → `ReputationCheck` → `AllOf`/`AnyOf` aggregator nodes, which then forward to action nodes. The visual editor enforces these patterns so predicates stay declarative and analyzable.
 - Each node type defines **strongly typed inputs** (attributes, thresholds, flags) and a fixed set of outputs. The visual editor validates connections at design time, and the Automation & Scripting Service revalidates when compiling scripts so ill-typed or incompatible graphs never reach runtime.
 
+### Loop Safety Analysis
+
+Before a script is accepted, the Automation & Scripting Service runs a **loop safety analysis** over the component graph to ensure there are no unbounded cycles within a single script invocation:
+
+- The compiler builds a **reduced graph** for analysis that includes only **same-run edges**. Asynchronous edges (for example, timer callbacks that fire in a future tick) are treated as new invocations and are excluded from this graph so they do not count as busy loops.
+- It then computes **strongly connected components (SCCs)** on the reduced graph. Any SCC with more than one node, or a self-loop, is treated as a candidate loop.
+- A loop is considered **safe** only if the SCC contains at least one **bounded guard node**, such as a `Counter` node with a finite `maxIterations`. Loops without such a guard are rejected at validation time with a descriptive error that points to the participating nodes.
+- In addition to static checks, the runtime enforces a **per-run iteration budget**. If a bug or future change allows an unsafe loop to slip through static analysis, the engine aborts the run with a `sandbox_error` (for example, `reason=iteration_budget_exceeded`) before it can spin indefinitely. See `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` for details on runtime safeguards.
+
 ### Component Versioning and Backwards Compatibility
 
 - Each DSL component (node type) is versioned independently, for example `HealthCheck@v1`, `HealthCheck@v2`. Published scripts reference both the component key and its version so the Automation & Scripting Service can load the correct behavior for a given `scriptPatchVersion`.
@@ -49,6 +58,12 @@ Maintainers should update this section whenever major scripting features land or
 - **Breaking changes** result in a new major component version (for example, `ReputationCheck@v2` with different output states). Existing scripts keep using the prior version and are flagged in the Game Design Service UI as “upgrade available” so designers can migrate them explicitly before publishing.
 - Old component versions remain loadable as long as any published script still references them. Decommissioning a version requires migrating or retiring the dependent scripts; migration tooling in the Game Design Service generates updated graphs and revalidates them against the new component schema.
 - The DSL and visual mapping are described in more depth in the Game Design Service documents; see [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md) and [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for how script graphs are created, versioned, and published.
+
+In rare cases a component version may be marked **unsafe** (for example, due to a security issue or correctness bug that cannot be fixed in place). The platform supports a **forced deprecation** flow:
+
+- The component version is marked `UNSAFE` in shared metadata and hidden from the visual editor so new scripts cannot reference it.
+- The Automation & Scripting Service refuses to load or execute scripts that still depend on the unsafe version, treating them as disabled and recording audit entries with an outcome such as `disabled_unsafe_component`.
+- The Game Design Service surfaces these scripts in a dedicated “requires migration” view so designers can migrate them to a safe component version. Only after migration and republish will the scripts become eligible for execution again.
 
 ## Supported Script Events
 
@@ -63,6 +78,19 @@ Scripts may register handlers for a set of standard lifecycle events. The Automa
 - `onTimerExpire` – when a scheduled timer finishes
 - `onCommand` – when a player targets the entity with a command
 - `onInterval` – periodic execution at a configured rate
+
+### Custom and Service-Specific Events
+
+Beyond the standard lifecycle events, FireMUD supports **extensible event types** so games and services can introduce new triggers without changing the core scheduler:
+
+- Each event is identified by a stable **event type key** (for example, `inventory.item_added`, `social.guild_rank_changed`) and an associated **versioned schema** defined in shared DTOs. These schemas follow the same compatibility rules as other platform contracts.
+- The Game Design Service controls which event types are **enabled per game/tenant**. A game may opt into additional event types while another game ignores them, but the meaning of a given `{eventTypeKey, version}` pair is global and deterministic.
+- The visual DSL exposes **event source nodes** for any event types enabled for the current game. Designers bind scripts to these nodes in the same way they do for `onSpawn` or `onCommand`; under the hood, bindings are stored as `{tenantId, eventTypeKey, eventSchemaVersion, scriptId}`.
+- When an upstream service emits a custom event, it includes the event type key, schema version, and a canonical ordering token (for example, `tickId` or a monotonic sequence). The Automation & Scripting Service uses this metadata to:
+  - deterministically route the event to matching script handlers, and
+  - enqueue resulting commands into the same per-entity queues used for standard events, preserving tick-based ordering and replay guarantees.
+
+New event types therefore extend **what** can trigger scripts without changing **how** triggers are scheduled or executed, keeping determinism and fairness aligned with the existing tick and automation model.
 
 ### Event Fan-Out and Ordering
 
@@ -102,6 +130,11 @@ Refer to the Automation & Scripting Service README for implementation details.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 - **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:{tenantId}:{regionId}:lock:{scriptId}` to ensure only one script tick for a given region runs at a time. These **script locks are separate from the entity locks** (`tick:{tenantId}:{regionId}:lock:{entityId}`) managed by the Game Session Service; script ticks never bypass entity-level locking or tick isolation and only inject work that the normal tick pipeline will process. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
 
+### Idempotency and Replay
+
+- Script executions are treated as **at-most-once per trigger** at the scheduler level, but the resulting commands participate in the same **idempotent replay model** as other tick actions. Ticks may retry commands after lock contention or crash recovery as described in [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md).
+- To support this, script-generated commands must be **idempotent with respect to `tickId` and `scriptEventId`**. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried.
+
 ### Script Timers vs Tick Timers
 
 - Core gameplay timers (cooldowns, regeneration, generic delayed effects) live in the **Game Session Service** under `timer:{tenantId}:{regionId}` and are processed as part of each region’s tick loop (see [Timers and Time Scaling](./system-architecture-ticks.md#timers-and-time-scaling)). These timers are governed by `game.tick-max-timers` and share pacing with other tick work.
@@ -135,6 +168,8 @@ Scripts bring configurable guards so workloads behave under load:
 
 These settings can be updated via the Game Design Service’s script editor. Version metadata ensures the scheduler executes the configuration that matches the pinned `scriptPatchVersion`.
 
+Once a script run emits commands, **tick fairness rules take over**: commands are appended to the per-entity queues and the Game Session Service still executes at most one command per entity per tick in FIFO order. `priorityTag` influences **which scripts get to enqueue work and how often**, but it does not change per-entity ordering or the deterministic conflict resolution defined in the tick system.
+
 ### Resource Isolation and Multi-Level Budgets
 
 - **Per-script budgets**: Each script is bounded by its own quota window (`SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOWSECONDS`), `intervalTicks`, `maxConcurrent`, and `priorityTag`. These caps ensure that no single script can dominate Automation & Scripting Service capacity, even if it is triggered frequently.
@@ -142,9 +177,11 @@ These settings can be updated via the Game Design Service’s script editor. Ver
 - **Cluster-level safety limits**: The Automation & Scripting Service instances enforce global ceilings on automation work (for example, total automation CPU budget per second and `AUTOMATION_TICK_MAX_EVENTS` across all tenants and regions). When these cluster-level limits are reached, the scheduler favors `high`-priority, latency-sensitive scripts and defers or drops `background` work, emitting metrics so operators can tune capacity.
 - `priorityTag` interacts with these budgets at each level: high-priority scripts retain their share of per-script, per-tenant, and cluster budgets as long as possible, while `background` scripts are the first to be throttled when tenant or cluster-wide automation usage approaches configured limits.
 
+Together, these **per-script**, **per-tenant**, and **cluster-wide** caps form a noisy-tenant protection story that aligns with the broader multi-tenancy model in [System Architecture: Multi-Tenancy](./system-architecture-multi-tenancy.md). All script-side keys and metrics are scoped by `tenantId`, and leadership leases such as `script-leader:{tenantId}` ensure that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure.
+
 ## Auditability & Metrics
 
-Every scheduler decision emits an audit record (stored in a lightweight `script_event_audit` table or Redis stream) containing `(scriptId, tickId, versionId, outcome, latency)`. Metrics include:
+Every scheduler decision emits an audit record (stored in a lightweight `script_event_audit` table or Redis stream) containing `(scriptEventId, scriptId, tickId, versionId, outcome, latency)`. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across logs, metrics, and traces. Metrics include:
 
 - **Scheduler metrics** – `automation_script_triggers_total`, `automation_script_skips_total` (broken out by policy), `automation_script_queue_delay_seconds` for queued triggers waiting on concurrency limits, `automation_script_leadership_changes_total` to monitor failovers, and `automation_script_triggers_dropped_total` to capture quota/queue drops so operators can tune `ScriptQuotaService` windows.
 - **Quota metrics** – `script_quota_allowed_total` and `script_quota_denied_total` (shared with the Automation & Scripting Service README) track per-script quota decisions in a consistent way across documentation and implementations.

@@ -11,7 +11,7 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 - Stores persistent NPC memory and automation queues
 - Integrates with Game Session and World Management services for real-time updates
 
-For details on how scripts are authored and executed safely, see [System Architecture: Scripting & Automation](../../system-architecture-scripting.md).
+For details on how scripts are authored, how standard and custom events are modeled, and how they execute safely, see [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and the subsection on [Custom and Service-Specific Events](../../system-architecture-scripting.md#custom-and-service-specific-events).
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
@@ -24,6 +24,8 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - AI computations are optimized for large worlds by evaluating scripts on a separate schedule and batching the resulting commands before handing them to the tick system.
 - Script definitions are versioned and can be hot reloaded without downtime as
   described in [System Architecture: Scripting & Automation](../../system-architecture-scripting.md).
+  See also the detailed sandbox and loop safety design in
+  [Script Sandbox & Resource Limits](./sandbox-runtime-design.md).
 - The service listens for a `NotifyScriptVersionUpdate` event and reloads the
   specified scripts in memory, validating compatibility before updating the
   runtime registry.
@@ -139,6 +141,8 @@ Additional variables tune the scripting engine:
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
 | `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` |
 | `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` |
+| `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` |
+| `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` |
 
 ## Proto Files
 
@@ -203,6 +207,16 @@ configurable window. Counters are stored in Redis using keys of the form
 `script_quota:{tenantId}:{scriptId}`. When the quota is exceeded the event is
 ignored and `script_quota_denied_total` is incremented. Enforcement metrics are
 exported via the standard `sagas.active` gauge.
+
+Key Automation & Scripting–specific metrics include:
+
+- `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
+- `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
+- `automation_script_tenant_budget_seconds{tenantId, tier}` for per-tenant automation budgets.
+- `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
+- `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds` for sandbox and runtime health.
+
+See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for how these metrics are scraped, visualized, and alerted on.
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

@@ -33,6 +33,11 @@ This document describes how FireMUD collects logs, metrics, and traces across al
   - Additional application metrics track:
     - Failed lock acquisitions per region (for example `redis.tick.lock_acquire_failed`) to highlight contention hotspots.
     - The ratio of replayed ticks to total ticks (for example `gamesession.tick.replayed_total` vs `gamesession.tick.executed_total`) so operators can see when idempotent recovery paths are being exercised frequently.
+- **Automation & Scripting metrics** surface scheduler, quota, and sandbox behavior:
+  - Scheduler and budget meters such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `automation_script_queue_delay_seconds`, `automation_script_leadership_changes_total`, and `automation_script_tenant_budget_seconds{tenantId, tier}`.
+  - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`.
+  - Sandbox and runtime meters such as `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds`.
+  These metrics are described in more detail in [System Architecture: Scripting & Automation](./system-architecture-scripting.md) and the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md).
 - Distributed traces are exported via OTLP and correlated with logs using the same `traceId` value.
 - Metrics reuse the `traceId` label via the `MetricsInterceptor`, making it easy to correlate latency spikes with specific traces and log entries.
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT` environment variable ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).
