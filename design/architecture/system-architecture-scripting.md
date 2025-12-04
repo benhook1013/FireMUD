@@ -27,6 +27,80 @@ Maintainers should update this section whenever major scripting features land or
 - Keep the system **extensible** while preventing malicious or abusive scripts.
 - Support **persistence** and versioned updates so game creators can iterate safely.
 
+## Game Design vs Automation & Scripting Responsibilities
+
+Two services collaborate to deliver scripting and automation:
+
+- **Game Design Service**
+  - Owns the **authoring UX**: the visual DSL editor, component palettes, world-generation triggers, and per-tenant configuration screens.
+  - Manages **draft and published configurations** for scripts, event bindings, and world-generation presets inside its own schema, including version history and “upgrade available” hints when components change.
+  - Controls the **publish lifecycle** for scripts and component graphs: designers edit drafts, run validations, and then publish a new `scriptPatchVersion` tied to a `baseVersionId` as described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions).
+  - Drives a **cross-service Saga** when a script version is published:
+    - Writes the final, validated script graphs and bindings into its own tables.
+    - Starts a Saga that upserts the compiled script definitions, event bindings, and any world-generation hooks into the Automation & Scripting Service schema for the target `{tenantId, scriptPatchVersion}`.
+    - On success, marks the version as `PUBLISHED` and calls `NotifyScriptVersionUpdate` so the Automation & Scripting Service reloads runtime state.
+    - On failure, rolls back or marks the publish as `FAILED`, keeping the prior `scriptPatchVersion` as the active one for that game.
+
+- **Automation & Scripting Service**
+  - Owns the **compiled graph schema and runtime registry**: it stores compiled DSL graphs, per-tenant script metadata, and runtime flags (`runtimeStatus`, quotas, priorities) in its own database.
+  - Enforces **runtime behavior**: sandbox execution, loop safety, per-script and per-tenant quotas (`ScriptQuotaService`), tick integration, and leadership leases over automation ticks.
+  - Maintains **auditability and observability** for script execution via the `script_event_audit` feed and automation metrics (for example, `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`).
+  - Implements **hot reload and failure handling** for script patches, including `activePatchVersion`, `pendingPatchVersion`, and `reloadState` as described in [Hot Reload & Resume Behavior](#hot-reload--resume-behavior).
+
+This split lets the Game Design Service focus on ergonomics and version lifecycle, while the Automation & Scripting Service focuses on safe, deterministic execution, quotas, and operational guarantees.
+
+## Example: `onEnterRegion` Script Execution
+
+This section walks through a typical happy-path flow where an NPC script reacts when a player enters its room or region. It ties together the Game Session Service, the Automation & Scripting Service, the tick system, and the auditing/metrics layer.
+
+1. **Player movement and event emission**
+   - A player issues a movement command that causes them to enter a new room. The Game Session Service processes this action as part of a tick for the relevant `{tenantId, regionId}`.
+   - After the move is committed and the player is now in the new region, the Game Session Service emits an `onEnterRegion` script trigger to the Automation & Scripting Service via gRPC. The trigger includes the `tenantId`, `regionId`, target `entityId` (for example, an NPC guarding the room), and the currently pinned `scriptPatchVersion` for that game as stored by the Game Session Service.
+
+2. **Script lookup and quota checks**
+   - The Automation & Scripting Service looks up all scripts bound to `onEnterRegion` for the target entity and tenant, using the version metadata provided by the Game Session Service to resolve the correct script definitions.
+   - For each candidate script, `ScriptQuotaService` applies per-script and per-tenant limits (for example, `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOWSECONDS`) before any work is enqueued. If a script has exceeded its quota, the trigger for that script is skipped, `script_quota_denied_total` is incremented, and an audit entry is recorded with an appropriate outcome; other scripts bound to the same event may still proceed if their quotas allow it.
+
+3. **DSL graph evaluation in the sandbox**
+   - Scripts that pass quota checks are compiled DSL graphs. The Automation & Scripting Service executes the `onEnterRegion` handler inside a sandboxed runtime, walking the graph of condition, timer, and action nodes for the current event payload.
+   - Instead of mutating game state directly, action nodes produce a set of **domain commands** (for example, “NPC says a line,” “NPC targets the player,” “schedule a follow-up patrol timer”) that describe what should happen in the game world.
+
+4. **Command enqueue into tick-compatible queues**
+   - The Automation & Scripting Service batches the resulting commands and enqueues them into Redis-backed automation queues keyed by `tenantId` and `regionId`. A staging script then merges these commands into the same per-entity command queues used by the Game Session Service, preserving FIFO order and the invariant of at most one command per entity per tick as described in the [Tick System and Runtime Design](./system-architecture-ticks.md).
+   - Each enqueued command carries the originating `scriptEventId`, `scriptId`, and version metadata so downstream logs, metrics, and audits can correlate behavior to the script that produced it.
+
+5. **Tick execution and world updates**
+   - On subsequent ticks for that `{tenantId, regionId}`, the Game Session Service’s `TickScheduler` pulls at most one command per entity from the combined player-and-automation queues and executes it under the usual lock and conflict-resolution rules.
+   - The NPC’s script-produced command runs alongside player commands with the same fairness guarantees: if the tick budget is reached or locks are contended, the command is deferred or retried according to the logic in the tick architecture.
+
+6. **Audit trail and metrics**
+   - For each trigger, the Automation & Scripting Service emits an audit record into the `script_event_audit` stream or table, recording fields such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, `versionId`, and an outcome (`allowed`, `denied_quota`, `skipped_disabled`, etc.). Retention is controlled by `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS`.
+   - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow so operators can monitor how often `onEnterRegion` scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. These metrics integrate with the broader logging and monitoring strategy described in [System Architecture: Logging & Monitoring](./system-architecture-logging-monitoring.md).
+
+## Example: Periodic Patrol via `onInterval`
+
+This example shows how a script that runs on a fixed cadence (for example, an NPC patrol) moves through the same pipeline using `onInterval`.
+
+1. **Script configuration and publish**
+   - A designer configures an NPC patrol script in the Game Design Service, binding an `onInterval` handler with a chosen cadence (for example, every N ticks or seconds) and a sequence of waypoints.
+   - When the script is published, its compiled DSL graph, `intervalTicks` (or equivalent cadence configuration), and version metadata are stored in the Automation & Scripting Service database and exposed under the current `scriptPatchVersion` for that game.
+
+2. **Scheduling the next interval**
+   - When the NPC spawns or when the script is first loaded, the Automation & Scripting Service’s scheduler registers an interval entry for the `{tenantId, scriptId, entityId}` tuple, computing a `nextTick` or `nextRunAt` timestamp based on the configured cadence and current tick/time.
+   - Leaders track these interval entries alongside other automation timers, using bounded scans and the automation tick budget (`AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each automation tick.
+
+3. **Firing `onInterval` and enforcing budgets**
+   - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and performs the same per-script and per-tenant quota checks described earlier. If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed.
+   - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution and updates the interval entry with a new `nextTick` or `nextRunAt`, ensuring the cadence remains stable even if some intervals are occasionally delayed by load.
+
+4. **Sandbox execution and command enqueue**
+   - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.
+   - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and enqueued into the automation queues for the relevant `{tenantId, regionId, entityId}`, then merged into the per-entity command queues so they execute during future ticks.
+
+5. **Execution, audit, and observability**
+   - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
+   - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work, increases `automation_tick_events_enqueued_total`. Outcomes are written to `script_event_audit` with enough context to debug missed or delayed intervals, and long-term patterns are visible via the same dashboards and alerts used for other script events.
+
 ## Scripting DSL
 
 - Scripts are authored in a **visual editor** where designers assemble **predefined components** (conditions, actions, timers, etc.).
@@ -48,7 +122,7 @@ Before a script is accepted, the Automation & Scripting Service runs a **loop sa
 
 - The compiler builds a **reduced graph** for analysis that includes only **same-run edges**. Asynchronous edges (for example, timer callbacks that fire in a future tick) are treated as new invocations and are excluded from this graph so they do not count as busy loops.
 - It then computes **strongly connected components (SCCs)** on the reduced graph. Any SCC with more than one node, or a self-loop, is treated as a candidate loop.
-- A loop is considered **safe** only if the SCC contains at least one **bounded guard node**, such as a `Counter` node with a finite `maxIterations`. Loops without such a guard are rejected at validation time with a descriptive error that points to the participating nodes.
+- A loop is considered **safe** only if the SCC contains at least one **bounded guard node**, such as a `Counter` node with a finite `maxIterations`. Loops without such a guard are rejected at validation time with a descriptive error that points to the participating nodes and is surfaced in the Game Design Service UI so designers see exactly which connections must change before the script can be published.
 - In addition to static checks, the runtime enforces a **per-run iteration budget**. If a bug or future change allows an unsafe loop to slip through static analysis, the engine aborts the run with a `sandbox_error` (for example, `reason=iteration_budget_exceeded`) before it can spin indefinitely. See `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` for details on runtime safeguards.
 
 ### Component Versioning and Backwards Compatibility
@@ -157,6 +231,8 @@ To make this stream resumable across leadership changes, the scheduler stores th
 
 Multiple leaders may exist for multi-tenant isolation (one leader per tenant shard or script group). Each script’s metadata stores scheduling rules, concurrency policy, and type tags (e.g., `npc-behavior`, `world-background`, `maintenance`). The leader uses this metadata plus observed tick counts, `lastTickId` state, and available quotas to decide when to enqueue the next execution.
 
+Automation-specific keys such as `script-leader:{tenantId}` and `script-scheduler:{tenantId}:{regionId}:lastTickId` follow the same naming and hash-tagging conventions described in [Redis Architecture – Key Naming and Shard Discipline](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline). For a full catalog of tick and lock keys, see [Redis Architecture – Key Format Examples](./system-architecture-redis.md#key-format-examples); this document only calls out the scripting-specific keys used by the scheduler.
+
 ## Per-Script Scheduling Policies
 
 Scripts bring configurable guards so workloads behave under load:
@@ -188,12 +264,41 @@ Every scheduler decision emits an audit record (stored in a lightweight `script_
 
 Logs annotate each audit row with the scheduler lease holder and tick details, making it easier to trace why a timer fired or was dropped.
 
+The list above highlights the most important cross-cutting metrics for the scripting architecture. The **Automation & Scripting Service README** remains the **single source of truth** for the complete set of service-specific metrics, their labels, and any future additions or removals.
+
 Audit records remain available for troubleshooting for the first 30 days or until the table reaches 1,000,000 rows, whichever comes first; a nightly maintenance job truncates old entries to keep storage bounded while preserving recent history.
 Operators tune retention via `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` (default `30`) and `SCRIPT_EVENT_AUDIT_MAX_ROWS` (default `1000000`), ensuring the cleanup job can safely trim both by row count and elapsed duration.
 
 ## Hot Reload & Resume Behavior
 
-When a new script version is published, the Game Design Service calls `NotifyScriptVersionUpdate`. Leaders pause scheduling (stop processing the tick stream) until the reload completes; in-progress executions finish without interruption. Pending triggers remain in the scheduler queue, bound to the tenant/shard, and resume after the reload with the new metadata (their `nextTick` is recalculated based on the latest tick count). Leaders listen for the matching `reloadComplete` confirmation from `ScriptVersionService` before resuming, ensuring there is an explicit “pause until safe” handshake so no trigger runs against a partially-loaded definition. This avoids mid-run swapping or lost timers, while still allowing refreshed scripts to take over once the system resumes.
+At any point in time, the Automation & Scripting Service tracks, per tenant, an **active script patch version** (`activePatchVersion`) and may temporarily hold a **pending script patch version** (`pendingPatchVersion`) while a reload is in progress. A simple `reloadState` (`IDLE`, `RELOADING`, or `FAILED`) describes where a tenant currently sits in the reload lifecycle.
+
+When a new script version is published, the Game Design Service calls `NotifyScriptVersionUpdate` with the target `{tenantId, scriptPatchVersion}`:
+
+- Leaders set `pendingPatchVersion` for that tenant and flip `reloadState=RELOADING` while **leaving `activePatchVersion` unchanged**.
+- Scheduling for that tenant is paused (leaders stop processing the automation tick stream), but in-progress executions finish without interruption.
+- Pending triggers remain in the scheduler queue, bound to the tenant/shard, and resume after reload with whatever version ends up as `activePatchVersion`. Their `nextTick` is recalculated based on the latest tick count so timers and intervals remain coherent.
+- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts, then listen for a `reloadComplete` confirmation before resuming scheduling. This explicit “pause until safe” handshake ensures no trigger runs against a partially-loaded definition.
+
+Once reload succeeds, leaders atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume normal scheduling. From the perspective of callers, script execution jumps from the previous patch to the new patch without ever exposing a mixed or half-applied state.
+
+### Reload Failure Handling
+
+If reload or validation fails for `{tenantId, pendingPatchVersion}` (for example, due to a compilation error, incompatible component versions, or a sandbox configuration problem), the system **fails safely back** to the last known good patch:
+
+- `activePatchVersion` remains unchanged; the new patch never becomes the active runtime configuration.
+- `pendingPatchVersion` is marked as failed (for example, `FAILED_VALIDATION`) and `reloadState` is set to `FAILED` along with an error reason.
+- Leaders discard any partially loaded state for the pending patch and resume scheduling using the existing `activePatchVersion`, ensuring automation continues to run on the previous, validated script set.
+- `ScriptVersionService` emits a failure result (for example, `reloadComplete(failure)`) back to the Game Design Service so designers and operators can see that the publish did not take effect and inspect the error details.
+
+Reload success is determined by the **leaders currently responsible for that tenant’s shards**. As long as each leader instance reloads and validates the pending patch successfully, the reload is considered accepted; non-leader replicas may pick up the new patch lazily or on restart. In very rare cases where some replicas fail to reload while leaders succeed, the platform treats this as a recoverable operational issue (for example, by restarting the unhealthy instances) rather than blocking the reload or running a partially active patch.
+
+Triggers that reference a **failed** patch version are rejected explicitly:
+
+- If the Game Session Service or another caller sends a trigger pinned to a `scriptPatchVersion` that is marked as failed or unknown for a tenant, the Automation & Scripting Service does not attempt to quietly fall back to the previous patch.
+- Instead, it records an audit entry with an outcome such as `skipped_version_unavailable`, increments `automation_script_triggers_dropped_total{reason=version_unavailable}`, and returns an appropriate error or no-op outcome to the caller depending on the API contract.
+
+This behavior makes reload outcomes predictable: scripts either continue to run on the prior patch, or they run on the new patch everywhere that matters. A bad patch cannot partially apply or silently change behavior; it simply fails to become active until the underlying issue is fixed and a new publish succeeds.
 
 ## Deployment & Versioning
 
@@ -229,7 +334,7 @@ scripts and ensure fair resource usage:
 
 ### Environment Variables
 
-The scripting engine exposes several environment variables so operators can tune quotas and tick behavior:
+The scripting engine exposes several environment variables so operators can tune quotas and tick behavior. The **Automation & Scripting Service README** (`design/architecture/microservices/automation-scripting-service/README.md`) is the **authoritative source** for these operational knobs; this table mirrors the most important ones for architectural context and may omit service-specific defaults or flags.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
@@ -243,7 +348,7 @@ The scripting engine exposes several environment variables so operators can tune
 
 These variables map to Spring Boot properties `script.quota.limit`, `script.quota.windowSeconds`, `automation.tick-duration-ms`, `automation.tick-max-events`, and `automation.tick-budget-ms`.
 
-See the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#environment-variables) for default values and additional details.
+See the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#environment-variables) for the full, up-to-date list of environment variables and default values.
 
 ---
 

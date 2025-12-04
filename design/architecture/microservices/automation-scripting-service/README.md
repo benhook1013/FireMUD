@@ -28,7 +28,9 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   [Script Sandbox & Resource Limits](./sandbox-runtime-design.md).
 - The service listens for a `NotifyScriptVersionUpdate` event and reloads the
   specified scripts in memory, validating compatibility before updating the
-  runtime registry.
+  runtime registry. See [Hot Reload & Failure Handling](#hot-reload--failure-handling)
+  for how `activePatchVersion`, `pendingPatchVersion`, and `reloadState` are
+  managed.
 - Uploading or replacing scripts via the `UpdateScript` gRPC method is handled as a Saga workflow so that failures
     can be rolled back. The service uses the shared `SagaBuilder` and
     `SagaRunner` helpers to persist the script and emit `sagas.active` metrics
@@ -82,6 +84,18 @@ interaction.
 - The service uses `ScriptTickService` to stage, commit, and roll back events in Redis.
   This runs independently of the main game tick loop. Locks `tick:{tenantId}:{regionId}:lock:{scriptId}`
   ensure only one script tick per region operates at a time and share a hash tag with the region’s tick queues and pending state. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed.
+
+### Hot Reload & Failure Handling
+
+Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each `{tenantId, scriptPatchVersion}`:
+
+- The service tracks the currently executing version as `activePatchVersion` and treats the incoming one as `pendingPatchVersion`, with a simple `reloadState` (`IDLE`, `RELOADING`, `FAILED`) mirroring [Hot Reload & Resume Behavior](../../system-architecture-scripting.md#hot-reload--resume-behavior).
+- On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for that tenant, but in-flight executions complete and triggers remain queued.
+- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts. If the reload succeeds on the current leaders responsible for that tenant, they atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume scheduling.
+- If reload or validation fails, the new patch never becomes active. The service keeps `activePatchVersion` on the prior patch, marks the pending patch as failed and `reloadState=FAILED`, discards any partially loaded state, and resumes scheduling using the last known good configuration. A failure result is reported back to the Game Design Service so the publish can be investigated or retried.
+- Triggers pinned to a failed or unknown `scriptPatchVersion` are rejected explicitly. The service records an audit entry (for example, `skipped_version_unavailable`) and increments a drop metric such as `automation_script_triggers_dropped_total{reason=version_unavailable}` instead of silently falling back to the previous patch.
+
+This behavior ensures that a script patch either becomes the new active version for that tenant or fails cleanly without affecting live automation behavior.
 
 ### gRPC APIs
 
