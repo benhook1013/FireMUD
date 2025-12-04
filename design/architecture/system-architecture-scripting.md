@@ -59,7 +59,13 @@ The script scheduler runs inside a small cohort of Automation & Scripting Servic
 
 Leaders consume the tick heartbeat stream produced by the Game Session Service (see [Tick System and Runtime Design](./system-architecture-ticks.md#tick-events)). That stream provides a monotonically increasing `tickId` per `{tenantId, regionId}`. By counting tick events, the scheduler knows when “every N ticks” has elapsed without needing to control why ticks fire. Each tick event includes shard metadata, so multiple leaders can coordinate per-shard schedules without overlapping.
 
-Multiple leaders may exist for multi-tenant isolation (one leader per tenant shard or script group). Each script’s metadata stores scheduling rules, concurrency policy, and type tags (e.g., `npc-behavior`, `world-background`, `maintenance`). The leader uses this metadata plus observed tick counts and available quotas to decide when to enqueue the next execution.
+To make this stream resumable across leadership changes, the scheduler stores the **last processed tick** per `{tenantId, regionId}` in Redis under a key such as `script-scheduler:{tenantId}:{regionId}:lastTickId` (sharing the same hash tag as the region’s tick keys). When a new leader takes over, it:
+
+- Reads `lastTickId` for each region it owns.
+- Compares it to the latest `tickId` observed on the heartbeat stream.
+- Computes which “every N ticks” boundaries have passed since `lastTickId` and enqueues any missing triggers exactly once before continuing from the current `tickId`.
+
+Multiple leaders may exist for multi-tenant isolation (one leader per tenant shard or script group). Each script’s metadata stores scheduling rules, concurrency policy, and type tags (e.g., `npc-behavior`, `world-background`, `maintenance`). The leader uses this metadata plus observed tick counts, `lastTickId` state, and available quotas to decide when to enqueue the next execution.
 
 ## Per-Script Scheduling Policies
 
