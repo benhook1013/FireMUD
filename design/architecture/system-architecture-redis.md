@@ -240,12 +240,15 @@ FireMUD actively monitors Redis performance and tick health:
   - Lock contention
   - Retry queue depth
   - Keyspace and memory usage
+  - Keyspace hits/misses and eviction counts (especially important once read-side caches are enabled)
+  - Per-command latency percentiles for tick-related scripts and commands
   - Basic connection health via the `redis.up` gauge exposed in
     `DatabaseAutoConfiguration`
 - Metrics are scraped via a [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment
   (deployable via the instructions in [`k8s/README.md`](../../k8s/README.md))
 - **Grafana dashboards** visualize tick throughput and hotspots
 - **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
+  - Alerts include thresholds on Redis latency percentiles for tick-related commands (for example, p95/p99 of Lua script runtimes) and on eviction rates so operators can detect when caches or rate limiting begin to impact coordination workloads.
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
 - Redis is the primary volatile coordination and cache layer. Services do not introduce competing in-memory cache technologies, but deployments may run **separate Redis clusters or logical instances** for coordination vs caching/rate limiting to protect tick latency.
 - Local debugging tools such as the Redis CLI and RedisInsight are described in
