@@ -57,15 +57,17 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
 
 - Writes are **asynchronously replicated**
 - **AOF (Append-Only File)** enabled for durability and crash recovery
-- AOF files are wiped on each Helm upgrade to start with a clean state
-  (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment))
 - Critical Lua writes use `WAIT 1 100` for **replica acknowledgment**
 - Development uses [config/redis/redis.conf](../../config/redis/redis.conf) for the single-node instance and can
   persist the AOF via the `redis-data` volume. See
   [Developer Setup](../../DEVELOPER_SETUP.md#optional-redis-persistence) for details and the
   RedisInsight debugging UI.
-- Production wipes the AOF before pods start using
-  [`redis-aof-reset-job.yaml`](../../k8s/helm/firemud/templates/redis-aof-reset-job.yaml).
+- In **development and ephemeral test environments**, Helm may reset the AOF on install/upgrade via
+  [`redis-aof-reset-job.yaml`](../../k8s/helm/firemud/templates/redis-aof-reset-job.yaml) to guarantee a clean
+  slate between runs (see [Backup & Recovery](./system-architecture-backup-recovery.md#redis-aof-reset-on-deployment)).
+- In **production**, Redis AOF files and volumes are **preserved across application deployments**. Resetting Redis
+  (and thereby terminating active sessions and discarding all volatile tick state) is treated as an explicit
+  operational action, not part of normal CI/CD rollout.
 
 `WAIT 1 100` is issued by the Game Session Service immediately after **critical** Lua scripts complete (see below for what counts as critical). Its semantics and limitations are:
 
@@ -158,6 +160,12 @@ The substring inside the braces (`{tenantId}:{regionId}`) forms the hash tag and
 
 Session and timer keys do not participate in tick multi-key scripts and may use simpler patterns as long as they preserve `tenantId` prefixes and avoid cross-shard assumptions.
 
+These key-shape and hash-tag rules are **testing requirements**, not just conventions. Unit tests in the Game Session Service (or a shared Redis test suite) should:
+
+- Construct keys using the same helpers used in production.
+- Assert that all keys passed to a given Lua script share the same hash tag substring (the content inside `{}`).
+- In dev/test profiles, optionally verify hash-slot alignment via `CLUSTER KEYSLOT` checks so regressions are caught early.
+
 ---
 
 ## Atomicity and Concurrency Control
@@ -173,11 +181,13 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 All Lua scripts are:
 
 - Stored under `services/game-session-service/src/main/resources/redis/`
-
 - **Idempotent**
 - **Shard-local**
 - **Retry-safe**
 - Designed to avoid cross-tick contamination
+- Loaded at startup and invoked via `EVALSHA` (or an equivalent pre-loading mechanism) rather than raw `EVAL` on every call, so scripts run by SHA fingerprint and avoid unnecessary parsing overhead at runtime.
+
+Tick-related multi-key operations **must not** be implemented as ad-hoc sequences of plain Redis commands outside these scripts. All staging, commit, rollback, and lock manipulation that touches multiple tick keys (locks, `pending`, queues, timers, or retry metadata) is performed exclusively via the Lua scripts in `services/game-session-service/src/main/resources/redis/` so transactional behavior remains consistent and replay-safe.
 
 > 🔗 For use during tick execution, see [Distributed Locking](./system-architecture-ticks.md#🔐-distributed-locking)
 
@@ -193,6 +203,7 @@ Redis executes Lua scripts on the same single-threaded event loop that serves no
 - **Limited keys and arguments**
   - Scripts should operate on a small, fixed set of keys per invocation (for example, one lock key, one pending key, and a handful of queues/timers for a single region).
   - Bulk fan-out or large multi-key operations should be decomposed into multiple smaller calls instead of a single monolithic script.
+   - Implementations must define and enforce a small constant upper bound on the number of keys any tick-related script may touch (for example, a handful of keys per region); this bound should be captured in configuration and validated via unit tests so “just one more key” changes are deliberate and reviewed.
 
 - **Runtime expectations**
   - Under normal load, scripts should complete in **under 5–10 ms** on their shard.

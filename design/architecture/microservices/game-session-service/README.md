@@ -17,7 +17,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Communicates with other microservices exclusively via gRPC.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
-- Ensures atomic command execution using Redis Lua scripts for all multi-key operations; the service does not rely on Redis `MULTI`/`EXEC` for consistency.
+- Ensures atomic command execution using Redis Lua scripts for all multi-key operations; the service does not rely on Redis `MULTI`/`EXEC` for consistency. Tick-related multi-key operations (locks, pending state, queues, timers, retry metadata) are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control); ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
 - Crash recovery replays ticks stored in Redis using AOF persistence and `WAIT`
   semantics, providing at‑least‑once, idempotent recovery as described in
   [Tick System and Runtime Design](../../system-architecture-ticks.md#crash-recovery-and-replay).
