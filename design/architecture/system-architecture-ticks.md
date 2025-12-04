@@ -216,6 +216,8 @@ Each tick processes timers for its region by:
 
 If a tick is delayed, multiple timers may fire at once; the processing loop remains bounded by the configured per-tick limit to avoid O(N) scans even when a large number of timers are scheduled.
 
+Timer scheduling, rescheduling, and cancellation are coordinated by the same Lua scripts and region-scoped locks that drive tick processing (see [Redis Architecture – Atomicity and Concurrency Control](./system-architecture-redis.md#atomicity-and-concurrency-control)). Domain services do not modify `timer:{tenantId}:{regionId}` directly with ad-hoc Redis commands; all writes to timer keys occur under the region lock so timers and command queues cannot race or diverge.
+
 ### Dynamic Time Scaling
 
 Durations can be modified on the fly:

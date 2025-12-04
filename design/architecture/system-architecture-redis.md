@@ -331,6 +331,17 @@ In rare cases where domain code is faulty, a `tick:{tenantId}:{regionId}:pending
   - Optionally apply a corrective migration or manual fix to affected aggregates.
   - Explicitly clear `tick:{tenantId}:{regionId}:pending` once the operator is satisfied that the tick will not be retried.
 
+Over time, this manual runbook will be backed by a small **tick recovery automation**:
+
+- The Logging & Admin Service (or a dedicated operations component) exposes a gRPC/HTTP admin endpoint that:
+  - Accepts an explicit `{tenantId, regionId, tickId}` and an operator principal.
+  - Marks the tick as `SKIPPED` or `FAILED` in a `tick_recovery` table owned by the relevant domain service(s).
+  - Invokes a Game Session Service helper to clear `tick:{tenantId}:{regionId}:pending` and any associated retry metadata in Redis.
+- A background watcher may propose candidate stuck ticks automatically when:
+  - A `pending` key has existed for longer than a configured threshold (for example, multiple tick intervals).
+  - Retry limits have been exhausted without successful completion.
+- Final skip/clear actions always require positive operator approval via the admin UI or CLI; no tick is auto-skipped without a human acknowledgement.
+
 Timers and retry queues are protected against unbounded growth:
 
 - Retry queues (`retry:{tenantId}:{regionId}`) are populated with bounded backoff and retry caps:
@@ -383,7 +394,18 @@ Session keys use the prefix `session:{tenantId}:{sessionId}` as described in the
 [Game Session Service README](./microservices/game-session-service/README.md#redis-keys).
 
 Session entries expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as
-configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
+configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication). The Game Session
+Service sets the Redis TTL for each `session:{tenantId}:{sessionId}` key to this value when the session is created or
+refreshed. Once the TTL elapses:
+
+- The session key is removed from Redis.
+- Reconnect / resume flows for that `sessionId` are rejected as **expired**, and the player must perform a fresh `LOGIN`.
+- Any associated volatile coordination state for that session (queued commands, conflict metadata) is treated as
+  abandoned and will not be replayed.
+
+In practice, `FIREMUD_AUTH_SESSION_EXPIRATION_MS` therefore defines the **maximum reconnection window** for gameplay
+sessions. Deployments should keep this value aligned with or slightly longer than `FIREMUD_AUTH_JWT_EXPIRATION_MS` so
+that JWT and server-side session lifetimes remain coherent.
 
 This state is used by the **Game Session Service** to:
 
@@ -412,8 +434,9 @@ Redis is already used for transient coordination (ticks, sessions, locks), and w
 - Database and domain services remain authoritative. PostgreSQL and the owning microservices define the source of truth for entities, rooms, inventories, and configuration; Redis is a helper, not a primary store.
 - Static/topology vs dynamic/runtime state:
   - Static or topology data (world geometry, room/zone graphs, published templates, configuration) changes infrequently and is a good fit for aggressive caching with long TTLs or manual invalidation.
-  - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
+- Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
 - Purpose-driven caching only. Objects should be cached because they are expensive to compute or fetch and appear on hot paths, not “just in case.” Profiling and production telemetry will drive what actually lands in Redis.
+- Coordination workload isolation. By default, read-side caches and gateway rate limits are placed on a **separate Redis cache/rate-limit cluster** rather than sharing the **coordination Redis** used for ticks, locks, timers, and sessions. Only small, tightly bounded aggregates may be considered for the coordination cluster, and even then only with explicit justification and review.
 
 ### Candidate Cacheable Object Types
 
@@ -451,6 +474,7 @@ Future cache layers are expected to combine several invalidation mechanisms, tun
 - TTL-based expiry:
   - Primary role is as a safety valve and memory-bloat control, not the main correctness mechanism.
   - Long TTLs may be acceptable for static/topology slices; short TTLs can bound staleness for dynamic aggregates in low-risk flows.
+  - Implementations must enforce **per-key TTL budgets** in configuration so caches cannot silently accumulate effectively permanent entries; long-lived keys should be rare, documented exceptions.
 - Event-based invalidation:
   - When authoritative state changes, the owning service emits domain events (for example: inventory changed, room-dynamic state changed, entity moved, template version activated).
   - A cache layer or a dedicated listener reacts to those events and either deletes affected keys or overwrites them with fresh values.
@@ -459,6 +483,8 @@ Future cache layers are expected to combine several invalidation mechanisms, tun
   - On mismatch, the cache entry is recomputed and updated atomically (value plus TTL) before being reused.
 
 For correctness-critical dynamic data (movement, inventories, visibility), the design will favor events plus versions as the primary correctness mechanisms and treat TTL as a backstop for forgotten keys or operational anomalies.
+
+To avoid noisy-neighbor effects on the coordination workload, cache writers must also enforce **per-value size limits** (for example via serialization-size checks) and avoid unbounded lists or blobs in Redis. Large or streaming-style responses should remain in PostgreSQL or object storage and be accessed through dedicated APIs rather than copied wholesale into Redis.
 
 ### Key Naming and Overwrite Expectations
 
