@@ -32,9 +32,11 @@ This model ensures:
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
-- `tick:lock:{tenantId}:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline))
+- `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline))
 - `SET NX PX` with expiry for exclusive ownership
 - Lua-based atomic checks to avoid race conditions
+
+Lock TTLs are configured as a **small multiple of the soft tick execution budget** (for example, 3× the per-region tick budget). This gives headroom for brief pauses (GC, CPU spikes) without letting the lock expire while work is still in progress. Ticks that approach this bound are treated as misbehaving and deferred or retried rather than allowed to run indefinitely under a single lock.
 
 If a required lock is unavailable:
 
@@ -45,6 +47,10 @@ If a required lock is unavailable:
 Conflict metadata is recorded and reported to the Game Session Service, which **reorders future submissions** intelligently.
 
 > 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control)
+
+### Lock Token Semantics
+
+Each acquired lock stores a **unique token** (for example, a UUID) as its value. The Game Session Service records this token and only releases the lock via a Lua script that verifies the stored value still matches the original token before deleting the key. This prevents one worker from accidentally releasing another worker’s lock if the TTL expires and the lock is reacquired. Tick effects are designed to be idempotent so that if a lock expires mid-tick and staged work is replayed, the game state remains consistent.
 
 ---
 
@@ -129,6 +135,8 @@ State changes are first **staged in Redis** under keys like `tick:pending:{tenan
 - Timeout or failed actions are **excluded** and **rescheduled with priority**
 - Commit and rollback are coordinated by Game Session Service using Lua scripts in Redis
 
+Each `tick:{tenantId}:{regionId}:pending` entry represents a **single tick** for that region and carries a monotonically increasing `tickId` plus the staged effects for that tick. If a crash or lock timeout leaves this key present, the next tick cycle treats it as “safe to reapply” and replays the staged effects. Domain updates are written to be idempotent so repeating the same `tickId` does not corrupt state, and successful completion both applies the effects and deletes the `tick:{tenantId}:{regionId}:pending` key.
+
 This ensures:
 
 - Atomic per-tick updates
@@ -190,6 +198,17 @@ Each tick scans timers for expirations and triggers corresponding events. If del
 Durations can be modified on the fly:
 
 - `scaled = base * multiplier`
+
+### Tick Event Stream
+
+The Game Session Service publishes a **tick event stream** so other services (schedulers, monitoring, leaders) can observe progression without altering the tick loop. Each event is keyed by `{tenantId}:{regionId}` and includes:
+
+- `tickId` (monotonic per region, used by schedulers to count intervals)
+- `shardId`/`regionId` metadata
+- `timestamp` when the tick began
+- `activeVersionId` pinned for that tick
+
+Leaders lease Redis keys (`tick-events-lease:{tenantId}:{regionId}`) before consuming the stream to avoid duplicate processing. The stream can be delivered via Redis Streams or pub/sub; the implementation ensures catch-up by storing the last processed offset in Redis so a recovering scheduler can resume from the right `tickId`. This event stream powers the Automation & Scripting scheduler’s “every N ticks” logic, the reconnection doc’s timer replay hints, and any other out-of-band reporting you need.
 - Used for spell effects, world modifiers (e.g., slow motion), or status changes
 - Time scaling affects **durations**, not tick rate
 

@@ -51,15 +51,41 @@ Refer to the Automation & Scripting Service README for implementation details.
 - Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
 - Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
-- **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:lock:{tenantId}:{scriptId}` to ensure only one script tick runs at a time. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
+- **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:{tenantId}:{regionId}:lock:{scriptId}` to ensure only one script tick for a given region runs at a time. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
 
 ## Scheduler Leadership & Coordination
 
-The script scheduler runs inside a small cohort of Automation & Scripting Service instances. Each node competes for a **leadership lease** in Redis, and the current leader is responsible for driving timers and scheduled triggers. Leadership uses a short-lived lease (for example, 5 seconds) that the leader refreshes via periodic heartbeats (renewal scripts write a TTLed key such as `script-leader:{tenantId}`); if the leader crashes or fails to renew, another node acquires the lease and resumes scheduling.
+The script scheduler runs inside a small cohort of Automation & Scripting Service instances. Each node competes for a **leadership lease** in Redis and the current leader is responsible for driving timers and scheduled triggers. Leadership uses short-lived leases (for example, 5 seconds) keyed by `script-leader:{tenantId}`; leaders refresh the lease via heartbeats and pause scheduling if their renewal fails, allowing another node to take over without duplicated work.
 
-Leader nodes subscribe to the tick heartbeat emitted by the Game Session Service (see [Tick System and Runtime Design](./system-architecture-ticks.md#tick-events)). They track tick counters so they know when “every 10 tick events” should fire a timer without needing to control why ticks occur. If the leader is uncertain about its lease, it pauses scheduling until it re-acquires leadership to avoid duplicated triggers.
+Leaders consume the tick heartbeat stream produced by the Game Session Service (see [Tick System and Runtime Design](./system-architecture-ticks.md#tick-events)). That stream provides a monotonically increasing `tickId` per `{tenantId, regionId}`. By counting tick events, the scheduler knows when “every N ticks” has elapsed without needing to control why ticks fire. Each tick event includes shard metadata, so multiple leaders can coordinate per-shard schedules without overlapping.
 
-Multiple leaders may exist for multi-tenant isolation (e.g., one leader per tenant shard). The same Redis-based lease mechanism is scoped by tenant, shard, or script group so timers remain balanced across regions. Each script’s metadata records the desired schedule, concurrency policy, and tag (npc-behavior, background-event, etc.), and the leader uses this metadata to decide when to enqueue the script execution.
+Multiple leaders may exist for multi-tenant isolation (one leader per tenant shard or script group). Each script’s metadata stores scheduling rules, concurrency policy, and type tags (e.g., `npc-behavior`, `world-background`, `maintenance`). The leader uses this metadata plus observed tick counts and available quotas to decide when to enqueue the next execution.
+
+## Per-Script Scheduling Policies
+
+Scripts bring configurable guards so workloads behave under load:
+
+- `intervalTicks` defines the target cadence (e.g., 10). The scheduler increments a counter and enqueues a run when the tick stream indicates the interval completed.
+- `concurrencyPolicy` is either `drop_new` (skip new triggers while the previous run is still active) or `queue_until_free` (retain the trigger in a short waiting queue until the running instance finishes). Running instances are never preempted; the policy only governs how new triggers are handled.
+- `maxConcurrent` restricts how many instances can execute simultaneously, helping you bound resource use for noisy background scripts.
+- `priorityTag` maps to simple tiers (High, Normal, Background). The scheduler maintains a limited budget of enqueues per tier per window and favors higher tiers when contention occurs, keeping critical NPC behaviors responsive while throttling lower-priority maintenance jobs.
+
+These settings can be updated via the Game Design Service’s script editor. Version metadata ensures the scheduler executes the configuration that matches the pinned `scriptPatchVersion`.
+
+## Auditability & Metrics
+
+Every scheduler decision emits an audit record (stored in a lightweight `script_event_audit` table or Redis stream) containing `(scriptId, tickId, versionId, outcome, latency)`. Metrics include:
+
+- `automation_script_triggers_total` and `automation_script_skips_total` (broken out by policy).
+- `automation_script_queue_delay_seconds` for queued triggers waiting on concurrency limits.
+- `automation_script_leadership_changes_total` to monitor failovers.
+- `automation_script_quota_denied_total` and `.allowed` already exist for quota enforcement.
+
+Logs annotate each audit row with the scheduler lease holder and tick details, making it easier to trace why a timer fired or was dropped.
+
+## Hot Reload & Resume Behavior
+
+When a new script version is published, the Game Design Service calls `NotifyScriptVersionUpdate`. Leaders pause scheduling (stop processing the tick stream) until the reload completes; in-progress executions finish without interruption. Pending triggers remain in the scheduler queue, bound to the tenant/shard, and resume after the reload with the new metadata (their `nextTick` is recalculated based on the latest tick count). This avoids mid-run swapping or lost timers, while still allowing refreshed scripts to take over once the system resumes.
 
 ## Deployment & Versioning
 

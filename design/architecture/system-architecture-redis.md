@@ -83,8 +83,9 @@ Redis keys follow strict naming conventions to ensure:
 
 | Redis Key | Description |
 | --- | --- |
-| `tick:lock:{tenantId}:{entityId}` | Lock for entity during tick execution |
-| `tick:pending:{tenantId}:{regionId}` | Staged results for a tick region |
+| `tick:{tenantId}:{regionId}:lock:{entityId}` | Lock for entity during tick execution within a region |
+| `tick:{tenantId}:{regionId}:pending` | Staged results for a tick region (single in-flight tick) |
+| `tick:{tenantId}:{regionId}:queue:{entityId}` | Per-entity command queue within a region |
 | `room:{tenantId}:{roomId}` | Hot room cache as JSON (occupants and metadata) |
 | `retry:{tenantId}:{regionId}` | Retry queue for failed actions |
 | `timer:{tenantId}:{entityId}:{effectId}` | Cooldown/effect timer metadata (in ms) |
@@ -94,6 +95,22 @@ Redis keys follow strict naming conventions to ensure:
 > for details.
 > 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
+
+### Hash Tags and Redis Cluster Slotting
+
+FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. Tick-related keys (locks, queues, pending state, retries) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
+
+- `tick:{tenantId}:{regionId}:lock:{entityId}`
+- `tick:{tenantId}:{regionId}:pending`
+- `tick:{tenantId}:{regionId}:queue:{entityId}`
+- `retry:{tenantId}:{regionId}`
+
+The substring inside the braces (`{tenantId}:{regionId}`) forms the hash tag and is identical for all keys that a script may touch during a tick. This guarantees that:
+
+- Lua scripts can atomically read/write locks, queues, and pending state without `CROSSSLOT` errors.
+- Each tick region’s keys remain **shard-local** while still supporting multi-key operations.
+
+Session and timer keys do not participate in tick multi-key scripts and may use simpler patterns as long as they preserve `tenantId` prefixes and avoid cross-shard assumptions.
 
 ---
 
@@ -120,10 +137,19 @@ All Lua scripts are:
 
 ### Example Lock Workflow
 
-1. Generate a unique lock token (for example, a UUID) and acquire `tick:lock:{tenantId}:{entityId}` using `SET NX PX` with that token as the value and a TTL equal to (or slightly greater than) the expected tick duration.
-2. Stage updates under `tick:pending:{tenantId}:{regionId}` via Lua script while the lock is held.
-3. On successful commit, release the lock using a Lua script that verifies `GET tick:lock:{tenantId}:{entityId}` still matches the original token before deleting the key, and flush the staged data in the same script.
-4. If the lock expires, the next tick replays `tick:pending:{tenantId}:{regionId}` and attempts the workflow again, treating tick effects as idempotent so replays do not create inconsistent state.
+1. Generate a unique lock token (for example, a UUID) and acquire `tick:{tenantId}:{regionId}:lock:{entityId}` using `SET NX PX` with that token as the value and a TTL configured as a small multiple of the soft tick execution budget (for example, 3× the configured per-region tick budget) so transient pauses do not cause the lock to expire while work is still in progress.
+2. Stage updates under `tick:{tenantId}:{regionId}:pending` via Lua script while the lock is held.
+3. On successful commit, release the lock using a Lua script that verifies `GET tick:{tenantId}:{regionId}:lock:{entityId}` still matches the original token before deleting the key, and flush the staged data in the same script.
+4. If the lock expires, the next tick replays `tick:{tenantId}:{regionId}:pending` and attempts the workflow again, treating tick effects as idempotent so replays do not create inconsistent state.
+
+### Pending Tick Value Model
+
+Each `tick:{tenantId}:{regionId}:pending` entry stores a **single in-flight tick** for that region. Its value includes:
+
+- A `tickId` that is monotonically increasing per `{tenantId, regionId}` tick stream
+- The staged effects for that tick (for example, serialized entity mutations or event descriptors)
+
+Lua scripts treat the presence of `tick:{tenantId}:{regionId}:pending` as meaning **“this tick may need to be (re)applied”**, regardless of whether a previous attempt completed. Domain updates are designed to be idempotent, so reapplying the same `tickId` after a crash or failover does not corrupt state. On successful completion, the same Lua script that releases locks also deletes `tick:{tenantId}:{regionId}:pending` so there is no follow-up work for that tick on the next cycle.
 
 ### Shard Locality and Cross-Region Behavior
 
