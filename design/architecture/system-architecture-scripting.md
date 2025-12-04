@@ -53,6 +53,14 @@ Refer to the Automation & Scripting Service README for implementation details.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 - **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:lock:{tenantId}:{scriptId}` to ensure only one script tick runs at a time. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
 
+## Scheduler Leadership & Coordination
+
+The script scheduler runs inside a small cohort of Automation & Scripting Service instances. Each node competes for a **leadership lease** in Redis, and the current leader is responsible for driving timers and scheduled triggers. Leadership uses a short-lived lease (for example, 5 seconds) that the leader refreshes via periodic heartbeats (renewal scripts write a TTLed key such as `script-leader:{tenantId}`); if the leader crashes or fails to renew, another node acquires the lease and resumes scheduling.
+
+Leader nodes subscribe to the tick heartbeat emitted by the Game Session Service (see [Tick System and Runtime Design](./system-architecture-ticks.md#tick-events)). They track tick counters so they know when “every 10 tick events” should fire a timer without needing to control why ticks occur. If the leader is uncertain about its lease, it pauses scheduling until it re-acquires leadership to avoid duplicated triggers.
+
+Multiple leaders may exist for multi-tenant isolation (e.g., one leader per tenant shard). The same Redis-based lease mechanism is scoped by tenant, shard, or script group so timers remain balanced across regions. Each script’s metadata records the desired schedule, concurrency policy, and tag (npc-behavior, background-event, etc.), and the leader uses this metadata to decide when to enqueue the script execution.
+
 ## Deployment & Versioning
 
 - Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is supported.
