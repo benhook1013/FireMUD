@@ -110,7 +110,7 @@ This section walks through a typical happy-path flow where an NPC script reacts 
    - The NPC’s script-produced command runs alongside player commands with the same fairness guarantees: if the tick budget is reached or locks are contended, the command is deferred or retried according to the logic in the tick architecture.
 
 6. **Audit trail and metrics**
-   - For each trigger, the Automation & Scripting Service emits an audit record into the `script_event_audit` store; in the target architecture this is a **PostgreSQL table** managed by the Automation & Scripting Service. Each record captures fields such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, `versionId`, and an outcome (`allowed`, `denied_quota`, `skipped_disabled`, etc.). Retention is controlled by `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` as described in the Automation & Scripting Service README.
+   - For each trigger, the Automation & Scripting Service emits an audit record into the `script_event_audit` store; in the target architecture this is a **PostgreSQL table** managed by the Automation & Scripting Service. The canonical schema is defined in the [Auditability & Metrics](#auditability--metrics) section, but in practice each row at minimum captures identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, the effective script version, and an `outcome` / `reason` pair. Retention is controlled by `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` as described in the Automation & Scripting Service README.
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow so operators can monitor how often `onEnterRegion` scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. These metrics integrate with the broader logging and monitoring strategy described in [System Architecture: Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ## Example: Periodic Patrol via `onInterval`
@@ -135,7 +135,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
 
 5. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
-   - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work, increases `automation_tick_events_enqueued_total`. Outcomes are written to `script_event_audit` with enough context to debug missed or delayed intervals, and long-term patterns are visible via the same dashboards and alerts used for other script events.
+   - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` (see [Auditability & Metrics](#auditability--metrics)) so missed or delayed intervals can be debugged using the recorded `outcome` and `reason` fields alongside identifiers like `scriptEventId`, `scriptId`, and `tickId`.
 
 ## Scripting DSL
 
@@ -208,9 +208,12 @@ Beyond the standard lifecycle events, FireMUD supports **extensible event types*
 - Each event is identified by a stable **event type key** (for example, `inventory.item_added`, `social.guild_rank_changed`) and an associated **versioned schema** defined in shared DTOs owned by the platform. Schemas live in a shared protobuf/DTO package referenced by participating services and follow the same compatibility rules as other platform contracts.
 - The Game Design Service controls which event types are **enabled per game/tenant**. A game may opt into additional event types while another game ignores them, but the meaning of a given `{eventTypeKey, version}` pair is global and deterministic.
 - The visual DSL exposes **event source nodes** for any event types enabled for the current game. Designers bind scripts to these nodes in the same way they do for `onSpawn` or `onCommand`; under the hood, bindings are stored as `{tenantId, eventTypeKey, eventSchemaVersion, scriptId}`.
-- When an upstream service emits a custom event, it includes the event type key, schema version, and a canonical ordering token (for example, `tickId` or a monotonic sequence). The Automation & Scripting Service uses this metadata to:
+- When an upstream service emits a custom event, it must include:
+  - the event type key and schema version, and
+  - a **canonical ordering token** that the scheduler can use for deterministic replay. For tick-originated events this is the region’s `tickId`. For other events it is a globally monotonic `{shardKey, sequenceId}` pair defined in the shared DTO/proto schema for that event type.
+  The Automation & Scripting Service uses this metadata to:
   - deterministically route the event to matching script handlers, and
-  - enqueue resulting commands into the same per-entity queues used for standard events, preserving tick-based ordering and replay guarantees.
+  - enqueue resulting commands into the same per-entity queues used for standard events, preserving tick-based ordering and replay guarantees. See [Determinism & Allowed Non-Determinism](#determinism--allowed-non-determinism) for how `{tenantId, regionId, scriptId, scriptEventId, tickId, scriptPatchVersion}` and event ordering tokens combine to make script behavior replayable, and refer to the shared event DTO/proto definitions for the exact `sequenceId` / `shardKey` fields required per event family.
 
 New event types and their schemas are introduced via the normal design and review process for shared contracts: changes land in the shared DTO/proto package, are reviewed by platform maintainers, and are then surfaced in the Game Design Service as new event type options. Individual games cannot unilaterally mint conflicting event type keys or schemas; additions go through this centralized “event catalog” so producers, consumers, and scripting bindings stay aligned.
 
@@ -221,7 +224,7 @@ New event types therefore extend **what** can trigger scripts without changing *
 - Each entity may have **multiple scripts bound to the same event** (for example, two `onSpawn` handlers that set patrol routes and apply buffs). At design time the Game Design Service stores these bindings as an ordered list per `{entityId, eventType}`.
 - When an event fires, the Automation & Scripting Service evaluates the bound handlers in a **deterministic order** sorted by `(orderIndex ASC, scriptId ASC)`. This ordering is stable across deployments so the same sequence of commands is enqueued given the same set of scripts. `orderIndex` is maintained per `{tenantId, entityId, eventType}`; two scripts with the same `orderIndex` for the same event are ordered by their `scriptId`.
 - **Failures are isolated per script**. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure, increments the appropriate metrics, and continues to the next handler unless the script is explicitly marked as `requiresExclusiveEvent` for that event. In the exclusive case, a failure short-circuits remaining handlers and the event fan-out ends early.
-- Quota checks (`ScriptQuotaService`) are performed **per script** before a handler runs. If a script exceeds its quota, its handler for that event is skipped and counted as `denied`, but other scripts bound to the same entity and event may still execute if their own quotas allow it.
+- Quota checks (`ScriptQuotaService`) are performed **per script** before a handler runs. If a script exceeds its quota, its handler for that event is skipped and recorded with an outcome such as `quota_denied`, but other scripts bound to the same entity and event may still execute if their own quotas allow it.
 - Script handlers enqueue commands **independently** into the entity’s command queue. The underlying tick system applies its normal fairness rules—only one command per entity per tick is executed—so even when many scripts respond to the same event, player-visible behavior remains bounded and replayable.
 
 ## Advanced NPC Behavior Modules
@@ -243,9 +246,24 @@ Detailed behavior, data models, and service-specific responsibilities for these 
 
 ### Failure Modes and Error Handling
 
-- Each script run produces a **structured outcome** such as `success`, `quota_denied`, `sandbox_error`, or `infrastructure_error`. Outcomes are written to the `script_event_audit` table and exposed via metrics (see **Auditability & Metrics**) so operators can correlate failures with specific `scriptId`, `tenantId`, and `tickId`.
+Each script run produces a **structured `outcome` value** recorded in the `script_event_audit` table and exposed via metrics (see **Auditability & Metrics**) so operators can correlate behavior with specific `scriptId`, `tenantId`, and `tickId`. The canonical outcome enum is:
+
+| Outcome | Meaning |
+| --- | --- |
+| `success` | Handler ran successfully and any resulting commands were enqueued. |
+| `quota_denied` | Trigger was rejected by `ScriptQuotaService` before the handler executed. |
+| `sandbox_error` | Handler failed inside the sandboxed DSL runtime (including runtime validation or rejected operations). |
+| `validation_error` | Static validation on inputs or script configuration failed before sandbox execution. |
+| `disabled_due_to_errors` | Failure-rate circuit breaker disabled the script due to repeated errors. |
+| `skipped_disabled` | Trigger was skipped because the script was administratively disabled (for example, `runtimeStatus=DISABLED` / `DISABLE_AFTER_DRAIN`). |
+| `dropped_quota` | Trigger was dropped because concurrency/queue limits were exceeded after quota checks (for example, oldest pending trigger evicted). |
+| `tenant_budget_exceeded` | Trigger was skipped because the tenant's automation budget for the relevant tier was exhausted. |
+| `version_unavailable` / `skipped_version_unavailable` | Trigger referenced a `scriptPatchVersion` that is unknown or marked as failed for the tenant. |
+| `infrastructure_error` | Handler could not execute due to infrastructure issues (for example, gRPC `UNAVAILABLE`, transient Redis errors). |
+| `disabled_unsafe_component` | Script was refused because it depends on a DSL component version marked `UNSAFE`. |
+
 - By default, **failures are surfaced through logs and metrics**, not detailed player-visible stack traces. Players typically experience a missing or degraded behavior (for example, an NPC does not respond) unless the script deliberately enqueues a fallback command that emits a message through the Game Logic Service.
-- Script executions are treated as **at-most-once per trigger by the Automation & Scripting Service**. If a handler fails due to a sandbox or validation error, the scheduler records the failure and moves on; it does not automatically re-run the script body for the same trigger to avoid hot loops and duplicate side effects. Infrastructure-level issues (for example, transient gRPC or Redis errors) may be retried by lower layers (for example, gRPC clients, Redis clients) according to the platform’s standard retry policies, but those retries operate on **idempotent downstream operations only** and do not cause the script logic to execute a second time for the same trigger. Tick-level idempotent replay and recovery remain the responsibility of the Game Session Service as described in the tick and Redis architecture docs.
+- Script executions are treated as **at-most-once per trigger by the Automation & Scripting Service**. If a handler fails due to a sandbox or validation error, the scheduler records the failure and moves on; it does not automatically re-run the script body for the same trigger to avoid hot loops and duplicate side effects. Infrastructure-level issues (for example, transient gRPC or Redis errors) may be retried by lower layers (for example, gRPC clients, Redis clients) according to the platform’s standard retry policies, but those retries operate on **idempotent downstream operations only** and do not cause the script logic to execute a second time for the same trigger. Tick-level idempotent replay and recovery remain the responsibility of the Game Session Service as described in the tick and Redis architecture docs. When script components call other services over gRPC, they must pass a stable idempotency key (for example, a composite of `{tenantId, regionId, scriptId, scriptEventId, tickId}` or a dedicated `effectId`) and rely on the [Transaction Strategies](./system-architecture-transactions.md) contracts so those downstream operations can be safely retried without duplicating effects.
 - To guard against **repeated hot-loop failures**, the scheduler combines per-script quotas, concurrency limits, and a **failure-rate circuit breaker**. Scripts that exceed a configurable failure threshold within a time window are temporarily placed into a `disabled_due_to_errors` state: new triggers are skipped, failures are counted, and an audit entry is written so administrators can review and re-enable the script via the Game Design or Logging & Admin tools.
 - Quota enforcement (`ScriptQuotaService`) runs **before** script execution; a script that misbehaves by emitting too many triggers is constrained by its quota window and `concurrencyPolicy`. Even if the logic always throws, it cannot exceed its configured execution rate, and the combination of quotas plus the circuit breaker prevents runaway resource usage.
 
@@ -266,13 +284,15 @@ The table below summarizes **which outcomes are retried** and which are treated 
 
 Common outcomes are surfaced in metrics as follows (labels such as `tenantId`, `scriptId`, and `eventType` are omitted here for brevity):
 
-- `success` → `automation_script_triggers_total{outcome="success"}` and, when commands are enqueued, `automation_tick_events_enqueued_total`.
-- `quota_denied` → `script_quota_denied_total` and `automation_script_triggers_dropped_total{reason="quota"}`.
-- `sandbox_error` → `automation_script_triggers_total{outcome="sandbox_error"}` and may contribute to `automation_script_triggers_dropped_total{reason="sandbox_error"}` depending on whether commands were enqueued before failure.
-- `validation_error` → `automation_script_triggers_total{outcome="validation_error"}`.
-- `disabled_due_to_errors` → `automation_script_skips_total{reason="disabled_due_to_errors"}` and `automation_script_triggers_dropped_total{reason="disabled_due_to_errors"}`.
-- `version_unavailable` / `skipped_version_unavailable` → `automation_script_triggers_dropped_total{reason="version_unavailable"}`.
-- `infrastructure_error` → `automation_script_triggers_total{outcome="infrastructure_error"}` and, when retries are exhausted, may also increment `automation_script_triggers_dropped_total{reason="infrastructure_error"}`.
+| Outcome | Metrics incremented |
+| --- | --- |
+| `success` | `automation_script_triggers_total{outcome="success"}` and, when commands are enqueued, `automation_tick_events_enqueued_total`. |
+| `quota_denied` | `script_quota_denied_total` and `automation_script_triggers_dropped_total{reason="quota"}`. |
+| `sandbox_error` | `automation_script_triggers_total{outcome="sandbox_error"}` and, depending on when the error occurs, may contribute to `automation_script_triggers_dropped_total{reason="sandbox_error"}`. |
+| `validation_error` | `automation_script_triggers_total{outcome="validation_error"}`. |
+| `disabled_due_to_errors` | `automation_script_skips_total{reason="disabled_due_to_errors"}` and `automation_script_triggers_dropped_total{reason="disabled_due_to_errors"}`. |
+| `version_unavailable` / `skipped_version_unavailable` | `automation_script_triggers_dropped_total{reason="version_unavailable"}`. |
+| `infrastructure_error` | `automation_script_triggers_total{outcome="infrastructure_error"}` and, when retries are exhausted, `automation_script_triggers_dropped_total{reason="infrastructure_error"}`. |
 
 ## Integration with Game Logic & Tick System
 
@@ -302,7 +322,7 @@ Common outcomes are surfaced in metrics as follows (labels such as `tenantId`, `
 ### Idempotency and Replay
 
 - Script executions are treated as **at-most-once per trigger** at the scheduler level, but the resulting commands participate in the same **idempotent replay model** as other tick actions. Ticks may retry commands after lock contention or crash recovery as described in [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md).
-- To support this, script-generated commands must be **idempotent with respect to `tickId` and `scriptEventId`**. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried.
+- To support this, script-generated commands must be **idempotent with respect to `tickId` and `scriptEventId`**. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried. When commands cause database writes or cross-service calls, domain services should treat `{tenantId, regionId, tickId}` plus either `scriptEventId` or a dedicated `effectId` as the idempotency token, following the patterns in [Transaction Strategies](./system-architecture-transactions.md) and the tick idempotency rules described in [Tick System and Runtime Design](./system-architecture-ticks.md#domain-idempotency-rules-tickid-in-postgresql).
 
 ### Script Timers vs Tick Timers
 
@@ -311,6 +331,35 @@ Common outcomes are surfaced in metrics as follows (labels such as `tenantId`, `
 - The script scheduler converts timer expirations into **script triggers**, then enqueues resulting commands into the same per-entity command queues that ticks consume. This keeps script timing decisions decoupled from tick ownership while still aligning execution with the canonical `tickId` stream.
 - Script timers obey their own **per-tick and per-window limits** controlled by automation-specific settings such as `AUTOMATION_TICK_MAX_EVENTS` and `AUTOMATION_TICK_BUDGET_MS`, in addition to per-script quotas. They do **not** count against `game.tick-max-timers`; instead, they are bounded by `automation.tick-max-events` as they are staged into tick queues.
 - This separation avoids double-scheduling and unexpected load coupling: tick timers determine when gameplay effects should fire within a region, while script timers determine **when scripts decide to enqueue actions**. Both ultimately converge on the same tick-based command queues, but each subsystem enforces its own quotas and per-tick limits.
+
+### End-to-End `onInterval` Timer Lifecycle
+
+This section summarizes how a single `onInterval` timer behaves across normal operation, leader changes, and script reloads, and which Redis keys are authoritative at each step.
+
+- **Normal operation**
+  - When an NPC spawns or a script is first loaded, the scheduler creates or updates an interval entry for the `{tenantId, scriptId, entityId}` tuple under `automation:timer:{tenantId}:{regionId}` and/or `automation:script:{tenantId}:{scriptId}:timer`. That entry stores at least the configured cadence (`intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`).
+  - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and updating `script-scheduler:{tenantId}:{regionId}:lastTickId`. For **“every N ticks”** intervals, the leader compares `lastTickId` with the current `tickId` and the stored `intervalTicks` / `nextTick` for each timer entry to decide which `onInterval` triggers are due.
+  - When an interval fires and passes quota/budget checks, the scheduler:
+    - emits a trigger (and audit row) for the `onInterval` handler, and
+    - recomputes and persists the next due point (`nextTick` or `nextRunAt`) in the timer entry so the cadence remains stable, even if some firings are delayed by load.
+
+- **Leader failover**
+  - Leaders periodically persist `script-scheduler:{tenantId}:{regionId}:lastTickId` as they process the heartbeat stream. The authoritative source of **“how far this region has progressed”** is therefore the combination of:
+    - the most recent `tickId` seen on the heartbeat stream, and
+    - the stored `lastTickId` for that `{tenantId, regionId}` key.
+  - When leadership changes, the new leader:
+    - reads `script-scheduler:{tenantId}:{regionId}:lastTickId` for each region it owns,
+    - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream, and
+    - for each timer entry in `automation:timer:{tenantId}:{regionId}` / `automation:script:{tenantId}:{scriptId}:timer`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued exactly once before the leader resumes normal scheduling from the latest `tickId`.
+  - Because the authoritative timer state lives in Redis (timer entries plus `lastTickId`), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
+
+- **Script reload**
+  - During reload, leaders set `reloadState=RELOADING` for the affected `{tenantId, pendingPatchVersion}` and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in `automation:timer:{tenantId}:{regionId}` / `automation:script:{tenantId}:{scriptId}:timer` remain in Redis but are treated as **pending**.
+  - Once reload succeeds and `activePatchVersion` is switched, the leader:
+    - re-reads `script-scheduler:{tenantId}:{regionId}:lastTickId` and the current `tickId`,
+    - updates each interval entry’s next due point (`nextTick` or `nextRunAt`) as needed so the cadence resumes from the latest tick/time (rather than replaying the paused window), and
+    - resumes normal scheduling for `onInterval` using the updated `activePatchVersion`. No interval runs against a partially loaded script definition.
+  - If reload fails, `activePatchVersion` remains unchanged, `pendingPatchVersion` is marked failed, and the leader resumes using the existing timer entries as-is. Any `onInterval` triggers that fire after a failed reload are still scheduled according to the stored cadence, but always execute under the last known good patch version.
 
 ## Scheduler Leadership & Coordination
 
@@ -370,9 +419,48 @@ Once a script run emits commands, **tick fairness rules take over**: commands ar
 
 Together, these **per-script**, **per-tenant**, and **cluster-wide** caps form a noisy-tenant protection story that aligns with the broader multi-tenancy model in [System Architecture: Multi-Tenancy](./system-architecture-multi-tenancy.md). All script-side keys and metrics are scoped by `tenantId`, and leadership leases such as `script-leader:{tenantId}` ensure that each tenant’s automation workload can be reasoned about and tuned independently while still sharing the same infrastructure.
 
+### Quota & Budget Summary
+
+The table below summarizes the major quota and budget types that apply to scripting, along with their scope, governing settings, and key metrics:
+
+| Type | Scope | Governing settings / sources | Primary metrics |
+| --- | --- | --- | --- |
+| **Per-script quota** | Per script (`tenantId`, `scriptId`) | `SCRIPT_QUOTA_LIMIT`, `SCRIPT_QUOTA_WINDOWSECONDS`, evaluated by `ScriptQuotaService` before a run starts. | `script_quota_allowed_total`, `script_quota_denied_total`, `automation_script_triggers_dropped_total{reason="quota"}`, `automation_script_triggers_total{outcome="quota_denied"}`. |
+| **Per-script cadence & concurrency** | Per script | `intervalTicks`, `concurrencyPolicy` (`drop_new` / `queue_until_free`), `maxConcurrent`. Stored in script metadata and used by the scheduler when deciding which triggers to admit. | `automation_script_queue_delay_seconds`, `automation_script_triggers_dropped_total` (for drops due to queue/concurrency), audit `outcome` / `reason` values such as `dropped_quota`. |
+| **Per-script priority** | Per script | `priorityTag` (`high`, `normal`, `background`) and per-tier enqueue budgets (for example, high=8/min, normal=4/min, background=2/min). | `automation_script_triggers_total` (tagged by tier), `automation_script_skips_total` (e.g., `reason="priority_throttled"` when tiers are constrained), `automation_script_triggers_dropped_total` for hard drops. |
+| **Per-tenant tier budgets** | Per tenant and priority tier | Tenant-scoped automation budgets per tier, tracked as aggregates such as `automation_script_tenant_budget_seconds{tenantId, tier}`. | `automation_script_tenant_budget_seconds{tenantId, tier}`, `automation_script_skips_total{reason="tenant_budget_exceeded"}`, audit `outcome="tenant_budget_exceeded"` with appropriate `reason`. |
+| **Cluster-wide safety limits** | Entire Automation & Scripting cluster | Global ceilings on automation work, including `AUTOMATION_TICK_MAX_EVENTS` and cluster-level CPU/time budgets. | `automation_tick_events_enqueued_total`, `automation_script_triggers_dropped_total` (for drops when global ceilings are hit), high-level resource metrics from the logging/monitoring stack. |
+
+These layers compose in order: a trigger must pass per-script quotas, cadence and concurrency checks, per-tenant budgets, and cluster-wide ceilings before it runs. When a trigger is rejected at any layer, the decision is reflected consistently via `script_event_audit.outcome` / `reason` and the metrics listed above.
+
 ## Auditability & Metrics
 
-Every scheduler decision emits an audit record (stored in a lightweight `script_event_audit` table in PostgreSQL) containing `(scriptEventId, scriptId, tickId, versionId, outcome, latency)`. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across logs, metrics, and traces. Metrics include:
+Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across logs, metrics, and traces.
+
+The canonical `script_event_audit` schema includes:
+
+- **Core identifiers**
+  - `scriptEventId` – unique identifier for a single trigger/run.
+  - `tenantId` – tenant/game owning the script.
+  - `regionId` – region (where applicable) associated with the trigger.
+  - `scriptId` – script definition that handled the trigger.
+  - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
+  - `versionId` – effective script version or `scriptPatchVersion` applied at runtime.
+  - `tickId` – canonical tick identifier associated with the trigger.
+
+- **Outcome and policy context**
+  - `outcome` – canonical outcome enum value (see [Failure Modes and Error Handling](#failure-modes-and-error-handling)), for example `success`, `quota_denied`, `skipped_disabled`, `tenant_budget_exceeded`, `disabled_unsafe_component`.
+  - `reason` – optional, machine-readable reason string providing additional detail for the outcome or policy decision (for example, `cpu_budget_exceeded`, `memory_budget_exceeded`, `concurrency_policy_drop_new`, `tenant_budget_exceeded`).
+  - `policy` – optional, human-readable policy or rule name that produced the decision (for example, `quota_window`, `max_concurrent`, `tenant_budget`).
+
+- **Timing and actor metadata**
+  - `latency` / `runtimeSeconds` – elapsed time for the script run or scheduling decision.
+  - `leaderInstanceId` – identifier for the scheduler leader that processed the trigger.
+  - `actorPrincipal` – acting principal for administrative actions (for example, disable/enable), when available.
+
+Not all columns are populated for every row, but this shape ensures that sandbox errors, quota denials, tenant budget enforcement, unsafe-component disables, and administrative actions all share a common audit surface with consistent `outcome` / `reason` semantics.
+
+Metrics include:
 
 - **Scheduler metrics** – `automation_script_triggers_total`, `automation_script_skips_total` (broken out by policy), `automation_script_queue_delay_seconds` for queued triggers waiting on concurrency limits, `automation_script_leadership_changes_total` to monitor failovers, and `automation_script_triggers_dropped_total` to capture quota/queue drops so operators can tune `ScriptQuotaService` windows.
 - **Quota metrics** – `script_quota_allowed_total` and `script_quota_denied_total` (shared with the Automation & Scripting Service README) track per-script quota decisions in a consistent way across documentation and implementations.
@@ -434,19 +522,18 @@ scripts and ensure fair resource usage:
   the tick queues. When the quota is exceeded the event is ignored and the
   `script_quota_denied_total` metric is incremented. Successful executions are tracked via
   `script_quota_allowed_total`.
-- The tick system only processes these queued commands—it never runs script logic itself.
 - Metrics such as `automation_tick_events_enqueued_total`, `script_quota_allowed_total`, and `script_quota_denied_total` expose script activity for monitoring.
 - Administrators may disable or throttle problematic scripts via the Game Design
   Service, which updates definitions and triggers hot reloads in the Automation &
   Scripting Service.
- - These quota and throttling controls work **in combination with** the failure-rate circuit breaker described under [Failure Modes and Error Handling](#failure-modes-and-error-handling), which can automatically place misbehaving scripts into a `disabled_due_to_errors` state when error rates exceed configured thresholds.
+- These quota and throttling controls work **in combination with** the failure-rate circuit breaker described under [Failure Modes and Error Handling](#failure-modes-and-error-handling), which can automatically place misbehaving scripts into a `disabled_due_to_errors` state when error rates exceed configured thresholds.
 
 #### Operational Disable / Throttle Flows
 
-- **Disable now (hard stop)** – When an administrator marks a script as disabled in the Game Design or Logging & Admin tools, the Automation & Scripting Service flips a `runtimeStatus=DISABLED` flag in script metadata. The scheduler stops accepting **new triggers** for that script immediately (treating them as `skipped_disabled` in audit records), but does not preempt in-flight runs; they are allowed to complete under existing quotas.
-- **Soft-disable after current run** – For scripts that should drain gracefully, administrators can set `runtimeStatus=DISABLE_AFTER_DRAIN`. The scheduler continues to run any currently queued triggers up to a small grace window, then transitions the script to `DISABLED` once its active and queued counts reach zero. Subsequent triggers are skipped and logged as `skipped_disabled`.
-- **Throttling** – Throttling is modeled as a temporary adjustment of per-script and per-tenant budgets rather than a separate toggle. Operators can reduce `SCRIPT_QUOTA_LIMIT`, increase `intervalTicks`, or change `priorityTag` to `background`; the scheduler immediately applies the new configuration when evaluating triggers. In addition, the failure-rate circuit breaker may place a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, which behaves like a hard disable until an administrator explicitly clears the status.
-- All disable/enable and throttle actions are **idempotent** and recorded in the `script_event_audit` table/feed with the acting principal (where available), so operators can trace when and why a script stopped executing.
+- **Disable now (hard stop)** – When an administrator marks a script as disabled in the Game Design or Logging & Admin tools, the Automation & Scripting Service flips a `runtimeStatus=DISABLED` flag in script metadata. The scheduler stops accepting **new triggers** for that script immediately (recording `outcome=skipped_disabled` and a suitable `reason`, such as `admin_hard_disable`, in `script_event_audit`), but does not preempt in-flight runs; they are allowed to complete under existing quotas.
+- **Soft-disable after current run** – For scripts that should drain gracefully, administrators can set `runtimeStatus=DISABLE_AFTER_DRAIN`. The scheduler continues to run any currently queued triggers up to a small grace window, then transitions the script to `DISABLED` once its active and queued counts reach zero. Subsequent triggers are skipped and logged to `script_event_audit` with `outcome=skipped_disabled` and a reason that reflects the drain behavior.
+- **Throttling** – Throttling is modeled as a temporary adjustment of per-script and per-tenant budgets rather than a separate toggle. Operators can reduce `SCRIPT_QUOTA_LIMIT`, increase `intervalTicks`, or change `priorityTag` to `background`; the scheduler immediately applies the new configuration when evaluating triggers. In addition, the failure-rate circuit breaker may place a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, which behaves like a hard disable until an administrator explicitly clears the status; these transitions are also captured in `script_event_audit` using the canonical `outcome` values (`disabled_due_to_errors`, `tenant_budget_exceeded`, etc.) paired with specific `reason` strings.
+- All disable/enable and throttle actions are **idempotent** and recorded in the `script_event_audit` table/feed with the acting principal (where available) via the `actorPrincipal` field, so operators can trace when and why a script stopped executing.
 
 ### Environment Variables
 

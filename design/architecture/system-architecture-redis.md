@@ -198,11 +198,18 @@ The substring inside the braces (`{tenantId}:{regionId}`) forms the hash tag and
 
 Session and timer keys do not participate in tick multi-key scripts and may use simpler patterns as long as they preserve `tenantId` prefixes and avoid cross-shard assumptions.
 
-These key-shape and hash-tag rules are **testing requirements**, not just conventions. Unit tests in the Game Session Service (or a shared Redis test suite) should:
+These key-shape and hash-tag rules are **enforced**, not just conventions:
 
-- Construct keys using the same helpers used in production.
-- Assert that all keys passed to a given Lua script share the same hash tag substring (the content inside `{}`).
-- In dev/test profiles, optionally verify hash-slot alignment via `CLUSTER KEYSLOT` checks so regressions are caught early.
+- All tick-related keys are constructed via shared **Key Naming** helpers in the common library; direct string concatenation of `tick:`, `retry:`, or `timer:` keys in application code is not allowed.
+- Unit tests in the Game Session Service (or a shared Redis test suite):
+  - Construct keys using the same helpers used in production.
+  - Assert that all keys passed to a given Lua script share the same hash tag substring (the content inside `{}`).
+  - In dev/test profiles, verify hash-slot alignment via `CLUSTER KEYSLOT` checks so regressions are caught early.
+- A lightweight lint/test step validates Lua script definitions: any script that accepts multiple keys must either:
+  - Use keys built from the canonical helpers (for example, the first key is always a `tick:{tenantId}:{regionId}:...` key), or
+  - Explicitly document why it is shard-local without a hash tag (for example, a script that operates on a single `session:{tenantId}:{sessionId}` key).
+
+Pull requests that introduce new tick-related keys or Lua scripts must add or update the corresponding helpers and tests; scripts that hard-code non-hash-tagged tick keys or produce `CROSSSLOT` errors under tests are rejected.
 
 ---
 
@@ -233,14 +240,14 @@ Tick-related multi-key operations **must not** be implemented as ad-hoc sequence
 Lua scripts are loaded and invoked using a **SHA-first** approach:
 
 - On service startup, the Game Session Service:
-  - Loads all Lua scripts into Redis using `SCRIPT LOAD` on a per-node basis.
-  - Caches the resulting SHA fingerprints in memory, keyed by a logical script identifier.
+  - Enumerates all master nodes in the Redis Cluster via the client library’s cluster metadata and loads each Lua script on **every master** using `SCRIPT LOAD`.
+  - Caches the resulting SHA fingerprints in memory, keyed by a logical script identifier; a script has one logical identifier but may be loaded on multiple masters.
 - At runtime, scripts are invoked via `EVALSHA` with the appropriate SHA and `KEYS`/`ARGV` lists instead of raw `EVAL` calls, avoiding repeated parsing overhead and keeping multi-key operations aligned with the hash-tag rules described in [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
 
 Redis Cluster does **not** guarantee that loaded scripts survive `SCRIPT FLUSH`, upgrades, or some failover events. The client logic therefore treats `NOSCRIPT` as a normal runtime condition:
 
 - If `EVALSHA` returns a `NOSCRIPT` error on a given node:
-  - The Game Session Service reloads the script on that node using `SCRIPT LOAD`.
+  - The Game Session Service reloads the script on that node using `SCRIPT LOAD` against the master responsible for the key slot of the first `KEYS[1]` argument.
   - It updates the cached SHA for that script if Redis reports a new fingerprint.
   - It immediately retries the call using `EVALSHA` with the refreshed SHA value.
 - All tick-related script helpers:
@@ -267,10 +274,10 @@ Redis executes Lua scripts on the same single-threaded event loop that serves no
 - **Limited keys and arguments**
   - Scripts should operate on a small, fixed set of keys per invocation (for example, one lock key, one pending key, and a handful of queues/timers for a single region).
   - Bulk fan-out or large multi-key operations should be decomposed into multiple smaller calls instead of a single monolithic script.
-   - Implementations must define and enforce a small constant upper bound on the number of keys any tick-related script may touch (for example, a handful of keys per region); this bound should be captured in configuration and validated via unit tests so “just one more key” changes are deliberate and reviewed.
+   - Implementations must define and enforce a small constant upper bound on the number of keys any tick-related script may touch (for example, `MAX_TICK_SCRIPT_KEYS` on the order of a handful of keys per region). This bound is captured in configuration and validated via unit tests so “just one more key” changes are deliberate and reviewed; scripts that exceed the configured bound are rejected during testing.
 
 - **Runtime expectations**
-  - Under normal load, scripts should complete in **under 5–10 ms** on their shard.
+  - Under normal load, scripts should complete in **under 5–10 ms** on their shard; SLOs treat runtimes above this as outliers.
   - The Game Session Service monitors Lua runtime metrics (see [Observability and Reliability](#📈-observability-and-reliability)); scripts that consistently exceed these targets are candidates for refactoring or further decomposition.
 
 - **Abort-early behavior**
@@ -309,10 +316,19 @@ To make sure locks do not routinely expire while legitimate work is still in fli
   - Records per-tick metrics such as `tick.execution_time_ms` and `tick.lock_ttl_ms` labeled by `{tenantId, regionId}`.
   - Emits a derived signal like `tick.lock_ttl_headroom_ratio` or a counter `tick.near_lock_ttl` whenever a tick’s execution time exceeds a configurable fraction of `lock_ttl_ms` (for example, >80%).
   - Surfaces regions with frequent near-TTL ticks on dashboards so operators can spot hot or overloaded regions early.
-- When a region repeatedly produces near-TTL or over-TTL ticks in production, the TickScheduler may:
-  - Mark the region as **degraded** and temporarily reduce tick frequency or fan-out.
-  - Trigger alerts so maintainers can inspect scripts, domain calls, and configuration.
-  - Guide operators to adjust `tick_budget_ms` and the lock TTL clamps, or refactor domain logic, rather than silently allowing long-running ticks to compete with normal regions.
+- Regions that **routinely exhaust or exceed** their lock TTLs are treated as explicitly degraded:
+  - A tick is considered **over-TTL** if `tick.execution_time_ms >= lock_ttl_ms`.
+  - A region enters a **degraded** state if, over a rolling window (for example 5 minutes), either:
+    - More than a configurable percentage of its ticks are over-TTL (for example >5%), or
+    - It produces a configurable number of consecutive over-TTL ticks (for example 3 in a row).
+  - When a region is marked degraded, the TickScheduler:
+    - Reduces that region’s effective tick fan-out (for example, lowers the maximum commands processed per tick) and may modestly increase the tick interval to create headroom.
+    - Continues to complete in-flight ticks but avoids starting new ticks more aggressively than the configured pacing, rather than silently allowing long-running work to compete with healthy regions.
+    - Emits explicit “region degraded” metrics and alerts so operators can investigate scripts, domain calls, and configuration.
+  - If a region remains degraded beyond a hard, configurable window, the scheduler may:
+    - Halt new ticks for that region and treat it as temporarily unavailable.
+    - Disconnect or deny new commands for affected sessions with a clear error indicating that the region is overloaded.
+    - Require operator intervention or configuration changes before the region is allowed to resume normal tick rates.
 
 ### Example Lock Workflow
 

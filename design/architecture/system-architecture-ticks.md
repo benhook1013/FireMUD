@@ -65,9 +65,14 @@ If a required lock is unavailable:
 
 - The action **fails immediately**
 - All staged changes are rolled back via Lua script
-- The action is **rescheduled for retry** by the Game Session Service
+- The action is **rescheduled for retry** by the Game Session Service using a bounded backoff policy.
 
-Conflict metadata is recorded and reported to the Game Session Service, which **reorders future submissions** intelligently.
+Conflict metadata is recorded and reported to the Game Session Service, which **reorders future submissions** intelligently. The scheduler enforces a simple, explicit fairness model:
+
+- Retries are scheduled **no earlier than a future tick**, not within the same tick; the executor never spins waiting for a lock.
+- Each rescheduled action carries a **per-command retry counter** and a **next-eligible-tick** value, so retries are delayed using an exponential backoff in ticks (for example, `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`).
+- After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is marked as permanently failed, a player-visible error is emitted, and metrics/logs capture the contention so operators can see hotspots.
+- Fairness is guaranteed **per entity**: within a given entity’s queue, commands are processed in FIFO order and retries are appended to the back of that queue. Cross-entity fairness is best-effort and driven by normal tick scheduling plus the backoff rules.
 
 > 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control)
 
@@ -90,12 +95,14 @@ Many gameplay commands conceptually touch **multiple entities** (for example tra
   - Tick Lua scripts are written to acquire and operate on **at most one** `tick:{tenantId}:{regionId}:lock:{entityId}` per invocation.
   - Multi-entity commands are decomposed into separate, per-entity legs (for example, one tick leg per participant), each executed under a single entity lock and keyed by a shared `tickId` and effect identifiers for idempotency.
   - Coordination between legs (for example ensuring that both sides of a trade succeed or fail together) occurs via PostgreSQL and/or small coordinator records, not by holding multiple Redis entity locks simultaneously.
+  - There is an explicit **fan-in cap** per command (for example `MAX_LOCKED_ENTITIES_PER_COMMAND`); features that need to touch more entities must do so over multiple ticks or via chunked follow-up commands.
 
-- **Exceptions require a global lock ordering:**
-  - If a future command truly cannot be decomposed and must take more than one entity lock inside a single script, it **must** acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire locks in ascending order).
-  - Such scripts are treated as special cases, reviewed carefully, and documented with their lock ordering assumptions.
+- **Exceptions require a global lock ordering and all-or-nothing behavior:**
+  - If a future command truly cannot be decomposed and must take more than one entity lock inside a single script, it **must** acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire locks in ascending order) and operate within a single `{tenantId, regionId}` shard; cross-region multi-lock commands are not allowed.
+  - If any lock in that ordered set cannot be acquired, the script immediately releases all previously acquired locks, returns a contention result, and the Game Session Service reschedules the command using the standard backoff rules; no partial logical effects are applied for that command.
+  - Such scripts are treated as special cases, reviewed carefully, and documented with their lock ordering assumptions and maximum entity counts.
 
-By treating “one entity lock per script” as the default contract and reserving multi-lock patterns for rare, explicitly ordered cases, the tick system:
+By treating “one entity lock per script” as the default contract, enforcing a small, explicit fan-in cap, and reserving ordered multi-lock patterns for rare, all-or-nothing cases, the tick system:
 
 - Eliminates classic deadlock patterns where two commands try to acquire the same pair of locks in opposite orders.
 - Keeps Lua scripts small and predictable, simplifying reasoning about failure and recovery.

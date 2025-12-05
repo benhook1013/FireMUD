@@ -68,6 +68,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   (`GAME_TICK_MAX_COMMANDS`) so one player cannot starve others.
 - Commands with `requiresSoloTick: true` are dequeued into an isolated tick so expensive operations like runtime procedural generation do not share time with normal actions.
 - After execution, results are persisted and broadcast to connected clients.
+- If a command cannot acquire its required entity lock(s), the executor does not spin; it fails the attempt, rolls back any staged changes, and reschedules the command with a bounded, tick-based backoff (for example exponential backoff capped by `MAX_BACKOFF_TICKS`), tracking a per-command retry counter and enforcing a `MAX_RETRIES` limit before surfacing a player-visible error and logging a permanent failure.
 
 The Game Session Service acts as the **authoritative tick executor** for each `{tenantId, regionId}` it owns:
 
@@ -77,6 +78,7 @@ The Game Session Service acts as the **authoritative tick executor** for each `{
   - Drive `tick:{tenantId}:{regionId}:pending` and commit/rollback flow.
   - Issue tick-scoped gRPC calls on behalf of that region’s commands.
 - On crash or deliberate handoff, another instance acquires the lease and resumes tick processing from Redis using the idempotent `tickId` and effect-guard rules from the Tick System design.
+- The executor monitors `tick.execution_time_ms` and `tick.lock_ttl_ms` for each region; when a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out and/or slightly lengthens the tick interval for that region, emits explicit “region degraded” metrics, and, if the condition persists beyond a configured window, may halt new ticks and reject new commands for that region until operators intervene.
 
 ### gRPC APIs
 
