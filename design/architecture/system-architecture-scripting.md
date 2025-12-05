@@ -186,19 +186,21 @@ Scripts may register handlers for a set of standard lifecycle events. The Automa
 
 Beyond the standard lifecycle events, FireMUD supports **extensible event types** so games and services can introduce new triggers without changing the core scheduler:
 
-- Each event is identified by a stable **event type key** (for example, `inventory.item_added`, `social.guild_rank_changed`) and an associated **versioned schema** defined in shared DTOs. These schemas follow the same compatibility rules as other platform contracts.
+- Each event is identified by a stable **event type key** (for example, `inventory.item_added`, `social.guild_rank_changed`) and an associated **versioned schema** defined in shared DTOs owned by the platform. Schemas live in a shared protobuf/DTO package referenced by participating services and follow the same compatibility rules as other platform contracts.
 - The Game Design Service controls which event types are **enabled per game/tenant**. A game may opt into additional event types while another game ignores them, but the meaning of a given `{eventTypeKey, version}` pair is global and deterministic.
 - The visual DSL exposes **event source nodes** for any event types enabled for the current game. Designers bind scripts to these nodes in the same way they do for `onSpawn` or `onCommand`; under the hood, bindings are stored as `{tenantId, eventTypeKey, eventSchemaVersion, scriptId}`.
 - When an upstream service emits a custom event, it includes the event type key, schema version, and a canonical ordering token (for example, `tickId` or a monotonic sequence). The Automation & Scripting Service uses this metadata to:
   - deterministically route the event to matching script handlers, and
   - enqueue resulting commands into the same per-entity queues used for standard events, preserving tick-based ordering and replay guarantees.
 
+New event types and their schemas are introduced via the normal design and review process for shared contracts: changes land in the shared DTO/proto package, are reviewed by platform maintainers, and are then surfaced in the Game Design Service as new event type options. Individual games cannot unilaterally mint conflicting event type keys or schemas; additions go through this centralized “event catalog” so producers, consumers, and scripting bindings stay aligned.
+
 New event types therefore extend **what** can trigger scripts without changing **how** triggers are scheduled or executed, keeping determinism and fairness aligned with the existing tick and automation model.
 
 ### Event Fan-Out and Ordering
 
 - Each entity may have **multiple scripts bound to the same event** (for example, two `onSpawn` handlers that set patrol routes and apply buffs). At design time the Game Design Service stores these bindings as an ordered list per `{entityId, eventType}`.
-- When an event fires, the Automation & Scripting Service evaluates the bound handlers in a **deterministic order** based on their declared `orderIndex` and script identifier. This ordering is stable across deployments so the same sequence of commands is enqueued given the same set of scripts.
+- When an event fires, the Automation & Scripting Service evaluates the bound handlers in a **deterministic order** sorted by `(orderIndex ASC, scriptId ASC)`. This ordering is stable across deployments so the same sequence of commands is enqueued given the same set of scripts. `orderIndex` is maintained per `{tenantId, entityId, eventType}`; two scripts with the same `orderIndex` for the same event are ordered by their `scriptId`.
 - **Failures are isolated per script**. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure, increments the appropriate metrics, and continues to the next handler unless the script is explicitly marked as `requiresExclusiveEvent` for that event. In the exclusive case, a failure short-circuits remaining handlers and the event fan-out ends early.
 - Quota checks (`ScriptQuotaService`) are performed **per script** before a handler runs. If a script exceeds its quota, its handler for that event is skipped and counted as `denied`, but other scripts bound to the same entity and event may still execute if their own quotas allow it.
 - Script handlers enqueue commands **independently** into the entity’s command queue. The underlying tick system applies its normal fairness rules—only one command per entity per tick is executed—so even when many scripts respond to the same event, player-visible behavior remains bounded and replayable.
@@ -221,7 +223,7 @@ Refer to the Automation & Scripting Service README for implementation details.
 
 - Each script run produces a **structured outcome** such as `success`, `quota_denied`, `sandbox_error`, or `infrastructure_error`. Outcomes are written to the `script_event_audit` table and exposed via metrics (see **Auditability & Metrics**) so operators can correlate failures with specific `scriptId`, `tenantId`, and `tickId`.
 - By default, **failures are surfaced through logs and metrics**, not detailed player-visible stack traces. Players typically experience a missing or degraded behavior (for example, an NPC does not respond) unless the script deliberately enqueues a fallback command that emits a message through the Game Logic Service.
-- Script executions are treated as **at-most-once per trigger**. If a handler fails due to a sandbox or validation error, the scheduler records the failure and moves on; it does not automatically retry the same script invocation to avoid hot loops and duplicate side effects. Infrastructure-level issues (for example, transient gRPC or Redis errors) follow the platform’s standard retry policies, but those retries are bounded and still respect idempotency rules in downstream services.
+- Script executions are treated as **at-most-once per trigger by the Automation & Scripting Service**. If a handler fails due to a sandbox or validation error, the scheduler records the failure and moves on; it does not automatically re-run the script body for the same trigger to avoid hot loops and duplicate side effects. Infrastructure-level issues (for example, transient gRPC or Redis errors) may be retried by lower layers (for example, gRPC clients, Redis clients) according to the platform’s standard retry policies, but those retries operate on **idempotent downstream operations only** and do not cause the script logic to execute a second time for the same trigger. Tick-level idempotent replay and recovery remain the responsibility of the Game Session Service as described in the tick and Redis architecture docs.
 - To guard against **repeated hot-loop failures**, the scheduler combines per-script quotas, concurrency limits, and a **failure-rate circuit breaker**. Scripts that exceed a configurable failure threshold within a time window are temporarily placed into a `disabled_due_to_errors` state: new triggers are skipped, failures are counted, and an audit entry is written so administrators can review and re-enable the script via the Game Design or Logging & Admin tools.
 - Quota enforcement (`ScriptQuotaService`) runs **before** script execution; a script that misbehaves by emitting too many triggers is constrained by its quota window and `concurrencyPolicy`. Even if the logic always throws, it cannot exceed its configured execution rate, and the combination of quotas plus the circuit breaker prevents runaway resource usage.
 
@@ -251,6 +253,17 @@ The table below summarizes **which outcomes are retried** and which are treated 
   - `automation:tick:{tenantId}:{scriptId}:pending`
 
   Keys within this namespace share a hash tag on `{tenantId}:{scriptId}` so multi-key Lua operations remain shard-local in Redis Cluster. These automation tick locks are **separate from the game tick locks** (`tick:{tenantId}:{regionId}:lock:{entityId}`) managed by the Game Session Service. Script ticks never bypass entity-level locking or tick isolation; they only batch and stage automation events before handing them to the normal tick pipeline. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed once they enter the per-entity command queues.
+
+### Ordering Between Player and Script Commands
+
+- Each entity has a **single authoritative command queue** in Redis (for example, `tick:{tenantId}:{regionId}:queue:{entityId}`) that aggregates both player-originated commands and script-generated commands.
+- Player commands and automation commands are appended to this queue in the order they are accepted by the Game Session Service and the Automation & Scripting Service. Within a given entity’s queue, commands are therefore processed in **FIFO order**, regardless of whether they came from a player or a script.
+- During tick processing, the Game Session Service:
+  - Reads at most one command per entity per tick from this combined queue.
+  - Applies its existing fairness and conflict-resolution rules (as described in the tick architecture) when deciding which entities to service on a given tick.
+- Script-generated commands carry `scriptEventId`, `scriptId`, and (when applicable) upstream ordering tokens such as `tickId` from custom events. Combined with the per-entity FIFO queue and the monotonic `tickId` stream, this ensures that:
+  - The order in which commands affect an entity is deterministic for a given event stream and configuration.
+  - Automation ticks cannot “jump ahead of” or reorder already-queued player commands for the same entity; they simply contribute additional commands into the same ordered queue that ticks consume.
 
 ### Idempotency and Replay
 
