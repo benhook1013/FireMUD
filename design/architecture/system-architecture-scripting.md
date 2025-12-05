@@ -44,6 +44,25 @@ At a high level, scripting follows this pipeline:
 5. **Script ticks & commit** – `ScriptTickService` batches automation events into tick-compatible queues with quotas and budgets, using Redis Lua scripts for atomic staging and commit.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
+```mermaid
+sequenceDiagram
+    participant Player
+    participant GameSession as Game Session Service
+    participant Scripting as Automation & Scripting Service
+    participant Redis as Redis (automation & tick queues)
+    participant GameLogic as Game Logic / Domain Services
+
+    Player->>GameSession: Command / world event
+    GameSession-->>Scripting: Script trigger (event + metadata)
+    Scripting->>Redis: Enqueue to automation_queue:{tenantId}:{entityId}
+    Scripting->>Redis: ScriptTickService stages automation:tick:{tenantId}:{scriptId}:*
+    Scripting->>Redis: Commit into tick:{tenantId}:{regionId}:queue:{entityId}
+    GameSession->>Redis: Read per-entity tick queue on tick
+    GameSession->>GameLogic: Apply command under locks / ticks
+    GameLogic-->>GameSession: Effects, updates, events
+    GameSession-->>Player: Updated state / messages
+```
+
 ## Game Design vs Automation & Scripting Responsibilities
 
 Two services collaborate to deliver scripting and automation:
@@ -207,17 +226,20 @@ New event types therefore extend **what** can trigger scripts without changing *
 
 ## Advanced NPC Behavior Modules
 
-- `NpcMoraleService` adjusts aggression based on health and morale so NPCs may flee or surrender.
-- `PveEncounterService` generates random encounters and environmental hazards.
-- `NpcFormationService` coordinates squad positioning for groups of NPCs.
-Refer to the Automation & Scripting Service README for implementation details.
+Several higher-level behavior modules build on the scripting framework and integrate with other microservices:
+
+- `NpcMoraleService` adjusts aggression based on health and morale so NPCs may flee or surrender. It relies on Social & Groups–provided faction and reputation data; see `design/architecture/microservices/social-groups-service/README.md` for the `faction` and `faction_standing` model.
+- `PveEncounterService` generates random encounters and environmental hazards, coordinating with world and game-logic services to spawn entities and apply effects. See the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md`) and Game Logic Service design (`design/architecture/microservices/game-logic-service/README.md`) for encounter definitions and combat rules.
+- `NpcFormationService` coordinates squad positioning for groups of NPCs, using shared world topology and movement rules from the World and Game Logic services.
+
+Detailed behavior, data models, and service-specific responsibilities for these modules are defined in the Automation & Scripting Service README and the relevant microservice design docs; this section only highlights that they are implemented on top of the scripting and tick pipeline described here.
 
 ## Sandboxing & Security
 
 - Script execution occurs in a **sandbox** with restricted APIs and resource limits. High-level behavior is described here; see [Script Sandbox & Resource Limits](./microservices/automation-scripting-service/sandbox-runtime-design.md) for a detailed model.
 - Components interact with the **Game Logic Service** and other backends only through validated gRPC calls; scripts never call arbitrary services directly.
 - The sandbox **prohibits direct access** to networking primitives, filesystems, blocking system calls, and process-wide time sources. Scripts see only curated DTOs, a seeded RNG, and tick-derived time as described in [Determinism & Allowed Non-Determinism](#determinism--allowed-non-determinism).
-- The service enforces **per-script quotas** via `ScriptQuotaService`, and CPU/memory limits are enforced via the sandbox runtime and Kubernetes resource limits, as detailed in the sandbox runtime design.
+- CPU and memory limits are enforced via the sandbox runtime and Kubernetes resource limits, as detailed in the sandbox runtime design. Quotas and rate limits for script triggers are described centrally in [Fairness & Abuse Prevention](#fairness--abuse-prevention) and in the Automation & Scripting Service README.
 
 ### Failure Modes and Error Handling
 
