@@ -478,6 +478,23 @@ Every tick-driven effect MUST use one of the following strategies:
   - The fields used (`last_tick_id`, `tenant_id`, `region_id`, `effect_key`).
   - How handlers behave when they detect a replay (no-op vs verify-then-no-op).
 
+### Testing Tick Idempotency and Redis Replays
+
+The crash-recovery story depends on domain services implementing these patterns correctly. To catch mistakes early:
+
+- Each service with tick-driven handlers must include **integration tests** that simulate Redis-style replays:
+  - Invoke the same handler twice (or more) with identical `(tenantId, regionId, tickId, effectKey, payload)` and assert that:
+    - The first call mutates state as expected.
+    - Subsequent calls are treated as replays and do not apply additional logical effects (HP changes, inventory moves, etc.).
+  - Exercise both idempotency strategies:
+    - Per-aggregate `last_tick_id` tables (for single-entity updates).
+    - Operation-level `tick_effect_guard` tables (for multi-entity effects).
+- A shared test harness (in the common library or individual services) should make it easy to:
+  - Construct a synthetic `tick:{tenantId}:{regionId}:pending` payload.
+  - Drive the same sequence of domain calls multiple times, mimicking a replay of the same pending tick after a crash.
+  - Verify that the final PostgreSQL state is identical regardless of how many times the tick is “reapplied.”
+- CI pipelines must run these replay tests; changes to tick handlers that break idempotency should fail tests before reaching production.
+
 Entity Management provides the reference example for per-aggregate tick state; see [Entity Management Service – Tick Idempotency](./microservices/entity-management-service/README.md#tick-idempotency) for details.
 
 ---

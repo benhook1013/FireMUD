@@ -54,6 +54,13 @@ Tick coordination and other Redis-backed workflows rely on a small set of shared
   - Lua scripts respect the configured `MAX_TICK_SCRIPT_KEYS` bound and do not introduce “just one more key” without extending tests.
   - Any new tick-related script or key path added by a service includes corresponding updates to the helpers and tests.
 
+For Redis-backed caches and rate limiting, the common library may also provide:
+
+- **Bounded cache writer utilities** – Helpers that:
+  - Enforce a maximum serialized value size (for example `MAX_CACHE_VALUE_BYTES`) before writing to Redis, rejecting oversized payloads with clear logs/metrics instead of allowing them to bloat memory.
+  - Require explicit TTL parameters and validate that they fall within configured per-key budgets, so caches cannot silently accumulate effectively permanent entries.
+  - Prefer single atomic commands (set value + TTL together) over multi-step delete/insert sequences.
+
 Services that add new tick, retry, timer, or session flows should extend the common library’s key helpers and script helpers first, then use those helpers from their own code. This keeps Redis key shapes, hash-tag rules, and Lua invocation behavior consistent across the platform.
 
 ---

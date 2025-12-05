@@ -81,6 +81,24 @@ FireMUD runs Redis in a **clustered, replicated configuration**:
   (and thereby terminating active sessions and discarding all volatile tick state) is treated as an explicit
   operational action, not part of normal CI/CD rollout.
 
+The `redis-aof-reset-job` is **strictly scoped**:
+
+- It is only enabled in **ephemeral** dev/test namespaces where losing volatile coordination state is acceptable.
+- Production and long-lived staging environments:
+  - Do not include the reset Job in their Helm values.
+  - Treat any AOF reset or Redis flush as a manual, audited operation with clear runbooks and impact analysis.
+- Helm values and CI/CD pipelines must not reuse dev/test Redis values for production namespaces; production values files are separate so misconfiguration cannot silently enable AOF resets outside ephemeral environments.
+
+Redis provides **best-effort durability** for volatile coordination state, not absolute guarantees:
+
+- `WAIT 1 100` only ensures that **at least one replica** has processed the write within the timeout; if both the primary and that replica are lost before their AOFs are flushed to disk, the most recent writes can still be lost.
+- AOF rewrite policy (for example Redis’s `auto-aof-rewrite-percentage` and `auto-aof-rewrite-min-size` settings) affects how much recent state can be lost if a node crashes between an in-memory update and the next fsync or AOF rewrite. FireMUD’s coordination Redis configuration:
+  - Favors `appendfsync everysec` (or equivalent) so operators can assume a worst-case loss window on the order of one second of volatile tick/session state under crash conditions.
+  - Keeps `auto-aof-rewrite-percentage` conservative to avoid overly frequent rewrites while still preventing unbounded file growth.
+- Operators should assume that, under rare compound failures (for example primary + replica loss or crash during rewrite), a **small tail window** of volatile Redis state may disappear. Correctness in those cases is preserved by:
+  - Treating Redis as non-authoritative and replaying ticks based on PostgreSQL and any surviving `tick:{tenantId}:{regionId}:pending` keys.
+  - Relying on the idempotent tick and domain logic described in [Crash Recovery and Replay](./system-architecture-ticks.md#crash-recovery-and-replay) so replays never apply new logical effects twice.
+
 `WAIT 1 100` is issued by the Game Session Service immediately after **critical** Lua scripts complete (see below for what counts as critical). Its semantics and limitations are:
 
 - If at least one replica acknowledges the write within the timeout, the write is considered **durably replicated for operational purposes**.
@@ -330,6 +348,72 @@ To make sure locks do not routinely expire while legitimate work is still in fli
     - Disconnect or deny new commands for affected sessions with a clear error indicating that the region is overloaded.
     - Require operator intervention or configuration changes before the region is allowed to resume normal tick rates.
 
+### Graceful Degradation & Redis Outage Policy
+
+Redis is **required** for tick coordination, sessions, and automation. When Redis becomes slow or unavailable, FireMUD prefers **explicit, bounded failure** over silently accepting work that cannot be coordinated or recovered deterministically.
+
+- **What we never do**
+  - The Game Session Service and other coordination clients **do not buffer authoritative commands purely in process memory** when Redis is unavailable. Commands that cannot be enqueued or coordinated in Redis are rejected rather than accepted and “replayed later,” because doing so would break idempotent replay guarantees and make partial failures hard to reason about.
+  - Region executors do not attempt to continue ticks against stale or partially visible Redis state after connection failures or timeouts.
+
+- **Short-lived latency spikes / partial degradation**
+  - When coordination round-trips to Redis slow down but still succeed within bounded time, regions may temporarily enter the **degraded** state described above:
+    - Tick fan-out is reduced and tick intervals may be modestly increased.
+    - Commands continue to flow, but per-command latency rises and retry rates may increase.
+  - If coordination latency recovers before the “degraded” window elapses, regions return to normal without disconnecting players.
+
+- **Sustained high latency or partial outages**
+  - When Redis coordination operations for a `{tenantId, regionId}` repeatedly:
+    - exceed configured latency SLOs,
+    - fail with timeouts or connection errors, or
+    - hit critical error conditions such as `OOM` or missing replica acknowledgements for critical writes,
+    the TickScheduler escalates beyond the basic degraded behavior:
+    - New ticks for that region are **halted**.
+    - New gameplay commands for that region are **rejected** with a clear error (for example, “region temporarily unavailable”) rather than accepted and lost.
+    - Existing sessions in the region may be disconnected or moved to a safe error state by the Game Session Service.
+  - Other regions and tenants that are not hitting Redis issues continue to operate normally; degradation is scoped as narrowly as the failure allows (per-region where possible, per-cluster only when unavoidable).
+
+- **Full coordination-cluster outage**
+  - If the Coordination Redis cluster is unreachable for **all** tick regions, the platform treats **gameplay as unavailable**:
+    - Tick scheduling stops globally.
+    - New gameplay sessions and commands that depend on ticks or sessions are rejected until Redis connectivity recovers.
+  - Non-gameplay services that do not depend on Redis (for example, Account, Game Design, Logging & Admin) may remain available; this is the primary form of “graceful degradation” at the product level.
+
+This policy applies consistently across the conditions described elsewhere in this document: replica-ack failures after `WAIT`, `OOM`/evictions of coordination keys, repeated over-TTL ticks, and client-level connection timeouts all drive regions through the same **healthy → degraded → halted** progression, rather than each caller inventing its own ad-hoc behavior.
+
+### Operational SLOs & Alert Thresholds
+
+To keep behavior consistent across environments, FireMUD defines **recommended SLOs and red-line thresholds** for Redis and tick coordination. Exact values are configurable per deployment, but implementations and dashboards should start from these defaults:
+
+- **Lua script runtime (coordination scripts only)**
+  - Target: `p95` runtime for tick/lock/timer scripts under **5 ms**, `p99` under **10 ms** on the Coordination Redis cluster.
+  - Warning alert: `p99` runtime > **10 ms** for **5 minutes** on any shard.
+  - Critical alert: `p99` runtime > **25 ms** for **1 minute** or more, or sustained `p95` > **15 ms**. Affected regions should be marked degraded and investigated immediately.
+
+- **Redis round-trip latency (coordination commands)**
+  - Target: median latency under **1 ms**, `p99` under **5 ms** for commands that drive ticks, locks, timers, and sessions.
+  - Warning alert: `p99` coordination latency > **5 ms** for **5 minutes** on any shard.
+  - Critical alert: `p99` > **15 ms** or connection timeouts on more than a small percentage of coordination operations (for example, >1% over 5 minutes). Regions using the affected shard are candidates for automatic degradation or temporary tick halts.
+
+- **Tick over-TTL behavior**
+  - As described above, a region is considered degraded if, over a 5-minute window, either:
+    - >5% of its ticks are **over-TTL**, or
+    - it produces **3 consecutive** over-TTL ticks.
+  - Warning alert: region enters degraded state.
+  - Critical alert: region remains degraded for more than a configurable window (for example **10–15 minutes**); at this point the Game Session Service may halt new ticks and reject new commands for that region until operators intervene.
+
+- **Coordination Redis memory and eviction**
+  - On the Coordination Redis deployment (which uses `maxmemory-policy noeviction`):
+    - Warning alert: `used_memory` exceeds **70%** of `maxmemory` for more than **10 minutes**.
+    - Critical alert: any `OOM`/`OUT OF MEMORY` error on coordination commands, or any eviction event for keys with `tick:`, `session:`, `timer:`, or `retry:` prefixes. These are treated as immediate incidents; affected regions should be marked degraded or halted until memory pressure is resolved.
+
+- **Cache/Rate-Limit Redis eviction**
+  - For the Cache/Rate-Limit Redis deployment where eviction is expected:
+    - Warning alert: sustained eviction rate above a configured baseline (for example, >**1,000 evictions per minute** for >10 minutes) or a step-change relative to recent history.
+    - Critical alert: eviction rate that grows without bound or consistently exceeds a fraction of the keyspace per hour (for example, evicting more than **5%** of average key count per hour), indicating mis-sized caches or runaway writers.
+
+These thresholds are intended to be **explicit starting points**, not immutable rules. Operators may tighten or relax them per environment, but architecture and implementation should treat the classes of behavior above—high script runtimes, elevated coordination latency, over-TTL ticks, coordination `OOM`/evictions, and runaway cache eviction—as the canonical “red lines” that justify automated degradation and paging.
+
 ### Example Lock Workflow
 
 1. Generate a unique lock token (for example, a UUID) and acquire `tick:{tenantId}:{regionId}:lock:{entityId}` using `SET NX PX` with that token as the value and the computed TTL (`lock_ttl_ms`). This ensures transient pauses do not cause the lock to expire while normal work is still in progress, but stale locks are automatically cleared after a bounded window.
@@ -422,6 +506,19 @@ If a tick is interrupted:
 
 All recovery is deterministic and safe.
 
+Domain services treat PostgreSQL as the **source of truth** for business state during recovery:
+
+- If a replay of `tick:{tenantId}:{regionId}:pending` encounters idempotency state in PostgreSQL that indicates the effects have already been applied (for example, `last_tick_id >= tickId` or an existing `tick_effect_guard` row), handlers must treat the call as a replay:
+  - They return success without applying new logical effects.
+  - They may optionally verify that current state is consistent with the previously applied effect and emit a warning if invariants appear broken.
+- If a handler detects an **impossible combination** (for example, missing or contradictory tick-state rows that make it unsafe to decide whether an effect has already been applied), it must:
+  - Avoid “best effort” reapplication; it should not attempt to re-run the effect blindly.
+  - Return a clear error or status that causes the Game Session Service to treat the tick as failed for that region.
+  - Log structured details sufficient to reconstruct and repair the affected aggregates offline.
+- The Game Session Service then:
+  - Treats the tick as **stuck** or **failed** (see the runbook below).
+  - Surfaces this via metrics and alerts so operators can apply the manual or automated recovery flows (for example, marking the tick as `FAILED` in a `tick_recovery` table and clearing the pending key).
+
 ### Runbook: Stuck Pending Entries and Unbounded Queues
 
 In rare cases where domain code is faulty, a `tick:{tenantId}:{regionId}:pending` entry may remain present even though repeated replays cannot complete successfully. Operators handle this as follows:
@@ -488,6 +585,41 @@ FireMUD actively monitors Redis performance and tick health:
 
 ---
 
+### Graceful Degradation Modes and Alert Thresholds
+
+Redis outages or sustained high latency on the **coordination cluster** are treated as explicit failure modes with well-defined behavior:
+
+- **Healthy:** Redis latency and error rates are within normal bounds.
+  - Game Session and other services process commands and ticks normally.
+  - Observability dashboards show p95/p99 Lua runtimes comfortably below the 5–10 ms SLO, low blocked-client counts, and zero coordination-key evictions.
+
+- **Degraded:** Latency or errors exceed soft thresholds but Redis is still reachable.
+  - Example triggers (exact values tuned per environment):
+    - p99 Lua runtime for tick-related scripts exceeds ~10–20 ms for several minutes.
+    - Blocked-client counts or blocked time on coordination nodes spike above a small configured threshold.
+    - Repeated `WAIT 1 100` failures or coordination OOM errors are observed without total outage.
+  - Behavior:
+    - Game Session slows down affected regions by reducing per-tick fan-out and/or slightly increasing tick intervals (as described in the Lock TTL section).
+    - New non-essential commands (for example expensive or cosmetic actions) may be rejected with clear “region under load” errors instead of being enqueued.
+    - Read-only queries that do not depend on coordination Redis (for example DB-backed status views) may remain available where practical, but tick progression and command intake are prioritized over optional features.
+
+- **Unavailable / Fail-closed:** Coordination Redis is unreachable or returning pervasive errors.
+  - Example triggers:
+    - `redis.up` gauge reports down for the coordination cluster.
+    - High error rates for basic commands (for example `GET`/`SET` on tick/session keys) over a short window.
+  - Behavior:
+    - Game Session **hard-fails new gameplay commands** that require ticks, returning a clear “service unavailable” style error.
+    - It **freezes tick scheduling** for affected regions rather than attempting to buffer commands in memory or continue without coordination guarantees.
+    - It does not attempt to run ad-hoc in-memory fallbacks for ticks, locks, or sessions; correctness takes precedence over partial gameplay.
+    - Operators are alerted via high-severity alerts so they can restore Redis; gameplay resumes only once coordination Redis is healthy again.
+
+For the **cache/rate-limit cluster**, alert thresholds focus on:
+
+- Eviction rates and keyspace memory usage (for example, sustained high eviction rate or `used_memory` approaching `maxmemory`).
+- Latency percentiles for cache/rate-limit commands that threaten to interfere with coordination workloads if clusters share resources.
+
+Caches and rate limiting are allowed to degrade more aggressively (for example, higher p99 latencies or eviction spikes) as long as they do not impact the Coordination Redis SLOs. Emergency actions for the cache/rate-limit cluster may include temporarily reducing cache TTLs, disabling specific caches, or relaxing rate limits, but **coordination behavior is never emulated in memory** when Redis is unhealthy.
+
 ## Session Keys and Gameplay Binding
 
 Redis stores transient gameplay session state for each connected player, including:
@@ -513,7 +645,12 @@ refreshed. Once the TTL elapses:
 
 In practice, `FIREMUD_AUTH_SESSION_EXPIRATION_MS` therefore defines the **maximum reconnection window** for gameplay
 sessions. Deployments should keep this value aligned with or slightly longer than `FIREMUD_AUTH_JWT_EXPIRATION_MS` so
-that JWT and server-side session lifetimes remain coherent.
+that JWT and server-side session lifetimes remain coherent. Configuration validation enforces this relationship in
+non-dev profiles:
+
+- `FIREMUD_AUTH_SESSION_EXPIRATION_MS` must be **greater than or equal to** `FIREMUD_AUTH_JWT_EXPIRATION_MS` (optionally plus a small safety margin). This ensures that, under normal conditions, a JWT never outlives its corresponding Redis session entry.
+- If configuration attempts to set a shorter Redis session TTL than the JWT lifetime in production or staging, the authentication and Game Session services treat it as a misconfiguration: startup fails or falls back to a safe, derived TTL (while logging a clear error) rather than silently allowing “JWT still valid but session state already expired” behavior.
+- Operators who intentionally want a shorter reconnection window than the JWT lifetime should make that choice explicit via environment profiles and documentation; in that case, reconnect flows will reject resumptions once the Redis TTL has elapsed even if the JWT remains technically valid.
 
 This state is used by the **Game Session Service** to:
 
@@ -521,6 +658,15 @@ This state is used by the **Game Session Service** to:
 - Rebind gameplay context to a new socket
 - Deduplicate reconnect attempts
 - Handle character takeovers (one session per character)
+
+The **authoritative lifecycle** of a game instance remains in PostgreSQL (for example the `game_instances` table and related state), not in Redis. If Redis drops a `session:{tenantId}:{sessionId}` key while the underlying game instance is still `RUNNING`:
+
+- Background operations and gameplay ticks continue based on tenant/game-instance identifiers; they do not depend on the presence of a specific `session:*` key.
+- A reconnect attempt with a valid JWT but a missing session key is treated as “no active binding” rather than “game instance missing”:
+  - The Game Session Service verifies the JWT first.
+  - It then either binds a **new** `session:{tenantId}:{sessionId}` record to the existing game instance (subject to ownership rules) or rejects the reconnect if the reconnection window has intentionally elapsed.
+  - The absence of the old `session:*` key never implies that the underlying `game_instances` row has stopped; it only affects how quickly a user can resume their previous socket binding.
+- Metrics such as “reconnect attempts missing session key but targeting a running game instance” surface misconfiguration or Redis instability so operators can adjust TTLs or investigate state loss.
 
 All session bind, rebind, and takeover flows are performed via a **Lua compare-and-set script** that:
 
@@ -619,6 +765,8 @@ Redis workloads in FireMUD fall into three broad categories:
 Recommended deployment patterns:
 
 - For **development and small deployments**, a single Redis cluster can serve all three workloads as long as cache value sizes and TTLs remain conservative and monitoring stays in place for memory pressure and latency.
+  - Coordination keys (`tick:*`, `session:*`, locks, timers, retries) must remain a **small, bounded fraction** of `maxmemory` (for example, <30%), and cache writers must enforce strict per-value size and TTL limits so caches cannot grow unbounded.
+  - Operators should treat eviction of coordination keys (for example `tick:` or `session:` prefixes) as a **hard incident** even in small deployments; alerting on eviction counters by prefix is required.
 - For **production and large worlds**, operators are encouraged to **separate Redis responsibilities**:
   - A **Coordination Redis** cluster dedicated to ticks, locks, timers, and sessions with strict latency SLOs, reserved memory headroom, and no large aggregates.
   - A **Cache/Rate-Limit Redis** cluster for gateway rate limiting and read-side caches, where eviction and higher latency variance are acceptable.
@@ -633,6 +781,10 @@ To honor the “coordination keys must not be evicted” rule:
   - Uses a `maxmemory-policy` of `noeviction` so that coordination keys are never removed to make room for caches.
   - Is sized with sufficient `maxmemory` (and headroom) to accommodate expected tick, lock, timer, and session state plus operational buffers.
   - Does **not** store large cache payloads or unbounded aggregates; those belong in the Cache/Rate-Limit cluster or in PostgreSQL/object storage.
+  - Treats any `OOM`/`OUT OF MEMORY` write error for coordination commands as a **critical failure condition**: the Game Session Service and other coordination clients:
+    - Detect write failures from Redis clients (including Lua script results) instead of ignoring them.
+    - Log structured errors and increment metrics (for example `redis.coordination_oom_errors`).
+    - Mark affected regions as degraded or temporarily halt new ticks/lock acquisitions until operators resolve the underlying memory issue.
 - The **Cache/Rate-Limit Redis** deployment:
   - May use an eviction policy such as `allkeys-lru` or `volatile-lru`, since entries are recomputable or best-effort.
   - Enforces strict limits on value size and TTL so cache growth does not starve rate limiting or degrade performance.

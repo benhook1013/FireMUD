@@ -201,6 +201,25 @@ Scripts may register handlers for a set of standard lifecycle events. The Automa
 - `onCommand` – when a player targets the entity with a command
 - `onInterval` – periodic execution at a configured rate
 
+### `onLoad` Semantics
+
+`onLoad` is a **script-level lifecycle event**, not an entity-level event. It is designed for initializing script-global state (for example, loading lookups, seeding script-local caches, writing initial audit markers) rather than per-entity setup, which belongs in `onSpawn` or other entity-scoped events.
+
+- **When it fires**
+  - The scheduler emits an `onLoad` trigger exactly once per `{tenantId, scriptId, versionId}` after a script becomes active for that tenant. In practice this means:
+    - When a script first becomes part of the tenant’s active script set under a given `scriptPatchVersion`, and
+    - After a successful hot reload that changes `activePatchVersion` for that tenant, `onLoad` fires once for each script in the newly active patch.
+  - If a reload fails and `activePatchVersion` remains unchanged (see [Hot Reload & Resume Behavior](#hot-reload--resume-behavior)), no additional `onLoad` events are generated.
+
+- **Per-script vs per-entity**
+  - `onLoad` runs **without an entity context**; it executes once per script definition and active version for a tenant, not once per NPC or player.
+  - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
+
+- **Interaction with reloads and recovery**
+  - The Automation & Scripting Service treats `onLoad` as **at-most-once per `{tenantId, scriptId, versionId}`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose current version is already active.
+  - `onLoad` triggers are enqueued only after leaders have switched `activePatchVersion` and `reloadState` has returned to `IDLE`. Scripts never run `onLoad` against a `pendingPatchVersion` that is still being validated or has failed reload.
+  - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, the effective `versionId` or `scriptPatchVersion`, and a canonical `outcome` / `reason` pair so operators can verify that initialization ran for a given script and version.
+
 ### Custom and Service-Specific Events
 
 Beyond the standard lifecycle events, FireMUD supports **extensible event types** so games and services can introduce new triggers without changing the core scheduler:
