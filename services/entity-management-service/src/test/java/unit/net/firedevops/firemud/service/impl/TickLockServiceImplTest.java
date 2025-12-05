@@ -31,7 +31,9 @@ class TickLockServiceImplTest {
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
     service = new TickLockServiceImpl(redisTemplate, meterRegistry, conflictTracker);
     service.initMetrics();
-    ReflectionTestUtils.setField(service, "tickDurationMs", 1000L);
+    ReflectionTestUtils.setField(service, "tickBudgetMs", 100L);
+    ReflectionTestUtils.setField(service, "minLockTtlMs", 500L);
+    ReflectionTestUtils.setField(service, "maxLockTtlMs", 5000L);
   }
 
   @Test

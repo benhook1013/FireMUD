@@ -27,6 +27,17 @@ Maintainers should update this section whenever major scripting features land or
 - Keep the system **extensible** while preventing malicious or abusive scripts.
 - Support **persistence** and versioned updates so game creators can iterate safely.
 
+## TL;DR Flow
+
+At a high level, scripting follows this pipeline:
+
+1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
+2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `{tenantId, eventType}` and applies per-script and per-tenant limits via `ScriptQuotaService`.
+3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
+4. **Automation queue staging** – Commands are enqueued into Redis-backed automation queues keyed by tenant and entity/region, along with `scriptEventId`, `scriptId`, and version metadata.
+5. **Script ticks & commit** – `ScriptTickService` batches automation events into tick-compatible queues with quotas and budgets, using Redis Lua scripts for atomic staging and commit.
+6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
+
 ## Game Design vs Automation & Scripting Responsibilities
 
 Two services collaborate to deliver scripting and automation:
@@ -334,21 +345,13 @@ scripts and ensure fair resource usage:
 
 ### Environment Variables
 
-The scripting engine exposes several environment variables so operators can tune quotas and tick behavior. The **Automation & Scripting Service README** (`design/architecture/microservices/automation-scripting-service/README.md`) is the **authoritative source** for these operational knobs; this table mirrors the most important ones for architectural context and may omit service-specific defaults or flags.
+The **authoritative, up-to-date list of environment variables and defaults** lives in the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`). This architecture doc only highlights the most important knobs conceptually:
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` |
-| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` |
-| `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
-| `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` |
-| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` |
-| `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` |
-| `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` |
+- `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOWSECONDS` – control per-script quota windows used by `ScriptQuotaService`.
+- `AUTOMATION_TICK_DURATION_MS` / `AUTOMATION_TICK_MAX_EVENTS` / `AUTOMATION_TICK_BUDGET_MS` – bound how much automation work `ScriptTickService` performs per script tick.
+- `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – govern how long `script_event_audit` records remain available for troubleshooting.
 
-These variables map to Spring Boot properties `script.quota.limit`, `script.quota.windowSeconds`, `automation.tick-duration-ms`, `automation.tick-max-events`, and `automation.tick-budget-ms`.
-
-See the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md#environment-variables) for the full, up-to-date list of environment variables and default values.
+For exact defaults, additional flags, and any future additions, always refer to the service README.
 
 ---
 

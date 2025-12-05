@@ -38,6 +38,9 @@ class ScriptTickServiceImplTest {
     service =
         new ScriptTickServiceImpl(redisTemplate, meterRegistry, quotaService, conflictTracker);
     ((ScriptTickServiceImpl) service).init();
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickBudgetMs", 100L);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "minLockTtlMs", 500L);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "maxLockTtlMs", 5000L);
   }
 
   @Test

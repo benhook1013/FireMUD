@@ -28,6 +28,29 @@ This model ensures:
 
 ---
 
+## Region Authority and Tick Executor
+
+Tick regions are coordinated by a **single authoritative executor** at any point in time:
+
+- For each `{tenantId, regionId}` there is exactly one active tick executor (a Game Session Service instance / worker) that:
+  - Reads commands from `tick:{tenantId}:{regionId}:queue:*`, timers from `timer:{tenantId}:{regionId}`, and retries from `retry:{tenantId}:{regionId}`.
+  - Drives `tick:{tenantId}:{regionId}:pending` and the associated commit/rollback scripts.
+  - Issues tick-scoped gRPC calls to domain services (Entity Management, World Management, Social Groups, Automation, etc.).
+- Other workers may be running but **do not process ticks for that region** while the current executor holds the leadership lease described in the [Redis Architecture](./system-architecture-redis.md#region-leadership-and-tick-executor-lease).
+
+On crash or failover:
+
+- A new Game Session instance acquires the `tick-executor-lease:{tenantId}:{regionId}` key.
+- It inspects `tick:{tenantId}:{regionId}:pending`, `retry:{tenantId}:{regionId}`, and `timer:{tenantId}:{regionId}`.
+- It resumes tick processing using the existing idempotency rules (`tickId`, `last_tick_id`, `tick_effect_guard`) so replays are safe and partially-applied ticks can be completed or skipped deterministically.
+
+The **region boundary** is therefore the unit of atomicity and authority:
+
+- All tick locks, staging, timers, retry metadata, and session participation for a `{tenantId, regionId}` are owned by that region’s active executor.
+- No lock, Lua script, or tick context spans multiple regions. Cross-region flows are modeled as **messages between region executors**, not shared locks.
+
+---
+
 ## Distributed Locking
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
@@ -108,6 +131,115 @@ Ticks are **region-scoped**, not globally synchronized. Each **tick region** (ty
 > second) so queued timers, cooldowns, and delayed events progress even when no
 > players are present.
 > 🧠 Tick regions are mapped to Redis shards for atomicity and lock discipline.
+---
+
+## Region Sizing and Ownership
+
+Region boundaries are a primary tuning knob for scale and performance:
+
+- **Hot regions** (crowded areas or complex encounters) can be split into multiple regions to increase parallelism and reduce per-region tick load.
+- **Cold regions** (sparse or low-activity areas) can be merged to reduce overhead and free capacity.
+
+The World Management Service owns region topology:
+
+- Region layout and `{regionId}` assignments are defined from world geometry.
+- For most deployments, region changes are applied between game instances or maintenance windows so active sessions are not disrupted.
+- Longer term, dynamic partitioning may support:
+  - “Drain and split” flows where a region is marked for split, existing ticks are allowed to complete, and entities plus queues are moved under new `{tenantId, regionId}` prefixes before ticks resume.
+  - Similar “merge” flows to consolidate lightly used regions.
+
+Region **ownership** (which Game Session instance executes ticks for a region) is flexible:
+
+- A consistent-hashing or scheduler layer maps `{tenantId, regionId}` to Game Session instances.
+- The chosen executor acquires the `tick-executor-lease:{tenantId}:{regionId}` key in Redis and becomes the authoritative tick executor for that region.
+- To rebalance load:
+  - The current executor stops renewing the lease for selected regions and drains in-flight work to a safe boundary (for example, after the current pending tick commits or is recovered).
+  - Another instance acquires the lease and continues tick processing from the existing Redis state.
+
+This combination of configurable region size and movable ownership lets FireMUD scale horizontally:
+
+- **More regions** and **more Game Session instances** yield additional parallelism.
+- Regions can be re-assigned between instances to balance CPU and memory usage without requiring a global downtime.
+
+---
+
+## Per-Command Execution Phases
+
+Within a region’s tick, each **command** is treated as a small, idempotent workflow executed under that region’s authority. Conceptually, commands proceed through the following phases (not every command uses every phase):
+
+1. **Enqueue**
+   - The Game Session Service accepts commands from Telnet/WebSocket clients or automation.
+   - It enqueues them into per-entity or per-region queues in Redis (for example `tick:{tenantId}:{regionId}:queue:{entityId}`).
+
+2. **Target Resolution (read-only)**
+   - During the relevant tick, the executor computes the target set for the command using the pinned snapshot for that `{tenantId, regionId}`:
+     - Single-target actions resolve a specific entity or room.
+     - Multi-target actions (AoE, trades, group buffs) derive a bounded list of entity IDs from room occupancy, threat lists, or other region-local state.
+   - This phase is read-only from the perspective of durable state: it determines *what* the command intends to affect without yet mutating Redis or PostgreSQL.
+
+3. **Region-Local Mutations**
+   - For commands that affect only the origin region:
+     - The executor acquires the required entity locks (possibly multiple per command, in deterministic order) under `tick:{tenantId}:{regionId}:lock:{entityId}`.
+     - It stages and commits changes via the tick Lua scripts and gRPC calls to domain services, using `tickId` and effect-guard tables for idempotency.
+   - For cross-region commands:
+     - The origin region applies any purely local effects first (for example, local animations, partial buffs, or immediate messaging).
+     - It then enqueues follow-up commands into the target regions’ queues (for example under `remote:{tenantId}:{entityId}`) so remote executors can apply their parts in their own ticks. See [Cross-Region Command Execution and Result Relay](#📡-cross-region-command-execution-and-result-relay).
+
+4. **Completion / Finalization (optional)**
+   - Many commands do not require awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
+   - For rare commands that truly need **end-to-end completion semantics** (for example complex cross-region trades or scripted events), the origin region may act as a simple coordinator:
+     - Track success/failure responses from participating regions (for example via Redis keys or a small Postgres table keyed by `tenantId`, `regionId`, `tickId`, and a command identifier).
+     - Once all required regions have responded or timeouts elapse, apply a final status to the origin entity (success, partial, failure) and emit any final messages or follow-up commands.
+   - This coordination is optional and reserved for high-value flows; most combat and movement commands do not use it and instead rely on the normal cross-region relay mechanism.
+
+Each phase is designed to be **idempotent**:
+
+- Commands carry a `tickId` and effect keys so replays become safe no-ops in domain services.
+- Redis staging and commit scripts treat `tick:{tenantId}:{regionId}:pending` as “this tick may need to be (re)applied,” and domain services enforce idempotency at the database layer.
+- Retry paths (lock contention, timeouts, missing dependencies) reschedule commands without violating correctness.
+
+---
+
+### Example: Cross-Region Lifesteal Command
+
+To illustrate the phases for a multi-target, cross-region command, consider a **lifesteal spell** where a caster in region A damages a target in region B and heals based on a percentage of the target’s current HP:
+
+1. **Enqueue**
+   - The caster issues a `LIFESTEAL <target>` command from a room in `{tenantId, regionA}`.
+   - The origin executor enqueues the command under the caster’s queue key in Redis.
+
+2. **Target Resolution (origin region, read-only)**
+   - During the next tick for `{tenantId, regionA}`, the executor:
+     - Resolves which remote entity (in `{tenantId, regionB}`) is the intended target.
+     - Validates that a cross-region action is allowed (line of sight, range, permissions) using the pinned snapshot and metadata.
+   - No HP or inventory state is mutated yet; this phase only determines the target and the target region.
+
+3. **Region-Local Mutations (target region)**
+   - The origin region enqueues a follow-up “apply lifesteal damage” command into `{tenantId, regionB}` (for example via `remote:{tenantId}:{targetEntityId}`).
+   - In the next tick for `{tenantId, regionB}`, the target region’s executor:
+     - Computes the damage amount as a percentage of the target’s authoritative current HP.
+     - Acquires the target’s lock (`tick:{tenantId}:{regionB}:lock:{targetEntityId}`) and applies damage via Entity Management using the normal tick idempotency rules.
+     - Emits a result event back to `{tenantId, regionA}` containing `casterEntityId` and the actual `damageApplied`.
+
+4. **Region-Local Mutations (origin region heal)**
+   - When the origin region receives the lifesteal result, it:
+     - Enqueues a local “apply lifesteal heal” command for `{tenantId, regionA}`.
+   - In a subsequent tick, the origin executor:
+     - Acquires the caster’s lock.
+     - Applies a heal up to `damageApplied` (subject to its own HP rules) using Entity Management and tick idempotency.
+
+5. **Completion / Finalization (optional)**
+   - The origin region may:
+     - Immediately show “You cast Lifesteal…” when the initial command is accepted.
+     - Show damage and heal messages as the remote and local legs complete.
+   - If a stricter “all-or-nothing” semantics is required for a specific spell, the origin region can track whether both the damage and heal legs have reported success and then apply a final status (for example, marking the spell as fully resolved or partially failed), but most combat flows do not require this extra coordination.
+
+Throughout this sequence:
+
+- Each leg is idempotent and keyed by `tickId` / effect keys in the domain services.
+- Region executors never hold cross-region locks; they only coordinate via queued commands and result events.
+- Retries (for example due to lock contention or transient failures) are handled by the existing retry queues and idempotent handlers in each region.
+
 ---
 
 ## Tick Execution Flow

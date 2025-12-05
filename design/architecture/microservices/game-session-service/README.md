@@ -69,6 +69,15 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Commands with `requiresSoloTick: true` are dequeued into an isolated tick so expensive operations like runtime procedural generation do not share time with normal actions.
 - After execution, results are persisted and broadcast to connected clients.
 
+The Game Session Service acts as the **authoritative tick executor** for each `{tenantId, regionId}` it owns:
+
+- It participates in region leadership using the Redis lease key `tick-executor-lease:{tenantId}:{regionId}` described in the [Redis Architecture](../../system-architecture-redis.md#region-leadership-and-tick-executor-lease).
+- While it holds the lease for a region, it is the only instance allowed to:
+  - Consume commands from that region’s queues and timers.
+  - Drive `tick:{tenantId}:{regionId}:pending` and commit/rollback flow.
+  - Issue tick-scoped gRPC calls on behalf of that region’s commands.
+- On crash or deliberate handoff, another instance acquires the lease and resumes tick processing from Redis using the idempotent `tickId` and effect-guard rules from the Tick System design.
+
 ### gRPC APIs
 
 - `Ping` – basic connectivity check.
@@ -97,6 +106,13 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+
+### Scaling and Region Rebalancing
+
+- Region-to-instance mapping is flexible and driven by a scheduler or consistent-hashing layer that assigns `{tenantId, regionId}` values to Game Session instances.
+- To scale out, operators add more Game Session pods and allow the scheduler to assign regions to new instances; each instance acquires leases for its assigned regions.
+- To rebalance load, an instance can stop renewing the lease for selected regions and drain in-flight work to a safe point; other instances then acquire those leases and continue tick processing from the existing Redis state.
+- Combined with region sizing (splitting hot regions and merging cold ones), this lease-based ownership model allows FireMUD to scale horizontally without global downtime.
 
 ## Dev-isolated Mode
 
@@ -403,7 +419,14 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 
 ### Redis Keys
 
-Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. Tick queues, locks and pending sets use the same prefix. Keys are removed when a session stops.
+Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
+
+Tick coordination is **region-scoped**, not session-scoped. Tick queues, locks, timers, retry metadata, and the `tick:{tenantId}:{regionId}:pending` key use the `tick:{tenantId}:{regionId}:...` prefix described in the [Redis Architecture](../../system-architecture-redis.md#tick-integration-resilience-locking-staging). Region keys follow region lifecycle and crash-recovery rules:
+
+- `tick:{tenantId}:{regionId}:pending` is created **without a TTL** so it survives process crashes and failover.
+- It is cleared only when the tick is successfully committed or an operator-driven recovery flow explicitly marks the tick as skipped/failed and removes the key.
+
+Session shutdown therefore cleans up **session** keys, but **does not** implicitly delete region-level tick coordination keys.
 
 - [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)

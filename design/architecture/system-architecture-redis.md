@@ -143,6 +143,25 @@ Tenant and identifier rules:
 > 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
 
+### Region Leadership and Tick Executor Lease
+
+Each `{tenantId, regionId}` is owned by a **single authoritative tick executor** at any point in time. Leadership is coordinated via a lightweight lease key:
+
+- `tick-executor-lease:{tenantId}:{regionId}` – stores the current executor identity (for example a `nodeId` or `instanceId`) and an expiry.
+
+The lease is acquired and renewed using `SET NX PX lease_ttl_ms`:
+
+- Only the holder of a valid lease may:
+  - Consume commands from region queues.
+  - Drive `tick:{tenantId}:{regionId}:pending` and commit/rollback flow.
+  - Update region timers (`timer:{tenantId}:{regionId}`) and retry queues (`retry:{tenantId}:{regionId}`).
+- The active executor periodically refreshes the lease as long as it remains healthy.
+- If the lease expires or is deliberately allowed to lapse:
+  - Other Game Session instances may compete to acquire the lease.
+  - The new leader resumes tick processing for `{tenantId, regionId}` using the existing Redis state (`pending`, queues, timers, retry metadata) and the idempotency rules described in the Tick System design.
+
+This lease acts as the **macro-level lock** for a region: it prevents multiple executors from driving ticks concurrently for the same `{tenantId, regionId}` while still allowing fast failover and rebalancing. Fine-grained entity locks (`tick:{tenantId}:{regionId}:lock:{entityId}`) are used *within* a leader to coordinate per-command work and crash recovery; they do not replace the leadership lease.
+
 ### Hash Tags and Redis Cluster Slotting
 
 FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. Tick-related keys (locks, queues, pending state, retries, timers) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
