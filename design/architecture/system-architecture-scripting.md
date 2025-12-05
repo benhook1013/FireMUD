@@ -21,7 +21,7 @@ This document describes the **target-state architecture** for scripting and auto
 - **Planned or partially implemented**
   - Copying published version data into the Automation & Scripting Service schema via Saga, and broader script-driven world generation flows (runtime generation requests via isolated ticks, generation seed persistence, and script-driven population triggers).
   - Expansion of the PvE encounter library, biome-specific events, and world generation features called out in the Automation & Scripting Service and world generation task lists.
-  - Scheduler leadership leases, per-region tick-stream consumption, and long-term audit retention are designed here; operators should verify concrete key names, metrics, and retention jobs against the current Automation & Scripting Service implementation and operations runbooks.
+  - Scheduler leadership leases, per-region tick-stream consumption, and long-term audit retention are designed here; see [Scheduler Leadership & Coordination](#scheduler-leadership--coordination) for scripting-specific lease keys (for example, `script-leader:{tenantId}`) and [Redis Architecture – Region Leadership and Tick Executor Lease](./system-architecture-redis.md#region-leadership-and-tick-executor-lease) for the underlying tick leadership model. Operators should verify concrete key names, metrics, and retention jobs against the current Automation & Scripting Service implementation and operations runbooks.
 
 Maintainers should update this section whenever major scripting features land or significant architecture pieces change so it remains a reliable guide to what is live versus aspirational.
 
@@ -240,6 +240,18 @@ The table below summarizes **which outcomes are retried** and which are treated 
 | `infrastructure_error` (e.g., gRPC `UNAVAILABLE`, `DEADLINE_EXCEEDED`, transient Redis timeout) | Network hiccups, temporary downstream unavailability | **May be retried** according to platform retry policy (bounded attempts, backoff, and idempotent downstream handlers) |
 | `INVALID_ARGUMENT` / `PERMISSION_DENIED` / other client or policy errors | Callers sent bad data or lack permission | No retry; callers must correct inputs or permissions |
 
+**Outcome-to-metric mapping**
+
+Common outcomes are surfaced in metrics as follows (labels such as `tenantId`, `scriptId`, and `eventType` are omitted here for brevity):
+
+- `success` → `automation_script_triggers_total{outcome="success"}` and, when commands are enqueued, `automation_tick_events_enqueued_total`.
+- `quota_denied` → `script_quota_denied_total` and `automation_script_triggers_dropped_total{reason="quota"}`.
+- `sandbox_error` → `automation_script_triggers_total{outcome="sandbox_error"}` and may contribute to `automation_script_triggers_dropped_total{reason="sandbox_error"}` depending on whether commands were enqueued before failure.
+- `validation_error` → `automation_script_triggers_total{outcome="validation_error"}`.
+- `disabled_due_to_errors` → `automation_script_skips_total{reason="disabled_due_to_errors"}` and `automation_script_triggers_dropped_total{reason="disabled_due_to_errors"}`.
+- `version_unavailable` / `skipped_version_unavailable` → `automation_script_triggers_dropped_total{reason="version_unavailable"}`.
+- `infrastructure_error` → `automation_script_triggers_total{outcome="infrastructure_error"}` and, when retries are exhausted, may also increment `automation_script_triggers_dropped_total{reason="infrastructure_error"}`.
+
 ## Integration with Game Logic & Tick System
 
 - **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and enqueues the resulting commands into each entity's command queue.
@@ -405,6 +417,7 @@ scripts and ensure fair resource usage:
 - Administrators may disable or throttle problematic scripts via the Game Design
   Service, which updates definitions and triggers hot reloads in the Automation &
   Scripting Service.
+ - These quota and throttling controls work **in combination with** the failure-rate circuit breaker described under [Failure Modes and Error Handling](#failure-modes-and-error-handling), which can automatically place misbehaving scripts into a `disabled_due_to_errors` state when error rates exceed configured thresholds.
 
 #### Operational Disable / Throttle Flows
 
