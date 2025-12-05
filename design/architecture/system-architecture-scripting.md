@@ -2,6 +2,12 @@
 
 This document outlines how FireMUD executes custom in-game behavior through a sandboxed scripting framework. It complements the [Automation & Scripting Service](./microservices/automation-scripting-service/README.md) and expands on the extensibility goals in the [core requirements](../project-management/core-requirements.md).
 
+## Terminology Glossary
+
+- **Game tick** – a region-scoped tick in the Game Session Service. Each `{tenantId, regionId}` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantId}:{regionId}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
+- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains `automation_queue:{tenantId}:{entityId}` events, stages them under `automation:tick:{tenantId}:{scriptId}:...`, and enqueues resulting commands into per-entity queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Tick heartbeat** – the event stream produced by the Game Session Service that reports `tickId` progression per `{tenantId, regionId}`. The script scheduler consumes this heartbeat to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself.
+
 ## Implementation Status
 
 This document describes the **target-state architecture** for scripting and automation. The implementation is evolving toward this design; this section captures a snapshot as of 2025-12-04. For the most accurate, fine-grained status, refer to the [Automation & Scripting Service Task List](../project-management/task-list-automation-scripting-service.md).
@@ -206,6 +212,19 @@ Refer to the Automation & Scripting Service README for implementation details.
 - To guard against **repeated hot-loop failures**, the scheduler combines per-script quotas, concurrency limits, and a **failure-rate circuit breaker**. Scripts that exceed a configurable failure threshold within a time window are temporarily placed into a `disabled_due_to_errors` state: new triggers are skipped, failures are counted, and an audit entry is written so administrators can review and re-enable the script via the Game Design or Logging & Admin tools.
 - Quota enforcement (`ScriptQuotaService`) runs **before** script execution; a script that misbehaves by emitting too many triggers is constrained by its quota window and `concurrencyPolicy`. Even if the logic always throws, it cannot exceed its configured execution rate, and the combination of quotas plus the circuit breaker prevents runaway resource usage.
 
+The table below summarizes **which outcomes are retried** and which are treated as final for a given trigger:
+
+| Outcome / error class | Typical source | Scheduler retry behavior |
+| --- | --- | --- |
+| `success` | Script ran and enqueued commands | No retry (completed) |
+| `quota_denied` | `ScriptQuotaService` limit exceeded before execution | No retry for this trigger; future triggers may succeed when quota window resets |
+| `sandbox_error` | Exception in sandboxed DSL runtime, validation failure, rejected operation | No retry; recorded as a failure, may contribute to circuit breaker and `disabled_due_to_errors` |
+| `validation_error` | Static validation on inputs or script config fails | No retry; treat as a permanent failure until configuration changes |
+| `disabled_due_to_errors` | Circuit breaker opened for the script | No retry while disabled; new triggers are skipped until operators re-enable the script |
+| `version_unavailable` / `skipped_version_unavailable` | Trigger references a scriptPatchVersion that failed reload or is unknown | No retry; audit and metrics record the drop so design/ops can fix the version mapping |
+| `infrastructure_error` (e.g., gRPC `UNAVAILABLE`, `DEADLINE_EXCEEDED`, transient Redis timeout) | Network hiccups, temporary downstream unavailability | **May be retried** according to platform retry policy (bounded attempts, backoff, and idempotent downstream handlers) |
+| `INVALID_ARGUMENT` / `PERMISSION_DENIED` / other client or policy errors | Callers sent bad data or lack permission | No retry; callers must correct inputs or permissions |
+
 ## Integration with Game Logic & Tick System
 
 - **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and enqueues the resulting commands into each entity's command queue.
@@ -213,7 +232,12 @@ Refer to the Automation & Scripting Service README for implementation details.
 - Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
 - Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
-- **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses `tick:{tenantId}:{regionId}:lock:{scriptId}` to ensure only one script tick for a given region runs at a time. These **script locks are separate from the entity locks** (`tick:{tenantId}:{regionId}:lock:{entityId}`) managed by the Game Session Service; script ticks never bypass entity-level locking or tick isolation and only inject work that the normal tick pipeline will process. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed.
+- **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses a **per-script automation tick namespace**:
+  - `automation:tick:{tenantId}:{scriptId}:lock`
+  - `automation:tick:{tenantId}:{scriptId}:queue`
+  - `automation:tick:{tenantId}:{scriptId}:pending`
+
+  Keys within this namespace share a hash tag on `{tenantId}:{scriptId}` so multi-key Lua operations remain shard-local in Redis Cluster. These automation tick locks are **separate from the game tick locks** (`tick:{tenantId}:{regionId}:lock:{entityId}`) managed by the Game Session Service. Script ticks never bypass entity-level locking or tick isolation; they only batch and stage automation events before handing them to the normal tick pipeline. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed once they enter the per-entity command queues.
 
 ### Idempotency and Replay
 
@@ -243,6 +267,26 @@ To make this stream resumable across leadership changes, the scheduler stores th
 Multiple leaders may exist for multi-tenant isolation (one leader per tenant shard or script group). Each script’s metadata stores scheduling rules, concurrency policy, and type tags (e.g., `npc-behavior`, `world-background`, `maintenance`). The leader uses this metadata plus observed tick counts, `lastTickId` state, and available quotas to decide when to enqueue the next execution.
 
 Automation-specific keys such as `script-leader:{tenantId}` and `script-scheduler:{tenantId}:{regionId}:lastTickId` follow the same naming and hash-tagging conventions described in [Redis Architecture – Key Naming and Shard Discipline](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline). For a full catalog of tick and lock keys, see [Redis Architecture – Key Format Examples](./system-architecture-redis.md#key-format-examples); this document only calls out the scripting-specific keys used by the scheduler.
+
+### Leadership Scope and Failure Semantics
+
+- **Leadership scope**
+  - By default, leadership is **one-per-tenant**: a single `script-leader:{tenantId}` key elects the Automation & Scripting Service instance responsible for that tenant’s automation workload across all regions.
+  - Larger deployments may introduce sharding (for example, `script-leader:{tenantId}:{shardId}` or script-group–specific leases) so multiple leaders can coordinate independent subsets of a tenant’s scripts. When sharding is enabled, each shard’s leader still obeys the same lease and heartbeat rules described above; the mapping from `{tenantId, regionId}` to `{tenantId, shardId}` is defined in configuration and documented alongside the multi-tenancy design.
+
+- **Heartbeat loss vs Redis availability**
+  - If a leader loses access to the tick heartbeat stream (for example, due to network partition or Game Session unavailability) but can still reach Redis, it treats the tick timeline as **unreliable**:
+    - `onInterval` and other cadence-based triggers pause for the affected `{tenantId, regionId}` entries rather than extrapolating tick counts locally.
+    - One-off event-driven triggers that do not depend on tick cadence may continue to run if safe and configured to do so, but the recommended default is to bias toward pausing automation rather than drifting away from the canonical tick stream.
+  - Leaders log structured warnings and emit metrics (for example `automation_script_leadership_changes_total` and a heartbeat health gauge) so operators can detect and remediate heartbeat issues.
+
+- **Reload windows and RELOADING state**
+  - During a script reload for `{tenantId, pendingPatchVersion}`, leaders set `reloadState=RELOADING` and **pause new triggers** for that tenant’s scripts until the new definitions are loaded and validated.
+  - Reloads are expected to be **short-lived** (on the order of seconds). A configurable threshold (for example `SCRIPT_RELOAD_MAX_PAUSE_SECONDS`) defines how long automation may remain paused in `RELOADING` before warnings and alerts fire.
+  - While in `RELOADING`:
+    - In-flight script executions are allowed to finish.
+    - New triggers for affected scripts are queued or skipped according to policy, but no script runs against a partially-loaded definition.
+    - Gameplay correctness remains governed by the tick system; the impact of extended reloads is increased latency or gaps in automation, not inconsistent authoritative state.
 
 ## Per-Script Scheduling Policies
 

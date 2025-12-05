@@ -66,6 +66,11 @@ interaction.
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
 - `automation_queue` keys in Redis buffer triggered events until a script runs.
+- Internal automation tick staging uses a dedicated namespace:
+  - `automation:tick:{tenantId}:{scriptId}:queue` – per-script queue of events being staged into tick-compatible commands.
+  - `automation:tick:{tenantId}:{scriptId}:pending` – per-script pending list of events currently being applied.
+  - `automation:tick:{tenantId}:{scriptId}:lock` – per-script lock ensuring only one automation tick for a `(tenantId, scriptId)` pair runs at a time.
+  These keys are separate from the game tick keys (`tick:{tenantId}:{regionId}:...`) used by the Game Session Service and are only touched by the Automation & Scripting Service’s own Lua scripts.
 - `automation_queue_enqueued_total` and `automation_queue_drained_total` metrics
   track Redis queue activity.
 - The staging Lua script processes only a limited number of events each tick

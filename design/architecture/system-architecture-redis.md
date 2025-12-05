@@ -137,6 +137,7 @@ Tenant and identifier rules:
 | `retry:{tenantId}:{regionId}` | Retry queue for failed actions |
 | `timer:{tenantId}:{regionId}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata |
 | `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
+| `automation:tick:{tenantId}:{scriptId}:lock` / `queue` / `pending` | Per-script automation tick locks and staging (Automation & Scripting Service) |
 
 > 🔗 `remote:{tenantId}:{entityId}` keys route cross-region commands. See [Cross-Region Command Execution and Result Relay](./system-architecture-ticks.md#📡-cross-region-command-execution-and-result-relay)
 > for details.
