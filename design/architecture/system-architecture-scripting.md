@@ -40,7 +40,7 @@ At a high level, scripting follows this pipeline:
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `{tenantId, eventType}` and applies per-script and per-tenant limits via `ScriptQuotaService`.
 3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – Commands are enqueued into Redis-backed automation queues keyed by tenant and entity/region, along with `scriptEventId`, `scriptId`, and version metadata.
+4. **Automation queue staging** – Commands are enqueued into Redis-backed automation queues under keys such as `automation_queue:{tenantId}:{entityId}`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity; region-scoped tick keys remain the responsibility of the Game Session Service.
 5. **Script ticks & commit** – `ScriptTickService` batches automation events into tick-compatible queues with quotas and budgets, using Redis Lua scripts for atomic staging and commit.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
@@ -83,7 +83,7 @@ This section walks through a typical happy-path flow where an NPC script reacts 
    - Instead of mutating game state directly, action nodes produce a set of **domain commands** (for example, “NPC says a line,” “NPC targets the player,” “schedule a follow-up patrol timer”) that describe what should happen in the game world.
 
 4. **Command enqueue into tick-compatible queues**
-   - The Automation & Scripting Service batches the resulting commands and enqueues them into Redis-backed automation queues keyed by `tenantId` and `regionId`. A staging script then merges these commands into the same per-entity command queues used by the Game Session Service, preserving FIFO order and the invariant of at most one command per entity per tick as described in the [Tick System and Runtime Design](./system-architecture-ticks.md).
+   - The Automation & Scripting Service batches the resulting commands and enqueues them into Redis-backed automation queues such as `automation_queue:{tenantId}:{entityId}`. A staging script then merges these commands into the same per-entity command queues used by the Game Session Service, preserving FIFO order and the invariant of at most one command per entity per tick as described in the [Tick System and Runtime Design](./system-architecture-ticks.md).
    - Each enqueued command carries the originating `scriptEventId`, `scriptId`, and version metadata so downstream logs, metrics, and audits can correlate behavior to the script that produced it.
 
 5. **Tick execution and world updates**
@@ -91,7 +91,7 @@ This section walks through a typical happy-path flow where an NPC script reacts 
    - The NPC’s script-produced command runs alongside player commands with the same fairness guarantees: if the tick budget is reached or locks are contended, the command is deferred or retried according to the logic in the tick architecture.
 
 6. **Audit trail and metrics**
-   - For each trigger, the Automation & Scripting Service emits an audit record into the `script_event_audit` stream or table, recording fields such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, `versionId`, and an outcome (`allowed`, `denied_quota`, `skipped_disabled`, etc.). Retention is controlled by `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS`.
+   - For each trigger, the Automation & Scripting Service emits an audit record into the `script_event_audit` store; in the target architecture this is a **PostgreSQL table** managed by the Automation & Scripting Service. Each record captures fields such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, `versionId`, and an outcome (`allowed`, `denied_quota`, `skipped_disabled`, etc.). Retention is controlled by `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` as described in the Automation & Scripting Service README.
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow so operators can monitor how often `onEnterRegion` scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. These metrics integrate with the broader logging and monitoring strategy described in [System Architecture: Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ## Example: Periodic Patrol via `onInterval`
@@ -212,13 +212,14 @@ Refer to the Automation & Scripting Service README for implementation details.
 
 ## Sandboxing & Security
 
-- Script execution occurs in a **sandbox** with restricted APIs and resource limits.
-- Components interact with the **Game Logic Service** through validated gRPC calls.
-- The service enforces **per-script quotas** via `ScriptQuotaService`. **CPU and memory limits** are enforced automatically.
+- Script execution occurs in a **sandbox** with restricted APIs and resource limits. High-level behavior is described here; see [Script Sandbox & Resource Limits](./microservices/automation-scripting-service/sandbox-runtime-design.md) for a detailed model.
+- Components interact with the **Game Logic Service** and other backends only through validated gRPC calls; scripts never call arbitrary services directly.
+- The sandbox **prohibits direct access** to networking primitives, filesystems, blocking system calls, and process-wide time sources. Scripts see only curated DTOs, a seeded RNG, and tick-derived time as described in [Determinism & Allowed Non-Determinism](#determinism--allowed-non-determinism).
+- The service enforces **per-script quotas** via `ScriptQuotaService`, and CPU/memory limits are enforced via the sandbox runtime and Kubernetes resource limits, as detailed in the sandbox runtime design.
 
 ### Failure Modes and Error Handling
 
-- Each script run produces a **structured outcome** such as `success`, `quota_denied`, `sandbox_error`, or `infrastructure_error`. Outcomes are written to the `script_event_audit` stream/table and exposed via metrics (see **Auditability & Metrics**) so operators can correlate failures with specific `scriptId`, `tenantId`, and `tickId`.
+- Each script run produces a **structured outcome** such as `success`, `quota_denied`, `sandbox_error`, or `infrastructure_error`. Outcomes are written to the `script_event_audit` table and exposed via metrics (see **Auditability & Metrics**) so operators can correlate failures with specific `scriptId`, `tenantId`, and `tickId`.
 - By default, **failures are surfaced through logs and metrics**, not detailed player-visible stack traces. Players typically experience a missing or degraded behavior (for example, an NPC does not respond) unless the script deliberately enqueues a fallback command that emits a message through the Game Logic Service.
 - Script executions are treated as **at-most-once per trigger**. If a handler fails due to a sandbox or validation error, the scheduler records the failure and moves on; it does not automatically retry the same script invocation to avoid hot loops and duplicate side effects. Infrastructure-level issues (for example, transient gRPC or Redis errors) follow the platform’s standard retry policies, but those retries are bounded and still respect idempotency rules in downstream services.
 - To guard against **repeated hot-loop failures**, the scheduler combines per-script quotas, concurrency limits, and a **failure-rate circuit breaker**. Scripts that exceed a configurable failure threshold within a time window are temporarily placed into a `disabled_due_to_errors` state: new triggers are skipped, failures are counted, and an audit entry is written so administrators can review and re-enable the script via the Game Design or Logging & Admin tools.
@@ -324,7 +325,7 @@ Together, these **per-script**, **per-tenant**, and **cluster-wide** caps form a
 
 ## Auditability & Metrics
 
-Every scheduler decision emits an audit record (stored in a lightweight `script_event_audit` table or Redis stream) containing `(scriptEventId, scriptId, tickId, versionId, outcome, latency)`. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across logs, metrics, and traces. Metrics include:
+Every scheduler decision emits an audit record (stored in a lightweight `script_event_audit` table in PostgreSQL) containing `(scriptEventId, scriptId, tickId, versionId, outcome, latency)`. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across logs, metrics, and traces. Metrics include:
 
 - **Scheduler metrics** – `automation_script_triggers_total`, `automation_script_skips_total` (broken out by policy), `automation_script_queue_delay_seconds` for queued triggers waiting on concurrency limits, `automation_script_leadership_changes_total` to monitor failovers, and `automation_script_triggers_dropped_total` to capture quota/queue drops so operators can tune `ScriptQuotaService` windows.
 - **Quota metrics** – `script_quota_allowed_total` and `script_quota_denied_total` (shared with the Automation & Scripting Service README) track per-script quota decisions in a consistent way across documentation and implementations.
@@ -371,7 +372,7 @@ This behavior makes reload outcomes predictable: scripts either continue to run 
 
 - Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is supported.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
-- Script-only patches create a `scriptPatchVersion` tied to a `baseVersionId` so new behaviors can be loaded on the fly. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
+- Script-only patches create a `scriptPatchVersion` (the logical/API name) tied to a `baseVersionId` so new behaviors can be loaded on the fly. In the Game Session Service database this is persisted as `script_patch_version`. See [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
 - The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to reload updated scripts via `ScriptVersionService` without downtime.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
@@ -397,7 +398,7 @@ scripts and ensure fair resource usage:
 - **Disable now (hard stop)** – When an administrator marks a script as disabled in the Game Design or Logging & Admin tools, the Automation & Scripting Service flips a `runtimeStatus=DISABLED` flag in script metadata. The scheduler stops accepting **new triggers** for that script immediately (treating them as `skipped_disabled` in audit records), but does not preempt in-flight runs; they are allowed to complete under existing quotas.
 - **Soft-disable after current run** – For scripts that should drain gracefully, administrators can set `runtimeStatus=DISABLE_AFTER_DRAIN`. The scheduler continues to run any currently queued triggers up to a small grace window, then transitions the script to `DISABLED` once its active and queued counts reach zero. Subsequent triggers are skipped and logged as `skipped_disabled`.
 - **Throttling** – Throttling is modeled as a temporary adjustment of per-script and per-tenant budgets rather than a separate toggle. Operators can reduce `SCRIPT_QUOTA_LIMIT`, increase `intervalTicks`, or change `priorityTag` to `background`; the scheduler immediately applies the new configuration when evaluating triggers. In addition, the failure-rate circuit breaker may place a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, which behaves like a hard disable until an administrator explicitly clears the status.
-- All disable/enable and throttle actions are **idempotent** and recorded in the `script_event_audit` feed with the acting principal (where available), so operators can trace when and why a script stopped executing.
+- All disable/enable and throttle actions are **idempotent** and recorded in the `script_event_audit` table/feed with the acting principal (where available), so operators can trace when and why a script stopped executing.
 
 ### Environment Variables
 
