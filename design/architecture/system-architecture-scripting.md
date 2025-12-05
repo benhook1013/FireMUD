@@ -142,6 +142,18 @@ Before a script is accepted, the Automation & Scripting Service runs a **loop sa
 - A loop is considered **safe** only if the SCC contains at least one **bounded guard node**, such as a `Counter` node with a finite `maxIterations`. Loops without such a guard are rejected at validation time with a descriptive error that points to the participating nodes and is surfaced in the Game Design Service UI so designers see exactly which connections must change before the script can be published.
 - In addition to static checks, the runtime enforces a **per-run iteration budget**. If a bug or future change allows an unsafe loop to slip through static analysis, the engine aborts the run with a `sandbox_error` (for example, `reason=iteration_budget_exceeded`) before it can spin indefinitely. See `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` for details on runtime safeguards.
 
+### Determinism & Allowed Non-Determinism
+
+Scripts are designed to be **deterministic under replay** for a given game configuration and event. The Automation & Scripting Service enforces this by constraining how randomness and time are exposed to DSL components:
+
+- All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `{tenantId, regionId, scriptId, scriptEventId, tickId, scriptPatchVersion}` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
+- **Wall-clock time is not exposed** to scripts. DSL components see only **derived game time** sourced from the tick and session model (for example, `tickId`, region-local “world time” counters, or effect durations computed by Game Logic). This ensures that replaying the same tick timeline yields the same time values from the script’s perspective, independent of real-world clock drift.
+- Any component that introduces variability must either:
+  - be implemented in terms of the seeded RNG and tick-based time described above, or
+  - be explicitly documented as **non-replayable** and confined to side channels such as logging and metrics where non-determinism does not affect gameplay state or authoritative decisions.
+
+Under these rules, the combination of `{tenantId, regionId, scriptId, scriptEventId, tickId, scriptPatchVersion}` fully determines the observable behavior of a script run that contributes commands to the tick system. This aligns script behavior with the determinism guarantees of the underlying tick and transaction architecture.
+
 ### Component Versioning and Backwards Compatibility
 
 - Each DSL component (node type) is versioned independently, for example `HealthCheck@v1`, `HealthCheck@v2`. Published scripts reference both the component key and its version so the Automation & Scripting Service can load the correct behavior for a given `scriptPatchVersion`.

@@ -41,6 +41,18 @@ The **Game Session Service** is responsible for coordinating tick and session be
 
 Redis is a **non-persistent** layer — but FireMUD treats it as **essential** for consistent multiplayer behavior. Availability and deterministic, idempotent recovery are prioritized rather than strict exactly-once semantics.
 
+### Network Security and Access Control
+
+Redis is treated as an **internal infrastructure component**, not a public-facing service:
+
+- Cluster nodes are deployed on **private networks** and exposed only inside the Kubernetes cluster or VPC. There is no direct Internet access to Redis.
+- Application access is restricted to trusted FireMUD services. No front-end client, browser, or untrusted component communicates with Redis directly; all access flows through authenticated, authorized backend services.
+- Production deployments enable:
+  - Authentication using Redis passwords or ACL users, stored as Kubernetes Secrets and injected via environment variables or configuration files.
+  - TLS encryption between application pods and Redis, following the same certificate and key rotation practices described in [System Architecture: Security](./system-architecture-security.md).
+
+Operational runbooks and Helm charts document the exact `requirepass`/ACL/TLS configuration per environment. Development profiles may relax some of these settings (for example, plaintext on localhost) but must never expose Redis outside the developer’s machine or bypass authentication on shared environments.
+
 ### Cluster Deployment
 
 FireMUD runs Redis in a **clustered, replicated configuration**:
@@ -126,6 +138,12 @@ Tenant and identifier rules:
 - `tenantId` and other identifier components used in keys are sanitized and drawn from stable identifiers (for example numeric IDs or UUIDs), not raw user-provided strings.
 - Human-readable values such as character names or room titles are never embedded directly into Redis keys; they are stored in PostgreSQL and referenced by IDs in Redis to keep keys short, stable, and free from unexpected characters.
 
+These conventions provide **logical tenant isolation** at the keyspace level. Even when multiple tenants share the same Redis cluster:
+
+- Every coordination and cache key is namespaced by `tenantId`, and many by both `tenantId` and `regionId`.
+- Operational tooling, dashboards, and runbooks use these prefixes when inspecting or modifying Redis state so actions are scoped to the intended tenant and region.
+- Services never expose raw Redis keys or provide “arbitrary command” capabilities to end users or external systems; all access goes through well-defined APIs that interpret and manipulate keys on behalf of tenants.
+
 ### Key Format Examples
 
 | Redis Key | Description |
@@ -205,11 +223,37 @@ All Lua scripts are:
 - **Shard-local**
 - **Retry-safe**
 - Designed to avoid cross-tick contamination
-- Loaded at startup and invoked via `EVALSHA` (or an equivalent pre-loading mechanism) rather than raw `EVAL` on every call, so scripts run by SHA fingerprint and avoid unnecessary parsing overhead at runtime.
 
 Tick-related multi-key operations **must not** be implemented as ad-hoc sequences of plain Redis commands outside these scripts. All staging, commit, rollback, and lock manipulation that touches multiple tick keys (locks, `pending`, queues, timers, or retry metadata) is performed exclusively via the Lua scripts in `services/game-session-service/src/main/resources/redis/` so transactional behavior remains consistent and replay-safe.
 
 > 🔗 For use during tick execution, see [Distributed Locking](./system-architecture-ticks.md#🔐-distributed-locking)
+
+### Script Loading, `EVALSHA`, and Failover Behavior
+
+Lua scripts are loaded and invoked using a **SHA-first** approach:
+
+- On service startup, the Game Session Service:
+  - Loads all Lua scripts into Redis using `SCRIPT LOAD` on a per-node basis.
+  - Caches the resulting SHA fingerprints in memory, keyed by a logical script identifier.
+- At runtime, scripts are invoked via `EVALSHA` with the appropriate SHA and `KEYS`/`ARGV` lists instead of raw `EVAL` calls, avoiding repeated parsing overhead and keeping multi-key operations aligned with the hash-tag rules described in [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
+
+Redis Cluster does **not** guarantee that loaded scripts survive `SCRIPT FLUSH`, upgrades, or some failover events. The client logic therefore treats `NOSCRIPT` as a normal runtime condition:
+
+- If `EVALSHA` returns a `NOSCRIPT` error on a given node:
+  - The Game Session Service reloads the script on that node using `SCRIPT LOAD`.
+  - It updates the cached SHA for that script if Redis reports a new fingerprint.
+  - It immediately retries the call using `EVALSHA` with the refreshed SHA value.
+- All tick-related script helpers:
+  - Encapsulate this `NOSCRIPT` handling so callers do not need to implement retries themselves.
+  - Ensure that the **first key argument** for each script is a tick key whose hash tag (`{tenantId}:{regionId}`) matches all other keys in the call, so Redis Cluster routes the script to the correct slot.
+
+If a script repeatedly fails to reload or `NOSCRIPT` errors persist beyond a short, configurable retry window, the Game Session Service:
+
+- Logs a structured error with script name, region, and tenant context.
+- Emits a metric such as `redis.lua.script_load_failures` for alerting.
+- Treats the affected tick region as **degraded** until the underlying Redis issue is resolved.
+
+This loading and retry behavior ensures that transient `SCRIPT FLUSH` events or node failovers do not permanently break tick processing while still surfacing persistent misconfiguration or Redis instability to operators.
 
 ### Lua Script Complexity and Runtime Guidelines
 
@@ -246,6 +290,29 @@ Tick locks use a TTL derived from the region’s soft tick budget to balance saf
 - Configuration rules:
   - Operators may adjust `tick_budget_ms`, `MIN_LOCK_TTL_MS`, and `MAX_LOCK_TTL_MS` via configuration, but the Game Session Service **always applies the clamp** to avoid accidentally tiny or excessively long lock durations.
   - A lock TTL must never exceed the maximum region-level recovery window defined in the Tick System design; if configuration attempts to raise it further, the Game Session Service caps it at `MAX_LOCK_TTL_MS` and logs a warning.
+
+**Runtime validation and observability**
+
+The safety of this TTL formula depends on how long **end-to-end tick work** takes under load, including:
+
+- Redis script runtime.
+- Downstream PostgreSQL transactions.
+- Cross-service gRPC calls made during a tick.
+- Occasional JVM pauses (GC, safepoints) on the Game Session Service.
+
+To make sure locks do not routinely expire while legitimate work is still in flight, FireMUD enforces the following validation and monitoring practices:
+
+- Load and stress tests measure the distribution of tick execution time (from lock acquisition through final commit) and confirm that:
+  - The **p99 tick duration** for a region remains comfortably below `lock_ttl_ms` (for example, less than 50–70% of the configured TTL).
+  - Regions that violate this during testing are treated as misconfigured; either the tick budget is raised, or work is decomposed so individual ticks become lighter.
+- At runtime, the Game Session Service:
+  - Records per-tick metrics such as `tick.execution_time_ms` and `tick.lock_ttl_ms` labeled by `{tenantId, regionId}`.
+  - Emits a derived signal like `tick.lock_ttl_headroom_ratio` or a counter `tick.near_lock_ttl` whenever a tick’s execution time exceeds a configurable fraction of `lock_ttl_ms` (for example, >80%).
+  - Surfaces regions with frequent near-TTL ticks on dashboards so operators can spot hot or overloaded regions early.
+- When a region repeatedly produces near-TTL or over-TTL ticks in production, the TickScheduler may:
+  - Mark the region as **degraded** and temporarily reduce tick frequency or fan-out.
+  - Trigger alerts so maintainers can inspect scripts, domain calls, and configuration.
+  - Guide operators to adjust `tick_budget_ms` and the lock TTL clamps, or refactor domain logic, rather than silently allowing long-running ticks to compete with normal regions.
 
 ### Example Lock Workflow
 
@@ -378,17 +445,22 @@ Timers and retry queues are protected against unbounded growth:
 FireMUD actively monitors Redis performance and tick health:
 
 - **Prometheus metrics** (via Redis exporters):
-  - Lua script latency
+  - Lua script latency and execution time distributions
   - Lock contention
   - Retry queue depth
   - Keyspace and memory usage
   - Keyspace hits/misses and eviction counts (especially important once read-side caches are enabled)
-  - Per-command latency percentiles for tick-related scripts and commands
+  - Per-command latency percentiles for tick-related scripts and commands, labeled by **key prefix** (for example, `tick:`, `session:`, `inventory:`, `rate_limit:`) so coordination workloads can be separated from caches and rate limiting.
+  - Blocked client counts and blocked time on Redis nodes to highlight when long-running Lua scripts or slow operations impact other traffic.
+  - `WAIT 1 100` acknowledgement results and failure counts (for example, `redis.critical_write_replica_acks_missing`) to detect replication issues affecting critical tick writes.
   - Basic connection health via the `redis.up` gauge exposed in
     `DatabaseAutoConfiguration`
 - Metrics are scraped via a [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment
   (deployable via the instructions in [`k8s/README.md`](../../k8s/README.md))
-- **Grafana dashboards** visualize tick throughput and hotspots
+- **Grafana dashboards**:
+  - Visualize tick throughput, Lua runtimes, lock contention, and stuck `pending` entries.
+  - Provide **separate panels** for coordination key prefixes (`tick:*`, `session:*`, timers, locks) versus cache and rate-limit prefixes so cache latency or misses cannot mask problems with tick coordination.
+  - Highlight trends in blocked clients, `WAIT` failures, and eviction events to show when cache or rate-limit activity begins to interfere with coordination workloads.
 - **Prometheus Alertmanager** sends alerts if metrics exceed thresholds
   - Alerts include thresholds on Redis latency percentiles for tick-related commands (for example, p95/p99 of Lua script runtimes) and on eviction rates so operators can detect when caches or rate limiting begin to impact coordination workloads.
 - **Graceful degradation** logic reduces gameplay interruption if Redis temporarily stalls
@@ -536,6 +608,27 @@ Recommended deployment patterns:
   - A **Cache/Rate-Limit Redis** cluster for gateway rate limiting and read-side caches, where eviction and higher latency variance are acceptable.
 
 This separation keeps gameplay-critical tick coordination isolated from noisy cache or rate-limiter traffic while still standardizing on Redis as the shared volatile state technology.
+
+**Eviction policy and memory configuration**
+
+To honor the “coordination keys must not be evicted” rule:
+
+- The **Coordination Redis** deployment:
+  - Uses a `maxmemory-policy` of `noeviction` so that coordination keys are never removed to make room for caches.
+  - Is sized with sufficient `maxmemory` (and headroom) to accommodate expected tick, lock, timer, and session state plus operational buffers.
+  - Does **not** store large cache payloads or unbounded aggregates; those belong in the Cache/Rate-Limit cluster or in PostgreSQL/object storage.
+- The **Cache/Rate-Limit Redis** deployment:
+  - May use an eviction policy such as `allkeys-lru` or `volatile-lru`, since entries are recomputable or best-effort.
+  - Enforces strict limits on value size and TTL so cache growth does not starve rate limiting or degrade performance.
+
+For **small or development deployments** that share all workloads on a single Redis cluster:
+
+- The configuration should still avoid mixing large, eviction-driven caches with critical coordination keys under `allkeys-*` policies. This is considered a **hard no** because it can silently evict locks, timers, or staging keys.
+- If a single-node instance must serve both coordination and cache traffic, prefer:
+  - `maxmemory-policy noeviction`, conservative cache TTLs, and tight cache size limits, or
+  - Separate logical Redis instances (for example, two containers or pods) so coordination and cache eviction policies can diverge even on the same host.
+
+Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. Alert thresholds are tuned so approaching memory pressure or unexpected eviction activity is visible well before it threatens coordination workloads.
 
 Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestRateLimiter`) should be designed to avoid **hot keys** under heavy load:
 

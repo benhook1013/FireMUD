@@ -82,6 +82,27 @@ If either check fails (for example, the lock token was lost and reacquired by an
 
 ---
 
+### Multi-Entity Commands and Deadlock Avoidance
+
+Many gameplay commands conceptually touch **multiple entities** (for example trades, area-of-effect spells, or group buffs). FireMUD avoids Redis-level deadlocks and complex multi-lock coordination with the following rules:
+
+- **One entity lock per script invocation (default):**
+  - Tick Lua scripts are written to acquire and operate on **at most one** `tick:{tenantId}:{regionId}:lock:{entityId}` per invocation.
+  - Multi-entity commands are decomposed into separate, per-entity legs (for example, one tick leg per participant), each executed under a single entity lock and keyed by a shared `tickId` and effect identifiers for idempotency.
+  - Coordination between legs (for example ensuring that both sides of a trade succeed or fail together) occurs via PostgreSQL and/or small coordinator records, not by holding multiple Redis entity locks simultaneously.
+
+- **Exceptions require a global lock ordering:**
+  - If a future command truly cannot be decomposed and must take more than one entity lock inside a single script, it **must** acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire locks in ascending order).
+  - Such scripts are treated as special cases, reviewed carefully, and documented with their lock ordering assumptions.
+
+By treating “one entity lock per script” as the default contract and reserving multi-lock patterns for rare, explicitly ordered cases, the tick system:
+
+- Eliminates classic deadlock patterns where two commands try to acquire the same pair of locks in opposite orders.
+- Keeps Lua scripts small and predictable, simplifying reasoning about failure and recovery.
+- Leaves complex cross-entity invariants to the database and domain services, which already provide stronger transactional semantics.
+
+---
+
 ## Smart Retry and Conflict Resolution
 
 FireMUD includes a robust system for **lock contention**, **timeouts**, and **retries**, coordinated by the Game Session Service and powered by Redis.
