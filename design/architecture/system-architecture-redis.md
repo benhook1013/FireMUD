@@ -325,6 +325,7 @@ Redis executes Lua scripts on the same single-threaded event loop that serves no
 - **Abort-early behavior**
   - Every script should check simple preconditions first (for example, presence of lock keys, correct tokens, expected `pending` state) and abort quickly if they are not met.
   - Scripts must not fall back to scanning large keyspaces or reconstructing complex state when preconditions are missing; instead, they return a result that signals the caller to retry or perform higher-level recovery.
+  - Scripts that mutate domain-facing tick state (for example, committing staged effects or releasing locks) **must re-validate** both the relevant lock token(s) and the current lease token for `{tenantId, regionId}` within the **same script invocation** that performs the mutation; callers must not “check then act” across multiple, separate Lua calls.
 
 Operational runbooks treat **long-running or stuck Lua scripts** as production issues:
 
@@ -448,15 +449,53 @@ These thresholds are intended to be **explicit starting points**, not immutable 
 
 1. Generate a unique lock token (for example, a UUID) and acquire `tick:{tenantId}:{regionId}:lock:{entityId}` using `SET NX PX` with that token as the value and the computed TTL (`lock_ttl_ms`). This ensures transient pauses do not cause the lock to expire while normal work is still in progress, but stale locks are automatically cleared after a bounded window.
 2. Stage updates under `tick:{tenantId}:{regionId}:pending` via Lua script while the lock is held.
-3. On successful commit, release the lock using a Lua script that:
-   - Verifies `GET tick:{tenantId}:{regionId}:lock:{entityId}` still matches the original token.
-   - Deletes the lock key only if the token matches.
-   - Flushes or clears the staged `tick:{tenantId}:{regionId}:pending` entry for the committed tick.
+3. On successful commit or rollback, call a **single canonical Lua script entrypoint** for “tick commit/rollback + lock release” that:
+   - Receives `KEYS` in a fixed order such as `[lockKey, pendingKey, leaseKey, …]`.
+   - Receives `ARGV` values that include both the `lockToken` and the current `leaseToken` for `{tenantId, regionId}`.
+   - Verifies `GET tick:{tenantId}:{regionId}:lock:{entityId}` still matches the original `lockToken`.
+   - Reads and verifies the `tick-executor-lease:{tenantId}:{regionId}` value still matches the provided `leaseToken`.
+   - Deletes the lock key and clears or updates the staged `tick:{tenantId}:{regionId}:pending` entry only when both tokens match and the expected `tickId` is present.
 4. If the lock expires before commit:
    - The next tick cycle detects the presence of `tick:{tenantId}:{regionId}:pending` and replays the staged effects using the idempotency rules described in the Tick System design.
    - Any worker that finds `pending` present but fails to reacquire the lock (because another worker has already taken it with a new token) aborts its work for that tick and returns a retry outcome; it does **not** attempt to apply domain updates without first holding a valid lock token.
 
-Tick locks are **never** acquired or released via raw `DEL`, `PEXPIRE`, or similar commands from application code. All lock acquisition, validation, and release flows run through the shared Lua scripts that enforce token checks, so no worker can accidentally release or reuse another worker’s lock after a TTL expiry or leadership change.
+Tick locks are **never** acquired or released via raw `DEL`, `PEXPIRE`, or similar commands from application code. All lock acquisition, validation, and release flows run through the shared Lua scripts that enforce token checks, so no worker can accidentally release or reuse another worker’s lock after a TTL expiry or leadership change. Code review and CI guardrails (for example, grep-based checks that forbid `DEL tick:{tenantId}:{regionId}:lock:*` outside the canonical scripts) enforce this policy so ad-hoc lock manipulation cannot slip into the codebase.
+
+### Canonical Commit/Rollback Script API
+
+The canonical “tick commit/rollback + lock release” script is treated as a stable API that all tick executors use. Its logical interface is:
+
+- **Logical name:** `tick_commit_and_release` (exact filename may vary, but callers refer to this logical identifier when resolving the script SHA).
+- **Keys (`KEYS`):**
+  - `KEYS[1]` – `tick:{tenantId}:{regionId}:lock:{entityId}` (entity lock key).
+  - `KEYS[2]` – `tick:{tenantId}:{regionId}:pending` (region-level pending entry for the current tick).
+  - `KEYS[3]` – `tick-executor-lease:{tenantId}:{regionId}` (region leadership lease).
+  - `KEYS[4]` (optional) – tick-local retry/timer structure if the script needs to adjust retry metadata as part of commit/rollback; when present it must share the same `{tenantId}:{regionId}` hash tag (for example `retry:{tenantId}:{regionId}` or `timer:{tenantId}:{regionId}`).
+- **Arguments (`ARGV`):**
+  - `ARGV[1]` – `tickId` being committed or rolled back.
+  - `ARGV[2]` – `lockToken` that the caller believes it holds for `KEYS[1]`.
+  - `ARGV[3]` – `leaseToken` (epoch) that the caller believes is current for `KEYS[3]`.
+  - `ARGV[4]` – `mode` (`"commit"` or `"rollback"`), indicating whether staged effects should be applied or discarded.
+
+The script validates in this order:
+
+1. Lease epoch: read `KEYS[3]` and ensure its token matches `ARGV[3]` (the expected `leaseToken`); abort if mismatched or missing.
+2. Lock token: read `KEYS[1]` and ensure its value matches `ARGV[2]` (the expected `lockToken`); abort if mismatched or missing.
+3. Pending tick: read `KEYS[2]` and ensure it corresponds to `ARGV[1]` (the expected `tickId`); abort if the key is absent or belongs to a different tick.
+
+If any validation fails, the script returns a structured status that callers treat as “no-op + retry” rather than attempting any domain mutation. A simple status convention is:
+
+- `0` – success: commit/rollback was applied, lock released, and `pending` cleared or updated as requested.
+- `1` – lease mismatch or missing.
+- `2` – lock mismatch or missing.
+- `3` – pending tick mismatch or missing.
+
+Callers:
+
+- Must treat **any non-zero status** as “no state change was applied” and schedule a retry via the normal tick conflict/retry machinery; they must not attempt to release locks or modify `pending` via ad-hoc Redis commands.
+- May log and increment metrics tagged with the status code to distinguish lease/lock/pending issues.
+
+This API ensures that all commit/rollback behavior flows through a single, easily-audited Lua entrypoint and that re-validation of lease and lock tokens always happens in the same script invocation that mutates tick state.
 
 ### Pending Tick Value Model
 
@@ -574,13 +613,19 @@ Over time, this manual runbook will be backed by a small **tick recovery automat
   - Retry limits have been exhausted without successful completion.
 - Final skip/clear actions always require positive operator approval via the admin UI or CLI; no tick is auto-skipped without a human acknowledgement.
 
-Timers and retry queues are protected against unbounded growth:
+Timers and retry queues are protected against unbounded growth and use explicit, bounded Redis data structures:
 
-- Retry queues (`retry:{tenantId}:{regionId}`) are populated with bounded backoff and retry caps:
-  - Each failed action includes metadata such as a retry count and last-failure timestamp.
-  - The Game Session Service enforces a maximum retry budget per action; once exceeded, the action is marked as permanently failed and removed from the Redis retry structure, with details recorded in PostgreSQL or an error log for offline inspection.
-- Timer keys (`timer:{tenantId}:{regionId}`) are periodically trimmed:
-  - Expired timers are removed as ticks progress.
+- Retry queues (`retry:{tenantId}:{regionId}`) are implemented as **sorted sets (ZSETs)** keyed by `retry:{tenantId}:{regionId}`, where:
+  - Each member represents a retryable action or command identifier.
+  - The score encodes the **next-eligible execution time** (for example, an epoch millisecond timestamp or tick number).
+  - Lua scripts select at most `N` ready entries per invocation using `ZRANGEBYSCORE retry:{tenantId}:{regionId} -inf now LIMIT 0 N`, process them, and remove or reschedule them with updated scores; scripts never scan unbounded lists.
+  - Each failed action includes metadata such as a retry count and last-failure timestamp (stored in Redis metadata or PostgreSQL as appropriate).
+  - The Game Session Service enforces a maximum retry budget per action; once exceeded, the action is marked as permanently failed and removed from the ZSET, with details recorded in PostgreSQL or an error log for offline inspection.
+- Timer keys (`timer:{tenantId}:{regionId}`) are also implemented as **sorted sets (ZSETs)** keyed by `timer:{tenantId}:{regionId}`, where:
+  - Each member represents a timer identifier or encoded payload key.
+  - The score encodes the **due time** in milliseconds.
+  - Lua scripts pop at most `N` due timers per invocation via `ZRANGEBYSCORE timer:{tenantId}:{regionId} -inf now LIMIT 0 N` and delete those members as part of the same script call.
+  - Expired timers are removed as ticks progress, and scripts always operate with a fixed upper bound on the number of timers processed per call.
   - Defensive limits (for example a maximum number of timers per region) may trigger alerts or automatic throttling if exceeded so that a bug cannot silently create unbounded timer growth.
 
 ---
