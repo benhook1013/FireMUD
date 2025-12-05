@@ -114,7 +114,7 @@ If `WAIT 1 100` returns with fewer than one acknowledgement:
   - Tick frequency for that region may be reduced.
   - Additional high-risk operations (for example large-scale region fan-outs) may be skipped or delayed until acknowledgements recover.
 
-Taken together, AOF and `WAIT` provide **at-least-once durability** for tick-related writes. Any replay that occurs after crash or failover is absorbed by the idempotent tick and domain logic described in [Crash Recovery and Replay](./system-architecture-ticks.md#crash-recovery-and-replay).
+Taken together, AOF and `WAIT` provide **best-effort, at-least-once durability** for tick-related writes on a single primary, but they do **not** eliminate the possibility of losing the most recent coordination updates during failover (for example, if a non-acknowledging replica is promoted or multiple nodes fail). The design therefore assumes that some Redis coordination keys may roll back around failover, and relies on the idempotent tick and domain logic described in [Crash Recovery and Replay](./system-architecture-ticks.md#crash-recovery-and-replay) plus PostgreSQL as the authoritative source of truth to repair or reapply lost state.
 
 ### Critical Write Policy and Centralization
 
@@ -199,6 +199,23 @@ The lease is acquired and renewed using `SET NX PX lease_ttl_ms`:
 
 This lease acts as the **macro-level lock** for a region: it prevents multiple executors from driving ticks concurrently for the same `{tenantId, regionId}` while still allowing fast failover and rebalancing. Fine-grained entity locks (`tick:{tenantId}:{regionId}:lock:{entityId}`) are used *within* a leader to coordinate per-command work and crash recovery; they do not replace the leadership lease.
 
+**Lease token / epoch semantics**
+
+To avoid “split-brain” scenarios during GC pauses or network stalls (for example, executor A holds the lease, pauses until its TTL expires, executor B acquires the lease, and then A resumes), the lease value stores a **random, opaque token** (for example, a UUID) in addition to the executor identity. The Game Session Service:
+
+- Treats this token as a **lease epoch** for `{tenantId, regionId}` and passes it as an argument to all tick-related Lua scripts along with `tickId`.
+- Requires every mutating script (staging, commit, rollback, timer updates, retry queue updates) to:
+  - Read the current `tick-executor-lease:{tenantId}:{regionId}` value, and
+  - Abort immediately if the stored lease token does not match the token it was invoked with.
+- Re-validates the lease token at key points in the tick lifecycle:
+  - Before starting a new tick (to ensure the worker still holds leadership).
+  - Before committing staged work or releasing locks (to ensure leadership has not moved since staging began).
+
+Combined with the **lock token semantics** described in the Tick System design, this ensures that:
+
+- A worker that resumes after losing the lease cannot commit or roll back tick state, even if it still holds local lock tokens.
+- Only the current lease holder (epoch) can progress `tick:{tenantId}:{regionId}:pending`, timers, and retry metadata for that region; any stale workers see a lease-token mismatch and abort, returning a retry outcome instead of applying stateful changes.
+
 ### Hash Tags and Redis Cluster Slotting
 
 FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. Tick-related keys (locks, queues, pending state, retries, timers) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
@@ -280,6 +297,13 @@ If a script repeatedly fails to reload or `NOSCRIPT` errors persist beyond a sho
 
 This loading and retry behavior ensures that transient `SCRIPT FLUSH` events or node failovers do not permanently break tick processing while still surfacing persistent misconfiguration or Redis instability to operators.
 
+When Lua scripts are versioned or changed as part of a deployment, services either:
+
+- Restart (clearing any in-memory mapping from “logical script name” to SHA), or
+- Refresh their cached SHA values explicitly as part of the rollout,
+
+so that a given logical script identifier never silently points at a stale SHA with incompatible behavior.
+
 ### Lua Script Complexity and Runtime Guidelines
 
 Redis executes Lua scripts on the same single-threaded event loop that serves normal commands. To protect shard latency, FireMUD applies the following guidelines to all tick-related scripts:
@@ -301,6 +325,12 @@ Redis executes Lua scripts on the same single-threaded event loop that serves no
 - **Abort-early behavior**
   - Every script should check simple preconditions first (for example, presence of lock keys, correct tokens, expected `pending` state) and abort quickly if they are not met.
   - Scripts must not fall back to scanning large keyspaces or reconstructing complex state when preconditions are missing; instead, they return a result that signals the caller to retry or perform higher-level recovery.
+
+Operational runbooks treat **long-running or stuck Lua scripts** as production issues:
+
+- Monitoring tracks Redis `slowlog`, blocked-client counts, and command/runtime latency distributions. Sustained outliers beyond the SLOs defined below trigger alerts so operators can investigate which script or workload is responsible.
+- In emergencies where a script is known to mutate only Redis state and is demonstrably stuck, operators may use `SCRIPT KILL` on the affected node to unblock the event loop. This is reserved for last-resort scenarios and must be followed by verification that callers correctly handle partial progress (for example, by re-running idempotent staging or commit scripts).
+- Runbooks emphasize **fixing the underlying script or workload** (for example, tightening bounds, reducing per-call work, or refactoring hot paths) rather than relying on `SCRIPT KILL` as a routine control mechanism.
 
 ### Lock TTL and Example Lock Workflow
 
@@ -425,6 +455,8 @@ These thresholds are intended to be **explicit starting points**, not immutable 
 4. If the lock expires before commit:
    - The next tick cycle detects the presence of `tick:{tenantId}:{regionId}:pending` and replays the staged effects using the idempotency rules described in the Tick System design.
    - Any worker that finds `pending` present but fails to reacquire the lock (because another worker has already taken it with a new token) aborts its work for that tick and returns a retry outcome; it does **not** attempt to apply domain updates without first holding a valid lock token.
+
+Tick locks are **never** acquired or released via raw `DEL`, `PEXPIRE`, or similar commands from application code. All lock acquisition, validation, and release flows run through the shared Lua scripts that enforce token checks, so no worker can accidentally release or reuse another worker’s lock after a TTL expiry or leadership change.
 
 ### Pending Tick Value Model
 

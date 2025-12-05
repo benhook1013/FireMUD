@@ -21,6 +21,10 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Crash recovery replays ticks stored in Redis using AOF persistence and `WAIT`
   semantics, providing at‑least‑once, idempotent recovery as described in
   [Tick System and Runtime Design](../../system-architecture-ticks.md#crash-recovery-and-replay).
+  When Redis becomes slow or unavailable, the Game Session Service applies the
+  graceful degradation and halt behavior defined in
+  [Redis Architecture – Graceful Degradation & Redis Outage Policy](../../system-architecture-redis.md#graceful-degradation--redis-outage-policy)
+  instead of buffering authoritative commands only in memory.
 - Every session record includes a `tenantId` identifying the game instance.
   Redis keys and database tables prefix this value so sessions from different
   games remain isolated. The platform may enforce per-game resource quotas at this level so one tenant cannot exhaust cluster capacity.
@@ -79,6 +83,11 @@ The Game Session Service acts as the **authoritative tick executor** for each `{
   - Issue tick-scoped gRPC calls on behalf of that region’s commands.
 - On crash or deliberate handoff, another instance acquires the lease and resumes tick processing from Redis using the idempotent `tickId` and effect-guard rules from the Tick System design.
 - The executor monitors `tick.execution_time_ms` and `tick.lock_ttl_ms` for each region; when a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out and/or slightly lengthens the tick interval for that region, emits explicit “region degraded” metrics, and, if the condition persists beyond a configured window, may halt new ticks and reject new commands for that region until operators intervene.
+  These degraded and halt transitions follow the same thresholds and policies
+  captured under
+  [Redis Architecture – Operational SLOs & Alert Thresholds](../../system-architecture-redis.md#operational-slos--alert-thresholds)
+  so operators and implementations share a single set of “red lines” for
+  coordination health.
 
 ### gRPC APIs
 

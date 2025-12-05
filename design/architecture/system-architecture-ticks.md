@@ -337,7 +337,11 @@ Each tick enforces a **soft execution budget** (e.g., 100ms):
 Commands flagged with `requiresSoloTick` run in an isolated tick so expensive
 operations do not stall other players. See the
 [Game Session Service design](./microservices/game-session-service/README.md#tick-execution-model)
-for how these solo ticks are orchestrated.
+for how these solo ticks are orchestrated. For Redis latency, replication, or
+memory issues that affect tick execution, the Game Session Service follows the
+graceful degradation and halt policy defined in
+[Redis Architecture – Graceful Degradation & Redis Outage Policy](./system-architecture-redis.md#graceful-degradation--redis-outage-policy)
+rather than introducing tick-specific fallbacks.
 
 Runtime procedural generation commands set `requiresSoloTick: true`. The Game Session Service
 detects this flag and schedules the command alone in its own tick, allowing up to
