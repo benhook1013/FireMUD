@@ -110,7 +110,12 @@ is described in [System Architecture: Security](../system-architecture-security.
 | `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Server-side session TTL in milliseconds | `3600000` |
+| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Server-side session TTL in milliseconds and Redis session key TTL | `3600000` |
+
+`FIREMUD_AUTH_SESSION_EXPIRATION_MS` defines the maximum window during which a disconnected gameplay session can be
+resumed. The Game Session Service uses this value both for its in-memory/session bookkeeping and as the TTL for
+`session:{tenantId}:{sessionId}` keys in Redis (see [Redis Architecture](../system-architecture-redis.md#session-keys-and-gameplay-binding)).
+After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
 
 ### Service Discovery
 

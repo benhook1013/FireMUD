@@ -31,8 +31,14 @@ public class TickLockServiceImpl implements TickLockService {
 
   private Counter lockContentionCounter;
 
-  @Value("${game.tick-duration-ms:1000}")
-  private long tickDurationMs;
+  @Value("${game.tick-budget-ms:100}")
+  private long tickBudgetMs;
+
+  @Value("${game.tick-min-lock-ttl-ms:500}")
+  private long minLockTtlMs;
+
+  @Value("${game.tick-max-lock-ttl-ms:5000}")
+  private long maxLockTtlMs;
 
   @PostConstruct
   void initMetrics() {
@@ -44,7 +50,9 @@ public class TickLockServiceImpl implements TickLockService {
   public boolean acquireLock(Long tenantId, Long entityId) {
     String key = lockKey(tenantId, entityId);
     Boolean result =
-        redisTemplate.opsForValue().setIfAbsent(key, "1", Duration.ofMillis(tickDurationMs));
+        redisTemplate
+            .opsForValue()
+            .setIfAbsent(key, "1", Duration.ofMillis(computeLockTtlMs()));
     boolean acquired = Boolean.TRUE.equals(result);
     if (!acquired) {
       lockContentionCounter.increment();
@@ -57,6 +65,17 @@ public class TickLockServiceImpl implements TickLockService {
   @Timed(value = "tick.lock.release")
   public void releaseLock(Long tenantId, Long entityId) {
     redisTemplate.delete(lockKey(tenantId, entityId));
+  }
+
+  private long computeLockTtlMs() {
+    long unclamped = tickBudgetMs * 3;
+    if (unclamped < minLockTtlMs) {
+      return minLockTtlMs;
+    }
+    if (unclamped > maxLockTtlMs) {
+      return maxLockTtlMs;
+    }
+    return unclamped;
   }
 
   private String lockKey(Long tenantId, Long entityId) {

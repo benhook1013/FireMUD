@@ -168,7 +168,38 @@ grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/P
 
 ### Tick Locking
 
-This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:lock:{tenantId}:{entityId}` key described in the [Redis Architecture](../../system-architecture-redis.md) document. Locks expire after `game.tick-duration-ms` (default 1000 ms) to ensure stalled ticks can be retried.
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantId}:{regionId}:lock:{entityId}` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs follow the canonical formula from the Redis design:
+
+- `lock_ttl_ms = clamp(tick_budget_ms * 3, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`
+- `tick_budget_ms` maps to the `game.tick-budget-ms` property.
+- `MIN_LOCK_TTL_MS` and `MAX_LOCK_TTL_MS` map to the `game.tick-min-lock-ttl-ms` and `game.tick-max-lock-ttl-ms` properties (defaults 500 ms and 5_000 ms respectively).
+
+These settings keep locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
+
+Entity Management assumes the **per-command execution phases** described in the [Tick System design](../../system-architecture-ticks.md#per-command-execution-phases): commands that touch multiple entities in the same region resolve their target set first (for example, the two parties in a trade or all entities in a room for AoE effects), then acquire the necessary `tick:{tenantId}:{regionId}:lock:{entityId}` keys in a deterministic order. If any required lock is unavailable, the command fails, staged changes are rolled back via Redis, and the Game Session Service reschedules the work using the retry mechanisms described in the Tick System and Redis designs.
+
+### Tick Idempotency
+
+Entity Management implements tick idempotency using the **per-aggregate last-tick state** pattern described in the [Tick System and Runtime Design](../../system-architecture-ticks.md#domain-idempotency-rules-tickid-in-postgresql) document:
+
+- A shadow table (for example `entity_tick_state`) tracks `last_tick_id` (and associated tenant/region metadata) per `entityId`.
+- Tick-driven handlers that mutate an entity:
+  - Load the current tick state for that `entityId`.
+  - Treat calls where `last_tick_id >= currentTickId` as **replays** and perform a no-op (or validation-only check).
+  - Apply changes only when `last_tick_id < currentTickId`, then update `last_tick_id = currentTickId` in the same transaction as the entity update.
+
+Complex multi-entity operations (for example trades that touch two inventories) use the **operation-level effect guard** pattern described in the same tick document, inserting a `(tenantId, regionId, tickId, effectKey)` row into a guard table before applying changes so replays of the same logical effect become safe no-ops instead of double-applications.
+
+Examples:
+
+- **Damage application** – when a tick instructs Entity Management to apply damage to `entityId`, the handler:
+  - Reads `entity_tick_state` for that `entityId`.
+  - Skips the update if `last_tick_id >= currentTickId` (replay), or applies the HP change and sets `last_tick_id = currentTickId` in the same transaction if `last_tick_id < currentTickId`.
+
+- **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
+  - The handler computes a deterministic `effectKey` such as `trade:{fromEntityId}:{toEntityId}:{itemId}`.
+  - It inserts `(tenantId, regionId, tickId, effectKey)` into the guard table before moving items between inventories.
+  - On primary-key conflict, the trade is treated as an already-applied effect for that tick and becomes a no-op.
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

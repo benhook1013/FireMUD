@@ -29,7 +29,15 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 - Metrics are recorded with Micrometer. The shared `MetricsInterceptor` tracks `grpc.server.requests` for each call. Services increment the `grpc.app_error` counter in their `error()` helpers as described in the [gRPC API Style guidelines](./system-architecture-grpc.md).
 - Business methods in services are annotated with `@Timed` to publish custom Prometheus timers.
 - Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals are tuned per environment (typically 15s in development and 30s in production).
-- Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment, and a PostgreSQL exporter is available for database metrics.
+- Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment, and a PostgreSQL exporter is available for database metrics. Redis dashboards surface Lua script latency, lock contention, retry queue depth, keyspace hits/misses, eviction rates, and latency percentiles for tick-related commands so operators can distinguish cache pressure from coordination issues.
+  - Additional application metrics track:
+    - Failed lock acquisitions per region (for example `redis.tick.lock_acquire_failed`) to highlight contention hotspots.
+    - The ratio of replayed ticks to total ticks (for example `gamesession.tick.replayed_total` vs `gamesession.tick.executed_total`) so operators can see when idempotent recovery paths are being exercised frequently.
+- **Automation & Scripting metrics** surface scheduler, quota, and sandbox behavior:
+  - Scheduler and budget meters such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `automation_script_queue_delay_seconds`, `automation_script_leadership_changes_total`, and `automation_script_tenant_budget_seconds{tenantId, tier}`.
+  - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`.
+  - Sandbox and runtime meters such as `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds`.
+  These metrics are described in more detail in [System Architecture: Scripting & Automation](./system-architecture-scripting.md) and the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md).
 - Distributed traces are exported via OTLP and correlated with logs using the same `traceId` value.
 - Metrics reuse the `traceId` label via the `MetricsInterceptor`, making it easy to correlate latency spikes with specific traces and log entries.
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT` environment variable ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).

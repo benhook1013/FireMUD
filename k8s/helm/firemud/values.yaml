@@ -36,3 +36,8 @@ redis:
   releaseName: redis
   # Optional override of the PersistentVolumeClaim used for the AOF file
   aofPvc: ""
+  # When true, a Helm hook Job wipes the Redis AOF on each install/upgrade.
+  # This is useful for dev/ephemeral environments to ensure a clean slate
+  # between runs. In production values, set this to false so Redis state
+  # (sessions and tick coordination data) is preserved across deployments.
+  resetAofOnInstallUpgrade: true

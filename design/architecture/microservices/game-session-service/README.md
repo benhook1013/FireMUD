@@ -17,10 +17,14 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Communicates with other microservices exclusively via gRPC.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
-- Ensures atomic command execution using Redis transactions and Lua scripts.
+- Ensures atomic command execution using Redis Lua scripts for all multi-key operations; the service does not rely on Redis `MULTI`/`EXEC` for consistency. Tick-related multi-key operations (locks, pending state, queues, timers, retry metadata) are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control); ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
 - Crash recovery replays ticks stored in Redis using AOF persistence and `WAIT`
-  semantics, ensuring deterministic recovery as described in
+  semantics, providing at‑least‑once, idempotent recovery as described in
   [Tick System and Runtime Design](../../system-architecture-ticks.md#crash-recovery-and-replay).
+  When Redis becomes slow or unavailable, the Game Session Service applies the
+  graceful degradation and halt behavior defined in
+  [Redis Architecture – Graceful Degradation & Redis Outage Policy](../../system-architecture-redis.md#graceful-degradation--redis-outage-policy)
+  instead of buffering authoritative commands only in memory.
 - Every session record includes a `tenantId` identifying the game instance.
   Redis keys and database tables prefix this value so sessions from different
   games remain isolated. The platform may enforce per-game resource quotas at this level so one tenant cannot exhaust cluster capacity.
@@ -68,6 +72,22 @@ Orchestrates live game sessions, including tick execution, player input validati
   (`GAME_TICK_MAX_COMMANDS`) so one player cannot starve others.
 - Commands with `requiresSoloTick: true` are dequeued into an isolated tick so expensive operations like runtime procedural generation do not share time with normal actions.
 - After execution, results are persisted and broadcast to connected clients.
+- If a command cannot acquire its required entity lock(s), the executor does not spin; it fails the attempt, rolls back any staged changes, and reschedules the command with a bounded, tick-based backoff (for example exponential backoff capped by `MAX_BACKOFF_TICKS`), tracking a per-command retry counter and enforcing a `MAX_RETRIES` limit before surfacing a player-visible error and logging a permanent failure.
+
+The Game Session Service acts as the **authoritative tick executor** for each `{tenantId, regionId}` it owns:
+
+- It participates in region leadership using the Redis lease key `tick-executor-lease:{tenantId}:{regionId}` described in the [Redis Architecture](../../system-architecture-redis.md#region-leadership-and-tick-executor-lease).
+- While it holds the lease for a region, it is the only instance allowed to:
+  - Consume commands from that region’s queues and timers.
+  - Drive `tick:{tenantId}:{regionId}:pending` and commit/rollback flow.
+  - Issue tick-scoped gRPC calls on behalf of that region’s commands.
+- On crash or deliberate handoff, another instance acquires the lease and resumes tick processing from Redis using the idempotent `tickId` and effect-guard rules from the Tick System design.
+- The executor monitors `tick.execution_time_ms` and `tick.lock_ttl_ms` for each region; when a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out and/or slightly lengthens the tick interval for that region, emits explicit “region degraded” metrics, and, if the condition persists beyond a configured window, may halt new ticks and reject new commands for that region until operators intervene.
+  These degraded and halt transitions follow the same thresholds and policies
+  captured under
+  [Redis Architecture – Operational SLOs & Alert Thresholds](../../system-architecture-redis.md#operational-slos--alert-thresholds)
+  so operators and implementations share a single set of “red lines” for
+  coordination health.
 
 ### gRPC APIs
 
@@ -97,6 +117,13 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+
+### Scaling and Region Rebalancing
+
+- Region-to-instance mapping is flexible and driven by a scheduler or consistent-hashing layer that assigns `{tenantId, regionId}` values to Game Session instances.
+- To scale out, operators add more Game Session pods and allow the scheduler to assign regions to new instances; each instance acquires leases for its assigned regions.
+- To rebalance load, an instance can stop renewing the lease for selected regions and drain in-flight work to a safe point; other instances then acquire those leases and continue tick processing from the existing Redis state.
+- Combined with region sizing (splitting hot regions and merging cold ones), this lease-based ownership model allows FireMUD to scale horizontally without global downtime.
 
 ## Dev-isolated Mode
 
@@ -403,7 +430,14 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 
 ### Redis Keys
 
-Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. Tick queues, locks and pending sets use the same prefix. Keys are removed when a session stops.
+Session state needed for reconnect recovery is stored under `session:{tenantId}:{sessionId}`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
+
+Tick coordination is **region-scoped**, not session-scoped. Tick queues, locks, timers, retry metadata, and the `tick:{tenantId}:{regionId}:pending` key use the `tick:{tenantId}:{regionId}:...` prefix described in the [Redis Architecture](../../system-architecture-redis.md#tick-integration-resilience-locking-staging). Region keys follow region lifecycle and crash-recovery rules:
+
+- `tick:{tenantId}:{regionId}:pending` is created **without a TTL** so it survives process crashes and failover.
+- It is cleared only when the tick is successfully committed or an operator-driven recovery flow explicitly marks the tick as skipped/failed and removes the key.
+
+Session shutdown therefore cleans up **session** keys, but **does not** implicitly delete region-level tick coordination keys.
 
 - [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
 - [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)

@@ -40,6 +40,29 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 - **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` integrates with the running servers. These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
+### Redis Key Naming & Lua Script Helpers
+
+Tick coordination and other Redis-backed workflows rely on a small set of shared helpers provided by the common library:
+
+- **Key Naming helpers** – A `RedisKeyNaming` (or similarly named) utility centralizes construction of tick-related keys such as `tick:{tenantId}:{regionId}:lock:{entityId}`, `tick:{tenantId}:{regionId}:pending`, `retry:{tenantId}:{regionId}`, and `timer:{tenantId}:{regionId}`. Application code must build these keys exclusively through the helper; direct string concatenation of `tick:`, `retry:`, or `timer:` prefixes in services is discouraged so hash-tag and naming rules remain consistent. The helper enforces the `{tenantId}:{regionId}` hash tag and is the single source of truth for tick key shapes.
+- **Lua script invocation helpers** – A small Redis/Lua helper class wraps `EVALSHA` calls for tick scripts. It ensures that:
+  - Scripts are invoked with the correct first key (a tick key with the `{tenantId}:{regionId}` hash tag).
+  - `NOSCRIPT` errors are handled by reloading the script on the appropriate master and retrying once.
+  - Callers pass keys built via `RedisKeyNaming` so multi-key operations stay shard-local.
+- **Test and lint hooks** – Shared test fixtures validate that:
+  - Keys produced by `RedisKeyNaming` share a common hash tag substring and map to the same cluster slot for multi-key operations.
+  - Lua scripts respect the configured `MAX_TICK_SCRIPT_KEYS` bound and do not introduce “just one more key” without extending tests.
+  - Any new tick-related script or key path added by a service includes corresponding updates to the helpers and tests.
+
+For Redis-backed caches and rate limiting, the common library may also provide:
+
+- **Bounded cache writer utilities** – Helpers that:
+  - Enforce a maximum serialized value size (for example `MAX_CACHE_VALUE_BYTES`) before writing to Redis, rejecting oversized payloads with clear logs/metrics instead of allowing them to bloat memory.
+  - Require explicit TTL parameters and validate that they fall within configured per-key budgets, so caches cannot silently accumulate effectively permanent entries.
+  - Prefer single atomic commands (set value + TTL together) over multi-step delete/insert sequences.
+
+Services that add new tick, retry, timer, or session flows should extend the common library’s key helpers and script helpers first, then use those helpers from their own code. This keeps Redis key shapes, hash-tag rules, and Lua invocation behavior consistent across the platform.
+
 ---
 
 ## Publishing Strategy

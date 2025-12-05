@@ -11,7 +11,7 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 - Stores persistent NPC memory and automation queues
 - Integrates with Game Session and World Management services for real-time updates
 
-For details on how scripts are authored and executed safely, see [System Architecture: Scripting & Automation](../../system-architecture-scripting.md).
+For details on how scripts are authored, how standard and custom events are modeled, and how they execute safely, see [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and the subsection on [Custom and Service-Specific Events](../../system-architecture-scripting.md#custom-and-service-specific-events).
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
@@ -24,9 +24,13 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - AI computations are optimized for large worlds by evaluating scripts on a separate schedule and batching the resulting commands before handing them to the tick system.
 - Script definitions are versioned and can be hot reloaded without downtime as
   described in [System Architecture: Scripting & Automation](../../system-architecture-scripting.md).
+  See also the detailed sandbox and loop safety design in
+  [Script Sandbox & Resource Limits](./sandbox-runtime-design.md).
 - The service listens for a `NotifyScriptVersionUpdate` event and reloads the
   specified scripts in memory, validating compatibility before updating the
-  runtime registry.
+  runtime registry. See [Hot Reload & Failure Handling](#hot-reload--failure-handling)
+  for how `activePatchVersion`, `pendingPatchVersion`, and `reloadState` are
+  managed.
 - Uploading or replacing scripts via the `UpdateScript` gRPC method is handled as a Saga workflow so that failures
     can be rolled back. The service uses the shared `SagaBuilder` and
     `SagaRunner` helpers to persist the script and emit `sagas.active` metrics
@@ -62,6 +66,11 @@ interaction.
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
 - `automation_queue` keys in Redis buffer triggered events until a script runs.
+- Internal automation tick staging uses a dedicated namespace:
+  - `automation:tick:{tenantId}:{scriptId}:queue` – per-script queue of events being staged into tick-compatible commands.
+  - `automation:tick:{tenantId}:{scriptId}:pending` – per-script pending list of events currently being applied.
+  - `automation:tick:{tenantId}:{scriptId}:lock` – per-script lock ensuring only one automation tick for a `(tenantId, scriptId)` pair runs at a time.
+  These keys are separate from the game tick keys (`tick:{tenantId}:{regionId}:...`) used by the Game Session Service and are only touched by the Automation & Scripting Service’s own Lua scripts.
 - `automation_queue_enqueued_total` and `automation_queue_drained_total` metrics
   track Redis queue activity.
 - The staging Lua script processes only a limited number of events each tick
@@ -78,8 +87,20 @@ interaction.
 - The sandboxed engine limits CPU time and memory for each script to prevent
   runaway behavior.
 - The service uses `ScriptTickService` to stage, commit, and roll back events in Redis.
-  This runs independently of the main game tick loop. Locks `tick:lock:{tenantId}:{scriptId}`
-  ensure only one script tick operates at a time. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed.
+  This runs independently of the main game tick loop. Locks `tick:{tenantId}:{regionId}:lock:{scriptId}`
+  ensure only one script tick per region operates at a time and share a hash tag with the region’s tick queues and pending state. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed.
+
+### Hot Reload & Failure Handling
+
+Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each `{tenantId, scriptPatchVersion}`:
+
+- The service tracks the currently executing version as `activePatchVersion` and treats the incoming one as `pendingPatchVersion`, with a simple `reloadState` (`IDLE`, `RELOADING`, `FAILED`) mirroring [Hot Reload & Resume Behavior](../../system-architecture-scripting.md#hot-reload--resume-behavior).
+- On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for that tenant, but in-flight executions complete and triggers remain queued.
+- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts. If the reload succeeds on the current leaders responsible for that tenant, they atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume scheduling.
+- If reload or validation fails, the new patch never becomes active. The service keeps `activePatchVersion` on the prior patch, marks the pending patch as failed and `reloadState=FAILED`, discards any partially loaded state, and resumes scheduling using the last known good configuration. A failure result is reported back to the Game Design Service so the publish can be investigated or retried.
+- Triggers pinned to a failed or unknown `scriptPatchVersion` are rejected explicitly. The service records an audit entry (for example, `skipped_version_unavailable`) and increments a drop metric such as `automation_script_triggers_dropped_total{reason=version_unavailable}` instead of silently falling back to the previous patch.
+
+This behavior ensures that a script patch either becomes the new active version for that tenant or fails cleanly without affecting live automation behavior.
 
 ### gRPC APIs
 
@@ -139,6 +160,8 @@ Additional variables tune the scripting engine:
 | `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
 | `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` |
 | `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` |
+| `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` |
+| `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` |
 
 ## Proto Files
 
@@ -203,6 +226,16 @@ configurable window. Counters are stored in Redis using keys of the form
 `script_quota:{tenantId}:{scriptId}`. When the quota is exceeded the event is
 ignored and `script_quota_denied_total` is incremented. Enforcement metrics are
 exported via the standard `sagas.active` gauge.
+
+Key Automation & Scripting–specific metrics include:
+
+- `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
+- `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
+- `automation_script_tenant_budget_seconds{tenantId, tier}` for per-tenant automation budgets.
+- `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
+- `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds` for sandbox and runtime health.
+
+See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for how these metrics are scraped, visualized, and alerted on.
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

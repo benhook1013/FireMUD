@@ -37,11 +37,14 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   private final net.firedevops.firemud.service.quota.ScriptQuotaService quotaService;
   private final ConflictTracker conflictTracker;
 
-  @Value("${automation.tick-duration-ms:1000}")
-  private long tickDurationMs;
-
   @Value("${automation.tick-budget-ms:100}")
   private long tickBudgetMs;
+
+  @Value("${automation.tick-min-lock-ttl-ms:500}")
+  private long minLockTtlMs;
+
+  @Value("${automation.tick-max-lock-ttl-ms:5000}")
+  private long maxLockTtlMs;
 
   @Value("${automation.tick-max-events:50}")
   private int tickMaxEvents;
@@ -139,7 +142,9 @@ public class ScriptTickServiceImpl implements ScriptTickService {
     long start = System.nanoTime();
     String lockKey = lockKey(tenantId, scriptId);
     Boolean acquired =
-        redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
+        redisTemplate
+            .opsForValue()
+            .setIfAbsent(lockKey, "1", Duration.ofMillis(computeLockTtlMs()));
     if (Boolean.FALSE.equals(acquired)) {
       lockContentionCounter.increment();
       conflictTracker.recordConflict("script:" + tenantId + ":" + scriptId);
@@ -191,6 +196,17 @@ public class ScriptTickServiceImpl implements ScriptTickService {
       }
       redisTemplate.delete(lockKey);
     }
+  }
+
+  private long computeLockTtlMs() {
+    long unclamped = tickBudgetMs * 3;
+    if (unclamped < minLockTtlMs) {
+      return minLockTtlMs;
+    }
+    if (unclamped > maxLockTtlMs) {
+      return maxLockTtlMs;
+    }
+    return unclamped;
   }
 
   private String queueKey(Long tenantId, Long scriptId) {
