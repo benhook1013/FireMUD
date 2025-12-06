@@ -348,7 +348,7 @@ The **Game Session Service** manages orchestration, while gameplay rules are res
 
 ## Tick Staging and Commit Flow
 
-State changes are first **staged in Redis** under keys like `tick:pending:{tenantId}:{regionId}`:
+State changes are first **staged in Redis** under keys like `tick:{tenantId}:{regionId}:pending`:
 
 - Only committed if **all actions succeed**
 - Timeout or failed actions are **excluded** and **rescheduled with priority**

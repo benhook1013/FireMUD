@@ -23,7 +23,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#session-keys-and-gameplay-binding))
 - Retry metadata and inter-tick conflict tracking
 - TTL-based service caches such as hot room lookups and recent chat history (see [Performance Optimization Guidelines](./performance-optimization.md))
-- Automation queue keys for script events (`automation_queue:{tenantKey}:{entityId}`) that are treated as **single-key operations** from Redis’s perspective (see [Hash Tags and Redis Cluster Slotting](#hash-tags-and-redis-cluster-slotting) for guidance if future automation scripts need to combine these keys with tick-region keys atomically)
+- Automation queue keys for script events (`automation_queue:{tenantId}:{entityId}`) that are treated as **single-key operations** from Redis’s perspective (see [Hash Tags and Redis Cluster Slotting](#hash-tags-and-redis-cluster-slotting) for guidance if future automation scripts need to combine these keys with tick-region keys atomically)
 
 Services connect to Redis using the `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT`
 environment variables described in
