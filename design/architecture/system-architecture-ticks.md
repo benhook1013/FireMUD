@@ -85,7 +85,7 @@ The **region boundary** is therefore the unit of atomicity and authority:
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
-- `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline))
+- `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#key-naming-and-shard-discipline))
 - `SET NX PX` with expiry for exclusive ownership
 - Lua-based atomic checks to avoid race conditions
 
@@ -562,7 +562,7 @@ The process is **asynchronous and multi-phased**:
 1. A tick-local command executes in the **origin region**.
 2. A follow-up action — including the `sourceEntityId` — is enqueued in the
    **target region's** command queue (often under a `remote:{tenantId}:{entityId}` key; see
-   [Redis Key Naming](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline)).
+   [Redis Key Naming](./system-architecture-redis.md#key-naming-and-shard-discipline)).
 3. The target region processes the action during its next tick and determines
    the outcome locally.
 4. The Game Session Service uses the `sourceEntityId` to route the result back

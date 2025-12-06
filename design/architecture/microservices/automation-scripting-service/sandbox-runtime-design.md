@@ -123,7 +123,7 @@ When a script exceeds its CPU/time budget:
 - The run stops immediately; no further nodes are evaluated.
 - Any commands already staged for the current run are **discarded** before commit.
 - The `script_event_audit` record is written with:
-  - `outcomeType = sandbox_error`
+  - `outcome = sandbox_error`
   - `reason = cpu_budget_exceeded`
   - The elapsed time and node count
 - Metrics are incremented:
@@ -171,7 +171,7 @@ When a script exceeds its soft memory budget:
 - The run is aborted before further allocations.
 - Any commands staged from that run are discarded prior to commit.
 - The `script_event_audit` record is written with:
-  - `outcomeType = sandbox_error`
+  - `outcome = sandbox_error`
   - `reason = memory_budget_exceeded`
   - Counts for nodes visited, collections sizes, and approximate bytes used (where available)
 - Metrics are incremented:
@@ -181,7 +181,7 @@ If instead the JVM or container hits a hard limit and restarts:
 
 - The run, and possibly other concurrent runs, fail with `infrastructure_error`.
 - Standard platform health checks and alerts (logging, Prometheus, OpenTelemetry) report the outage.
-- Upon recovery, the scheduler continues from the next tick; at-most-once guarantees ensure the failed run is not retried automatically.
+- Upon recovery, the scheduler continues from the next tick; at-most-once guarantees ensure the failed run is not retried automatically. In this case the `script_event_audit` record uses `outcome = infrastructure_error` to match the canonical `outcome` enum described in the scripting architecture.
 
 ---
 
@@ -225,4 +225,3 @@ When diagnosing sandbox-related issues in production, operators should:
   - Re-enable the script after remediation
 
 Future implementation work should keep this observable behavior intact even if the internal enforcement mechanisms evolve (for example, moving from cooperative checks to dedicated worker processes).
-
