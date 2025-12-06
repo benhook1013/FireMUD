@@ -16,10 +16,24 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
   - Focus on: [Failure Modes and Error Handling](#failure-modes-and-error-handling), [Fairness & Abuse Prevention](#fairness--abuse-prevention), [Resource Isolation and Multi-Level Budgets](#resource-isolation-and-multi-level-budgets), [Auditability & Metrics](#auditability--metrics), and the high-level references to Redis and tick behavior.
   - Pair this document with [System Architecture: Logging & Monitoring](./system-architecture-logging-monitoring.md), [System Architecture: Redis](./system-architecture-redis.md), and the Automation & Scripting Service README for concrete metric, alerting, and runbook details.
 
+### Quick Reference
+
+- [Goals](#goals)
+- [TL;DR Flow](#tldr-flow)
+- [Supported Script Events](#supported-script-events)
+- [Determinism & Allowed Non-Determinism](#determinism--allowed-non-determinism)
+- [Integration with Game Logic & Tick System](#integration-with-game-logic--tick-system)
+- [Scheduler Leadership & Coordination](#scheduler-leadership--coordination)
+- [Failure Modes and Error Handling](#failure-modes-and-error-handling)
+- [Fairness & Abuse Prevention](#fairness--abuse-prevention)
+- [Auditability & Metrics](#auditability--metrics)
+- [Hot Reload & Resume Behavior](#hot-reload--resume-behavior)
+
 ## Terminology Glossary
 
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `{tenantId, regionId}` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantId}:{regionId}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
-- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script events** from Redis-backed queues such as `automation_queue:{tenantId}:{entityId}`, stages them under `automation:tick:{tenantId}:{scriptId}:...`, and enqueues resulting commands into per-entity tick command queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation_queue:{tenantId}:{entityId}`, stages them under `automation:tick:{tenantId}:{scriptId}:...`, and enqueues resulting commands into per-entity tick command queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Automation queue** – a per-tenant, per-entity Redis queue (`automation_queue:{tenantId}:{entityId}`) that holds **post-handler script work items** (domain commands plus script metadata such as `scriptEventId`, `scriptId`, and version information) after sandboxed DSL execution and before automation ticks stage them into tick-compatible queues.
 - **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `tickId` progression per `{tenantId, regionId}`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details.
 
 ## Implementation Status
@@ -54,7 +68,7 @@ At a high level, scripting follows this pipeline:
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `{tenantId, eventType}` and applies per-script and per-tenant limits via `ScriptQuotaService`.
 3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – **Script events that have been admitted for execution** are enqueued into Redis-backed automation queues under keys such as `automation_queue:{tenantId}:{entityId}`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity and represent the backlog of script triggers awaiting processing; region-scoped tick keys remain the responsibility of the Game Session Service.
+4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are enqueued into Redis-backed automation queues under keys such as `automation_queue:{tenantId}:{entityId}`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity and represent the backlog of post-DSL script work items awaiting processing by automation ticks; region-scoped tick keys remain the responsibility of the Game Session Service.
 5. **Script ticks & commit** – `ScriptTickService` drains `automation_queue` entries, batches automation events into tick-compatible queues with quotas and budgets under `automation:tick:{tenantId}:{scriptId}:...`, and only then commits the resulting **domain commands** into the tick command queues using Redis Lua scripts for atomic staging and commit.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
@@ -68,7 +82,8 @@ sequenceDiagram
 
     Player->>GameSession: Command / world event
     GameSession-->>Scripting: Script trigger (event + metadata)
-    Scripting->>Redis: Enqueue to automation_queue:{tenantId}:{entityId}
+    Scripting->>Scripting: Run sandboxed DSL handler
+    Scripting->>Redis: Enqueue script work to automation_queue:{tenantId}:{entityId}
     Scripting->>Redis: ScriptTickService stages automation:tick:{tenantId}:{scriptId}:*
     Scripting->>Redis: Commit into tick:{tenantId}:{regionId}:queue:{entityId}
     GameSession->>Redis: Read per-entity tick queue on tick
@@ -181,6 +196,7 @@ Before a script is accepted, the Automation & Scripting Service runs a **loop sa
 Scripts are designed to be **deterministic under replay** for a given game configuration and event. The Automation & Scripting Service enforces this by constraining how randomness and time are exposed to DSL components:
 
 - All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `{tenantId, regionId, scriptId, scriptEventId, tickId, scriptPatchVersion}` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
+  Seeds are derived from this tuple primarily so offline replay tools and test harnesses can reproduce behavior for a given event stream; production tick replays never re-enter the DSL for the same `scriptEventId`.
 - **Wall-clock time is not exposed** to scripts. DSL components see only **derived game time** sourced from the tick and session model (for example, `tickId`, region-local “world time” counters, or effect durations computed by Game Logic). This ensures that replaying the same tick timeline yields the same time values from the script’s perspective, independent of real-world clock drift.
 - Any component that introduces variability must either:
   - be implemented in terms of the seeded RNG and tick-based time described above, or
@@ -272,6 +288,7 @@ Several higher-level behavior modules build on the scripting framework and integ
 - `NpcFormationService` coordinates squad positioning for groups of NPCs, using shared world topology and movement rules from the World and Game Logic services.
 
 Detailed behavior, data models, and service-specific responsibilities for these modules are defined in the Automation & Scripting Service README and the relevant microservice design docs; this section only highlights that they are implemented on top of the scripting and tick pipeline described here.
+`NpcMoraleService` and basic encounter/formation behavior are implemented today; the **breadth of the PvE encounter library and biome-specific events is still expanding** and tracked in the Automation & Scripting Service task list (`design/project-management/task-list-automation-scripting-service.md`).
 
 ## Sandboxing & Security
 
@@ -338,6 +355,8 @@ Implementations should align emitted metrics with those documents; the intent he
   - `automation:tick:{tenantId}:{scriptId}:pending`
 
   Keys within this namespace share a hash tag on `{tenantId}:{scriptId}` so multi-key Lua operations remain shard-local in Redis Cluster. These automation tick locks are **separate from the game tick locks** (`tick:{tenantId}:{regionId}:lock:{entityId}`) managed by the Game Session Service. Script ticks never bypass entity-level locking or tick isolation; they only batch and stage automation events before handing them to the normal tick pipeline. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed once they enter the per-entity command queues.
+
+  **ScriptTickService lock isolation:** `ScriptTickService` uses only the `automation:tick:{tenantId}:{scriptId}:*` keys for locking and staging. It never reads from or writes to `tick:{tenantId}:{regionId}:lock:{entityId}` or other `tick:{tenantId:...}` locks; those remain exclusively owned by the Game Session Service’s tick executors.
 
 ### Ordering Between Player and Script Commands
 
