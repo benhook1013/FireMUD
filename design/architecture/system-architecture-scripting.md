@@ -19,8 +19,8 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 ## Terminology Glossary
 
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `{tenantId, regionId}` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantId}:{regionId}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
-- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains `automation_queue:{tenantId}:{entityId}` events, stages them under `automation:tick:{tenantId}:{scriptId}:...`, and enqueues resulting commands into per-entity queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
-- **Tick heartbeat** – the event stream produced by the Game Session Service that reports `tickId` progression per `{tenantId, regionId}`. The script scheduler consumes this heartbeat to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself.
+- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script events** from Redis-backed queues such as `automation_queue:{tenantId}:{entityId}`, stages them under `automation:tick:{tenantId}:{scriptId}:...`, and enqueues resulting commands into per-entity tick command queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `tickId` progression per `{tenantId, regionId}`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details.
 
 ## Implementation Status
 
@@ -54,8 +54,8 @@ At a high level, scripting follows this pipeline:
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `{tenantId, eventType}` and applies per-script and per-tenant limits via `ScriptQuotaService`.
 3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – Commands are enqueued into Redis-backed automation queues under keys such as `automation_queue:{tenantId}:{entityId}`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity; region-scoped tick keys remain the responsibility of the Game Session Service.
-5. **Script ticks & commit** – `ScriptTickService` batches automation events into tick-compatible queues with quotas and budgets, using Redis Lua scripts for atomic staging and commit.
+4. **Automation queue staging** – **Script events that have been admitted for execution** are enqueued into Redis-backed automation queues under keys such as `automation_queue:{tenantId}:{entityId}`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity and represent the backlog of script triggers awaiting processing; region-scoped tick keys remain the responsibility of the Game Session Service.
+5. **Script ticks & commit** – `ScriptTickService` drains `automation_queue` entries, batches automation events into tick-compatible queues with quotas and budgets under `automation:tick:{tenantId}:{scriptId}:...`, and only then commits the resulting **domain commands** into the tick command queues using Redis Lua scripts for atomic staging and commit.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
 ```mermaid
@@ -105,7 +105,7 @@ This section walks through a typical happy-path flow where an NPC script reacts 
 
 1. **Player movement and event emission**
    - A player issues a movement command that causes them to enter a new room. The Game Session Service processes this action as part of a tick for the relevant `{tenantId, regionId}`.
-   - After the move is committed and the player is now in the new region, the Game Session Service emits an `onEnterRegion` script trigger to the Automation & Scripting Service via gRPC. The trigger includes the `tenantId`, `regionId`, target `entityId` (for example, an NPC guarding the room), and the currently pinned `scriptPatchVersion` for that game as stored by the Game Session Service.
+   - After the move is committed and the player is now in the new region, the Game Session Service emits an `onEnterRegion` **script event** to the Automation & Scripting Service over gRPC. Conceptually this is a unary `TriggerScriptEvent` call on the Automation & Scripting Service that carries the `tenantId`, `regionId`, target `entityId` (for example, an NPC guarding the room), `eventType=onEnterRegion`, and the currently pinned `scriptPatchVersion` for that game as stored by the Game Session Service. For low-rate lifecycle events such as `onEnterRegion`, `onSpawn`, and `onCommand`, simple unary gRPC calls are sufficient; high-volume time-based scheduling comes from the tick heartbeat stream described later in this document.
 
 2. **Script lookup and quota checks**
    - The Automation & Scripting Service looks up all scripts bound to `onEnterRegion` for the target entity and tenant, using the version metadata provided by the Game Session Service to resolve the correct script definitions.
@@ -116,7 +116,8 @@ This section walks through a typical happy-path flow where an NPC script reacts 
    - Instead of mutating game state directly, action nodes produce a set of **domain commands** (for example, “NPC says a line,” “NPC targets the player,” “schedule a follow-up patrol timer”) that describe what should happen in the game world.
 
 4. **Command enqueue into tick-compatible queues**
-   - The Automation & Scripting Service batches the resulting commands and enqueues them into Redis-backed automation queues such as `automation_queue:{tenantId}:{entityId}`. A staging script then merges these commands into the same per-entity command queues used by the Game Session Service, preserving FIFO order and the invariant of at most one command per entity per tick as described in the [Tick System and Runtime Design](./system-architecture-ticks.md).
+   - After sandbox execution, the Automation & Scripting Service records **script event entries** into Redis-backed automation queues such as `automation_queue:{tenantId}:{entityId}`, tagging each entry with the originating `scriptEventId`, `scriptId`, version metadata, and the domain commands that should be materialized when the event is processed. At this stage, `automation_queue` is still an **event backlog**, not the final tick command queue.
+   - A dedicated Lua staging script (invoked by `ScriptTickService`) drains `automation_queue`, processes events under `automation:tick:{tenantId}:{scriptId}:...`, and merges the resulting domain commands into the same per-entity tick command queues used by the Game Session Service. This preserves FIFO ordering and the invariant of at most one command per entity per tick as described in the [Tick System and Runtime Design](./system-architecture-ticks.md).
    - Each enqueued command carries the originating `scriptEventId`, `scriptId`, and version metadata so downstream logs, metrics, and audits can correlate behavior to the script that produced it.
 
 5. **Tick execution and world updates**
@@ -145,7 +146,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
 
 4. **Sandbox execution and command enqueue**
    - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.
-   - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and enqueued into the automation queues for the relevant `{tenantId, regionId, entityId}`, then merged into the per-entity command queues so they execute during future ticks.
+   - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and recorded as script work items in `automation_queue:{tenantId}:{entityId}` for the affected entity. Each work item carries the originating `scriptEventId`, `scriptId`, version metadata, and the **current region** for the entity at enqueue time. `ScriptTickService` later drains `automation_queue`, stages these events under `automation:tick:{tenantId}:{scriptId}:...`, and merges the resulting commands into the appropriate `tick:{tenantId}:{regionId}:queue:{entityId}` so they execute during future ticks.
 
 5. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.

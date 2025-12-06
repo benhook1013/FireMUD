@@ -17,7 +17,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ## Architecture / Design Notes
 
-- Executes scripts in response to world or player events received via gRPC callbacks.
+- Executes scripts in response to world or player events received via **gRPC callbacks** from the Game Session Service and other domain services. Standard lifecycle events (`onSpawn`, `onEnterRegion`, `onCommand`, etc.) are delivered as unary gRPC calls (conceptually via a `TriggerScriptEvent`–style API), while tick-derived scheduling signals (for example, “every N ticks”) are driven by a **gRPC streaming tick heartbeat** originating from the Game Session Service. See [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and [Tick System and Runtime Design](../../system-architecture-ticks.md#tick-events--heartbeat-stream) for event and heartbeat details.
 - Scripts run inside a sandboxed engine to prevent malicious behavior.
 - Scripts are authored in a **component-based DSL** using a visual editor so
   designers can build behaviors without coding.
