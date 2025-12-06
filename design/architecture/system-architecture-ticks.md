@@ -86,20 +86,30 @@ The **region boundary** is therefore the unit of atomicity and authority:
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
 - `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#key-naming-and-shard-discipline))
-- `SET NX PX` with expiry for exclusive ownership
+- `SET NX PX` with expiry for exclusive ownership, via a shared lock helper
 - Lua-based atomic checks to avoid race conditions
 
-Lock TTLs are derived from the **soft tick execution budget** using the formula described in the Redis architecture (`lock_ttl_ms = clamp(tick_budget_ms * 3, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`). This gives headroom for brief pauses (GC, CPU spikes) without letting the lock expire while work is still in progress, while still bounding how long a stale lock can block progress. Ticks that approach this bound are treated as misbehaving and deferred or retried rather than allowed to run indefinitely under a single lock.
+Lock TTLs are derived from the **soft tick execution budget** using the formula described in the Redis architecture. Conceptually:
 
-Capacity planning assumes that, under normal conditions, **end-to-end tick work including GC pauses stays well below `lock_ttl_ms`**:
+- The platform computes `lock_ttl_ms` as `clamp(tick_budget_ms * LOCK_TTL_MULTIPLIER, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`, where:
+  - `LOCK_TTL_MULTIPLIER` is a configuration property (for example `5` in production profiles) rather than a hard-coded constant of `3`.
+  - `MIN_LOCK_TTL_MS` / `MAX_LOCK_TTL_MS` bound the envelope for all regions.
+- This gives headroom for pauses (GC, CPU spikes, brief scheduler jitter) without letting the lock expire while work is still in progress, while still bounding how long a stale lock can block progress.
 
-- Load/perf tests and production telemetry must show that `p99` tick execution time (lock acquisition → commit/rollback + lock release) remains under a configurable fraction of `lock_ttl_ms` (for example **≤50–70%**).
-- Rare, extreme pauses (for example long GC) may still exceed `lock_ttl_ms`. In those cases:
-  - The original worker may continue executing locally even after its lock expires and is potentially reacquired by another worker.
-  - Lock-token and pending-key checks (described below) cause any such “late” work to fail safely: the Lua script sees a token or `tickId` mismatch, aborts without applying effects, and surfaces a retry outcome instead.
-- Metrics described in the Redis architecture (`tick.execution_time_ms`, `tick.lock_ttl_headroom_ratio`, `tick.near_lock_ttl`, and over-TTL counters) are used to detect regions where real-world pauses approach or exceed `lock_ttl_ms` so operators can tune GC, tick budgets, or workload distribution before overlapping work becomes common.
+Capacity planning and configuration tuning rely on **measured data**, not just the multiplier:
 
-Operationally, this means:
+- Load/perf tests and production telemetry must show that `p99` tick execution time (lock acquisition → commit/rollback + lock release) remains under a configurable fraction of `lock_ttl_ms` (for example **≤50%** in steady state, with alerts when sustained runtime exceeds **70%**).
+- The recommended process is:
+  - Start from a conservative `LOCK_TTL_MULTIPLIER` (for example, 5× the soft tick budget).
+  - Measure `tick.execution_time_ms`, `tick.lock_ttl_ms`, and headroom ratios under realistic workloads.
+  - Adjust `tick_budget_ms` and/or `LOCK_TTL_MULTIPLIER` per environment so that GC pauses and normal load variations still fall well within the configured envelope.
+
+Rare, extreme pauses (for example long GC) may still exceed `lock_ttl_ms`. In those cases:
+
+- The original worker may continue executing locally even after its lock expires and is potentially reacquired by another worker.
+- Lock-token and pending-key checks (described below) cause any such “late” work to fail safely: the Lua script sees a token or `tickId` mismatch, aborts without applying effects, and surfaces a retry outcome instead.
+
+Operationally:
 
 - **Lock TTL expiry in healthy operation should be rare**. A non-trivial rate of over-TTL ticks in a region is treated as a degradation signal (see the Redis architecture’s degraded/ halted region behavior) and usually indicates a need to adjust tick budgets, GC settings, or shard layout.
 - When a tick does run past `lock_ttl_ms`, its work is treated as a failed attempt and rescheduled via the normal retry/backoff mechanism; fairness rules (per-entity FIFO queues and bounded retries) still apply, so these retries are delayed but not starved relative to other commands.

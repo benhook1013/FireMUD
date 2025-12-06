@@ -79,25 +79,25 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
 
 ### Redis AOF Reset on Deployment
 
-Redis is treated as a **transient coordination layer** in terms of data authority (PostgreSQL owns canonical game data), but in production it is also a **long-lived availability dependency**. The lifecycle of Redis and its AOF differs by environment:
+Redis is treated as a **transient coordination layer** in terms of data authority (PostgreSQL owns canonical game data), but in staging and production it is also a **long-lived availability dependency**. The lifecycle of Redis and its AOF differs by environment:
 
 - **Development and ephemeral test environments**
   - A Kubernetes Job (`k8s/helm/firemud/templates/redis-aof-reset-job.yaml`) may be enabled to delete the Redis Append‑Only File (AOF) on each Helm install or upgrade.
   - This guarantees a clean slate between runs so stale gameplay state, tick locks, or timers do not leak across test cycles.
-  - This behavior is appropriate for local/dev stacks and short‑lived preview environments where all games are disposable.
+  - This behavior is appropriate for local/dev stacks and short‑lived preview environments where all games are disposable and no replay or uptime guarantees are made.
 
-- **Production**
+- **Staging and production-equivalent environments**
   - Redis AOF files and volumes are **not wiped as part of normal Helm upgrades**. Application deployments roll out while Redis keeps its in‑memory state and AOF, so active sessions, tick queues, and timers survive app releases.
   - Resetting Redis (by deleting its AOF and/or volumes) is treated as an explicit **operational maintenance action** equivalent to a “world restart”. Operators must expect:
     - All active sessions to terminate.
     - All volatile tick state, timers, and queues to be discarded.
     - Games to restart from authoritative PostgreSQL state on next login.
-  - Any workflow that resets Redis in production must be documented as a runbook with clear player‑impact notes; it is not part of the default CI/CD pipeline.
+  - Any workflow that resets Redis in staging/production must be documented as a runbook with clear player‑impact notes; it is not part of the default CI/CD pipeline.
 
 This behavior is distinct from **failover**:
 
 - **Failover (node crash or leader change):** Redis pods restart or leadership moves, but AOF files and replication state are preserved. Tick locks and `tick:{tenantId}:{regionId}:pending` entries survive so the Game Session Service can safely **replay or complete** in-flight ticks using idempotent domain logic.
-- **Deployment (Helm upgrade) in production:** Application pods roll forward while Redis keeps its AOF and in‑memory state. In‑flight ticks and sessions remain active across deployment.
+- **Deployment (Helm upgrade) in staging/production:** Application pods roll forward while Redis keeps its AOF and in‑memory state. In‑flight ticks and sessions remain active across deployment.
 
 ## Kubernetes Production
 
