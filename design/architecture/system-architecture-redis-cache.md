@@ -105,11 +105,11 @@ Memory and eviction behavior for cache and rate-limit workloads must not comprom
 For **small or development deployments** that share all workloads on a single Redis cluster:
 
 - This configuration is intended for **low-concurrency lab and developer environments only**, not for QA, staging, production, or any player-facing game instances.
-- The configuration must still avoid mixing large, eviction-driven caches with critical coordination keys under `allkeys-*` policies. This is considered a **hard no** because it can silently evict locks, timers, or staging keys.
+- The configuration should still avoid mixing large, eviction-driven caches with critical coordination keys under `allkeys-*` policies, because it can silently evict locks, timers, or staging keys.
 - Even with `maxmemory-policy noeviction`, conservative cache TTLs, and tight cache size limits, shared coordination+cache Redis remains **operationally fragile**: any mis-sized cache or unexpected hot key can push the node into `OOM` conditions where coordination writes begin to fail.
-- If a single-node instance must serve both coordination and cache traffic, prefer:
-  - `maxmemory-policy noeviction`, very small, well-bounded caches used purely for development convenience; and
-  - Separate logical Redis instances (for example, two containers or pods) whenever a scenario moves beyond low-volume, single-user testing so coordination and cache eviction policies can diverge even on the same host.
+- If a single-node instance must serve both coordination and cache traffic, it is strongly recommended to:
+  - Use `maxmemory-policy noeviction`, with very small, well-bounded caches used purely for development convenience; and
+  - Move to separate logical Redis instances (for example, two containers or pods) whenever a scenario moves beyond low-volume, single-user testing so coordination and cache eviction policies can diverge even on the same host.
 
 Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. Alert thresholds are tuned so approaching memory pressure or unexpected eviction activity is visible well before it threatens coordination workloads.
 

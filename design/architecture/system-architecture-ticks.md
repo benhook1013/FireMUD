@@ -154,7 +154,10 @@ Many gameplay commands conceptually touch **multiple entities** (for example tra
 - **Exceptions require a global lock ordering and all-or-nothing behavior:**
   - If a future command truly cannot be decomposed and must take more than one entity lock inside a single script, it **must** acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire locks in ascending order) and operate within a single `{tenantId, regionId}` shard; cross-region multi-lock commands are not allowed.
   - If any lock in that ordered set cannot be acquired, the script immediately releases all previously acquired locks, returns a contention result, and the Game Session Service reschedules the command using the standard backoff rules; no partial logical effects are applied for that command.
-  - Such scripts are treated as special cases, reviewed carefully, and documented with their lock ordering assumptions and maximum entity counts.
+  - Such scripts are treated as special cases, reviewed carefully, and documented with their lock ordering assumptions and maximum entity counts. The Redis architecture and Lua Script Registry reinforce this by:
+    - Declaring, per script, a `max_entity_locks` value in the script descriptor (default `1` for normal tick scripts).
+    - Requiring explicit opt-in to an **ordered multi-lock** mode (and associated tests) for any script that needs `max_entity_locks > 1`.
+    - Failing CI when a Lua script attempts to use more entity lock keys than declared or bypasses the ordered multi-lock contract.
 
 By treating “one entity lock per script” as the default contract, enforcing a small, explicit fan-in cap, and reserving ordered multi-lock patterns for rare, all-or-nothing cases, the tick system:
 
@@ -490,6 +493,23 @@ This supports **at-least-once, idempotent, replayable** ticks — ticks may be s
 
 Domain services treat `tickId` as the canonical idempotency token for every tick-side effect. Replays of the same `tick:{tenantId}:{regionId}:pending` entry must never apply a logically new effect to PostgreSQL.
 
+### Scope: Which Operations Must Be Idempotent?
+
+The idempotency rules in this section apply to any operation that is:
+
+- Invoked as part of tick execution (driven by commands dequeued from `tick:{tenantId}:{regionId}:queue:{entityId}` or by timers/retries tied to the same `tickId` stream), **and**
+- Persists or triggers side effects outside Redis, including:
+  - PostgreSQL mutations (rows in Entity Management, World Management, Social, etc.).
+  - Durable queues or outboxes consumed by other services.
+  - Calls to other services that in turn modify PostgreSQL or external systems.
+
+Explicitly out of scope (no special tick idempotency guard required):
+
+- Pure reads that do not mutate state.
+- Best-effort observability (metrics, logs, traces) that can be recorded multiple times without affecting gameplay semantics.
+
+Operations that **cannot** be made idempotent or compensatable at the domain layer — for example payments, emails, or webhooks into third-party systems — **must not** be executed directly inside tick-driven handlers. Those flows must use the saga/outbox patterns in [Transaction Strategies](./system-architecture-transactions.md) so they can tolerate retries and partial failures independently of tick replay.
+
 Every tick-driven effect MUST use one of the following strategies:
 
 - **Per-aggregate last-tick state**
@@ -558,6 +578,27 @@ The crash-recovery story depends on domain services implementing these patterns 
   - Drive the same sequence of domain calls multiple times, mimicking a replay of the same pending tick after a crash.
   - Verify that the final PostgreSQL state is identical regardless of how many times the tick is “reapplied.”
 - CI pipelines must run these replay tests; changes to tick handlers that break idempotency should fail tests before reaching production.
+
+### Design Checklist for New Tick-Driven Commands
+
+When introducing a new command type that will run under tick control, implementers must answer the following questions in design docs and code review:
+
+- **Is this command tick-driven?**
+  - Does it run because an entry is dequeued from `tick:{tenantId}:{regionId}:queue:{entityId}` or a tick-timer/retry fired?
+  - If not, it may follow different idempotency rules and does not belong in this section.
+- **What is the idempotency key?**
+  - For single-aggregate updates: which `last_tick_id` field and table enforce “at most one update per tick” for that aggregate?
+  - For multi-aggregate or multi-effect operations: what is the `effect_key` used in `tick_effect_guard`, and how is it derived deterministically from the command payload?
+- **Where is the guard persisted?**
+  - Which schema/table holds `last_tick_id` or `tick_effect_guard` entries?
+  - Is there a primary-key or unique index that enforces the idempotency key at the database level?
+- **What happens on replay?**
+  - What does the handler do when it detects that the guard already exists or `last_tick_id >= currentTickId`?
+  - Is the “replay” outcome clearly documented and tested (no new logical effects, optional consistency verification)?
+- **Are there any non-idempotent external effects?**
+  - If the handler sends email, charges a payment method, or calls an external API with irreversible effects, how is that separated from the tick-driven part (for example, via an outbox entry processed by a saga)?
+
+PRs that add new tick-driven commands should link to this checklist and demonstrate how each item is satisfied before the feature is considered complete.
 
 ---
 

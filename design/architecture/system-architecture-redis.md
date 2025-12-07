@@ -61,8 +61,10 @@ unset, services fall back to `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT` as
 documented in
 [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#redis-connection).
 In **player‑facing environments**, Coordination Redis and Cache/Rate‑Limit Redis
-must be configured as distinct logical Redis deployments even if they share the
-same underlying host.
+should be configured as distinct logical Redis deployments even if they share the
+same underlying host. Sharing a single deployment for both workloads is strongly
+discouraged because misconfiguration (for example, eviction policies or memory
+limits) can silently impact coordination keys and gameplay availability.
 
 Redis acts as a **coordinated real-time buffer**, not a source of truth, but is still treated as **critical** for game availability and consistency.
 
@@ -366,17 +368,28 @@ Lease and lock TTLs are controlled via explicit configuration properties:
 - `game.tick-min-lock-ttl-ms` / `game.tick-max-lock-ttl-ms` – bounds for computing `lock_ttl_ms`.
 - `game.tick-lease-ttl-ms` – region lease TTL used for `tick-executor-lease:{tenantId}:{regionId}` keys.
 
+Internally, the Game Session Service also defines a `MAX_LEASE_TTL_MS` constant that bounds how long a region can remain “logically owned” by a single lease epoch even if the executor disappears. Region leases are intentionally **short-lived coordination hints** (seconds, not minutes), not long-duration ownership records; if an executor vanishes and its lease remains valid for longer than a small multiple of the tick budget, that is treated as a misconfiguration rather than a supported steady state.
+
 At startup, the Game Session Service derives `lock_ttl_ms` from `game.tick-budget-ms` and validates:
 
 - `game.tick-min-lock-ttl-ms <= game.tick-max-lock-ttl-ms`.
 - `lock_ttl_ms` (computed) satisfies `lock_ttl_ms >= game.tick-budget-ms` and remains within `[MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS]` as documented in the Tick System design.
-- `game.tick-lease-ttl-ms` is **strictly greater than** both `game.tick-budget-ms` and the computed `lock_ttl_ms` (for example, at least 2–3× `lock_ttl_ms`).
+- `game.tick-lease-ttl-ms` is **strictly greater than** both `game.tick-budget-ms` and the computed `lock_ttl_ms` (for example, at least 2–3× `lock_ttl_ms`), but also bounded above:
+  - `game.tick-lease-ttl-ms <= MAX_LEASE_TTL_MS`, where `MAX_LEASE_TTL_MS` is on the order of a small multiple of the tick budget (for example, a few seconds to tens of seconds, not minutes).
+  - Optionally, `game.tick-lease-ttl-ms <= LEASE_TO_LOCK_TTL_MULTIPLIER * lock_ttl_ms` for a small fixed multiplier (for example 3–5×), so leases never outlive lock TTLs by more than a modest factor.
 
 Because a lock from a previous lease epoch can stall only the entity it guards and only until its TTL expires, `MAX_LOCK_TTL_MS` also defines the **maximum tolerated per-entity failover stall window**. Configurations that attempt to increase `lock_ttl_ms` beyond this envelope are rejected; stall budgets longer than `MAX_LOCK_TTL_MS` must be justified by an explicit design change rather than ad-hoc configuration.
 
 If any of these invariants are violated in any profile (dev, test, staging, or production), **startup fails fast** with a clear configuration error. There is no automatic fallback to “safe defaults”; running with an unsafe TTL envelope is treated as a configuration bug that must be corrected before the service can accept gameplay traffic.
 
 These checks make misconfigured TTL envelopes visible early and keep all environments within the intended safety margins.
+
+Implementations may also use local monotonic clocks or Redis’s `TIME` command **for diagnostics only**, for example to:
+
+- Log warnings when an executor believes it has held a lease significantly longer than `game.tick-lease-ttl-ms` would suggest under normal renewal cadence, or
+- Detect pathological environments where wall-clock time jumps dramatically.
+
+However, **correctness never depends on wall-clock time**: lease safety is defined purely in terms of token equality and TTL expiry. Time-based checks are treated as guardrails that surface misconfigurations and unhealthy environments to operators; they are not part of the core coordination protocol.
 
 ### Hash Tags and Redis Cluster Slotting
 
@@ -465,6 +478,8 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
     - The required number and order of `KEYS` (with symbolic names such as `lockKey`, `pendingKey`, `leaseKey`, `timerKey`).
     - The allowed key prefixes for each position (for example `tick:`/`retry:`/`timer:` for tick scripts, `session:` only for session scripts).
     - Whether the script is expected to be **multi-key shard-local** or **single-key**.
+    - How many entity lock keys (`tick:{tenantId}:{regionId}:lock:{entityId}`) it is allowed to touch (for example `max_entity_locks = 1` for the default case).
+    - Whether the script participates in an **ordered multi-lock** pattern (rare) where more than one entity lock is acquired under a deterministic ordering, as described in the tick design.
   - Java key-builder APIs for each script are generated from (or validated against) this descriptor so that:
     - Builders construct `KEYS[...]` in exactly the declared order.
     - Callers cannot assemble `KEYS` arrays manually; they must call the generated builders.
@@ -472,6 +487,8 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
     - The script’s `KEYS` count matches the descriptor.
     - All sample `KEYS` produced by the Java builders share the same hash tag for multi-key scripts.
     - Single-key scripts receive exactly one key.
+    - The number of entity lock keys referenced by the script (for example via `lockKey` entries and `tick:{tenantId}:{regionId}:lock:` prefixes) does not exceed the declared `max_entity_locks`.
+    - Scripts that declare `max_entity_locks > 1` also opt in to the ordered multi-lock mode and include tests that prove they acquire and release locks in a deterministic order.
 - Static analysis and linting enforce prefix and shard-locality rules at the script level:
   - A Lua linter scans each script for literal key prefixes (`"tick:"`, `"session:"`, `"retry:"`, `"timer:"`, `"remote:"`, cache prefixes) and compares them with the script’s descriptor.
   - Tick coordination scripts are allowed to use only tick/coordination prefixes (`tick:`, `retry:`, `timer:`, `remote:`) and are rejected in CI if they reference `session:`, automation, or cache prefixes.
@@ -608,6 +625,43 @@ If a script repeatedly fails to reload or `NOSCRIPT` errors persist beyond a sho
 - Emits a metric such as `redis.lua.script_load_failures` for alerting.
 - Treats the affected tick region as **degraded** until the underlying Redis issue is resolved.
 
+### Script Evolution and Deployment Order
+
+Lua scripts change over time as bugs are fixed, behavior is refined, and new coordination flows are added. To keep rollouts predictable without over-constraining teams, FireMUD distinguishes between **compatible** and **breaking** script changes and applies simple sequencing rules:
+
+- **Compatible script changes (no special order required)**
+  - Internal bugfixes or performance improvements that do not change:
+    - The script’s logical identifier.
+    - The declared `KEYS`/`ARGV` count or ordering.
+    - The documented outcome contract for existing callers.
+  - Adding new scripts under **new logical identifiers** that no existing caller references.
+  - These changes can be rolled out with normal application deployments; `NOSCRIPT` handling and background preload keep behavior correct even under frequent releases.
+
+- **Breaking script changes (require coordination)**
+  - Any change that:
+    - Alters the expected `KEYS`/`ARGV` shape for an existing logical script.
+    - Changes semantics in a way that would break existing callers’ expectations.
+    - Removes a script that may still be referenced by some callers.
+  - For these changes, deployments follow a lightweight “scripts first, callers second” rule, mirroring the `schemaVersion` rollout pattern:
+    - **Phase 1 – Script compatible with old and new callers**
+      - Introduce a new script body (under the same or a new logical identifier) that can handle both the old and new calling conventions safely (for example, treats missing arguments conservatively or understands both old and new payload variants).
+      - Deploy this updated script set cluster-wide so all Redis nodes can execute it.
+    - **Phase 2 – Caller rollout**
+      - Update services to send only the **new** `KEYS`/`ARGV` shape or to invoke a new logical script identifier.
+      - Monitor `NOSCRIPT` and script failure metrics to confirm that calls are consistently hitting the expected behavior.
+    - **Phase 3 – Cleanup**
+      - Once metrics and code search show that no callers use the old behavior or logical identifier, remove compatibility branches and/or delete the obsolete script from the registry.
+
+- **Separate logical identifiers for incompatible behavior**
+  - When behavior cannot be made backward-compatible for a period of time, the preferred pattern is to introduce a **new logical script identifier** (for example `tick_commit_v2`) rather than mutating the existing one in place.
+  - Old callers continue to use `*_v1` while new callers move to `*_v2`; once all callers have migrated, `*_v1` can be removed from the registry and codebase.
+
+These rules are intentionally minimal: they do not require strict global coordination, but they ensure that:
+
+- Callers never depend on a script behavior that has not yet been deployed cluster-wide.
+- Mixed versions of a script remain safe (by design) during a rollout window.
+- `NOSCRIPT` handling continues to provide correctness under churn, while deployment order and logical versioning prevent confusing “old vs new behavior” splits.
+
 This loading and retry behavior ensures that transient `SCRIPT FLUSH` events or node failovers do not permanently break tick processing while still surfacing persistent misconfiguration or Redis instability to operators.
 
 When Lua scripts are versioned or changed as part of a deployment, services either:
@@ -738,6 +792,13 @@ Redis is **required** for tick coordination, sessions, and automation. When Redi
 
 This policy applies consistently across the conditions described elsewhere in this document: replication failures or sustained lag, `OOM`/evictions of coordination keys, repeated over-TTL ticks, and client-level connection timeouts all drive regions through the same **healthy → degraded → halted** progression, rather than each caller inventing its own ad-hoc behavior.
 
+To avoid flapping when metrics hover around thresholds, transitions between these states apply simple hysteresis and cooldown rules:
+
+- Entry thresholds are evaluated over rolling windows (for example, 5–10 minutes of elevated latency or over-TTL ticks) before marking a region degraded or halted.
+- Exit thresholds are deliberately stricter and longer-lived than entry thresholds; for example, a region may require multiple consecutive “good” windows (lower latency, no over-TTL ticks) before it is eligible to move from halted → degraded → healthy.
+- Implementations treat degraded/halted as **minimum residency states**: once a region enters one of these states, it remains there for at least a short, configurable cooldown period even if metrics briefly improve, to avoid rapid oscillation.
+- Operators can override thresholds and cooldowns per environment; in borderline conditions, environments may prefer to keep a region pinned in degraded (throttled) rather than repeatedly toggling between halted and healthy.
+
 ### Operational SLOs & Alert Thresholds
 
 To keep behavior consistent across environments, FireMUD defines **recommended SLOs and red-line thresholds** for Redis and tick coordination. Exact values are configurable per deployment, but implementations and dashboards should start from these defaults:
@@ -763,6 +824,16 @@ To keep behavior consistent across environments, FireMUD defines **recommended S
   - On the Coordination Redis deployment (which uses `maxmemory-policy noeviction`):
     - Warning alert: `used_memory` exceeds **70%** of `maxmemory` for more than **10 minutes**.
     - Critical alert: any `OOM`/`OUT OF MEMORY` error on coordination commands, or any eviction event for keys with `tick:`, `session:`, `timer:`, or `retry:` prefixes. These are treated as immediate incidents; affected regions should be marked degraded or halted until memory pressure is resolved.
+    - Coordination footprints are sized using the approximate model from the Redis Cache design:
+      - `coord_bytes ≈ regions * (locks_per_region * avg_lock_bytes + timers_per_region * avg_timer_bytes + pending_bytes_per_region + session_bytes_per_region)`.
+      - Deployments should keep `coord_bytes` under a target fraction of `maxmemory` (for example, <30–40%) after applying a **2–3× safety factor** to account for spikes, fragmentation, and unforeseen growth.
+    - Gameplay services are expected to expose **admission-control guardrails** tied to Redis capacity, such as:
+      - Maximum active regions per tenant or shard.
+      - Maximum concurrent sessions per tenant.
+      - Maximum timers or outstanding commands per region.
+    - When those guardrails are reached, services should:
+      - Reject new regions or sessions with clear “capacity reached” errors instead of continuing to allocate coordination state, and/or
+      - Shed lower-priority work (for example, background automation) before core gameplay, so Redis is not driven into `OOM`.
 
 - **Cache/Rate-Limit Redis eviction**
   - For the Cache/Rate-Limit Redis deployment where eviction is expected:
@@ -856,6 +927,12 @@ This **single `pending` per region** rule is a **hard architectural constraint**
 
 Redis-based replay and crash recovery depend on a **shared, explicit idempotency pattern** in domain services:
 
+- **Scope – which operations are in play**
+  - Any handler that is invoked as part of tick execution and **persists state outside Redis** (for example PostgreSQL rows, durable queues, or external side effects) is considered **tick-driven** and must obey this contract.
+  - Examples include: HP changes, inventory moves, room occupancy changes, quest progress, cooldown/application of effects, and any other mutation driven by commands read from `tick:{tenantId}:{regionId}:queue:{entityId}`.
+  - Read-only queries and best-effort observability (metrics, logs) are exempt; they may be “at least once” without an idempotency guard.
+  - Flows that cannot be made idempotent or compensatable at the domain layer (for example, billing events, emails, webhooks to third-party systems) **must not** be wired directly into tick scripts; they must use stronger patterns such as outbox tables and sagas as described in [Transaction Strategies](./system-architecture-transactions.md).
+
 - Each domain service that applies tick-driven effects (for example Entity Management, World Management, Social Groups) maintains an **idempotency guard** keyed by a composite such as `(tenantId, regionId, tickId, effectKey)`:
   - `tickId` is the monotonically increasing identifier from `tick:{tenantId}:{regionId}:pending`.
   - `effectKey` uniquely identifies a logical effect within that tick from the domain service’s perspective (for example, `"entity:{entityId}:hp"` or `"inventory:{containerId}"`).
@@ -877,8 +954,11 @@ To keep this contract enforceable across services and teams, FireMUD treats it a
     - Apply the same tick/effect combination twice and assert that database state changes only once.
     - Apply ticks out of order (for example, `tickId+1` then `tickId`) and assert that guards prevent corruption.
 - Static checks and code review guidance reinforce this requirement:
-  - New tick handlers are not considered complete unless they use the shared idempotency APIs.
-  - PR templates and review checklists explicitly call out “idempotency guard implemented via shared library” for any tick-driven feature.
+  - New tick handlers are not considered complete unless they use the shared idempotency APIs for every domain mutation they perform.
+  - PR templates and review checklists explicitly call out:
+    - “Tick-driven handler declares its idempotency key (`tickId` + `effectKey` or per-aggregate `last_tick_id`).”
+    - “Idempotency guard implemented via shared library” for any tick-driven feature.
+    - “No non-idempotent external side effects (billing, email, third-party calls) are performed directly inside tick-driven handlers.”
 
 This pattern ensures that:
 
@@ -1117,7 +1197,33 @@ When `UNSUPPORTED_SCHEMA_VERSION` appears in metrics or logs, runbooks treat it 
 - A sign that session schema or deployment versions are out of sync (for example, services writing a newer `schemaVersion` than the CAS script supports, or an incomplete rollback).
 - A trigger to:
   - Align deployments so all Game Session Service instances run scripts that understand the highest `schemaVersion` currently in use, and
-  - Optionally run a **session schema cleanup** tool that scans `session:{tenantId}:*` keys for unknown versions and deletes or aggressively expires those entries. Because Redis sessions are non-authoritative and bounded by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, removing unknown-version sessions is acceptable; affected players simply need to perform a fresh `LOGIN`.
+  - Optionally run a **session schema cleanup** tool for specific tenants that scans `session:{tenantId}:*` keys for unknown versions and deletes or aggressively expires those entries. Because Redis sessions are non-authoritative and bounded by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, removing unknown-version sessions is acceptable; affected players simply need to perform a fresh `LOGIN`.
+
+### Session Schema Cleanup and Large Keyspaces
+
+Session schema cleanup is a **hygiene and recovery tool**, not a required part of normal operation:
+
+- The primary safety mechanisms for sessions are:
+  - TTL-based expiry governed by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`.
+  - The CAS script’s conservative behavior for unknown `schemaVersion` values (no mutation + explicit `UNSUPPORTED_SCHEMA_VERSION` outcome and metrics).
+- In steady state, it is acceptable to:
+  - Rely on TTL for natural drainage of older or unknown-version sessions.
+  - Treat occasional `UNSUPPORTED_SCHEMA_VERSION` results as “deployment mismatch” signals that prompt rollout fixes rather than continuous keyspace scrubbing.
+
+When runbooks call for explicit cleanup (for example, after a major schema change or to address a large number of unknown-version sessions in a specific tenant), cleanup tools must be designed for **large keyspaces**:
+
+- Scope:
+  - Operate on a **per-tenant prefix** such as `session:{tenantId}:*`; avoid scanning the entire Redis keyspace when only some tenants are affected.
+  - Prefer targeted selectors (for example, `session:{tenantId}:*` with filters inside the tool) over global `SCAN` patterns.
+- Bounded SCAN usage:
+  - Use Redis `SCAN` with modest `COUNT` values (for example, 100–1000) to avoid long blocking periods.
+  - Enforce a maximum runtime per invocation (for example, 10–30 seconds) and exit cleanly when the time budget is exhausted; subsequent runs resume from the last cursor or continuation token.
+  - Insert small delays between batches when running in continuous jobs so scans do not monopolize CPU or I/O on the Redis node.
+- Observability:
+  - Emit metrics such as `session.cleanup_scanned_total`, `session.cleanup_deleted_total`, and `session.cleanup_duration_seconds` to capture how much work the cleaner performs and its impact.
+  - Log tenant identifiers and approximate key counts so operators can correlate cleanup activity with changes in memory usage and `UNSUPPORTED_SCHEMA_VERSION` metrics.
+
+Default runbooks should prefer **fixing deployments** (aligning scripts and writers) and relying on TTL over running aggressive cleanup jobs. Session cleanup tools remain available for exceptional cases where operators explicitly choose to trade short-lived overhead for faster convergence of session keyspace to a new schema.
 
 > 🔐 Key formats are internal and subject to change. Services treat Redis as a coordination layer, not a persistent or public contract.
 
