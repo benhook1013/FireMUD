@@ -2,17 +2,19 @@
 
 This document outlines FireMUD’s usage of Redis as a **transient, high-performance, distributed coordination layer**. It focuses on Redis's responsibilities, safety guarantees, key patterns, and operational practices.
 
-**Sections**
+## Table of Contents
 
-- [Redis as a Volatile State Layer](#redis-as-a-volatile-state-layer)
-- [Redis Availability, Consistency, and Safety Guarantees](#redis-availability-consistency-and-safety-guarantees)
-- [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)
-- [Atomicity and Concurrency Control](#atomicity-and-concurrency-control)
-- [Tick Integration (Resilience, Locking, Staging)](#tick-integration-resilience-locking-staging)
-- [Observability and Reliability](#observability-and-reliability)
-- [Session Keys and Gameplay Binding](#session-keys-and-gameplay-binding)
-- [Future Cache Design and Versioned Aggregates](#future-cache-design-and-versioned-aggregates)
-- [Related Documentation](#related-documentation)
+- [FireMUD System Architecture: Redis](#firemud-system-architecture-redis)
+  - [Table of Contents](#table-of-contents)
+  - [Redis as a Volatile State Layer](#redis-as-a-volatile-state-layer)
+  - [Redis Availability, Consistency, and Safety Guarantees](#redis-availability-consistency-and-safety-guarantees)
+  - [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)
+  - [Atomicity and Concurrency Control](#atomicity-and-concurrency-control)
+  - [Tick Integration (Resilience, Locking, Staging)](#tick-integration-resilience-locking-staging)
+  - [Observability and Reliability](#observability-and-reliability)
+  - [Session Keys and Gameplay Binding](#session-keys-and-gameplay-binding)
+  - [Future Cache Design and Versioned Aggregates](#future-cache-design-and-versioned-aggregates)
+  - [Related Documentation](#related-documentation)
 
 Redis is always treated as **non-authoritative for game data**: all canonical game data (accounts, entities, items, rooms, game instances) lives in **PostgreSQL**, owned by domain-specific services. Redis provides **volatile coordination state** — ticks, locks, timers, sessions, queues — that participates in gameplay availability and recovery in two distinct deployment modes:
 
