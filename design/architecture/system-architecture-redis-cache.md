@@ -140,3 +140,10 @@ This section captures design intent only; concrete decisions are explicitly defe
 - Decide which aggregates receive a dedicated version or `lastModified` field for cache validation and how those fields are surfaced in their APIs.
 - Define the domain events required to drive event-based invalidation (including payload shape, routing, and delivery guarantees).
 - Add concrete examples, diagrams, and per-service subsections that show exactly how the chosen aggregates use Redis (key shapes, TTLs, version semantics, and listeners) once profiling and production telemetry justify their introduction.
+
+## Related Documentation
+
+- [System Architecture: Redis](./system-architecture-redis.md)
+- [FireMUD Redis Lua Patterns](./system-architecture-redis-lua-patterns.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [Transaction Strategies](./system-architecture-transactions.md)

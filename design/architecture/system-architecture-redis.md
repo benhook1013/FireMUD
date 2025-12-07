@@ -1041,5 +1041,7 @@ Coordination Redis (ticks, locks, timers, sessions) is the focus of this documen
 ## Related Documentation
 
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [System Architecture: Redis Cache & Rate Limiting](./system-architecture-redis-cache.md)
+- [FireMUD Redis Lua Patterns](./system-architecture-redis-lua-patterns.md)
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Transaction Strategies](./system-architecture-transactions.md)

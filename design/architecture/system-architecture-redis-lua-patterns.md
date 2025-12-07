@@ -85,3 +85,9 @@ Unit tests for this script would:
   - The return value is `"ALREADY_HELD"`.
 - Simulate a conflicting holder by setting a different token in `KEYS[1]` and assert that the script returns `"LOCK_HELD_BY_OTHER"` and does not overwrite the existing token.
 
+## Related Documentation
+
+- [System Architecture: Redis](./system-architecture-redis.md)
+- [System Architecture: Redis Cache & Rate Limiting](./system-architecture-redis-cache.md)
+- [Tick System and Runtime Design](./system-architecture-ticks.md)
+- [Transaction Strategies](./system-architecture-transactions.md)
