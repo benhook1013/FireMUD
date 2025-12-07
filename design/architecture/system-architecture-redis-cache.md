@@ -61,6 +61,24 @@ Future cache layers are expected to combine several invalidation mechanisms, tun
 
 This pattern keeps cache correctness bounded to clearly defined aggregates and avoids random, hard-to-reason-about invalidation scattered across services.
 
+### Cache Correctness Classes
+
+From a correctness perspective, cache usage falls into two broad classes:
+
+- **Class A – correctness-critical caches** (for example, inventories shown to players, room occupants that drive combat/visibility decisions):
+  - Must use **event-based invalidation and/or version checks** as described above.
+  - May add TTLs, but **TTL alone is never considered sufficient** for correctness; a Class A cache must remain correct even if TTLs are set very large.
+  - Aggregates that cannot provide events or versions should treat Redis as a pure performance optimization (for example, per-request in-memory caching) or avoid caching that aggregate entirely.
+- **Class B – best-effort/performance caches** (for example, analytics-style aggregates, debug views, or non-player-facing summaries):
+  - May rely on **TTL-only** invalidation, as long as occasional staleness is acceptable for the use case.
+  - Still must respect per-key TTL budgets and size limits so they cannot starve Class A caches or coordination workloads.
+
+To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
+
+- Maximum serialized value sizes should be established per cache family (for example, no single cached room view exceeding a small, documented size limit in kilobytes).
+- CI or static checks should verify representative payload sizes remain under these limits, and any intentional increase should be justified in review.
+- Large or streaming-style responses should remain in PostgreSQL or object storage and be accessed through dedicated APIs rather than copied wholesale into Redis, even on the cache/rate-limit cluster.
+
 ## Memory, Eviction, and Rate Limiting
 
 Memory and eviction behavior for cache and rate-limit workloads must not compromise Coordination Redis:
@@ -100,6 +118,20 @@ Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestR
 - Per-client or per-token prefixes are preferred over global counters so that no single key receives a disproportionate share of traffic.
 - When high-cardinality shared credentials are unavoidable, deployments may use simple hashing or bucketing in key naming to spread load across multiple keys within the rate-limit Redis cluster.
 
+### Key Naming and Overwrite Expectations
+
+Cached aggregates in Redis should follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Examples (subject to refinement):
+
+- `inventory:{tenantId}:{containerId}` – cached view of a single inventory or container (including room-ground containers).
+- `worldDynamic:{tenantId}:{aggregateId}` – cached view of room-level dynamic state or other world-scoped aggregates.
+- `view:roomLook:{tenantId}:{roomId}` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
+
+Expectations:
+
+- Writing a new value for a key overwrites the previous entry. Cache writers do not attempt to merge old and new payloads inside Redis.
+- Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.
+- Future implementations should prefer single atomic commands or scripts (set value and TTL together, optionally with version) over multi-step delete plus set sequences unless there is a very specific, documented reason (such as maintaining backward-compatible behavior during a migration).
+
 ## Future Work / TODO
 
 This section captures design intent only; concrete decisions are explicitly deferred. Before caching is implemented broadly, we need to:
@@ -108,4 +140,3 @@ This section captures design intent only; concrete decisions are explicitly defe
 - Decide which aggregates receive a dedicated version or `lastModified` field for cache validation and how those fields are surfaced in their APIs.
 - Define the domain events required to drive event-based invalidation (including payload shape, routing, and delivery guarantees).
 - Add concrete examples, diagrams, and per-service subsections that show exactly how the chosen aggregates use Redis (key shapes, TTLs, version semantics, and listeners) once profiling and production telemetry justify their introduction.
-
