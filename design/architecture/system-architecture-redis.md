@@ -16,6 +16,8 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
   - [Future Cache Design and Versioned Aggregates](#future-cache-design-and-versioned-aggregates)
   - [Related Documentation](#related-documentation)
 
+---
+
 Redis is always treated as **non-authoritative for game data**: all canonical game data (accounts, entities, items, rooms, game instances) lives in **PostgreSQL**, owned by domain-specific services. Redis provides **volatile coordination state** — ticks, locks, timers, sessions, queues — that participates in gameplay availability and recovery in two distinct deployment modes:
 
 - In **development and ephemeral test environments**, Redis behaves as a **disposable coordination cache**. Helm may wipe its AOF between runs, and no guarantees are made about preserving in-flight ticks, sessions, or timers across deployments.
@@ -162,6 +164,11 @@ Redis provides **best-effort durability** for volatile coordination state, not a
   - Treating Redis as non-authoritative and replaying ticks based on PostgreSQL and any surviving `tick:{tenantId}:{regionId}:pending` keys.
   - Relying on the idempotent tick and domain logic described in [Crash Recovery and Replay](./system-architecture-ticks.md#crash-recovery-and-replay) so replays never apply new logical effects twice.
 
+Coordination Redis deployments in staging and production are expected to:
+
+- Run with AOF enabled (`appendonly yes`) and an fsync policy at least as strong as Redis’s `appendfsync everysec` so that the tail-loss window is bounded to a small number of ticks under normal conditions.
+- Avoid disabling fsync entirely for coordination workloads (`appendfsync no` is not acceptable), even in performance experiments; test profiles that relax durability must be clearly labeled as such and not reused for player-facing environments.
+
 Future operational work may introduce concrete observability around tail-loss behavior (for example, measuring effective loss windows in staging/production and tightening Redis configuration accordingly), but those targets are intentionally left unspecified at this stage.
 
 FireMUD does **not** use the Redis `WAIT` command in application code. Replication remains asynchronous; the system assumes that:
@@ -175,6 +182,51 @@ Cluster operators **may** additionally configure Redis replication safety knobs 
 
 - Gameplay logic does not depend on them for correctness.
 - Enabling them trades write availability for additional replication guarantees and must be evaluated per environment.
+
+#### AOF Truncation and Corruption
+
+Operationally, AOF files are treated as **all-or-nothing** coordination history for a given node:
+
+- If Redis detects AOF corruption on startup or if an operator suspects a damaged AOF, the node is considered **untrustworthy as a source of coordination state**.
+- Preferred recovery is to:
+  - Fail over to a healthy replica whose AOF is intact, promoting it to primary for the affected slots, and
+  - Keep the corrupted node offline until its AOF has been discarded and the node has been reprovisioned or resynchronized from a clean source.
+- When no clean replica exists and a compromised AOF is the only copy:
+  - Operators may deliberately discard the AOF (for example by deleting it or starting Redis with AOF disabled), effectively treating Redis as if it had lost all volatile coordination state for the affected slots.
+  - The platform then rebuilds coordination state from PostgreSQL and fresh tick/session activity using the idempotent replay rules described above.
+
+Manual “surgery” on AOF contents is **not supported** in FireMUD runbooks. Either the AOF is trusted and used as-is, or it is discarded and the node restarts with an empty (or cleanly resynchronized) coordination keyspace.
+
+#### Replica Promotion and Missed Writes
+
+Because replication is asynchronous:
+
+- A promoted replica may legitimately be missing some of the latest coordination writes from the former primary.
+- After promotion, the **new primary’s keyspace becomes authoritative** for coordination state, even if tail keys (recent locks, timers, `pending` entries, queues, or sessions) were never replicated.
+
+From the tick system’s perspective, this is indistinguishable from a larger AOF tail-loss window:
+
+- Missing coordination keys are treated as if they never existed; ticks, retries, and timers that depended on them either:
+  - Are re-enqueued based on surviving state and PostgreSQL, or
+  - Are skipped, with impact bounded to the same best-effort window described above.
+- Stale coordination keys that survived failover cannot cause double-apply or split-brain behavior because all mutating scripts validate lease tokens, lock tokens, `tickId`, and `generation` fields before making changes.
+
+Replication-lag and health metrics (documented under Observability) are used to detect environments where promotion would routinely imply unacceptably large coordination gaps so operators can tune Redis or adjust tick budgets accordingly.
+
+#### Lua Scripts and AOF Replay
+
+On restart, Redis replays AOF entries in order, including `EVAL`/`EVALSHA` calls for Lua scripts. FireMUD’s Lua patterns are designed so that:
+
+- Replaying a script from AOF is equivalent to **re-invoking it with the same `KEYS` and `ARGV`**.
+- Tick and session scripts are required to be idempotent with respect to their inputs and to:
+  - Validate the current lease and lock tokens before writing.
+  - Enforce monotonic guards such as `tickId` and `generation` counters.
+  - Use set-style semantics for staged effects and queues so duplicate inserts become no-ops.
+
+As a result:
+
+- AOF replay cannot double-apply tick effects or session mutations; stale replays see token or `tickId`/`generation` mismatches and exit without writes.
+- Long-running scripts are already bounded by SLOs and runtime limits described under Observability; the design does not rely on AOF replaying arbitrarily slow or heavy scripts for correctness.
 
 ---
 
@@ -223,7 +275,22 @@ Each `{tenantId, regionId}` is owned by a **single authoritative tick executor**
 
 - `tick-executor-lease:{tenantId}:{regionId}` – stores the current executor identity (for example a `nodeId` or `instanceId`) and an expiry.
 
-The lease is acquired and renewed using `SET NX PX lease_ttl_ms`:
+Lease management is split into two distinct operations:
+
+- **Acquire:** When no lease exists for `{tenantId, regionId}`, a Game Session instance competes to acquire leadership using:
+  - `SET tick-executor-lease:{tenantId}:{regionId} <leaseToken> NX PX lease_ttl_ms`
+  - `leaseToken` is a random, opaque value (for example, a UUID) chosen by the prospective leader.
+  - A successful `SET` indicates that this instance holds the lease for the current epoch; a failed `SET` means another executor already owns it.
+- **Renew:** While holding the lease, the active executor extends its TTL using a **Lua-based compare-and-extend helper**, not `SET NX`:
+  - Inputs:
+    - `KEYS[1] = tick-executor-lease:{tenantId}:{regionId}`
+    - `ARGV[1] = expectedLeaseToken`
+    - `ARGV[2] = lease_ttl_ms`
+  - Behavior (sketch):
+    - Read `KEYS[1]`; if it is missing or its stored token does not equal `expectedLeaseToken`, return a `"STALE_LEASE"` outcome and perform **no writes**.
+    - If the stored token matches, update the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
+  - Callers interpret `"STALE_LEASE"` as “this instance no longer owns the lease” and must immediately stop acting as leader for that `{tenantId, regionId}`. They may later attempt a fresh acquisition with a new `leaseToken` via the normal `SET NX` path.
+  - No other component (including ad-hoc operational scripts) may write `tick-executor-lease:{tenantId}:{regionId}` directly; all renewals go through the compare-and-extend helper so token semantics remain consistent.
 
 - Only the holder of a valid lease may:
   - Consume commands from region queues.
@@ -261,6 +328,9 @@ Lease TTLs and lock TTLs are chosen and monitored as part of a single envelope:
 - `lease_ttl_ms` is configured **strictly greater than** both the soft tick budget and `lock_ttl_ms` (for example, on the order of multiple ticks) so that:
   - Under healthy conditions, an executor refreshes the lease several times during normal operation and **lease expiry is not expected**.
   - Lock expiry during an in-flight tick is an **exceptional condition**, not part of the normal execution path.
+  - A lock acquired under a given lease epoch is never refreshed across epochs; once its TTL starts, it can block work for that entity for at most `lock_ttl_ms` from acquisition, even if leadership changes.
+
+`MAX_LOCK_TTL_MS` is therefore treated as a **hard upper bound** on per-entity failover stall caused purely by stale locks from a previous leader. Region-level progress is defined as “some entities advance”: a region may temporarily skip work for entities behind stale locks, but it should not be considered globally stuck unless the number or duration of such stalled entities crosses the degradation thresholds described under Observability.
 
 Capacity planning and SLOs therefore assume:
 
@@ -278,6 +348,10 @@ When rare, worst-case pauses still occur:
 - If a pause exceeds `lease_ttl_ms`:
   - Another executor may acquire the region lease and resume ticks from the surviving Redis state.
   - When the original worker resumes, lease-token checks prevent it from committing or rolling back tick state; its in-flight work is treated as failed and rescheduled via the normal retry mechanisms.
+  - The new leader may encounter `tick:{tenantId}:{regionId}:lock:{entityId}` keys whose tokens do not match its current lease epoch. These are treated as **stale locks** from the previous epoch:
+    - The new leader does **not** refresh or forcibly clear those locks.
+    - It skips work for the affected entities while continuing to process entities that are not behind stale locks.
+    - The stale locks naturally expire within their original `lock_ttl_ms`, after which the new leader can reacquire locks and resume work for those entities.
 
 In both cases, the design optimizes for **safety and fairness under load**:
 
@@ -297,6 +371,8 @@ At startup, the Game Session Service derives `lock_ttl_ms` from `game.tick-budge
 - `game.tick-min-lock-ttl-ms <= game.tick-max-lock-ttl-ms`.
 - `lock_ttl_ms` (computed) satisfies `lock_ttl_ms >= game.tick-budget-ms` and remains within `[MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS]` as documented in the Tick System design.
 - `game.tick-lease-ttl-ms` is **strictly greater than** both `game.tick-budget-ms` and the computed `lock_ttl_ms` (for example, at least 2–3× `lock_ttl_ms`).
+
+Because a lock from a previous lease epoch can stall only the entity it guards and only until its TTL expires, `MAX_LOCK_TTL_MS` also defines the **maximum tolerated per-entity failover stall window**. Configurations that attempt to increase `lock_ttl_ms` beyond this envelope are rejected; stall budgets longer than `MAX_LOCK_TTL_MS` must be justified by an explicit design change rather than ad-hoc configuration.
 
 If any of these invariants are violated in any profile (dev, test, staging, or production), **startup fails fast** with a clear configuration error. There is no automatic fallback to “safe defaults”; running with an unsafe TTL envelope is treated as a configuration bug that must be corrected before the service can accept gameplay traffic.
 
@@ -605,6 +681,9 @@ To make sure locks do not routinely expire while legitimate work is still in fli
 - At runtime, the Game Session Service:
   - Records per-tick metrics such as `tick.execution_time_ms` and `tick.lock_ttl_ms` labeled by `{tenantId, regionId}`.
   - Emits a derived signal like `tick.lock_ttl_headroom_ratio` or a counter `tick.near_lock_ttl` whenever a tick’s execution time exceeds a configurable fraction of `lock_ttl_ms` (for example, >80%).
+  - Tracks per-region **stale-lock** metrics when a leader observes locks whose token does not match the current lease epoch, such as:
+    - `tick.stale_locks_current` – number of entities in the region currently behind stale locks from a previous epoch.
+    - `tick.stale_lock_max_remaining_ttl_ms` – maximum remaining TTL among those stale locks, approximated via `PTTL`.
   - Surfaces regions with frequent near-TTL ticks on dashboards so operators can spot hot or overloaded regions early.
 - Regions that **routinely exhaust or exceed** their lock TTLs are treated as explicitly degraded:
   - A tick is considered **over-TTL** if `tick.execution_time_ms >= lock_ttl_ms`.
@@ -619,6 +698,12 @@ To make sure locks do not routinely expire while legitimate work is still in fli
     - Halt new ticks for that region and treat it as temporarily unavailable.
     - Disconnect or deny new commands for affected sessions with a clear error indicating that the region is overloaded.
     - Require operator intervention or configuration changes before the region is allowed to resume normal tick rates.
+- Separately, regions that remain impacted by stale locks from previous epochs are tracked and surfaced:
+  - A region is considered **stale-lock degraded** if, over a rolling window (for example 5 minutes), either:
+    - `tick.stale_locks_current` remains non-zero, or
+    - `tick.stale_lock_max_remaining_ttl_ms` repeatedly approaches `lock_ttl_ms`, indicating that new leaders are frequently waiting out nearly full lock TTLs.
+  - Warning alerts fire when a region enters the stale-lock degraded state; critical alerts fire when it remains in that state beyond a hard, configurable window.
+  - In extreme cases where stale locks effectively block most entities in a region until expiry, the scheduler may treat the region as temporarily halted and refuse new commands until the lock TTL window has passed or operators intervene.
 
 ### Graceful Degradation & Redis Outage Policy
 
