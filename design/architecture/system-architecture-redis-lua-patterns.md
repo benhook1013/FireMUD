@@ -16,6 +16,15 @@ Tick-related scripts must be idempotent: **re-running the same script with the s
     - Read `tick-executor-lease:{tenantId}:{regionId}` and compare its stored token to the `leaseToken` passed in `ARGV`.
     - For each entity lock key, compare the stored lock token to the expected token in `ARGV`.
   - If any token does not match, the script returns a **non-mutating outcome** such as `"STALE_LEASE"` or `"STALE_LOCK"` and performs **no writes**. Callers interpret this as “retry under the new lease” rather than as partial progress.
+  - Region lease **renewal** uses a small, dedicated compare-and-extend helper that follows the same pattern:
+    - Inputs:
+      - `KEYS[1] = tick-executor-lease:{tenantId}:{regionId}`
+      - `ARGV[1] = expectedLeaseToken`
+      - `ARGV[2] = lease_ttl_ms`
+    - Behavior (sketch):
+      - Read `KEYS[1]`; if missing or if the stored token does not equal `expectedLeaseToken`, return `"STALE_LEASE"` and perform **no writes**.
+      - If the token matches, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
+    - Callers treat `"STALE_LEASE"` as loss of leadership for that `{tenantId, regionId}` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
 - **Pattern 2 – Compare-and-set on `tickId` (monotonic guard)**
   - Scripts that touch `tick:{tenantId}:{regionId}:pending` treat `tickId` as a monotonic guard:
