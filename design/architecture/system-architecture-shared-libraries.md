@@ -27,7 +27,9 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for
   centrally enforcing JWT-based roles and supporting secret rotation. See the
   [Authentication Design](./system-architecture-authentication.md).
-- **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables.
+- **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables. Redis‑backed services choose the appropriate prefix:
+  - Coordination clients (ticks, locks, timers, sessions) typically bind `RedisProperties` to `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`, falling back to `FIREMUD_REDIS_HOST` / `FIREMUD_REDIS_PORT` when the coordination‑specific variables are unset.
+  - Cache/rate‑limit clients (for example Spring Cloud Gateway) typically bind to `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`, again falling back to the baseline `FIREMUD_REDIS_*` pair in single‑node development setups.
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present.
 - **Tracing Configuration** – `TracingConfig` exports spans to the collector using the `otel.endpoint` property and sets the `service.name` from `spring.application.name`.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
@@ -52,6 +54,8 @@ Tick coordination and other Redis-backed workflows rely on a small set of shared
 - **Test and lint hooks** – Shared test fixtures validate that:
   - Keys produced by `RedisKeyNaming` share a common hash tag substring and map to the same cluster slot for multi-key operations.
   - Lua scripts respect the configured `MAX_TICK_SCRIPT_KEYS` bound and do not introduce “just one more key” without extending tests.
+  - Automation and session scripts are declared as **single-key** in their descriptors; tests assert that their `KEYS` length is exactly one and fail fast if additional keys are introduced without an explicit design change.
+  - Prefix discipline is enforced consistently: tick scripts are allowed only tick/coordination prefixes (`tick:`, `retry:`, `timer:`, `remote:`), session scripts only `session:`, and automation scripts only `automation_queue:` / `automation:tick:`. CI lints Lua sources against these rules so mixed `tick:*` + `automation:*` or `tick:*` + `session:*` scripts cannot be added inadvertently.
   - Any new tick-related script or key path added by a service includes corresponding updates to the helpers and tests.
 
 For Redis-backed caches and rate limiting, the common library may also provide:

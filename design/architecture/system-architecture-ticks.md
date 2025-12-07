@@ -559,6 +559,90 @@ The crash-recovery story depends on domain services implementing these patterns 
   - Verify that the final PostgreSQL state is identical regardless of how many times the tick is “reapplied.”
 - CI pipelines must run these replay tests; changes to tick handlers that break idempotency should fail tests before reaching production.
 
+---
+
+## Tick Execution and Redis Integration
+
+Redis is essential for **coordinating tick execution** across distributed worker services. It provides:
+
+- Per-entity **command queues**
+- Durable **tick staging** via `tick:{tenantId}:{regionId}:pending`
+- Distributed **locks** and **retry tracking**
+- **Conflict metadata** for retry prioritization
+- Accurate **cooldown and timer tracking**
+
+### Canonical Tick Commit Pattern (Lua + gRPC/DB)
+
+To keep idempotency and crash behavior consistent, all tick execution follows a common **three-phase pattern** that clearly separates Redis staging from external side effects:
+
+1. **Stage effects in Redis (Lua)**
+   - Under region leadership and entity locks, a Lua script:
+     - Validates the current `tick-executor-lease:{tenantId}:{regionId}` token and lock tokens.
+     - Computes the intended tick effects for the region (for example, “apply damage X to entity A” and “move entity B to room R”).
+     - Writes a **pure description** of those effects into `tick:{tenantId}:{regionId}:pending` along with the `tickId`. This payload contains only enough data for domain services to re-derive their work (entity IDs, effect keys, parameters), not a separate shadow copy of the entire authoritative state.
+   - The script does **not** call out to gRPC or mutate PostgreSQL; it only updates Redis atomically.
+
+2. **Apply effects in domain services (gRPC + PostgreSQL)**
+   - The Game Session Service reads the staged `pending` entry and, for each effect:
+     - Issues gRPC calls to the owning domain services (Entity Management, World Management, etc.).
+     - Each domain handler runs inside a local database transaction that:
+       - Uses `tickId` and effect keys plus its own tick-state / guard tables to decide whether this effect is **new** or a **replay**.
+       - Applies changes only for new effects, then records the updated idempotency state.
+     - If a handler reports a retryable failure (for example, lock contention at the DB layer), the Game Session Service records this as a **failed effect** for the tick; the tick may be retried or split according to the retry rules, but already-applied effects remain safe due to idempotency.
+   - This phase may succeed for some effects and fail for others; all such outcomes are reflected in process memory and observability, but Redis state remains unchanged until phase 3.
+
+3. **Commit or roll back in Redis (Lua)**
+   - Once all domain calls for a given tick have either succeeded or failed definitively, the Game Session Service invokes a second Lua script that:
+     - Re-validates the `tick-executor-lease` token and lock tokens for the region.
+     - Checks the current `tick:{tenantId}:{regionId}:pending` entry and `tickId`.
+     - Decides, based on the collected outcomes:
+       - **Commit path** – if all required effects succeeded:
+         - Clears the `pending` entry for that `tickId`.
+         - Releases any surviving tick locks for the region.
+       - **Rollback / recovery path** – if some effects failed:
+         - Leaves or updates `pending` to represent the remaining work to be retried, or marks the tick as failed and allows runbook-driven recovery as described below.
+   - No new domain-side mutations occur in this phase; the script reconciles only Redis coordination state with the outcomes that were already durably recorded in PostgreSQL.
+
+This pattern, combined with domain-level idempotency rules described above, yields the following guarantees even when phases fail independently:
+
+- If phase 1 (staging) completes but phase 2 (domain calls) only partially succeeds, **replays of the same `pending` entry** will not double-apply effects, because domain services treat repeated `(tenantId, regionId, tickId, effectKey)` requests as no-ops.
+- If phase 2 succeeds fully but phase 3 (commit/cleanup) fails or is interrupted, the next executor that sees the same `pending` entry and `tickId`:
+  - Re-runs the same domain calls, which are treated as replays and become no-ops.
+  - Eventually completes the commit/cleanup script, clearing `pending` and releasing locks once lease/lock tokens validate.
+- If Redis loses the `pending` entry entirely (for example due to tail loss or TTL misconfiguration), domain state remains consistent because all effects were applied under idempotent rules; missing ticks are detected and handled via metrics and recovery runbooks, not by speculative domain reapplication.
+
+### Failure Scenarios and Invariants
+
+The table below summarizes how common failure patterns interact with Redis and PostgreSQL, and which invariants the system preserves:
+
+| Scenario | Redis coordination state | Domain (PostgreSQL) state | Guaranteed invariants | Typical operator / system action |
+| --- | --- | --- | --- | --- |
+| Primary crash, AOF fully up-to-date | `pending`, locks, timers, retries preserved for recent ticks | All committed effects durably stored | No double-apply; at-most-one executor per region after lease re-acquisition | New executor replays any surviving `pending` entries; ticks complete or are retried automatically. |
+| Crash during AOF window (tail loss) | Some recent `pending`/lock/queue keys for the last ticks may be missing | Effects applied before the crash remain in Postgres; very recent, in-flight effects may or may not have been applied | No double-apply; some ticks may be lost or need manual reconstruction | Metrics show gaps/stuck regions; recovery subsystem may mark missing ticks as FAILED/SKIPPED and clear any inconsistent Redis state. |
+| GC pause > `lock_ttl_ms` but < `lease_ttl_ms` | Locks may expire and be reacquired; `pending` remains; lease still held by original executor | Any domain effects applied before the pause remain consistent; replays are treated as no-ops | No double-apply; lease ownership unchanged; at-most-one executor per region | Late work that fails token checks is retried; region may be marked degraded if over-TTL behavior persists. |
+| GC pause > `lease_ttl_ms` (lease lost) | Lease may move to a new executor; `pending` and queues preserved subject to AOF window | Effects applied by the old executor before losing the lease remain consistent; new executor replays with idempotent handlers | No double-apply; at-most-one active executor per region (enforced by lease tokens) | Old executor’s work is discarded when it resumes; new executor drives recovery; region may be degraded until stable. |
+| Redis coordination cluster outage | Coordination keys temporarily unavailable; may lose a tail window of recent state depending on failure + AOF | Postgres remains authoritative; effects committed before outage remain intact | No double-apply; some ticks may be lost or skipped, but already-applied effects are not rolled back | Game Session halts ticks/commands for affected regions; once Redis recovers, recovery subsystem and operators decide whether to skip, retry, or repair missing ticks. |
+
+### Stuck Pending Entries and Recovery
+
+In rare cases where domain code is faulty, a `tick:{tenantId}:{regionId}:pending` entry may remain present even though repeated replays cannot complete successfully. A small tick recovery subsystem handles these situations:
+
+- A background watcher scans metrics or a compact Redis/PostgreSQL index of `pending` entries to identify **stuck ticks** (for example, `pending` keys that have existed for multiple tick intervals with exhausted retries).
+- Candidate stuck ticks are enqueued into a `tick_recovery` queue or table with metadata such as `{tenantId, regionId, tickId, firstSeenAt, lastRetryAt}`.
+- An automated recovery worker:
+  - Marks clearly terminal ticks as `FAILED` or `SKIPPED` in PostgreSQL using the same effect-guard and idempotency rules as normal handlers.
+  - Clears `tick:{tenantId}:{regionId}:pending` and associated retry metadata in Redis via a dedicated, idempotent helper path.
+  - Emits detailed logs and metrics for audit.
+- Operator tooling allows manual override for complex cases (for example, data corruption), and environments can choose between:
+  - **Recommendation mode** – operators approve or override proposed recoveries.
+  - **Auto-recovery mode** – for clearly defined, low-risk patterns.
+
+Retry and timer queues are protected against unbounded growth by design:
+
+- Retry queues (`retry:{tenantId}:{regionId}`) use ZSETs keyed by `retry:{tenantId}:{regionId}` with scores encoding next-eligible execution time; scripts process at most `N` entries per invocation and enforce a maximum retry budget per action.
+- Timer keys (`timer:{tenantId}:{regionId}`) use ZSETs keyed by `timer:{tenantId}:{regionId}` with scores encoding due time; scripts pop at most `N` timers per call and delete processed members.
+- Defensive limits (for example, maximum timers per region) trigger alerts or throttling if exceeded so that bugs cannot create unbounded timer growth.
+
 Entity Management provides the reference example for per-aggregate tick state; see [Entity Management Service – Tick Idempotency](./microservices/entity-management-service/README.md#tick-idempotency) for details.
 
 ---

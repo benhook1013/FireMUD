@@ -75,6 +75,29 @@ For local development, use `./gradlew devUp` to start Docker Compose and
    - For local development, restore an AOF file with
      `dev-tools/restores/restore-redis-aof.sh <file>` if you need to recover transient
      state.
+
+   - **Coordination Redis recovery behavior**
+     - When Coordination Redis recovers after an outage or severe degradation:
+       - Tick executors:
+         - Do **not** attempt to resume in-flight locks or leases based on in-memory state.
+         - Rely solely on surviving Redis keys (`tick:{tenantId}:{regionId}:pending`, `tick-executor-lease:{tenantId}:{regionId}`, and lock keys) plus PostgreSQL idempotency guards to decide what work needs replay.
+         - If `pending` survives for a region, the next executor for that `{tenantId, regionId}` replays the tick as described in the tick system design. If `pending` is missing (for example due to AOF tail loss), the scheduler treats partially executed work as lost and advances to the next `tickId`, relying on monitoring to surface inconsistencies.
+       - Leases:
+         - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantId}:{regionId}` in Redis and treat previously held leases as invalid.
+       - Sessions:
+         - If `session:{tenantId}:{sessionId}` keys survive, reconnect flows behave normally.
+         - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).
+
+   - **Session schema cleanup (deployment mismatch)**
+     - Symptom: the `session.cas_unsupported_schema_total` metric (or logs mentioning `UNSUPPORTED_SCHEMA_VERSION` from the session CAS script) is non-zero outside of brief rollout windows.
+     - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:{tenantId}:{sessionId}` keys, or session payloads have been corrupted.
+     - Remediation:
+       1. Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis Architecture docs).
+       2. Run the session schema cleanup tool/Job (once implemented) that:
+          - Scans `session:{tenantId}:*` keys for `schemaVersion` values not supported by the current CAS script, and
+          - Deletes those keys or reduces their TTL so they expire quickly.
+       3. Monitor `session.cas_unsupported_schema_total` and reconnect error rates to confirm the issue has cleared. Affected players may need to log in again; no authoritative PostgreSQL data is lost.
+
 3. **Full Cluster Restore**
    - Recreate the cluster using Terraform modules in `k8s/terraform`. See
      [`k8s/terraform/README.md`](../../k8s/terraform/README.md) for usage.
