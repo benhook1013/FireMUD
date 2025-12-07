@@ -17,7 +17,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ## Architecture / Design Notes
 
-- Executes scripts in response to world or player events received via gRPC callbacks.
+- Executes scripts in response to world or player events received via **gRPC callbacks** from the Game Session Service and other domain services. Standard lifecycle events (`onSpawn`, `onEnterRegion`, `onCommand`, etc.) are delivered as unary gRPC calls (conceptually via a `TriggerScriptEvent`–style API), while tick-derived scheduling signals (for example, “every N ticks”) are driven by a **gRPC streaming tick heartbeat** originating from the Game Session Service. See [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and [Tick System and Runtime Design](../../system-architecture-ticks.md#tick-events--heartbeat-stream) for event and heartbeat details.
 - Scripts run inside a sandboxed engine to prevent malicious behavior.
 - Scripts are authored in a **component-based DSL** using a visual editor so
   designers can build behaviors without coding.
@@ -65,12 +65,12 @@ interaction.
 
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
-- `automation_queue` keys in Redis buffer triggered events until a script runs.
+- `automation_queue` keys in Redis buffer **script work items** (the commands and metadata produced by sandboxed DSL handlers) after a script runs and before they are staged into tick-compatible command queues. Each entry includes the originating `scriptEventId`, `scriptId`, version metadata, and the domain commands that should be materialized when the event is processed.
 - Internal automation tick staging uses a dedicated namespace:
-  - `automation:tick:{tenantId}:{scriptId}:queue` – per-script queue of events being staged into tick-compatible commands.
-  - `automation:tick:{tenantId}:{scriptId}:pending` – per-script pending list of events currently being applied.
+  - `automation:tick:{tenantId}:{scriptId}:queue` – per-script queue of work items being staged into tick-compatible commands.
+  - `automation:tick:{tenantId}:{scriptId}:pending` – per-script pending list of work items currently being applied.
   - `automation:tick:{tenantId}:{scriptId}:lock` – per-script lock ensuring only one automation tick for a `(tenantId, scriptId)` pair runs at a time.
-  These keys are separate from the game tick keys (`tick:{tenantId}:{regionId}:...`) used by the Game Session Service and are only touched by the Automation & Scripting Service’s own Lua scripts.
+  These keys are separate from the game tick keys (`tick:{tenantId}:{regionId}:...`) used by the Game Session Service and are only touched by the Automation & Scripting Service’s own Lua scripts. Script ticks never acquire `tick:{tenantId}:{regionId}:lock:{entityId}`; they stage commands for later execution by the Game Session Service’s tick loop.
 - `automation_queue_enqueued_total` and `automation_queue_drained_total` metrics
   track Redis queue activity.
 - The staging Lua script processes only a limited number of events each tick
@@ -83,12 +83,10 @@ interaction.
 ### Script Lifecycle
 
 - Scripts reside in the Automation & Scripting Service database and are versioned along with other game data as described in the design service versioning process.
-- Events from the Game Session Service trigger script execution via gRPC.
-- The sandboxed engine limits CPU time and memory for each script to prevent
-  runaway behavior.
-- The service uses `ScriptTickService` to stage, commit, and roll back events in Redis.
-  This runs independently of the main game tick loop. Locks `tick:{tenantId}:{regionId}:lock:{scriptId}`
-  ensure only one script tick per region operates at a time and share a hash tag with the region’s tick queues and pending state. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed.
+- Events from the Game Session Service trigger script execution via gRPC. For each admitted trigger, the service executes the relevant sandboxed DSL handler **synchronously**, producing domain commands instead of mutating game state directly.
+- The sandboxed engine limits CPU time and memory for each script to prevent runaway behavior.
+- After a handler runs, the resulting commands and metadata are enqueued into `automation_queue` for the affected entity. `ScriptTickService` then stages, commits, and, when necessary, rolls back these queued work items in Redis. Automation ticks run independently of the main game tick loop and operate only on the `automation:tick:{tenantId}:{scriptId}:*` namespace described above.
+  Script ticks never hold the game tick locks (`tick:{tenantId}:{regionId}:lock:{entityId}`); they only batch and stage automation work before handing it to the Game Session Service, which applies commands under its own tick and locking model. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed once they enter the per-entity tick queues.
 
 ### Hot Reload & Failure Handling
 

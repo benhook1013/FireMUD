@@ -28,6 +28,36 @@ This model ensures:
 
 ---
 
+## Tick Events & Heartbeat Stream
+
+Two related but distinct concepts appear in the design:
+
+- **Tick execution** – the authoritative per-region game loop driven entirely inside the Game Session Service.
+- **Tick heartbeat** – a read-only feed of `tickId` progression that external services (such as the Automation & Scripting Service) observe so they can align their own timers and quotas with the canonical tick timeline.
+
+Tick execution itself never depends on external event buses. Instead:
+
+- The Game Session Service owns the tick loop and all Redis keys under `tick:{tenantId}:{regionId}:...`.
+- External services interact with tick progression via a **gRPC server-streaming API**, not via direct access to tick queues.
+
+A representative API shape is:
+
+- `rpc StreamTickHeartbeats(TickHeartbeatRequest) returns (stream TickHeartbeat)` on the Game Session Service’s gRPC API surface.
+  - `TickHeartbeatRequest` selects which `{tenantId, regionId}` pairs (or tenant-wide selectors) the caller is interested in.
+  - Each `TickHeartbeat` carries at least `tenantId`, `regionId`, and `tickId`, plus optional shard metadata for routing.
+
+Automation & Scripting Service instances:
+
+- Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
+- For each heartbeat message:
+  - Update `script-scheduler:{tenantId}:{regionId}:lastTickId` in Redis.
+  - Compute which “every N ticks” boundaries have elapsed since the last processed tick.
+  - Enqueue due `onInterval` and other tick-derived script triggers, subject to quotas and budgets.
+
+This makes it explicit that **tick heartbeats and script timers are driven by gRPC streams**, while the **tick loop and command queues remain internal** to the Game Session Service and Redis.
+
+---
+
 ## Region Authority and Tick Executor
 
 Tick regions are coordinated by a **single authoritative executor** at any point in time:
@@ -55,11 +85,24 @@ The **region boundary** is therefore the unit of atomicity and authority:
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
-- `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline))
+- `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#key-naming-and-shard-discipline))
 - `SET NX PX` with expiry for exclusive ownership
 - Lua-based atomic checks to avoid race conditions
 
 Lock TTLs are derived from the **soft tick execution budget** using the formula described in the Redis architecture (`lock_ttl_ms = clamp(tick_budget_ms * 3, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`). This gives headroom for brief pauses (GC, CPU spikes) without letting the lock expire while work is still in progress, while still bounding how long a stale lock can block progress. Ticks that approach this bound are treated as misbehaving and deferred or retried rather than allowed to run indefinitely under a single lock.
+
+Capacity planning assumes that, under normal conditions, **end-to-end tick work including GC pauses stays well below `lock_ttl_ms`**:
+
+- Load/perf tests and production telemetry must show that `p99` tick execution time (lock acquisition → commit/rollback + lock release) remains under a configurable fraction of `lock_ttl_ms` (for example **≤50–70%**).
+- Rare, extreme pauses (for example long GC) may still exceed `lock_ttl_ms`. In those cases:
+  - The original worker may continue executing locally even after its lock expires and is potentially reacquired by another worker.
+  - Lock-token and pending-key checks (described below) cause any such “late” work to fail safely: the Lua script sees a token or `tickId` mismatch, aborts without applying effects, and surfaces a retry outcome instead.
+- Metrics described in the Redis architecture (`tick.execution_time_ms`, `tick.lock_ttl_headroom_ratio`, `tick.near_lock_ttl`, and over-TTL counters) are used to detect regions where real-world pauses approach or exceed `lock_ttl_ms` so operators can tune GC, tick budgets, or workload distribution before overlapping work becomes common.
+
+Operationally, this means:
+
+- **Lock TTL expiry in healthy operation should be rare**. A non-trivial rate of over-TTL ticks in a region is treated as a degradation signal (see the Redis architecture’s degraded/ halted region behavior) and usually indicates a need to adjust tick budgets, GC settings, or shard layout.
+- When a tick does run past `lock_ttl_ms`, its work is treated as a failed attempt and rescheduled via the normal retry/backoff mechanism; fairness rules (per-entity FIFO queues and bounded retries) still apply, so these retries are delayed but not starved relative to other commands.
 
 If a required lock is unavailable:
 
@@ -82,6 +125,7 @@ Each acquired lock stores a **unique token** (for example, a UUID) as its value.
 
 - Verify that `tick:{tenantId}:{regionId}:pending` either does not exist or, if it exists, corresponds to the `tickId` they are about to process.
 - Confirm that the currently held lock’s token still matches the value stored in Redis.
+- Perform these validations and any subsequent commit/rollback + lock-release steps within the **same Lua script invocation** that touches the lock and `pending` key; no domain mutation is allowed to rely on lock state checked in a prior, separate script call.
 
 If either check fails (for example, the lock token was lost and reacquired by another worker), the worker aborts processing for that tick and returns a retry outcome so the Game Session Service can reschedule the work. Tick effects are designed to be idempotent so that if a lock expires mid-tick and staged work is replayed, the game state remains consistent.
 
@@ -300,7 +344,13 @@ State changes are first **staged in Redis** under keys like `tick:pending:{tenan
 - Timeout or failed actions are **excluded** and **rescheduled with priority**
 - Commit and rollback are coordinated by Game Session Service using Lua scripts in Redis
 
-Each `tick:{tenantId}:{regionId}:pending` entry represents a **single tick** for that region and carries a monotonically increasing `tickId` plus the staged effects for that tick. If a crash or lock timeout leaves this key present, the next tick cycle treats it as “safe to reapply” and replays the staged effects. Domain updates are written to be idempotent so repeating the same `tickId` does not corrupt state, and successful completion both applies the effects and deletes the `tick:{tenantId}:{regionId}:pending` key.
+Each `tick:{tenantId}:{regionId}:pending` entry represents a **single tick** for that region and carries a monotonically increasing `tickId` plus the staged effects for that tick. The execution model follows the three-phase pattern described in the Redis architecture:
+
+1. **Stage** – Lua scripts under the current region lease and entity locks write the intended effects into `pending` (using `tickId` and effect keys) without calling external services.
+2. **Apply** – Game Session issues gRPC calls to domain services based on the staged payload; handlers apply changes under local transactions and idempotency rules keyed by `(tenantId, regionId, tickId, effectKey)`.
+3. **Commit / Cleanup** – A final Lua script reconciles Redis state with the outcomes of the domain calls: it validates the lease and lock tokens, removes `pending` and releases locks on success, or leaves/updates `pending` for retry or operator-driven recovery on failure.
+
+If a crash or lock timeout leaves `pending` present, the next executor for that region treats the entry as “this tick may need to be (re)applied”: it re-runs the Apply and Commit/Cleanup phases. Domain updates are written to be idempotent so repeating the same `tickId` does not corrupt state, and successful completion both applies any remaining effects (if needed) and deletes the `tick:{tenantId}:{regionId}:pending` key.
 
 The **TickScheduler** in the Game Session Service enforces this **single in-flight tick per region** rule:
 
@@ -419,8 +469,8 @@ If a tick crashes mid-flight (e.g., Game Session Service restart), Redis preserv
 Recovery is coordinated by Game Session Service and backed by:
 
 - **Lua-based atomic updates**
-- **AOF (Append-Only File)** persistence
-- `WAIT 1 100` for durable replication
+- **AOF (Append-Only File)** persistence for best-effort durability of volatile tick/session state
+- **Asynchronous replication**, with correctness guaranteed by treating Redis as a volatile coordination layer and relying on idempotent tick replays plus PostgreSQL as the source of truth
 
 This supports **at-least-once, idempotent, replayable** ticks — ticks may be safely replayed after crash or failover without changing observable game state, even though individual effects may execute more than once under rare failure windows.
 
@@ -512,7 +562,7 @@ The process is **asynchronous and multi-phased**:
 1. A tick-local command executes in the **origin region**.
 2. A follow-up action — including the `sourceEntityId` — is enqueued in the
    **target region's** command queue (often under a `remote:{tenantId}:{entityId}` key; see
-   [Redis Key Naming](./system-architecture-redis.md#🗂️-key-naming-and-shard-discipline)).
+   [Redis Key Naming](./system-architecture-redis.md#key-naming-and-shard-discipline)).
 3. The target region processes the action during its next tick and determines
    the outcome locally.
 4. The Game Session Service uses the `sourceEntityId` to route the result back
@@ -557,7 +607,7 @@ may be notified that the chain was halted.
 - ✅ Parallel, fault-isolated tick execution with room-level isolation
 - ✅ Lock-on-demand using Redis avoids fixed thread ownership
 - ✅ Atomic staging and safe rollback via Lua
-- ✅ Deterministic recovery using AOF + `WAIT`
+- ✅ Deterministic recovery using AOF and idempotent tick replays
 - ✅ Conflict metadata avoids livelocks and enables adaptive pacing
 - ✅ Flexible time scaling without affecting system cadence
 - ✅ No in-service volatile state — everything recoverable via Redis

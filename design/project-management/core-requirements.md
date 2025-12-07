@@ -166,8 +166,8 @@ See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workfl
 - **Game Session Service** orchestrates tick execution and runtime configuration.
 - **Redis** stores volatile session state so players can **reconnect seamlessly** after disruptions.
 - Tick regions operate independently for scalability but rely on Redis for atomic coordination.
-- Redis runs with **AOF persistence** and synchronous replication so tick state can be recovered after failover.
-- Lua scripts in Redis ensure atomic tick updates and use `WAIT` for replica acknowledgment.
+- Redis runs with **AOF persistence**; replication remains asynchronous, and tick state is treated as volatile coordination data that can be reconstructed via idempotent replay after failover.
+- Lua scripts in Redis ensure atomic, shard-local tick updates on the primary; correctness and recovery rely on AOF plus idempotent replays against PostgreSQL rather than synchronous replica acknowledgments.
 - A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows transparent service restarts.
 See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for implementation details.
 
