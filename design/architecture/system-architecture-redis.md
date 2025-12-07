@@ -324,65 +324,26 @@ Combined with the **lock token semantics** described in the Tick System design, 
 
 **TTL envelopes and worst-case pauses**
 
-Lease TTLs and lock TTLs are chosen and monitored as part of a single envelope:
+For self-hosted and hobby deployments, FireMUD keeps lease and lock TTLs intentionally simple:
 
-- `lock_ttl_ms` is derived from the soft tick budget using a configurable multiplier and bounds as described in the Tick System design (`lock_ttl_ms = clamp(tick_budget_ms * LOCK_TTL_MULTIPLIER, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`).
-- `lease_ttl_ms` is configured **strictly greater than** both the soft tick budget and `lock_ttl_ms` (for example, on the order of multiple ticks) so that:
-  - Under healthy conditions, an executor refreshes the lease several times during normal operation and **lease expiry is not expected**.
-  - Lock expiry during an in-flight tick is an **exceptional condition**, not part of the normal execution path.
-  - A lock acquired under a given lease epoch is never refreshed across epochs; once its TTL starts, it can block work for that entity for at most `lock_ttl_ms` from acquisition, even if leadership changes.
+- The **only** timing setting you normally configure is a region’s tick interval (`game.tick-interval-ms`).
+- The Game Session Service derives internal values from that single knob using fixed multipliers:
+  - `tick_budget_ms = tick_interval_ms * 0.8` (soft execution budget, not exposed as config).
+  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)` – entity lock TTL.
+  - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)` – region lease TTL for `tick-executor-lease:{tenantId}:{regionId}`.
 
-`MAX_LOCK_TTL_MS` is therefore treated as a **hard upper bound** on per-entity failover stall caused purely by stale locks from a previous leader. Region-level progress is defined as “some entities advance”: a region may temporarily skip work for entities behind stale locks, but it should not be considered globally stuck unless the number or duration of such stalled entities crosses the degradation thresholds described under Observability.
+This keeps the relationship simple and predictable:
 
-Capacity planning and SLOs therefore assume:
+- Locks live significantly longer than a normal tick’s work, so transient pauses rarely cause expiries.
+- Leases outlive locks by a fixed factor, so region leadership remains stable unless the executor truly disappears or stalls for an extended period.
+- All three values scale together when you change `tick-interval-ms`; there is no need to tune separate TTL properties per environment.
 
-- `p99` end-to-end tick execution time (lock acquisition → commit/rollback + lock release) remains within a conservative fraction of `lock_ttl_ms` (for example ≤50% in steady state, with alerts when sustained runtime exceeds 70%).
-- Over-TTL ticks (where `tick.execution_time_ms >= lock_ttl_ms`) are rare outliers; dashboards and alerts treat a sustained over-TTL rate above a small threshold as a **degradation signal** that requires investigation (GC tuning, tick-budget adjustment, or load shedding).
+Under rare, worst-case pauses:
 
-When rare, worst-case pauses still occur:
+- If a pause exceeds `lock_ttl_ms` but the executor retains the lease, locks may expire and be reacquired, but token and `tickId` checks in Lua ensure late work fails safely and is retried instead of double-applying.
+- If a pause exceeds `lease_ttl_ms`, another executor may acquire the lease and resume ticks from Redis; when the original worker resumes, lease-token checks prevent it from committing state from the old epoch, and any stale locks are allowed to expire naturally under their original `lock_ttl_ms`.
 
-- If a pause exceeds `lock_ttl_ms` but the executor retains the lease:
-  - Locks may expire and be reacquired by the same or another worker.
-  - Lock tokens and `pending`/`tickId` checks in Lua ensure that any late work from the original worker fails safely (token or epoch mismatch) and is retried instead of double-applying effects.
-  - The original executor must treat the loss of a lock as a **hard failure** for the in-flight work on that entity:
-    - It does not attempt to “complete” the current attempt without first reacquiring the lock via the shared helper.
-    - If it chooses to retry, it does so by reacquiring the lock and re-running the workflow from a clean state, not by partially reusing stale local state.
-- If a pause exceeds `lease_ttl_ms`:
-  - Another executor may acquire the region lease and resume ticks from the surviving Redis state.
-  - When the original worker resumes, lease-token checks prevent it from committing or rolling back tick state; its in-flight work is treated as failed and rescheduled via the normal retry mechanisms.
-  - The new leader may encounter `tick:{tenantId}:{regionId}:lock:{entityId}` keys whose tokens do not match its current lease epoch. These are treated as **stale locks** from the previous epoch:
-    - The new leader does **not** refresh or forcibly clear those locks.
-    - It skips work for the affected entities while continuing to process entities that are not behind stale locks.
-    - The stale locks naturally expire within their original `lock_ttl_ms`, after which the new leader can reacquire locks and resume work for those entities.
-
-In both cases, the design optimizes for **safety and fairness under load**:
-
-- Tick effects are not applied twice.
-- Regions with repeated over-TTL behavior are automatically marked degraded and, if necessary, halted until operators correct the underlying cause.
-
-**Configuration knobs and startup validation**
-
-Lease and lock TTLs are controlled via explicit configuration properties:
-
-- `game.tick-budget-ms` – soft tick execution budget per region.
-- `game.tick-min-lock-ttl-ms` / `game.tick-max-lock-ttl-ms` – bounds for computing `lock_ttl_ms`.
-- `game.tick-lease-ttl-ms` – region lease TTL used for `tick-executor-lease:{tenantId}:{regionId}` keys.
-
-Internally, the Game Session Service also defines a `MAX_LEASE_TTL_MS` constant that bounds how long a region can remain “logically owned” by a single lease epoch even if the executor disappears. Region leases are intentionally **short-lived coordination hints** (seconds, not minutes), not long-duration ownership records; if an executor vanishes and its lease remains valid for longer than a small multiple of the tick budget, that is treated as a misconfiguration rather than a supported steady state.
-
-At startup, the Game Session Service derives `lock_ttl_ms` from `game.tick-budget-ms` and validates:
-
-- `game.tick-min-lock-ttl-ms <= game.tick-max-lock-ttl-ms`.
-- `lock_ttl_ms` (computed) satisfies `lock_ttl_ms >= game.tick-budget-ms` and remains within `[MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS]` as documented in the Tick System design.
-- `game.tick-lease-ttl-ms` is **strictly greater than** both `game.tick-budget-ms` and the computed `lock_ttl_ms` (for example, at least 2–3× `lock_ttl_ms`), but also bounded above:
-  - `game.tick-lease-ttl-ms <= MAX_LEASE_TTL_MS`, where `MAX_LEASE_TTL_MS` is on the order of a small multiple of the tick budget (for example, a few seconds to tens of seconds, not minutes).
-  - Optionally, `game.tick-lease-ttl-ms <= LEASE_TO_LOCK_TTL_MULTIPLIER * lock_ttl_ms` for a small fixed multiplier (for example 3–5×), so leases never outlive lock TTLs by more than a modest factor.
-
-Because a lock from a previous lease epoch can stall only the entity it guards and only until its TTL expires, `MAX_LOCK_TTL_MS` also defines the **maximum tolerated per-entity failover stall window**. Configurations that attempt to increase `lock_ttl_ms` beyond this envelope are rejected; stall budgets longer than `MAX_LOCK_TTL_MS` must be justified by an explicit design change rather than ad-hoc configuration.
-
-If any of these invariants are violated in any profile (dev, test, staging, or production), **startup fails fast** with a clear configuration error. There is no automatic fallback to “safe defaults”; running with an unsafe TTL envelope is treated as a configuration bug that must be corrected before the service can accept gameplay traffic.
-
-These checks make misconfigured TTL envelopes visible early and keep all environments within the intended safety margins.
+Region-level progress is defined as “some entities advance”; regions with frequent over‑TTL ticks are treated as degraded by the scheduler and may have their tick rate reduced, but these behaviors are driven by simple ratios of `tick.execution_time_ms` to `lock_ttl_ms`, not by additional configuration properties.
 
 Implementations may also use local monotonic clocks or Redis’s `TIME` command **for diagnostics only**, for example to:
 
@@ -708,15 +669,14 @@ Tick-related scripts must be idempotent: **re-running the same script with the s
 
 **Lock TTL formula and guardrails**
 
-Tick locks use a TTL derived from the region’s soft tick budget to balance safety and recovery:
+Tick locks use a TTL derived from the **tick interval** to balance safety and recovery:
 
-- The Game Session Service computes a default lock TTL as:
-  - `lock_ttl_ms = clamp(tick_budget_ms * 3, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`
-  - `MIN_LOCK_TTL_MS` defaults to 500 ms.
-  - `MAX_LOCK_TTL_MS` defaults to 5_000 ms.
-- Configuration rules:
-  - Operators may adjust `tick_budget_ms`, `MIN_LOCK_TTL_MS`, and `MAX_LOCK_TTL_MS` via configuration, but the Game Session Service **always applies the clamp** to avoid accidentally tiny or excessively long lock durations.
-  - A lock TTL must never exceed the maximum region-level recovery window defined in the Tick System design; if configuration attempts to raise it further, the Game Session Service caps it at `MAX_LOCK_TTL_MS` and logs a warning.
+- The Game Session Service exposes `game.tick-interval-ms` as the primary knob that controls pacing.
+- Internally it computes:
+  - `tick_budget_ms = tick_interval_ms * 0.8`
+  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
+  - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)`
+- These values are not meant to be tuned independently in typical deployments; changing `tick-interval-ms` is usually sufficient.
 
 **Runtime validation and observability**
 
@@ -818,6 +778,7 @@ To keep behavior consistent across environments, FireMUD defines **recommended S
     - >5% of its ticks are **over-TTL**, or
     - it produces **3 consecutive** over-TTL ticks.
   - Warning alert: region enters degraded state.
+  - Practical guidance for self-hosted setups: if you routinely see “tick budget exceeded” or over‑TTL warnings across many regions and do not want to deeply tune GC or workloads, simply **increase `game.tick-duration-ms`** (and matching automation tick duration) and restart. All derived budgets and TTLs grow proportionally, reducing the chance of expiries at the cost of slightly slower ticks.
   - Critical alert: region remains degraded for more than a configurable window (for example **10–15 minutes**); at this point the Game Session Service may halt new ticks and reject new commands for that region until operators intervene.
 
 - **Coordination Redis memory and eviction**

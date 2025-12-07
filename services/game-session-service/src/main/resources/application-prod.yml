@@ -20,7 +20,6 @@ management:
 
 game:
   tick-duration-ms: ${GAME_TICK_DURATION_MS:1000}
-  tick-budget-ms: ${GAME_TICK_BUDGET_MS:100}
   tick-max-commands: ${GAME_TICK_MAX_COMMANDS:50}
 
 firemud:

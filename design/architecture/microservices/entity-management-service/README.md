@@ -168,13 +168,14 @@ grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/P
 
 ### Tick Locking
 
-This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantId}:{regionId}:lock:{entityId}` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs follow the canonical formula from the Redis design:
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantId}:{regionId}:lock:{entityId}` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs follow the simplified formula from the Redis design:
 
-- `lock_ttl_ms = clamp(tick_budget_ms * 3, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`
-- `tick_budget_ms` maps to the `game.tick-budget-ms` property.
-- `MIN_LOCK_TTL_MS` and `MAX_LOCK_TTL_MS` map to the `game.tick-min-lock-ttl-ms` and `game.tick-max-lock-ttl-ms` properties (defaults 500 ms and 5_000 ms respectively).
+- The Game Session Service exposes `game.tick-interval-ms` as the primary pacing knob.
+- Internally it derives a soft budget and TTLs, for example:
+  - `tick_budget_ms = tick_interval_ms * 0.8`
+  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
 
-These settings keep locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
+Entity Management treats `lock_ttl_ms` as an opaque value supplied by shared helpers; it does not define its own lock TTL configuration. This keeps locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
 
 Entity Management assumes the **per-command execution phases** described in the [Tick System design](../../system-architecture-ticks.md#per-command-execution-phases): commands that touch multiple entities in the same region resolve their target set first (for example, the two parties in a trade or all entities in a room for AoE effects), then acquire the necessary `tick:{tenantId}:{regionId}:lock:{entityId}` keys in a deterministic order. If any required lock is unavailable, the command fails, staged changes are rolled back via Redis, and the Game Session Service reschedules the work using the retry mechanisms described in the Tick System and Redis designs.
 

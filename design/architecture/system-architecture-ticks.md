@@ -89,20 +89,15 @@ To prevent concurrent entity updates, ticks acquire **distributed locks** in Red
 - `SET NX PX` with expiry for exclusive ownership, via a shared lock helper
 - Lua-based atomic checks to avoid race conditions
 
-Lock TTLs are derived from the **soft tick execution budget** using the formula described in the Redis architecture. Conceptually:
+In practice, the system keeps this simple by exposing a **single primary knob**—the region tick interval—and deriving lock/lease TTLs from that:
 
-- The platform computes `lock_ttl_ms` as `clamp(tick_budget_ms * LOCK_TTL_MULTIPLIER, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`, where:
-  - `LOCK_TTL_MULTIPLIER` is a configuration property (for example `5` in production profiles) rather than a hard-coded constant of `3`.
-  - `MIN_LOCK_TTL_MS` / `MAX_LOCK_TTL_MS` bound the envelope for all regions.
-- This gives headroom for pauses (GC, CPU spikes, brief scheduler jitter) without letting the lock expire while work is still in progress, while still bounding how long a stale lock can block progress.
+- `tick_interval_ms` is the configured target interval between ticks for a region.
+- Internally, the Game Session Service computes a soft execution budget (for example `tick_budget_ms = tick_interval_ms * 0.8`) and then derives TTLs using fixed multipliers:
+  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
+  - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)`
+- These multipliers are **hard-coded defaults** for hobby/self‑hosted deployments; they are chosen to give generous headroom for GC pauses and hiccups without requiring per‑environment tuning.
 
-Capacity planning and configuration tuning rely on **measured data**, not just the multiplier:
-
-- Load/perf tests and production telemetry must show that `p99` tick execution time (lock acquisition → commit/rollback + lock release) remains under a configurable fraction of `lock_ttl_ms` (for example **≤50%** in steady state, with alerts when sustained runtime exceeds **70%**).
-- The recommended process is:
-  - Start from a conservative `LOCK_TTL_MULTIPLIER` (for example, 5× the soft tick budget).
-  - Measure `tick.execution_time_ms`, `tick.lock_ttl_ms`, and headroom ratios under realistic workloads.
-  - Adjust `tick_budget_ms` and/or `LOCK_TTL_MULTIPLIER` per environment so that GC pauses and normal load variations still fall well within the configured envelope.
+This keeps configuration light—typically you only adjust `tick_interval_ms`—while still ensuring locks live long enough for normal work to finish and stale locks are cleared after a bounded window.
 
 Rare, extreme pauses (for example long GC) may still exceed `lock_ttl_ms`. In those cases:
 
