@@ -137,3 +137,7 @@ Monetization:
 - Avoid returning nulls; use transactions for DB consistency.
 - When suppressing SpotBugs warnings, use `@SuppressFBWarnings(value = "<WARNING>", justification = "<reason>")`.
 - The GitHub CLI (`gh`) is available in the development environment and may be used to inspect or update pull request metadata as part of an assigned task, following the global AI rules.
+
+## Documentation Formatting
+
+- When a markdown document needs a Table of Contents, start with `## Table of Contents`, include the indented bullet list of anchors, then place a horizontal rule (`---`) directly after the list (with blank lines before and after) so the ToC stays visually separated from the body content.

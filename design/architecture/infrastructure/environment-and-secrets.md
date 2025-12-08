@@ -59,13 +59,45 @@ These values are typically provided via Kubernetes Secrets in production.
 
 ### Redis Connection
 
-Redis stores transient queues and caches. Services that depend on Redis read
-these variables.
+Redis stores transient queues and caches. In **player-facing environments** the
+architecture uses separate Redis deployments for:
+
+- **Coordination Redis** – tick locks, timers, sessions, and other
+  gameplay‑critical coordination keys.
+- **Cache/Rate‑Limit Redis** – gateway rate limiting and best‑effort read‑side
+  caches.
+
+For **local development and low‑concurrency lab environments**, a single Redis
+instance is acceptable. In that case, all services may point at the same host
+and port.
+
+Baseline variables (primarily for development and simple single‑node setups):
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `FIREMUD_REDIS_HOST` | Redis host | `redis` |
 | `FIREMUD_REDIS_PORT` | Redis port | `6379` |
+
+Coordination Redis (ticks, locks, timers, sessions):
+
+| Variable | Purpose | Default / Fallback |
+| -------- | ------- | ------------------ |
+| `FIREMUD_REDIS_COORD_HOST` | Coordination Redis host | Defaults to `FIREMUD_REDIS_HOST` when unset |
+| `FIREMUD_REDIS_COORD_PORT` | Coordination Redis port | Defaults to `FIREMUD_REDIS_PORT` when unset |
+
+Cache/Rate‑Limit Redis (gateway rate limiting, caches):
+
+| Variable | Purpose | Default / Fallback |
+| -------- | ------- | ------------------ |
+| `FIREMUD_REDIS_CACHE_HOST` | Cache/Rate‑Limit Redis host | Defaults to `FIREMUD_REDIS_HOST` when unset |
+| `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis port | Defaults to `FIREMUD_REDIS_PORT` when unset |
+
+Player‑facing environments (production, staging, and any environment used to
+validate performance or correctness) **must** configure Coordination Redis and
+Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the
+same host/port for both in those environments is considered non‑compliant with
+the Redis architecture because it reintroduces eviction and latency coupling
+between coordination keys and cache/rate‑limit traffic.
 
 ### gRPC TLS Certificates
 

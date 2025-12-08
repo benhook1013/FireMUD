@@ -101,12 +101,18 @@ for conventions on schema evolution and error handling. See each service's
     - [CreateCharacterResponse](#entity_management-v1-CreateCharacterResponse)
     - [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest)
     - [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse)
+    - [ListRoomEntitiesRequest](#entity_management-v1-ListRoomEntitiesRequest)
+    - [ListRoomEntitiesResponse](#entity_management-v1-ListRoomEntitiesResponse)
     - [PingRequest](#entity_management-v1-PingRequest)
     - [PingResponse](#entity_management-v1-PingResponse)
     - [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest)
     - [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse)
+    - [RoomEntity](#entity_management-v1-RoomEntity)
     - [UpdateEntityRequest](#entity_management-v1-UpdateEntityRequest)
     - [UpdateEntityResponse](#entity_management-v1-UpdateEntityResponse)
+  
+    - [EntityType](#entity_management-v1-EntityType)
+    - [ReloadHint](#entity_management-v1-ReloadHint)
   
     - [EntityManagementService](#entity_management-v1-EntityManagementService)
   
@@ -126,10 +132,20 @@ for conventions on schema evolution and error handling. See each service's
     - [GameDesignService](#gamedesign-v1-GameDesignService)
   
 - [game-logic/v1/game_logic_service.proto](#game-logic_v1_game_logic_service-proto)
+    - [BroadcastSayRequest](#game_logic-v1-BroadcastSayRequest)
+    - [BroadcastSayResponse](#game_logic-v1-BroadcastSayResponse)
     - [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest)
     - [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse)
+    - [LookExit](#game_logic-v1-LookExit)
+    - [LookRequest](#game_logic-v1-LookRequest)
+    - [LookResult](#game_logic-v1-LookResult)
+    - [LookResult.AmbientStateEntry](#game_logic-v1-LookResult-AmbientStateEntry)
     - [PingRequest](#game_logic-v1-PingRequest)
     - [PingResponse](#game_logic-v1-PingResponse)
+    - [RoomEntity](#game_logic-v1-RoomEntity)
+  
+    - [ChatAlias](#game_logic-v1-ChatAlias)
+    - [EntityType](#game_logic-v1-EntityType)
   
     - [GameLogicService](#game_logic-v1-GameLogicService)
   
@@ -222,8 +238,13 @@ for conventions on schema evolution and error handling. See each service's
 - [world-management/v1/world_management_service.proto](#world-management_v1_world_management_service-proto)
     - [GetRoomRequest](#world_management-v1-GetRoomRequest)
     - [GetRoomResponse](#world_management-v1-GetRoomResponse)
+    - [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest)
+    - [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse)
     - [PingRequest](#world_management-v1-PingRequest)
     - [PingResponse](#world_management-v1-PingResponse)
+    - [RoomExitSnapshot](#world_management-v1-RoomExitSnapshot)
+    - [RoomSnapshot](#world_management-v1-RoomSnapshot)
+    - [RoomSnapshot.AmbientStateEntry](#world_management-v1-RoomSnapshot-AmbientStateEntry)
     - [UpdateWorldStateRequest](#world_management-v1-UpdateWorldStateRequest)
     - [UpdateWorldStateResponse](#world_management-v1-UpdateWorldStateResponse)
   
@@ -267,7 +288,7 @@ for conventions on schema evolution and error handling. See each service's
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | auth_token | [string](#string) |  |  |
-| account_id | [string](#string) |  | Account tied to this authentication result |
+| account_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -1361,6 +1382,38 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="entity_management-v1-ListRoomEntitiesRequest"></a>
+
+### ListRoomEntitiesRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| room_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ListRoomEntitiesResponse"></a>
+
+### ListRoomEntitiesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entities | [RoomEntity](#entity_management-v1-RoomEntity) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-PingRequest"></a>
 
 ### PingRequest
@@ -1418,6 +1471,28 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="entity_management-v1-RoomEntity"></a>
+
+### RoomEntity
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entity_id | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
+| entity_type | [EntityType](#entity_management-v1-EntityType) |  |  |
+| role | [string](#string) |  |  |
+| state_flags | [string](#string) | repeated |  |
+| vision_priority | [int32](#int32) |  |  |
+| reload_hint | [ReloadHint](#entity_management-v1-ReloadHint) |  |  |
+| visible | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-UpdateEntityRequest"></a>
 
 ### UpdateEntityRequest
@@ -1450,6 +1525,34 @@ Basic ping response containing a greeting and optional error details.
 
  
 
+
+<a name="entity_management-v1-EntityType"></a>
+
+### EntityType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ENTITY_TYPE_UNSPECIFIED | 0 |  |
+| PLAYER | 1 |  |
+| NPC | 2 |  |
+| ITEM | 3 |  |
+
+
+
+<a name="entity_management-v1-ReloadHint"></a>
+
+### ReloadHint
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| RELOAD_HINT_UNSPECIFIED | 0 |  |
+| STABLE | 1 |  |
+| PLAYER_ENTERED | 2 |  |
+| PLAYER_LEFT | 3 |  |
+
+
  
 
  
@@ -1467,6 +1570,7 @@ Basic ping response containing a greeting and optional error details.
 | UpdateEntity | [UpdateEntityRequest](#entity_management-v1-UpdateEntityRequest) | [UpdateEntityResponse](#entity_management-v1-UpdateEntityResponse) |  |
 | QueryInventory | [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest) | [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse) |  |
 | ListCharactersByAccount | [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest) | [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse) |  |
+| ListRoomEntities | [ListRoomEntitiesRequest](#entity_management-v1-ListRoomEntitiesRequest) | [ListRoomEntitiesResponse](#entity_management-v1-ListRoomEntitiesResponse) |  |
 
  
 
@@ -1684,6 +1788,45 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="game_logic-v1-BroadcastSayRequest"></a>
+
+### BroadcastSayRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| player_id | [string](#string) |  |  |
+| room_id | [string](#string) |  |  |
+| alias | [ChatAlias](#game_logic-v1-ChatAlias) |  |  |
+| text | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-BroadcastSayResponse"></a>
+
+### BroadcastSayResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| message | [string](#string) |  |  |
+| delivered_to | [string](#string) | repeated |  |
+| npc_echoes | [string](#string) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="game_logic-v1-ExecuteCommandRequest"></a>
 
 ### ExecuteCommandRequest
@@ -1717,6 +1860,79 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="game_logic-v1-LookExit"></a>
+
+### LookExit
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| label | [string](#string) |  |  |
+| target_room_id | [string](#string) |  |  |
+| description | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-LookRequest"></a>
+
+### LookRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| player_id | [string](#string) |  |  |
+| room_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-LookResult"></a>
+
+### LookResult
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_id | [string](#string) |  |  |
+| room_name | [string](#string) |  |  |
+| short_description | [string](#string) |  |  |
+| long_description | [string](#string) |  |  |
+| exits | [LookExit](#game_logic-v1-LookExit) | repeated |  |
+| entities | [RoomEntity](#game_logic-v1-RoomEntity) | repeated |  |
+| ambient_state | [LookResult.AmbientStateEntry](#game_logic-v1-LookResult-AmbientStateEntry) | repeated |  |
+| room_flags | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="game_logic-v1-LookResult-AmbientStateEntry"></a>
+
+### LookResult.AmbientStateEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="game_logic-v1-PingRequest"></a>
 
 ### PingRequest
@@ -1742,7 +1958,54 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+
+<a name="game_logic-v1-RoomEntity"></a>
+
+### RoomEntity
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entity_id | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
+| entity_type | [EntityType](#game_logic-v1-EntityType) |  |  |
+| role | [string](#string) |  |  |
+| state_flags | [string](#string) | repeated |  |
+
+
+
+
+
  
+
+
+<a name="game_logic-v1-ChatAlias"></a>
+
+### ChatAlias
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CHAT_ALIAS_UNSPECIFIED | 0 |  |
+| SAY | 1 |  |
+| YELL | 2 |  |
+| WHISPER | 3 |  |
+
+
+
+<a name="game_logic-v1-EntityType"></a>
+
+### EntityType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ENTITY_TYPE_UNSPECIFIED | 0 |  |
+| PLAYER | 1 |  |
+| NPC | 2 |  |
+| ITEM | 3 |  |
+
 
  
 
@@ -1758,6 +2021,8 @@ Basic ping response containing a greeting and optional error details.
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#game_logic-v1-PingRequest) | [PingResponse](#game_logic-v1-PingResponse) |  |
 | ExecuteCommand | [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest) | [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse) |  |
+| ResolveLook | [LookRequest](#game_logic-v1-LookRequest) | [LookResult](#game_logic-v1-LookResult) |  |
+| BroadcastSay | [BroadcastSayRequest](#game_logic-v1-BroadcastSayRequest) | [BroadcastSayResponse](#game_logic-v1-BroadcastSayResponse) |  |
 
  
 
@@ -2882,6 +3147,38 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 
 
 
+<a name="world_management-v1-GetRoomSnapshotRequest"></a>
+
+### GetRoomSnapshotRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| room_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GetRoomSnapshotResponse"></a>
+
+### GetRoomSnapshotResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| snapshot | [RoomSnapshot](#world_management-v1-RoomSnapshot) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-PingRequest"></a>
 
 ### PingRequest
@@ -2902,6 +3199,64 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-RoomExitSnapshot"></a>
+
+### RoomExitSnapshot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| exit_id | [string](#string) |  |  |
+| target_room_id | [string](#string) |  |  |
+| target_room_name | [string](#string) |  |  |
+| label | [string](#string) |  |  |
+| description | [string](#string) |  |  |
+| cost | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-RoomSnapshot"></a>
+
+### RoomSnapshot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| room_name | [string](#string) |  |  |
+| short_description | [string](#string) |  |  |
+| long_description | [string](#string) |  |  |
+| exits | [RoomExitSnapshot](#world_management-v1-RoomExitSnapshot) | repeated |  |
+| ambient_state | [RoomSnapshot.AmbientStateEntry](#world_management-v1-RoomSnapshot-AmbientStateEntry) | repeated |  |
+| room_flags | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="world_management-v1-RoomSnapshot-AmbientStateEntry"></a>
+
+### RoomSnapshot.AmbientStateEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [string](#string) |  |  |
 
 
 
@@ -2954,6 +3309,7 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#world_management-v1-PingRequest) | [PingResponse](#world_management-v1-PingResponse) |  |
 | GetRoom | [GetRoomRequest](#world_management-v1-GetRoomRequest) | [GetRoomResponse](#world_management-v1-GetRoomResponse) |  |
+| GetRoomSnapshot | [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest) | [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse) |  |
 | UpdateWorldState | [UpdateWorldStateRequest](#world_management-v1-UpdateWorldStateRequest) | [UpdateWorldStateResponse](#world_management-v1-UpdateWorldStateResponse) |  |
 
  
@@ -2979,3 +3335,4 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | <a name="bool" /> bool |  | bool | boolean | boolean | bool | bool | boolean | TrueClass/FalseClass |
 | <a name="string" /> string | A string must always contain UTF-8 encoded or 7-bit ASCII text. | string | String | str/unicode | string | string | string | String (UTF-8) |
 | <a name="bytes" /> bytes | May contain any arbitrary sequence of bytes. | string | ByteString | str | []byte | ByteString | string | String (ASCII-8BIT) |
+

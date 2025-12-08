@@ -388,7 +388,7 @@ jobs:
               ? "❌ Critical/High vulnerabilities detected"
               : "✅ No critical/high vulnerabilities found";
 
-            const body = `### 🔍 Trivy Security Scan Report\n**${summary}**\n\n\`\`\n${report}\n\`\``;
+            const body = `### 🔍 Trivy Security Scan Report\n**${summary}**\n\n\`\`\`\n${report}\n\`\`\``;
 
             core.summary.addHeading("🔍 Trivy Security Scan");
             core.summary.addRaw(summary).write();
