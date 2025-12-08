@@ -79,6 +79,29 @@ The **region boundary** is therefore the unit of atomicity and authority:
 - All tick locks, staging, timers, retry metadata, and session participation for a `{tenantId, regionId}` are owned by that region’s active executor.
 - No lock, Lua script, or tick context spans multiple regions. Cross-region flows are modeled as **messages between region executors**, not shared locks.
 
+### Region Progress vs Lease Ownership
+
+Region leases are intentionally **short‑lived coordination hints**, not full health indicators. It is possible for an executor to:
+
+- Continue renewing the `tick-executor-lease:{tenantId}:{regionId}` key (Redis and lease logic are healthy), while
+- Making little or no **forward progress** because downstream dependencies (PostgreSQL, domain gRPC services) are slow or unreachable.
+
+To distinguish this “lease held but stalled” case from a true lease loss:
+
+- The Game Session Service tracks **per-region progress signals**, such as:
+  - The timestamp or tick counter of the **last successful commit** for `{tenantId, regionId}`.
+  - A small counter of **consecutive failed ticks** for that region caused by downstream errors or timeouts (not by lock contention alone).
+- When a region exceeds simple hardcoded thresholds (for example, several consecutive failures or no successful ticks for many multiples of `tick-duration-ms`), the scheduler treats the region as **stalled** even though it still holds the lease.
+
+Behavior for stalled regions:
+
+- New ticks are **not scheduled** for that `{tenantId, regionId}` until progress recovers.
+- New gameplay commands targeting that region are **rejected** with a clear “region unavailable” style error instead of being accepted and stuck behind a non‑advancing executor.
+- The executor continues to renew the lease during a short grace period so no other instance takes over and attempts the same failing work against unhealthy dependencies.
+- If a large number of regions on the same instance become stalled, the instance’s readiness/liveness can be marked unhealthy so orchestration restarts it once dependencies recover.
+
+Lease expiry and failover remain strictly about **coordination safety** (avoiding split‑brain on Redis state). Stalled region handling is layered on top as a **progress watchdog**: leases tell you who owns a region’s coordination keys, while stalled/healthy tell you whether that owner is actually advancing game state.
+
 ---
 
 ## Distributed Locking

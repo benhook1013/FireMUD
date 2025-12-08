@@ -199,6 +199,18 @@ Operationally, AOF files are treated as **all-or-nothing** coordination history 
 
 Manual “surgery” on AOF contents is **not supported** in FireMUD runbooks. Either the AOF is trusted and used as-is, or it is discarded and the node restarts with an empty (or cleanly resynchronized) coordination keyspace.
 
+For **breaking coordination script changes** (for example, changes that reinterpret existing `pending`/timer/session payloads or adjust validation logic for stored values), FireMUD intentionally avoids relying on AOF replay across versions:
+
+- Script changes are classified into:
+  - **Safe changes** – bugfixes or internal refactors that do not change how existing stored payloads are interpreted. These may be deployed without special AOF handling.
+  - **Breaking changes** – any change that could cause a new script version to interpret existing coordination keys differently (for example, schema changes without a migration, new required fields, or changed validation rules).
+- For breaking changes, the runbook is:
+  - Schedule a maintenance window.
+  - Stop accepting new gameplay commands and pause ticks for affected tenants/regions (or globally for small/self-hosted deployments).
+  - Explicitly **flush coordination state** for the affected slots (for example, by clearing tick/lock/timer/retry/session prefixes in the Coordination Redis deployment or recreating the coordination Redis instance).
+  - Deploy the new scripts and services and restart tick processing; Redis rebuilds coordination state from PostgreSQL and fresh gameplay.
+- AOF replay is therefore relied on only within a given script semantics window. When script behavior changes in a way that is not trivially backward-compatible for stored payloads, operators treat existing coordination state as disposable and restart from a clean keyspace instead of attempting cross-version replay.
+
 #### Replica Promotion and Missed Writes
 
 Because replication is asynchronous:
@@ -213,7 +225,18 @@ From the tick system’s perspective, this is indistinguishable from a larger AO
   - Are skipped, with impact bounded to the same best-effort window described above.
 - Stale coordination keys that survived failover cannot cause double-apply or split-brain behavior because all mutating scripts validate lease tokens, lock tokens, `tickId`, and `generation` fields before making changes.
 
-Replication-lag and health metrics (documented under Observability) are used to detect environments where promotion would routinely imply unacceptably large coordination gaps so operators can tune Redis or adjust tick budgets accordingly.
+Replication-lag and health metrics (documented under Observability) are used to detect environments where promotion would routinely imply unacceptably large coordination gaps so operators can tune Redis or adjust tick budgets accordingly. For coordination workloads, FireMUD ties acceptable replication lag to the tick interval:
+
+- As a starting envelope:
+  - **Target:** `p99` replication lag for coordination shards < **0.25 × `tick-duration-ms`**.
+  - **Warning:** lag regularly between **0.25 ×** and **1.0 ×** `tick-duration-ms`.
+  - **Red line:** lag ≥ **1 full tick window** for any shard, especially when sustained.
+- From a gameplay perspective:
+  - Promotion with lag comfortably below one tick implies that, in the worst case, affected regions may lose at most one tick’s worth of volatile coordination state, which the replay model is designed to tolerate.
+  - If replication lag frequently approaches or exceeds a tick window, some regions may systematically lose more ticks than others during failover (for example, repeatedly skipping several ticks of timers or retries), which can bias gameplay.
+- For small/self-hosted deployments where it is difficult to keep lag within this envelope:
+  - It is acceptable to run Coordination Redis with a single primary (and an optional replica used only for observability or manual promotion) and to treat promotion of a significantly behind replica as equivalent to dropping coordination state for affected tenants/regions.
+  - Replica promotion in such environments should be a rare, deliberate operation with explicit runbooks indicating that recent tick/session state may be lost; gameplay resumes from PostgreSQL and new coordination activity instead of relying on the replica’s stale view.
 
 #### Lua Scripts and AOF Replay
 
@@ -402,6 +425,16 @@ Changing how identifiers are normalized or how hash tags are formed (for example
       - Allow old keys to expire naturally if they are strictly transient and do not need to be carried forward.
     - Remove compatibility code and old normalization paths once the keyspace has converged.
 - At no point should two different normalization versions be used concurrently for new keys without an explicit compatibility layer; doing so risks splitting a logical `{tenantId, regionId}` across shards and breaking the assumption that all tick keys for a region are co-located.
+- **Operational constraint – do not combine with resharding**
+  - Normalization changes and Redis Cluster resharding (slot rebalancing, adding/removing masters) are **not performed in the same maintenance window**. For small/self-hosted deployments the protocol is:
+    - When changing normalization:
+      - Treat the cluster slot map as fixed for the duration of the migration.
+      - Pause or drain ticks and new commands for affected tenants/regions.
+      - Migrate keys according to the steps above, validate that each `{tenantId, regionId}` now lives under its new hash tag, then resume ticks.
+    - When resharding the cluster:
+      - Treat it as a pure infrastructure operation: no changes to normalization helpers or hash-tag format.
+      - Application code continues to use the current normalization version while slots move underneath.
+  - If both changes are required in a small deployment, they are sequenced explicitly: normalization migration first (with stable cluster topology), then resharding as a separate, later step.
 
 Session and timer keys do not participate in tick multi-key scripts and may use simpler patterns as long as they preserve `tenantId` prefixes and avoid cross-shard assumptions. In particular:
 
@@ -433,18 +466,18 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
   - Construct keys using the same helpers used in production.
   - Assert that all keys passed to a given Lua script share the same hash tag substring (the content inside `{}`).
   - In dev/test profiles, verify hash-slot alignment via `CLUSTER KEYSLOT` checks so regressions are caught early.
-- A structured **Lua Script Registry** and descriptor format keeps Java key builders and Lua `KEYS[...]` ordering in sync:
-  - Each script is described by a small machine-readable descriptor (for example a JSON/YAML file or Java annotation) that declares:
+- A structured **Lua Script Registry** and descriptor format kept in the `firemud-common` library keeps Java key builders and Lua `KEYS[...]` ordering in sync:
+  - Each script is described by a small machine-readable descriptor (for example a JSON/YAML file or Java annotation) that lives alongside the Lua source in `firemud-common` and declares:
     - The logical script name.
     - The required number and order of `KEYS` (with symbolic names such as `lockKey`, `pendingKey`, `leaseKey`, `timerKey`).
     - The allowed key prefixes for each position (for example `tick:`/`retry:`/`timer:` for tick scripts, `session:` only for session scripts).
     - Whether the script is expected to be **multi-key shard-local** or **single-key**.
     - How many entity lock keys (`tick:{tenantId}:{regionId}:lock:{entityId}`) it is allowed to touch (for example `max_entity_locks = 1` for the default case).
     - Whether the script participates in an **ordered multi-lock** pattern (rare) where more than one entity lock is acquired under a deterministic ordering, as described in the tick design.
-  - Java key-builder APIs for each script are generated from (or validated against) this descriptor so that:
+  - Java key-builder APIs and registry helpers for each script are defined in `firemud-common` and generated from (or validated against) these descriptors so that:
     - Builders construct `KEYS[...]` in exactly the declared order.
-    - Callers cannot assemble `KEYS` arrays manually; they must call the generated builders.
-  - A CI step parses descriptors, loads the Lua source, and verifies:
+    - Callers in individual services cannot assemble `KEYS` arrays manually; they must call the shared builders.
+  - A CI step in the `firemud-common` module parses descriptors, loads the Lua source, and verifies:
     - The script’s `KEYS` count matches the descriptor.
     - All sample `KEYS` produced by the Java builders share the same hash tag for multi-key scripts.
     - Single-key scripts receive exactly one key.
@@ -458,11 +491,11 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
 
 Pull requests that introduce new tick-related keys or Lua scripts must:
 
-- Add or update the corresponding script descriptor and key-builder APIs.
-- Extend the shared Redis test suite to prove:
+- Add or update the corresponding script descriptor, Lua source, and key-builder/registry APIs in the `firemud-common` library.
+- Extend the shared Redis test suite in `firemud-common` to prove:
   - Correct `KEYS` ordering and hash-tag alignment.
   - Enforcement of the declared prefix constraints (for example, tests that intentionally supply a mismatched prefix and assert a fast failure or no-op).
-- Avoid ad-hoc `EVAL`/`EVALSHA` calls; all script invocations go through registry-backed helpers that resolve the SHA and build `KEYS` from descriptors.
+- Avoid ad-hoc `EVAL`/`EVALSHA` calls; all script invocations in services go through registry-backed helpers exported from `firemud-common` that resolve the SHA and build `KEYS` from descriptors.
 
 Scripts that hard-code non-hash-tagged tick keys, mix forbidden prefixes, or produce `CROSSSLOT` errors under tests are rejected.
 
@@ -478,15 +511,15 @@ Redis’s single-threaded model is extended using **Lua scripts** for atomic ope
 - Session rebinding and deduplication (`session:*` keys; strictly single-key scripts that operate on one session key per call)
 - Retry queue updates
 
-All Lua scripts are:
+All Lua scripts that participate in tick coordination, sessions, and automation are:
 
-- Stored under `services/game-session-service/src/main/resources/redis/`
+- Owned and packaged by the shared `firemud-common` library under a common `redis/` resources path.
 - **Idempotent**
 - **Shard-local**
 - **Retry-safe**
 - Designed to avoid cross-tick contamination
 
-Tick-related multi-key operations **must not** be implemented as ad-hoc sequences of plain Redis commands outside these scripts. All staging, commit, rollback, and lock manipulation that touches multiple tick keys (locks, `pending`, queues, timers, or retry metadata) is performed exclusively via the Lua scripts in `services/game-session-service/src/main/resources/redis/` so transactional behavior remains consistent and replay-safe.
+Tick-related multi-key operations **must not** be implemented as ad-hoc sequences of plain Redis commands outside these scripts. All staging, commit, rollback, and lock manipulation that touches multiple tick keys (locks, `pending`, queues, timers, or retry metadata) is performed exclusively via the registered Lua scripts shipped in `firemud-common` so transactional behavior remains consistent and replay-safe across services.
 
 Additional guardrails for script authors:
 
@@ -502,11 +535,11 @@ Additional guardrails for script authors:
 Every new or modified Lua script that participates in tick coordination, sessions, or automation must satisfy the following checklist before it is accepted:
 
 - **Registered contract**
-  - The script is registered in the central **Lua Script Registry** with:
+  - The script lives in the `firemud-common` shared library and is registered in the central **Lua Script Registry** with:
     - A logical script name.
     - A descriptor that declares the exact `KEYS` count, ordering, and allowed prefixes.
     - A flag indicating whether it is multi-key shard-local or strictly single-key.
-  - Java callers invoke the script only via registry-backed helpers and generated key builders; there are no ad-hoc `EVAL`/`EVALSHA` calls.
+  - Java callers in services invoke the script only via registry-backed helpers and generated key builders from `firemud-common`; there are no ad-hoc `EVAL`/`EVALSHA` calls in individual services.
 
 - **Key shape and shard-locality**
   - For multi-key scripts:
@@ -540,6 +573,39 @@ Every new or modified Lua script that participates in tick coordination, session
     - Include tests that exercise behavior against representative values for each supported `schemaVersion` so incompatibilities between script logic and stored payloads are caught in CI rather than at runtime.
 
 Scripts that do not meet this checklist—mismatched descriptors, prefix violations, non-idempotent behavior, or missing tests—must be rejected during review and CI until they are brought into compliance.
+
+### Access Control, Redis Users, and Operational Guardrails
+
+The Lua Script Registry and key-shape rules assume that **all multi-key coordination writes** go through registered scripts and shared helpers. To keep this enforceable in practice:
+
+- **Application user vs. ops user**
+  - Coordination clients (Game Session, Automation & Scripting, any future tick participants) connect to Redis using a dedicated **application user** (for example, `coord_app`) that:
+    - Has permission to execute `EVALSHA`/`SCRIPT LOAD` and write commands (`SET`, `DEL`, `PEXPIRE`, etc.) on the coordination database/index.
+    - Is used exclusively by application code and maintenance jobs that go through the script registry and key-builder helpers; humans do not use this account from interactive tools in production.
+  - Human operators and tools (Redis CLI, RedisInsight, ad-hoc scripts) connect using a separate **read-only ops user** (for example, `ops_ro`) that:
+    - Is restricted to `@read` commands and explicitly **denied** `EVAL`, `EVALSHA`, `SCRIPT LOAD`, and write commands (`SET`, `DEL`, `EXPIRE`, `PEXPIRE`, etc.) for the coordination deployment.
+    - May still read coordination keys (`GET`, `HGETALL`, `ZRANGE`, `SCAN`, etc.) for inspection and debugging.
+
+- **Operational expectations**
+  - All coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, and automation/tick scheduler keys that share their hash tags) are treated as **write-only via application code**. Ad-hoc write commands against these prefixes from CLI or external scripts are not supported and are considered unsafe.
+  - If coordination state must be repaired or migrated, operators:
+    - Prefer to stop or drain the Game Session Service for affected tenants/regions.
+    - Use dedicated, versioned tools or maintenance code paths that go through the same script registry and key-builder helpers as normal ticks, rather than issuing raw Redis commands.
+    - Avoid hand-editing individual keys for tick/lock/session prefixes; manual changes risk violating token, `tickId`, or shard-locality invariants in ways that are hard to detect.
+
+- **Scope for ad-hoc operations**
+  - Ad-hoc `SET`/`DEL` or `EVAL`/`EVALSHA` may be used for **non-coordination workloads** (for example, cache or rate-limit deployments) where invariants are looser and keys are explicitly segregated by prefix and Redis instance.
+  - Even in those environments, it is recommended to follow a similar “app user vs. ops user” split so that accidental destructive commands in a CLI session cannot impact coordination keys.
+
+- **Break-glass behavior**
+  - In rare emergency scenarios where direct modification of coordination keys is deemed unavoidable (for example, to unblock a stuck test cluster), such actions:
+    - Are performed only with an explicitly documented “break-glass” superuser account, not with `coord_app` or `ops_ro`.
+    - Are treated as violating some of the replay/idempotency assumptions in this document for affected tenants/regions and require a follow-up review and, where appropriate, flushing or rebuilding coordination state from PostgreSQL.
+  - Production incident runbooks should favor:
+    - Halting ticks, draining regions, or flushing coordination state for specific tenants/regions, over hand-editing individual keys.
+    - Redeploying services or rerunning maintenance tools that use the normal script registry, instead of issuing raw Redis commands against coordination prefixes.
+
+These guardrails keep the script registry’s guarantees meaningful: application code and registered scripts are solely responsible for mutating coordination keys, while human operators and tooling default to **read-only** access for those prefixes.
 
 ### Script Loading, `EVALSHA`, and Failover Behavior
 
@@ -704,6 +770,10 @@ To make sure locks do not routinely expire while legitimate work is still in fli
   - A region enters a **degraded** state if, over a rolling window (for example 5 minutes), either:
     - More than a configurable percentage of its ticks are over-TTL (for example >5%), or
     - It produces a configurable number of consecutive over-TTL ticks (for example 3 in a row).
+  - Over-TTL ticks are tracked separately from **lock acquisition contention**:
+    - Immediate lock conflicts (for example, `SET NX` returning false before any work starts) increment contention-style counters such as `tick_lock_contention_total` or `game_session_lock_contention_total`.
+    - Over-TTL ticks increment a distinct “slow work” signal (for example, `tick.over_ttl_total` or a derived metric where `tick.execution_time_ms >= lock_ttl_ms`).
+    - High contention with **normal** Redis latency and tick durations points to game/command design hotspots; high over-TTL rates correlated with elevated Redis or downstream latency point to **capacity or infrastructure** problems.
   - When a region is marked degraded, the TickScheduler:
     - Reduces that region’s effective tick fan-out (for example, lowers the maximum commands processed per tick) and may modestly increase the tick interval to create headroom.
     - Continues to complete in-flight ticks but avoids starting new ticks more aggressively than the configured pacing, rather than silently allowing long-running work to compete with healthy regions.
@@ -750,7 +820,7 @@ Redis is **required** for tick coordination, sessions, and automation. When Redi
     - New gameplay sessions and commands that depend on ticks or sessions are rejected until Redis connectivity recovers.
   - Non-gameplay services that do not depend on Redis (for example, Account, Game Design, Logging & Admin) may remain available; this is the primary form of “graceful degradation” at the product level.
 
-This policy applies consistently across the conditions described elsewhere in this document: replication failures or sustained lag, `OOM`/evictions of coordination keys, repeated over-TTL ticks, and client-level connection timeouts all drive regions through the same **healthy → degraded → halted** progression, rather than each caller inventing its own ad-hoc behavior.
+This policy applies consistently across the conditions described elsewhere in this document: replication failures or sustained lag, `OOM`/evictions of coordination keys, repeated over-TTL ticks, and client-level connection timeouts all drive regions through the same **healthy → degraded → halted** progression, rather than each caller inventing its own ad-hoc behavior. Cases where Redis remains healthy but downstream services are unavailable (for example, database or gRPC outages) are handled as **stalled regions** at the tick scheduler layer, as described in the Tick System design; leases continue to enforce single-writer coordination, while stalled/healthy status reflects whether that writer is actually making progress.
 
 To avoid flapping when metrics hover around thresholds, transitions between these states apply simple hysteresis and cooldown rules:
 
@@ -778,8 +848,21 @@ To keep behavior consistent across environments, FireMUD defines **recommended S
     - >5% of its ticks are **over-TTL**, or
     - it produces **3 consecutive** over-TTL ticks.
   - Warning alert: region enters degraded state.
+  - Diagnostic guidance:
+    - If **contention metrics** (for example, `tick_lock_contention_total`, `game_session_lock_contention_total`) are high for a small set of entities or regions, while Redis latency and tick durations remain within SLOs and over‑TTL rates are low, treat this primarily as a **gameplay/hotspot** or command design issue and rely on the normal backoff/fairness rules.
+    - If **over‑TTL rates** are high across many entities or regions and correlate with elevated Redis latency or downstream error rates, treat this as a **capacity or infrastructure** problem; prefer reducing tick rates (for example by increasing `tick-duration-ms`) or addressing Redis/DB performance, rather than assuming simple contention and relying solely on backoff.
   - Practical guidance for self-hosted setups: if you routinely see “tick budget exceeded” or over‑TTL warnings across many regions and do not want to deeply tune GC or workloads, simply **increase `game.tick-duration-ms`** (and matching automation tick duration) and restart. All derived budgets and TTLs grow proportionally, reducing the chance of expiries at the cost of slightly slower ticks.
   - Critical alert: region remains degraded for more than a configurable window (for example **10–15 minutes**); at this point the Game Session Service may halt new ticks and reject new commands for that region until operators intervene.
+
+- **Coordination key inspection and admin commands**
+  - For coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*` and related automation/tick-scheduler keys that share their hash tags):
+    - Operators use **single-key** commands (`GET`, `HGETALL`, `ZRANGE`, `DEL key`) or app-level maintenance tools; they must not issue multi-key commands such as `MGET` or `DEL key1 key2` that span arbitrary keys.
+    - If a multi-key command against these prefixes produces a `CROSSSLOT` error, that is treated as a signal that the operation is mixing shards or regions incorrectly; the correct fix is to narrow the operation (for example, to a single `{tenantId}:{regionId}` hash tag) or use application-level tools, not to work around `CROSSSLOT` via client-side retries.
+  - Bulk inspection or cleanup for coordination keys (for example, deleting all tick keys for a region) should be implemented as:
+    - Application-level maintenance flows or scripts that:
+      - Use shared key builders and Lua helpers.
+      - Restrict operations to keys that share a hash tag.
+    - Or, in small/self-hosted setups, controlled one-off scripts that operate on one region/tenant at a time using the same rules. Ad-hoc multi-key commands in Redis CLI against coordination prefixes are discouraged.
 
 - **Coordination Redis memory and eviction**
   - On the Coordination Redis deployment (which uses `maxmemory-policy noeviction`):
@@ -802,6 +885,38 @@ To keep behavior consistent across environments, FireMUD defines **recommended S
     - Critical alert: eviction rate that grows without bound or consistently exceeds a fraction of the keyspace per hour (for example, evicting more than **5%** of average key count per hour), indicating mis-sized caches or runaway writers.
 
 These thresholds are intended to be **explicit starting points**, not immutable rules. Operators may tighten or relax them per environment, but architecture and implementation should treat the classes of behavior above—high script runtimes, elevated coordination latency, over-TTL ticks, coordination `OOM`/evictions, and runaway cache eviction—as the canonical “red lines” that justify automated degradation and paging.
+
+**Default remediation actions**
+
+To keep responses consistent across incidents, the following “first response” actions are recommended when thresholds trip:
+
+- **High Lua/command latency or blocked clients (Coordination Redis)**
+  - Immediately reduce tick throughput:
+    - Lower per-tick fan-out (for example, reduce `game.tick-max-commands`) and, if needed, modestly increase `game.tick-duration-ms` to create headroom.
+  - If latency remains high, shed optional work before core gameplay:
+    - Pause or slow down automation/script ticks and non-essential background tasks that use Coordination Redis.
+  - Treat changes to Redis config (for example, `lua-time-limit`) as a secondary lever; prefer scaling capacity or reducing load first.
+
+- **Replication lag near or above the tick-relative envelope**
+  - Avoid automatic promotion of lagging replicas for Coordination Redis; treat promotion as a deliberate operation with runbooks that call out the risk of recent tick/session loss.
+  - Medium term, either:
+    - Reduce write pressure (for example, increase `game.tick-duration-ms`), or
+    - Improve Redis/cluster/network capacity so lag falls back within the target envelope.
+  - If chronic high lag cannot be resolved in a small/self-hosted environment, consider running Coordination Redis effectively as a single-primary (with replicas used only for observability/manual promotion) and treating promotion of a behind replica as equivalent to dropping volatile coordination state.
+
+- **Coordination Redis OOM or evictions**
+  - Immediately mark affected regions degraded or halted and reject new commands for those regions; do not attempt to continue normal tick processing while evictions/OOMs occur.
+  - Remediate by:
+    - Increasing memory or moving non-essential workloads (caches/rate limits) off the Coordination Redis deployment.
+    - Tightening per-tenant caps on active regions, sessions, timers, or outstanding commands so coordination footprints fit comfortably within `maxmemory`.
+  - If memory pressure cannot be relieved cleanly, it may be preferable to flush coordination keys for specific tenants/regions and rebuild state from PostgreSQL rather than operating under repeated OOM conditions.
+
+- **Misuse of multi-key commands on coordination prefixes**
+  - Treat `CROSSSLOT` errors from administrative tools against `tick:*`, `session:*`, `timer:*`, `retry:*`, or related prefixes as configuration or tooling bugs, not transient outages.
+  - Stop using offending commands immediately and switch to:
+    - App-level maintenance endpoints/scripts that operate per-region (per-hash tag), or
+    - Single-key Redis operations for inspection or targeted deletes.
+  - Update ops scripts and playbooks so multi-key commands against coordination prefixes are explicitly disallowed going forward.
 
 ### Example Lock Workflow
 
@@ -1071,7 +1186,7 @@ Redis stores transient gameplay session state for each connected player, includi
 - Conflict and retry metadata
 
 Session keys use the prefix `session:{tenantId}:{sessionId}` as described in the
-[Game Session Service README](./microservices/game-session-service/README.md#redis-keys).
+[Game Session Service README](./microservices/game-session-service/README.md#redis-keys). The `sessionId` is an opaque server-side identifier (for example, a UUID or a fixed-length hash derived from the underlying JWT or account/session tuple) chosen to keep key length bounded and independent of the raw token size.
 
 Session entries expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as
 configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication). The Game Session
@@ -1158,7 +1273,7 @@ When `UNSUPPORTED_SCHEMA_VERSION` appears in metrics or logs, runbooks treat it 
 - A sign that session schema or deployment versions are out of sync (for example, services writing a newer `schemaVersion` than the CAS script supports, or an incomplete rollback).
 - A trigger to:
   - Align deployments so all Game Session Service instances run scripts that understand the highest `schemaVersion` currently in use, and
-  - Optionally run a **session schema cleanup** tool for specific tenants that scans `session:{tenantId}:*` keys for unknown versions and deletes or aggressively expires those entries. Because Redis sessions are non-authoritative and bounded by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, removing unknown-version sessions is acceptable; affected players simply need to perform a fresh `LOGIN`.
+  - Optionally run a **session schema cleanup** tool for specific tenants that scans `session:{tenantId}:*` keys for unknown versions and deletes or aggressively expires those entries. Cleanup is run as a one-off, single-worker maintenance task (per Coordination Redis deployment) to avoid competing with ticks; because Redis sessions are non-authoritative and bounded by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, removing unknown-version sessions is acceptable and affected players simply need to perform a fresh `LOGIN`.
 
 ### Session Schema Cleanup and Large Keyspaces
 
@@ -1177,9 +1292,10 @@ When runbooks call for explicit cleanup (for example, after a major schema chang
   - Operate on a **per-tenant prefix** such as `session:{tenantId}:*`; avoid scanning the entire Redis keyspace when only some tenants are affected.
   - Prefer targeted selectors (for example, `session:{tenantId}:*` with filters inside the tool) over global `SCAN` patterns.
 - Bounded SCAN usage:
+  - Run **at most one cleanup worker at a time** per Coordination Redis deployment; do not schedule overlapping cleanup jobs for multiple tenants or run them from multiple services concurrently.
   - Use Redis `SCAN` with modest `COUNT` values (for example, 100–1000) to avoid long blocking periods.
   - Enforce a maximum runtime per invocation (for example, 10–30 seconds) and exit cleanly when the time budget is exhausted; subsequent runs resume from the last cursor or continuation token.
-  - Insert small delays between batches when running in continuous jobs so scans do not monopolize CPU or I/O on the Redis node.
+  - Insert small delays between batches so scans do not monopolize CPU or I/O on the Redis node; cleanup jobs are treated as **maintenance tasks**, not continuous background load.
 - Observability:
   - Emit metrics such as `session.cleanup_scanned_total`, `session.cleanup_deleted_total`, and `session.cleanup_duration_seconds` to capture how much work the cleaner performs and its impact.
   - Log tenant identifiers and approximate key counts so operators can correlate cleanup activity with changes in memory usage and `UNSUPPORTED_SCHEMA_VERSION` metrics.
