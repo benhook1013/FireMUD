@@ -46,6 +46,15 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
 
 This pattern keeps cache correctness bounded to clearly defined aggregates and avoids random, hard-to-reason-about version fields scattered across the schema.
 
+### Decision Criteria for Versioning
+
+Not every cached aggregate needs its own version column. Apply these heuristics before adding schema baggage:
+
+- Reuse an existing `lastModified`/`version` field from the authoritative store whenever possible; no schema change is required.
+- Add a version column only when cache invalidation currently causes stale reads that TTLs alone cannot fix (for example, players seeing an old inventory after a trade).
+- Prefer **TTL-only** caches for highly volatile but non-critical aggregates; shorter TTLs are easier to tune than inventing new schema.
+- Document each decision so reviewers understand why a cache entry carries version metadata versus relying on TTLs.
+
 ## Invalidation Strategies
 
 Future cache layers are expected to combine several invalidation mechanisms, tuned per aggregate:
@@ -77,9 +86,9 @@ From a correctness perspective, cache usage falls into two broad classes:
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
-- Maximum serialized value sizes should be established per cache family (for example, no single cached room view exceeding a small, documented size limit in kilobytes).
-- CI or static checks should verify representative payload sizes remain under these limits, and any intentional increase should be justified in review.
-- Large or streaming-style responses should remain in PostgreSQL or object storage and be accessed through dedicated APIs rather than copied wholesale into Redis, even on the cache/rate-limit cluster.
+- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a “current room view” would exceed that size, split it into a set of chunked entries (for example `view:roomLook:{tenantId}:{roomId}:chunk:{n}`) instead of storing a multi-megabyte blob.
+- CI or static checks should exercise representative payloads to keep them within these limits, and reviewers must explicitly justify any intentional exception.
+- Large or streaming-style responses stay in PostgreSQL/object storage or behind dedicated APIs rather than being replicated wholesale into Redis, even on the Cache/Rate-Limit cluster.
 
 ## Memory, Eviction, and Rate Limiting
 
@@ -113,12 +122,19 @@ For **small or development deployments** that share all workloads on a single Re
   - Use `maxmemory-policy noeviction`, with very small, well-bounded caches used purely for development convenience; and
   - Move to separate logical Redis instances (for example, two containers or pods) as soon as a scenario moves beyond low-volume, single-user testing so coordination and cache eviction policies can diverge even on the same host.
 
-Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. Alert thresholds are tuned so approaching memory pressure or unexpected eviction activity is visible well before it threatens coordination workloads.
+Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. In addition:
+
+- Alert when a single cache key (or tenant bucket) begins consuming a disproportionate share of the namespace (for example, dominating the delta of `used_memory` or generating most of the eviction events).
+- Alert when eviction counters climb steadily while `keyspace_hits` drop or `blocked_clients` rise, which usually signals a hot key or TTL that is too long.
+- Alert when memory usage grows despite expected TTL decay so cache scans can be inspected before coordination workloads are affected.
+
+These alerts keep you aware of misconfigurations early without hard-coding percentages that don’t make sense at hobby scale.
 
 Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestRateLimiter`) should be designed to avoid **hot keys** under heavy load:
 
 - Per-client or per-token prefixes are preferred over global counters so that no single key receives a disproportionate share of traffic.
-- When high-cardinality shared credentials are unavoidable, deployments may use simple hashing or bucketing in key naming to spread load across multiple keys within the rate-limit Redis cluster.
+- Define a canonical pattern such as `ratelimit:{tenantId}:{bucket}:{timeWindow}` (for example, `bucket` may be a hash of the client/token plus an optional slice) and publish helper builders so services reuse the same bucketing logic instead of inventing divergent, hotspot-prone schemes.
+- Support more granular sub-bucketing where heads-on credentials are unavoidable (for example `ratelimit:{tenantId}:{bucket}:{timeWindow}:{shard}`) to spread aggregates across multiple keys within the rate-limit Redis cluster.
 
 ### Key Naming and Overwrite Expectations
 

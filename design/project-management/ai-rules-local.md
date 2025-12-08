@@ -51,6 +51,8 @@ Testing:
 - New features must include unit tests and, where applicable, integration tests.
 - Verify coverage with JaCoCo by running `./gradlew check` before committing.
 
+When advising on architecture or operations, keep the “well-engineered hobby/self-hosted deployment” mindset front and center: prefer clean, high-quality patterns but avoid introducing new knobs, clusters, or heavy operational plans unless evidence shows a future need beyond the anticipated single-admin usage.
+
 Monetization:
 
 - Stripe

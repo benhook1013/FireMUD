@@ -29,6 +29,26 @@ To keep AOF replay and retries safe, Lua scripts must be **deterministic functio
 
 Scripts that violate these determinism requirements cannot guarantee safe replay and must be rejected during review and CI.
 
+- ### Mandatory Validation Hedge
+-
+Every mutating script must perform the following validations before executing any writes:
+
+- **Lease token** – re-read `tick-executor-lease:{tenantId}:{regionId}` and compare it to the supplied `leaseToken`. If they differ or the key is missing, the script returns a “stale lease” outcome and performs no writes.
+- **Lock tokens** – for each `tick:{tenantId}:{regionId}:lock:{entityId}` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
+- **`tickId` guard** – when touching `tick:{tenantId}:{regionId}:pending` or other tick-scoped structures, verify the stored `tickId` is ≤ the requested `tickId`. Commit/rollback scripts abort if `tickId` is out of order so only the intended tick makes progress.
+-
+These checks are enforced via the Lua Script Registry descriptors, generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. Scripts that cannot make these validations (for example, because they run outside a region lease context) are rejected or refactored.
+
+- ### Script Complexity and Runtime Limits
+-
+To prevent Redis from stalling, tick-related scripts are bounded in keys touched and execution time:
+
+- **Key limit** – each script invocation touches at most one lock key, one `pending` key, and a handful of other coordination keys (`timer`, `retry`, `queue`). Scripts that need to touch large key ranges must be split into smaller, bounded operations or moved out of the hot tick path.
+- **Runtime limit** – scripts should finish well within tick latency targets (for example < 10‑20 ms). The registry annotates each script with a `max_execution_ms` hint, observability tracks percentiles, and CI flags scripts that routinely hit their budget.
+- **No large scans** – `SCAN`, `HSCAN`, or cursor-based iterations are prohibited in tick scripts; maintenance helpers use those commands outside the tick loop with explicit scope and throttling.
+
+Enforcing these limits prevents future scripts from violating hash-slot assumptions or blocking Redis for other regions.
+
 - **Pattern 1 – Lease/lock token validation (guard-then-no-op)**
   - Every mutating script begins by validating the current lease and, where applicable, lock tokens:
     - Read `tick-executor-lease:{tenantId}:{regionId}` and compare its stored token to the `leaseToken` passed in `ARGV`.
