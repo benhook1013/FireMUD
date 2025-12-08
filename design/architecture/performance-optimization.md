@@ -82,9 +82,10 @@ These notes summarize typical optimizations applied across FireMUD services.
   downloads between CI runs.
 - Separate build jobs for backend, frontend, and docs keep feedback fast and
   allow caching to be scoped to the tools they use.
-- Heavy analysis tasks (SpotBugs, Checkstyle, JaCoCo, markdownlint, link
-  checking) are gated behind the `fullCheck` flag so routine local builds stay
-  quick while CI can still run the full suite when needed.
+- Heavy analysis tasks (SpotBugs, Checkstyle, JaCoCo, Spotless checks) are
+  gated behind the `fullCheck` flag so routine local builds stay quick while
+  CI can still run the full suite when needed. Markdown lint and link checks
+  are relatively fast and always run as part of `check`.
 
 ## Related Documentation
 

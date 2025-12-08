@@ -202,22 +202,14 @@ tasks.register<Exec>("linkCheck") {
     environment("CHECK_EXTERNAL_LINKS", if (fullCheck) "1" else "0")
 }
 
-tasks.named("lintMarkdown") {
-    enabled = fullCheck
-}
-
-tasks.named("linkCheck") {
-    enabled = fullCheck
-}
-
 tasks.named("check") {
+    // Always run Markdown lint and link checks; they are relatively fast.
+    dependsOn("lintMarkdown", "linkCheck")
     if (fullCheck) {
         dependsOn(
-            "lintMarkdown",
             "checkstyleMain",
             "spotbugsMain",
-            "jacocoTestReport",
-            "linkCheck"
+            "jacocoTestReport"
         )
     }
 }

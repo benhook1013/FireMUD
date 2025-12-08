@@ -22,6 +22,8 @@ Redis is always treated as **non-authoritative for game data**: all canonical ga
 
 - In **development and ephemeral test environments**, Redis behaves as a **disposable coordination cache**. Helm may wipe its AOF between runs, and no guarantees are made about preserving in-flight ticks, sessions, or timers across deployments.
 - In **staging and production-equivalent environments**, Redis behaves as a **long-lived coordination log**. AOF is preserved across normal rollouts and node restarts; crash recovery and replay semantics described in this document apply and must not be bypassed by automatic AOF resets.
+-
+The acceptable loss window is intentionally capped: affected `{tenantId, regionId}` pairs should lose at most a single tick’s worth of coordination state (locks, timers, sessions) during a routine failover, and the tick effect ledger must show that each staged effect either replayed or was marked `ABANDONED` before subsequent ticks are scheduled. Anything materially beyond this (for example repeated gaps greater than the tick interval or a growing backlog of pending effects) is treated as an incident requiring investigation, not as “normal” volatility.
 
 All subsequent sections assume the **staging/production coordination mode** unless explicitly labeled as “dev/ephemeral only.” Deployment and runbook docs call out where behavior differs by environment.
 
@@ -65,6 +67,12 @@ should be configured as distinct logical Redis deployments even if they share th
 same underlying host. Sharing a single deployment for both workloads is strongly
 discouraged because misconfiguration (for example, eviction policies or memory
 limits) can silently impact coordination keys and gameplay availability.
+
+Call out this separation in playbooks so that local developers do not treat the
+shared-instance convenience as representative of production behavior: eviction
+policies, `maxmemory`, and TTL behavior in a dev instance are intentionally
+unreliable, they can spill over into the coordination workload, and metrics/alerts
+should only be trusted when the workloads are split as described above.
 
 Redis acts as a **coordinated real-time buffer**, not a source of truth, but is still treated as **critical** for game availability and consistency.
 
@@ -328,7 +336,7 @@ Lease management is split into two distinct operations:
 
 This lease acts as the **macro-level lock** for a region: it prevents multiple executors from driving ticks concurrently for the same `{tenantId, regionId}` while still allowing fast failover and rebalancing. Fine-grained entity locks (`tick:{tenantId}:{regionId}:lock:{entityId}`) are used *within* a leader to coordinate per-command work and crash recovery; they do not replace the leadership lease.
 
-**Lease token / epoch semantics**
+### Lease Token and Epoch Semantics
 
 To avoid “split-brain” scenarios during GC pauses or network stalls (for example, executor A holds the lease, pauses until its TTL expires, executor B acquires the lease, and then A resumes), the lease value stores a **random, opaque token** (for example, a UUID) in addition to the executor identity. The Game Session Service:
 
@@ -345,7 +353,7 @@ Combined with the **lock token semantics** described in the Tick System design, 
 - A worker that resumes after losing the lease cannot commit or roll back tick state, even if it still holds local lock tokens.
 - Only the current lease holder (epoch) can progress `tick:{tenantId}:{regionId}:pending`, timers, and retry metadata for that region; any stale workers see a lease-token mismatch and abort, returning a retry outcome instead of applying stateful changes.
 
-**TTL envelopes and worst-case pauses**
+### TTL Envelopes and Worst-Case Pauses
 
 For self-hosted and hobby deployments, FireMUD keeps lease and lock TTLs intentionally simple:
 
@@ -400,8 +408,9 @@ To keep hash tags unambiguous and compatible with Redis Cluster’s parsing rule
   - Treat changes to normalization behavior (for example, different case folding or slug rules) as **schema changes** that require a migration plan, not as local implementation details.
 
 Under a given normalization version, the `tenantId` and `regionId` segments that appear inside hash tags are **normalized identifiers**, not arbitrary external IDs. They must:
-  - Omit `{`, `}`, and `:` characters (since `{}` delimit hash tags and `:` is used as a separator in key names).
-  - Use a restricted character set such as lowercase letters, digits, and `-` / `_` (for example `[a-z0-9_-]+`).
+
+- Omit `{`, `}`, and `:` characters (since `{}` delimit hash tags and `:` is used as a separator in key names).
+- Use a restricted character set such as lowercase letters, digits, and `-` / `_` (for example `[a-z0-9_-]+`).
 - If an external tenant or region identifier does not meet these constraints (for example, it contains Unicode, braces, or colons), it is first mapped to a stable normalized form (for example, a slug, hex-encoded UUID, or other opaque token) before being used in Redis keys.
 - The same normalized `tenantId` / `regionId` values are reused consistently across all tick-related keys so that a given `{tenantId, regionId}` hash tag always represents the same shard-local region.
 
@@ -733,7 +742,7 @@ Tick-related scripts must be idempotent: **re-running the same script with the s
 
 ### Lock TTL and Example Lock Workflow
 
-**Lock TTL formula and guardrails**
+#### Lock TTL Formula and Guardrails
 
 Tick locks use a TTL derived from the **tick interval** to balance safety and recovery:
 
@@ -744,7 +753,7 @@ Tick locks use a TTL derived from the **tick interval** to balance safety and re
   - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)`
 - These values are not meant to be tuned independently in typical deployments; changing `tick-interval-ms` is usually sufficient.
 
-**Runtime validation and observability**
+#### Runtime Validation and Observability
 
 The safety of this TTL formula depends on how long **end-to-end tick work** takes under load, including:
 
@@ -886,7 +895,7 @@ To keep behavior consistent across environments, FireMUD defines **recommended S
 
 These thresholds are intended to be **explicit starting points**, not immutable rules. Operators may tighten or relax them per environment, but architecture and implementation should treat the classes of behavior above—high script runtimes, elevated coordination latency, over-TTL ticks, coordination `OOM`/evictions, and runaway cache eviction—as the canonical “red lines” that justify automated degradation and paging.
 
-**Default remediation actions**
+#### Default Remediation Actions
 
 To keep responses consistent across incidents, the following “first response” actions are recommended when thresholds trip:
 
@@ -988,6 +997,9 @@ Each `tick:{tenantId}:{regionId}:pending` entry stores a **single in-flight tick
 
 - A `tickId` that is monotonically increasing per `{tenantId, regionId}` tick stream
 - The staged effects for that tick (for example, serialized entity mutations or event descriptors)
+- A reference to the durable **tick effect ledger** recorded in PostgreSQL (see the [Tick System and Runtime Design](./system-architecture-ticks.md#tick-effect-ledger-and-replay-guarantees) section) so every staged effect shares an explicit `(tenantId, regionId, tickId, effectKey)` identity and a `status` (`SCHEDULED`, `APPLIED`, `ABANDONED`).
+
+This tight Redis/PostgreSQL coupling guarantees that replay is never silent: redis-managed pending state cannot exist without a ledger entry, and the ledger’s terminal states prove whether replay re-applied or consciously abandoned each effect.
 
 Lua scripts treat the presence of `tick:{tenantId}:{regionId}:pending` as meaning **“this tick may need to be (re)applied”**, regardless of whether a previous attempt completed. Domain updates are designed to be idempotent with respect to `tickId` and effect identity, so reapplying the same `tickId` after a crash or failover does not corrupt state. The `pending` key is created **without a TTL** so it survives primary crashes and failover; it is only removed when the tick has been successfully applied or explicitly abandoned.
 
@@ -1051,8 +1063,8 @@ When an action crosses regional boundaries (for example a player moving between
 rooms on different shards) the Game Session Service decomposes the transition
 into **two sequential ticks**:
 
-1. **Tick&nbsp;A** on _Shard&nbsp;X_ performs exit logic and clears local state.
-2. **Tick&nbsp;B** on _Shard&nbsp;Y_ applies entry logic and rebinds the
+1. **Tick&nbsp;A** on *Shard&nbsp;X* performs exit logic and clears local state.
+2. **Tick&nbsp;B** on *Shard&nbsp;Y* applies entry logic and rebinds the
    session in the new region.
 
 No lock, Lua script, or tick context may span shards. The Game Session Service
@@ -1135,7 +1147,7 @@ FireMUD actively monitors Redis performance and tick health:
 
 Redis outages or sustained high latency on the **coordination cluster** are treated as explicit failure modes with well-defined behavior for ticks, locks, leases, and sessions.
 
-**Health states for Coordination Redis**
+#### Health States for Coordination Redis
 
 - **Healthy:** Redis latency and error rates are within normal bounds.
   - Game Session and other services process commands and ticks normally.
@@ -1165,7 +1177,7 @@ Redis outages or sustained high latency on the **coordination cluster** are trea
     - The system does not attempt to run ad-hoc in-memory fallbacks for ticks, locks, or sessions; correctness takes precedence over partial gameplay.
     - Operators are alerted via high-severity alerts so they can restore Redis; gameplay for affected regions resumes only once Coordination Redis is healthy again.
 
-**Lock, lease, and session behavior on reconnect**
+#### Lock, Lease, and Session Behavior on Reconnect
 
 When Coordination Redis recovers after an outage or severe degradation, tick executors and session flows:
 

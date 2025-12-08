@@ -152,7 +152,7 @@ Memory safety relies on three complementary mechanisms:
    - Containers and JVM options enforce hard ceilings on memory usage.
    - Catastrophic violations (for example, `OutOfMemoryError`) cause the container to be restarted and are treated as infrastructure issues, not script-level sandbox errors.
 
-### Enforcement Mechanism
+### Memory Enforcement Mechanism
 
 Within a script run, the engine implements **soft memory guards**:
 
