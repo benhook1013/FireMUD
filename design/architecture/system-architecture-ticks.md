@@ -79,6 +79,44 @@ The **region boundary** is therefore the unit of atomicity and authority:
 - All tick locks, staging, timers, retry metadata, and session participation for a `{tenantId, regionId}` are owned by that region’s active executor.
 - No lock, Lua script, or tick context spans multiple regions. Cross-region flows are modeled as **messages between region executors**, not shared locks.
 
+### Tick Effect Ledger and Replay Guarantees
+
+Tick coordination relies on Redis for the fast staging surface, but PostgreSQL remains the source of truth for whether a tick effect was ever applied. To make this explicit:
+
+- Every tick effect that can be staged in `tick:{tenantId}:{regionId}:pending` or the retry/timer queues must also write a durable row in a “tick effect ledger” table (`tick_effects` or similar) owned by the Game Session Service. Each row records `tenant_id`, `region_id`, `tick_id`, `effect_key`, `command_id`, `status` (`SCHEDULED`, `APPLIED`, `ABANDONED`), a `reason` or `outcome` code, `created_at`, and `updated_at`.
+- The ledger enforces the invariant that for any `(tenant_id, region_id, tick_id, effect_key)` exactly one terminal state exists: either `status = APPLIED` (effect successfully committed to domain state) or `status = ABANDONED` (effect intentionally skipped or unrecoverable), and rows may not remain stuck in `SCHEDULED` beyond a configurable grace window.
+- On replay (for example after failover or replaying `pending` entries), the executor loads ledger rows with `status = SCHEDULED` for that tick and:
+  - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then update the row to `APPLIED`.
+  - If replay determines the effect is no longer valid (expired session, entity gone, tick de-scheduled, etc.), it updates the row to `ABANDONED` with a precise `reason`.
+  - If the effect was already applied (e.g., because of idempotent writes or cached state), it marks the ledger row as `APPLIED` and skips running the Lua script again.
+- This ledger makes replay visible:  services expose metrics such as `tick.effects_pending_total`, `tick.effects_applied_total`, `tick.effects_abandoned_total{reason}`, and `tick.effects_replayed_total`. Alerts fire if pending counts remain above thresholds for longer than a tick window or if the abandoned ratio grows unexpectedly.
+- Every Lua script that stages effects is required to include the `effect_key` used in the ledger so that matches between Redis and PostgreSQL can be validated. Scripts that cannot be tied back to a ledger row are rejected.
+
+With this contract, operators and automation can detect whether replay occurred, how long effects sat in `SCHEDULED`, and whether any stale `pending` entries were consciously abandoned instead of silently forgotten.
+
+### Region Progress vs Lease Ownership
+
+Region leases are intentionally **short‑lived coordination hints**, not full health indicators. It is possible for an executor to:
+
+- Continue renewing the `tick-executor-lease:{tenantId}:{regionId}` key (Redis and lease logic are healthy), while
+- Making little or no **forward progress** because downstream dependencies (PostgreSQL, domain gRPC services) are slow or unreachable.
+
+To distinguish this “lease held but stalled” case from a true lease loss:
+
+- The Game Session Service tracks **per-region progress signals**, such as:
+  - The timestamp or tick counter of the **last successful commit** for `{tenantId, regionId}`.
+  - A small counter of **consecutive failed ticks** for that region caused by downstream errors or timeouts (not by lock contention alone).
+- When a region exceeds simple hardcoded thresholds (for example, several consecutive failures or no successful ticks for many multiples of `tick-duration-ms`), the scheduler treats the region as **stalled** even though it still holds the lease.
+
+Behavior for stalled regions:
+
+- New ticks are **not scheduled** for that `{tenantId, regionId}` until progress recovers.
+- New gameplay commands targeting that region are **rejected** with a clear “region unavailable” style error instead of being accepted and stuck behind a non‑advancing executor.
+- The executor continues to renew the lease during a short grace period so no other instance takes over and attempts the same failing work against unhealthy dependencies.
+- If a large number of regions on the same instance become stalled, the instance’s readiness/liveness can be marked unhealthy so orchestration restarts it once dependencies recover.
+
+Lease expiry and failover remain strictly about **coordination safety** (avoiding split‑brain on Redis state). Stalled region handling is layered on top as a **progress watchdog**: leases tell you who owns a region’s coordination keys, while stalled/healthy tell you whether that owner is actually advancing game state.
+
 ---
 
 ## Distributed Locking
@@ -89,20 +127,15 @@ To prevent concurrent entity updates, ticks acquire **distributed locks** in Red
 - `SET NX PX` with expiry for exclusive ownership, via a shared lock helper
 - Lua-based atomic checks to avoid race conditions
 
-Lock TTLs are derived from the **soft tick execution budget** using the formula described in the Redis architecture. Conceptually:
+In practice, the system keeps this simple by exposing a **single primary knob**—the region tick interval—and deriving lock/lease TTLs from that:
 
-- The platform computes `lock_ttl_ms` as `clamp(tick_budget_ms * LOCK_TTL_MULTIPLIER, MIN_LOCK_TTL_MS, MAX_LOCK_TTL_MS)`, where:
-  - `LOCK_TTL_MULTIPLIER` is a configuration property (for example `5` in production profiles) rather than a hard-coded constant of `3`.
-  - `MIN_LOCK_TTL_MS` / `MAX_LOCK_TTL_MS` bound the envelope for all regions.
-- This gives headroom for pauses (GC, CPU spikes, brief scheduler jitter) without letting the lock expire while work is still in progress, while still bounding how long a stale lock can block progress.
+- `tick_interval_ms` is the configured target interval between ticks for a region.
+- Internally, the Game Session Service computes a soft execution budget (for example `tick_budget_ms = tick_interval_ms * 0.8`) and then derives TTLs using fixed multipliers:
+  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
+  - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)`
+- These multipliers are **hard-coded defaults** for hobby/self‑hosted deployments; they are chosen to give generous headroom for GC pauses and hiccups without requiring per‑environment tuning.
 
-Capacity planning and configuration tuning rely on **measured data**, not just the multiplier:
-
-- Load/perf tests and production telemetry must show that `p99` tick execution time (lock acquisition → commit/rollback + lock release) remains under a configurable fraction of `lock_ttl_ms` (for example **≤50%** in steady state, with alerts when sustained runtime exceeds **70%**).
-- The recommended process is:
-  - Start from a conservative `LOCK_TTL_MULTIPLIER` (for example, 5× the soft tick budget).
-  - Measure `tick.execution_time_ms`, `tick.lock_ttl_ms`, and headroom ratios under realistic workloads.
-  - Adjust `tick_budget_ms` and/or `LOCK_TTL_MULTIPLIER` per environment so that GC pauses and normal load variations still fall well within the configured envelope.
+This keeps configuration light—typically you only adjust `tick_interval_ms`—while still ensuring locks live long enough for normal work to finish and stale locks are cleared after a bounded window.
 
 Rare, extreme pauses (for example long GC) may still exceed `lock_ttl_ms`. In those cases:
 
@@ -268,7 +301,7 @@ Within a region’s tick, each **command** is treated as a small, idempotent wor
      - It stages and commits changes via the tick Lua scripts and gRPC calls to domain services, using `tickId` and effect-guard tables for idempotency.
    - For cross-region commands:
      - The origin region applies any purely local effects first (for example, local animations, partial buffs, or immediate messaging).
-     - It then enqueues follow-up commands into the target regions’ queues (for example under `remote:{tenantId}:{entityId}`) so remote executors can apply their parts in their own ticks. See [Cross-Region Command Execution and Result Relay](#📡-cross-region-command-execution-and-result-relay).
+     - It then enqueues follow-up commands into the target regions’ queues (for example under `remote:{tenantId}:{entityId}`) so remote executors can apply their parts in their own ticks. See [Cross-Region Command Execution and Result Relay](#cross-region-command-execution-and-result-relay).
 
 4. **Completion / Finalization (optional)**
    - Many commands do not require awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
@@ -450,6 +483,8 @@ Timer scheduling, rescheduling, and cancellation are coordinated by the same Lua
 Durations can be modified on the fly:
 
 - `scaled = base * multiplier`
+- Used for spell effects, world modifiers (e.g., slow motion), or status changes
+- Time scaling affects **durations**, not tick rate
 
 ### Tick Event Stream
 
@@ -461,8 +496,6 @@ The Game Session Service publishes a **tick event stream** so other services (sc
 - `activeVersionId` pinned for that tick
 
 Leaders lease Redis keys (`tick-events-lease:{tenantId}:{regionId}`) before consuming the stream to avoid duplicate processing. The stream can be delivered via Redis Streams or pub/sub; the implementation ensures catch-up by storing the last processed offset in Redis so a recovering scheduler can resume from the right `tickId`. This event stream powers the Automation & Scripting scheduler’s “every N ticks” logic, the reconnection doc’s timer replay hints, and any other out-of-band reporting you need.
-- Used for spell effects, world modifiers (e.g., slow motion), or status changes
-- Time scaling affects **durations**, not tick rate
 
 > Runtime feature flags controlling global pace or status effects are applied by the Game Session Service before tick execution.
 > For design-time definitions see [Game Design Service Feature Flags](./microservices/game-design-service/feature-flags.md);

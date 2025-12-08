@@ -203,7 +203,7 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{token}` and expire according to `session-expiration-ms` in `AuthProperties`. The TTL is configured via the `FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variable described in [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication).
+Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{tokenHash}`, where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT), and expire according to `session-expiration-ms` in `AuthProperties`. The TTL is configured via the `FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variable described in [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication).
 
 ### Two-Factor Authentication
 

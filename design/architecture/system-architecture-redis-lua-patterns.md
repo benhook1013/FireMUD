@@ -11,6 +11,24 @@ re-invocation behavior for tick-related scripts.
 
 Tick-related scripts must be idempotent: **re-running the same script with the same `KEYS` and `ARGV` must not apply new logical effects**. To make this concrete, scripts follow a small set of patterns:
 
+### Determinism Requirements
+
+To keep AOF replay and retries safe, Lua scripts must be **deterministic functions of their inputs and current Redis state**:
+
+- Scripts may only use:
+  - The `KEYS` and `ARGV` provided by the caller.
+  - The current contents of Redis keys they read.
+- Scripts must **not**:
+  - Call `math.random` or any other RNG to influence behavior or generate IDs.
+  - Use `TIME` or any other clock-based primitive to affect keys, members, scores, or control flow.
+  - Synthesize new identifiers (for example, random suffixes or timestamps embedded in keys, ZSET members, or values) inside the Lua code.
+  - Depend on external state or side effects outside Redis (for example, global variables mutated across runs).
+- When randomness or time is required for a workflow:
+  - Those values are generated in the caller (for example, Java code), passed in via `ARGV`, and treated as ordinary arguments.
+  - AOF replay re-runs the script with the **same** `ARGV`, preserving idempotent behavior.
+
+Scripts that violate these determinism requirements cannot guarantee safe replay and must be rejected during review and CI.
+
 - **Pattern 1 – Lease/lock token validation (guard-then-no-op)**
   - Every mutating script begins by validating the current lease and, where applicable, lock tokens:
     - Read `tick-executor-lease:{tenantId}:{regionId}` and compare its stored token to the `leaseToken` passed in `ARGV`.

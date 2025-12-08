@@ -47,12 +47,6 @@ public class TickServiceImpl implements TickService {
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
 
-  @Value("${game.tick-budget-ms:100}")
-  private long tickBudgetMs;
-
-  @Value("${game.solo-tick-budget-ms:500}")
-  private long soloTickBudgetMs;
-
   @Value("${game.tick-max-commands:50}")
   private int tickMaxCommands;
 

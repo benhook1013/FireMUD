@@ -13,7 +13,9 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
   - Static or topology data (world geometry, room/zone graphs, published templates, configuration) changes infrequently and is a good fit for aggressive caching with long TTLs or manual invalidation.
 - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
 - Purpose-driven caching only. Objects should be cached because they are expensive to compute or fetch and appear on hot paths, not “just in case.” Profiling and production telemetry will drive what actually lands in Redis.
-- Coordination workload isolation. By default, read-side caches and gateway rate limits are placed on a **separate Redis cache/rate-limit cluster** rather than sharing the **Coordination Redis** used for ticks, locks, timers, and sessions. Only small, tightly bounded aggregates may be considered for the coordination cluster, and even then only with explicit justification and review.
+- Coordination workload isolation:
+  - In **QA, staging, and production** (any environment used for load tests or player traffic), read-side caches and gateway rate limits are placed on one or more **separate Redis cache/rate-limit deployments**, distinct from the **Coordination Redis** used for ticks, locks, timers, and sessions. Coordination Redis does **not** host caches or rate-limit keys in these environments.
+  - In **local developer** and other low-concurrency lab setups, a single Redis instance may be shared for convenience (see below), but this topology is not considered representative for performance or failure behavior and must not be reused for QA, staging, or production.
 
 ## Candidate Cacheable Object Types
 
@@ -107,9 +109,9 @@ For **small or development deployments** that share all workloads on a single Re
 - This configuration is intended for **low-concurrency lab and developer environments only**, not for QA, staging, production, or any player-facing game instances.
 - The configuration should still avoid mixing large, eviction-driven caches with critical coordination keys under `allkeys-*` policies, because it can silently evict locks, timers, or staging keys.
 - Even with `maxmemory-policy noeviction`, conservative cache TTLs, and tight cache size limits, shared coordination+cache Redis remains **operationally fragile**: any mis-sized cache or unexpected hot key can push the node into `OOM` conditions where coordination writes begin to fail.
-- If a single-node instance must serve both coordination and cache traffic, it is strongly recommended to:
+- If a single-node instance must serve both coordination and cache traffic in a local/dev setup, it is strongly recommended to:
   - Use `maxmemory-policy noeviction`, with very small, well-bounded caches used purely for development convenience; and
-  - Move to separate logical Redis instances (for example, two containers or pods) whenever a scenario moves beyond low-volume, single-user testing so coordination and cache eviction policies can diverge even on the same host.
+  - Move to separate logical Redis instances (for example, two containers or pods) as soon as a scenario moves beyond low-volume, single-user testing so coordination and cache eviction policies can diverge even on the same host.
 
 Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. Alert thresholds are tuned so approaching memory pressure or unexpected eviction activity is visible well before it threatens coordination workloads.
 
