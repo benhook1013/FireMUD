@@ -416,7 +416,7 @@ If FireMUD later introduces limited intra-region parallelism (for example, shard
 
 ## Timeout and Fairness Policy
 
-Each tick enforces a **soft execution budget** (e.g., 100ms):
+Each tick enforces a **soft execution budget** (for example `tick_budget_ms = tick_interval_ms * 0.8`):
 
 - Slow actions are **deferred** to retry in exclusive follow-up ticks
 - These retries are **not executed in parallel**
@@ -429,6 +429,23 @@ Each tick enforces a **soft execution budget** (e.g., 100ms):
   pending lists per tick. The defaults (`game.tick-max-commands` and
   `automation.tick-max-events`) spread heavy workloads across ticks so one
   player or script cannot monopolize the loop.
+
+The Game Session Service continuously **compares observed tick runtime to the configured lock TTL**:
+
+- Per `{tenantId, regionId}`, it tracks histograms of `tick.execution_time_ms` and derives ratios such as:
+  - `tick.execution_time_ms_p95 / lock_ttl_ms`
+  - `tick.execution_time_ms_p99 / lock_ttl_ms`
+- These ratios drive a simple, environment-agnostic health model:
+  - **Healthy:** `p99 < 0.5 × lock_ttl_ms` – tick work comfortably fits within the lock budget.
+  - **Degraded:** `0.5× ≤ p99 < 0.75× lock_ttl_ms` – region is flagged as degraded; dashboards and logs recommend either increasing `game.tick-interval-ms` or simplifying work for that region.
+  - **Unsafe:** `p99 ≥ 0.75 × lock_ttl_ms` over a sustained window – the scheduler treats this as a **configuration/architecture error** for that region:
+    - New ticks may be slowed or temporarily halted for the affected `{tenantId, regionId}` until the operator adjusts configuration (for example, larger tick interval) or reduces per-tick work.
+    - Logs include explicit guidance that normal tick work must complete well within `lock_ttl_ms` and that repeated over-budget ticks will cause retries and degraded throughput.
+
+These checks complement the static TTL guardrails described in the Redis design (for example, `lock_ttl_ms >= 1.5× tick_interval_ms` and `lease_ttl_ms >= 2× tick_interval_ms`). Together they ensure that:
+
+- Misconfigured environments are caught at startup, and
+- Environments that drift over time (for example, as more cross-service work is added to a tick) surface as **runtime warnings or errors** rather than silently operating with constant lock expiries and retries.
 
 Commands flagged with `requiresSoloTick` run in an isolated tick so expensive
 operations do not stall other players. See the
@@ -590,6 +607,7 @@ Every tick-driven effect MUST use one of the following strategies:
 - Domain services (Entity Management, World Management, Game Logic hosts, Social Groups, etc.) are responsible for:
   - Persisting tick idempotency state in their own PostgreSQL schema via shadow tables and guard tables.
   - Ensuring that **every tick-driven write path** uses either the per-aggregate `last_tick_id` pattern or the operation-level guard pattern.
+  - Treating Redis locks and leases as **opaque tick-engine concerns**: domain handlers do not read `tick:{tenantId}:{regionId}:lock:{entityId}` or `tick-executor-lease:{tenantId}:{regionId}` to make application-level decisions. All coordination based on locks/leases happens inside the Game Session Service via registered Lua scripts; domains see only `(tenantId, regionId, tickId, effectKey)` and their own idempotency state.
 - At least one concrete example per service should document:
   - The name of its tick-state table(s).
   - The fields used (`last_tick_id`, `tenant_id`, `region_id`, `effect_key`).

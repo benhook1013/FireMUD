@@ -2,6 +2,8 @@
 
 This document outlines FireMUD’s usage of Redis as a **transient, high-performance, distributed coordination layer**. It focuses on Redis's responsibilities, safety guarantees, key patterns, and operational practices.
 
+> **Note on complexity:** The coordination model described here (leases, lock tokens, tick replay, schema‑versioned Lua scripts, and AOF behavior) is one of the more advanced parts of FireMUD’s design. It is intentionally thorough so that future contributors—including those learning Redis and Lua with AI assistance—can rely on worked examples and patterns instead of inventing new approaches. Treat changes in this area as “expert mode” work: prefer extending existing scripts and tests over introducing entirely new coordination patterns, and lean on the documented checklists rather than additional process or project roles.
+
 ## Table of Contents
 
 - [FireMUD System Architecture: Redis](#firemud-system-architecture-redis)
@@ -23,7 +25,7 @@ Redis is always treated as **non-authoritative for game data**: all canonical ga
 - In **development and ephemeral test environments**, Redis behaves as a **disposable coordination cache**. Helm may wipe its AOF between runs, and no guarantees are made about preserving in-flight ticks, sessions, or timers across deployments.
 - In **staging and production-equivalent environments**, Redis behaves as a **long-lived coordination log**. AOF is preserved across normal rollouts and node restarts; crash recovery and replay semantics described in this document apply and must not be bypassed by automatic AOF resets.
 -
-The acceptable loss window is intentionally capped: affected `{tenantId, regionId}` pairs should lose at most a single tick’s worth of coordination state (locks, timers, sessions) during a routine failover, and the tick effect ledger must show that each staged effect either replayed or was marked `ABANDONED` before subsequent ticks are scheduled. Anything materially beyond this (for example repeated gaps greater than the tick interval or a growing backlog of pending effects) is treated as an incident requiring investigation, not as “normal” volatility.
+The acceptable loss window is intentionally capped to a **small, bounded tail of recent coordination state per `{tenantId, regionId}`**. In staging and production-like deployments the target is on the order of **one to two seconds of activity** per region. For typical tick intervals (for example `tick-interval-ms >= 250`), this corresponds to losing at most a handful of ticks for an affected region during a routine failover. Anything materially beyond this (for example, repeated effective loss windows greater than **2 seconds** or more than **2×** the configured tick interval, or a growing backlog of pending effects) is treated as an incident requiring investigation, not as “normal” volatility.
 
 All subsequent sections assume the **staging/production coordination mode** unless explicitly labeled as “dev/ephemeral only.” Deployment and runbook docs call out where behavior differs by environment.
 
@@ -58,15 +60,36 @@ Redis**:
   `FIREMUD_REDIS_CACHE_PORT`.
 
 For local development and other single‑node setups, all of these variables may
-point at the same instance. When the `*_COORD_*` or `*_CACHE_*` variables are
-unset, services fall back to `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT` as
+point at the same instance. In that case, developers typically set
+`FIREMUD_REDIS_HOST`, `FIREMUD_REDIS_COORD_HOST`, and `FIREMUD_REDIS_CACHE_HOST`
+to the same `host:port` pair so services can be configured consistently while
+still exercising both code paths. When the `*_COORD_*` or `*_CACHE_*` variables
+are unset, services fall back to `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT` as
 documented in
 [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#redis-connection).
-In **player‑facing environments**, Coordination Redis and Cache/Rate‑Limit Redis
-should be configured as distinct logical Redis deployments even if they share the
-same underlying host. Sharing a single deployment for both workloads is strongly
-discouraged because misconfiguration (for example, eviction policies or memory
-limits) can silently impact coordination keys and gameplay availability.
+In **player‑facing or shared environments** (staging, QA, production),
+Coordination Redis and Cache/Rate‑Limit Redis must be configured as **distinct
+logical Redis deployments** even if they share the same underlying host
+hardware. Sharing a single deployment for both workloads is treated as a
+non‑compliant configuration because misconfiguration (for example, eviction
+policies or memory limits) can silently impact coordination keys and gameplay
+availability.
+
+Coordination Redis also enforces its role via ACL and simple self‑checks:
+
+- The coordination `coord_app` user is granted access only to coordination
+  prefixes (`tick:*`, `session:*`, `timer:*`, `retry:*`, `remote:*`, and related
+  keys) and corresponding databases; cache/rate‑limit prefixes are denied at the
+  ACL level even in development profiles.
+- Cache/Rate‑Limit Redis deployments use separate users (for example
+  `cache_app`) and ACLs that explicitly deny access to coordination prefixes,
+  so even if environment variables are misconfigured, cache clients cannot read
+  or mutate tick/session keys.
+- Coordination clients perform a lightweight startup self‑check in non‑dev
+  profiles (for example, verifying expected role markers or DB selections and
+  confirming that scripts for tick/session prefixes can be loaded). If these
+  checks fail, services refuse to start tick processing rather than silently
+  using a misconfigured Redis instance.
 
 Call out this separation in playbooks so that local developers do not treat the
 shared-instance convenience as representative of production behavior: eviction
@@ -167,19 +190,22 @@ The `redis-aof-reset-job` is **strictly scoped** and must be treated as **dev/ep
 Redis provides **best-effort durability** for volatile coordination state, not absolute guarantees:
 
 - AOF rewrite policy (for example Redis’s `auto-aof-rewrite-percentage` and `auto-aof-rewrite-min-size` settings), `appendfsync` behavior, disk performance, replication lag, and failover timing all influence how much recent state can be lost if a node crashes between an in-memory update and the next durable write.
-- FireMUD does not currently specify a precise target for the AOF tail-loss window (for example, “no more than N seconds” or “no more than M ticks”). Instead, the design assumes that:
-  - Some **bounded tail window** of recent volatile coordination writes may be lost under failure.
-  - The exact window depends on deployment‑specific Redis configuration and infrastructure characteristics and may evolve over time.
+- FireMUD explicitly targets a **small tail-loss window** for coordination state in player-facing environments:
+  - Under normal conditions, deployments should aim to lose **no more than ~1–2 seconds** of recent coordination writes per node during a crash or failover, which typically corresponds to at most a handful of ticks per `{tenantId, regionId}`.
+  - Environments where effective loss windows regularly exceed **2 seconds** or more than **2×** the configured tick interval for a region are considered **degraded** and should trigger investigation or configuration changes (for example, slower tick intervals or stronger durability).
 - Correctness in the presence of such loss is preserved by:
   - Treating Redis as non-authoritative and replaying ticks based on PostgreSQL and any surviving `tick:{tenantId}:{regionId}:pending` keys.
   - Relying on the idempotent tick and domain logic described in [Crash Recovery and Replay](./system-architecture-ticks.md#crash-recovery-and-replay) so replays never apply new logical effects twice.
 
 Coordination Redis deployments in staging and production are expected to:
 
-- Run with AOF enabled (`appendonly yes`) and an fsync policy at least as strong as Redis’s `appendfsync everysec` so that the tail-loss window is bounded to a small number of ticks under normal conditions.
+- Run with AOF enabled (`appendonly yes`) and an fsync policy at least as strong as Redis’s `appendfsync everysec` so that the tail-loss window is bounded to a small number of ticks (on the order of 1–2 seconds) under normal conditions.
+- Use an AOF configuration that keeps restart and rewrite costs manageable for a self-hosted, hobby-style deployment, for example:
+  - `aof-use-rdb-preamble yes` so most history is stored as an RDB snapshot plus a short AOF tail.
+  - `auto-aof-rewrite-percentage 100` and `auto-aof-rewrite-min-size 256mb` (or similar) so rewrite work runs only when the AOF has meaningfully grown.
 - Avoid disabling fsync entirely for coordination workloads (`appendfsync no` is not acceptable), even in performance experiments; test profiles that relax durability must be clearly labeled as such and not reused for player-facing environments.
 
-Future operational work may introduce concrete observability around tail-loss behavior (for example, measuring effective loss windows in staging/production and tightening Redis configuration accordingly), but those targets are intentionally left unspecified at this stage.
+Future operational work may introduce concrete observability around tail-loss behavior (for example, measuring effective loss windows in staging/production and tightening Redis configuration accordingly), but the **1–2 second** envelope above is the default design assumption for self-hosted deployments unless explicitly overridden.
 
 FireMUD does **not** use the Redis `WAIT` command in application code. Replication remains asynchronous; the system assumes that:
 
@@ -207,25 +233,69 @@ Operationally, AOF files are treated as **all-or-nothing** coordination history 
 
 Manual “surgery” on AOF contents is **not supported** in FireMUD runbooks. Either the AOF is trusted and used as-is, or it is discarded and the node restarts with an empty (or cleanly resynchronized) coordination keyspace.
 
+#### AOF Size and Restart Budget
+
+For small/self-hosted FireMUD deployments, coordination Redis should remain **simple to operate**:
+
+- As a rule of thumb, keep each node’s coordination AOF size below roughly **1–2 GiB**. Bigger files are allowed but should be treated as a sign that retention or rewrite settings may need adjustment.
+- Redis restart time for a healthy node (including AOF or RDB+AOF replay) should ordinarily complete within **30–60 seconds**. Nodes that routinely take longer to restart are considered **operationally unhealthy** for coordination workloads.
+
+If restarts become slow or AOF files grow beyond these soft budgets, it is acceptable for operators to:
+
+- Schedule a maintenance window.
+- Stop game services for affected tenants/regions (or globally for a hobby deployment).
+- Reset the coordination Redis instance by:
+  - Stopping Redis,
+  - Deleting or recreating the volume that holds the AOF, and
+  - Starting Redis with an empty keyspace.
+- Allow ticks and sessions to rebuild coordination state from PostgreSQL and new gameplay activity.
+
+For hobby/self-hosted servers this “reset and rebuild” option is a valid trade-off: players may need to re-login or restart games after such a reset, but the node returns to a clean, fast-restarting state without complex AOF tuning.
+
 FireMUD also maintains a **Lua Compatibility Registry** for coordination scripts:
 
-- Each script declaration records a `schemaVersion`, the `KEYS`/`ARGV` contract, and a compatibility tag (`compatible` vs `breaking`) so reviewers can quickly understand the impact of a change.
-- Compatible script updates must include both “old-schema” and “new-schema” replay tests that exercise actual `pending`/timer payloads, proving that existing Redis entries remain safely idempotent.
-- Breaking script changes require explicit migration plans that list the prefixes, tenants, and regions to flush, plus the Redis keys or value fields that change semantics.
-- Without a clear compatibility tag and associated proof, changes are rejected; the registry is the authoritative source for whether replay state is preserved or replaced.
+- Each script declaration records:
+  - A `schemaVersionsSupported` list describing which `schemaVersion` values it is expected to handle in Redis payloads (for example `[1]` or `[1,2]`).
+  - The `KEYS`/`ARGV` contract.
+  - A compatibility tag, typically one of:
+    - `compatible` – the change preserves replay behavior for all existing stored payloads handled by the previous version.
+    - `breaking_requires_reset` – the change alters how existing stored payloads are interpreted or validated and therefore cannot rely on cross-version AOF replay.
+- Changes tagged `compatible` must meet **all** of the following criteria:
+  - `KEYS`/`ARGV` count and ordering are unchanged.
+  - The script continues to correctly handle **every** `schemaVersion` value that may exist in Redis for that script.
+  - For representative payload fixtures of each supported `schemaVersion`, re-running the same logical AOF sequences under the new script either:
+    - Produces the same final coordination state as before, or
+    - Produces only strictly benign differences (for example, extra metrics or logging) that do not affect tick/session semantics.
+  - Tests in `firemud-common` exercise “old-schema” and “new-schema” payloads and prove idempotent replay behavior under the new script body.
+- Any change that does not convincingly meet these criteria must be tagged `breaking_requires_reset` by default, including:
+  - Dropping support for an older `schemaVersion` value while keys with that version may still exist.
+  - Changing how existing fields are interpreted or validated so previously accepted payloads would now be rejected or handled differently.
+  - Adding new required fields that older payloads do not contain.
+- Without a clear compatibility tag and associated proof, changes are rejected; the registry is the authoritative source for whether replay state is preserved (`compatible`) or coordination state must be reset (`breaking_requires_reset`).
 
-For **breaking coordination script changes** (for example, changes that reinterpret existing `pending`/timer/session payloads or adjust validation logic for stored values), FireMUD intentionally avoids relying on AOF replay across versions:
+For **breaking coordination script changes** (entries tagged `breaking_requires_reset` in the compatibility registry), FireMUD intentionally avoids relying on AOF replay across versions:
 
 - Script changes are classified into:
-  - **Safe changes** – bugfixes or internal refactors that do not change how existing stored payloads are interpreted. These may be deployed without special AOF handling.
-  - **Breaking changes** – any change that could cause a new script version to interpret existing coordination keys differently (for example, schema changes without a migration, new required fields, or changed validation rules).
+  - **Safe changes** – bugfixes or internal refactors that do not change how existing stored payloads are interpreted and pass the compatibility tests above. These may be deployed without special AOF handling.
+  - **Breaking changes** – any change marked `breaking_requires_reset` because it could cause a new script version to interpret or validate existing coordination keys differently.
 - For breaking changes, the runbook is:
-  - Schedule a maintenance window.
-  - Stop accepting new gameplay commands and pause ticks for affected tenants/regions (or globally for small/self-hosted deployments).
-  - Explicitly **flush coordination state** for the affected slots (for example, by clearing tick/lock/timer/retry/session prefixes in the Coordination Redis deployment or recreating the coordination Redis instance). The flush scope should be the specific `{tenantId, regionId}` hash tags listed in the compatibility registry and may be limited to individual prefixes (pending, timers, retry) rather than everything.
-  - Ensure PostgreSQL/domain services are aware of the flush: confirm the tick effect ledger reports no `SCHEDULED` rows for the flushed `(tenantId, regionId)` pairs and that any in-flight commands are either retried or rejected before allowing replay to resume.
-  - Deploy the new scripts and services and restart tick processing; Redis rebuilds coordination state from PostgreSQL and fresh gameplay.
-- AOF replay is therefore relied on only within a given script semantics window. When script behavior changes in a way that is not trivially backward-compatible for stored payloads, operators treat existing coordination state as disposable and restart from a clean keyspace instead of attempting cross-version replay.
+  - A small **coordination upgrade planner** tool (part of the FireMUD dev-tools) compares the current deployment’s Lua Compatibility Registry to the target version and decides whether a coordination reset is required:
+    - If all script changes are tagged `compatible`, the planner reports that no special Redis handling is required beyond the usual deployment process.
+    - If any script is tagged `breaking_requires_reset`, the planner reports that a coordination reset is required for this upgrade.
+  - In hobby and small/self-hosted deployments, the preferred pattern is for the planner to **orchestrate the reset automatically** when breaking changes are present:
+    - Pause ticks and stop accepting new gameplay commands globally (or for the affected tenants/regions), for example by toggling a Game Session “tick enabled” flag or calling an admin endpoint.
+    - Stop the coordination Redis instance (or logical deployment) used for ticks and sessions.
+    - Delete or recreate the volume that holds its AOF, and restart Redis with an empty keyspace (“whole-node reset”).
+    - Optionally run a lightweight health check (scripts load successfully, test ticks can be scheduled) and then unpause ticks and player traffic.
+  - Where finer granularity is truly required, the planner may instead:
+    - Stand up a **new** coordination Redis instance with an empty AOF.
+    - Point application services at it (for example by updating configuration and restarting Game Session).
+    - Decommission the old instance after any necessary inspection.
+    - This advanced path is intentionally out of scope for the default hobby/self-hosted profile and should only be used when coordination state cannot simply be dropped.
+  - Regardless of mechanism, PostgreSQL/domain services must be aware of the reset: operators confirm that the tick effect ledger reports no `SCHEDULED` rows for the affected `(tenantId, regionId)` pairs and that any in-flight commands are either retried or rejected before allowing replay to resume.
+  - After reset, the new scripts and services run against an empty coordination keyspace and Redis rebuilds tick and session state from PostgreSQL and fresh gameplay activity.
+- Operators must **never** rely on deleting keys from a live primary while retaining its old AOF and expecting future restarts to replay only the post-flush state. For coordination Redis, either the AOF is trusted as the complete history for that node, or it is discarded and the node restarts from a clean keyspace.
+- AOF replay is therefore relied on only within a given script semantics window where compatibility has been proven. When script behavior changes in a way that is not trivially backward-compatible for stored payloads (that is, changes tagged `breaking_requires_reset`), FireMUD treats existing coordination state as disposable and restarts from a clean keyspace instead of attempting cross-version replay.
 
 #### Replica Promotion and Missed Writes
 
@@ -373,6 +443,14 @@ Combined with the **lock token semantics** described in the Tick System design, 
 - A worker that resumes after losing the lease cannot commit or roll back tick state, even if it still holds local lock tokens.
 - Only the current lease holder (epoch) can progress `tick:{tenantId}:{regionId}:pending`, timers, and retry metadata for that region; any stale workers see a lease-token mismatch and abort, returning a retry outcome instead of applying stateful changes.
 
+From the coordination layer’s perspective, **lease and lock tokens are meaningful only when interpreted together inside registered Lua scripts**:
+
+- Lock keys (`tick:{tenantId}:{regionId}:lock:{entityId}`) are considered **opaque artifacts** outside Lua; their mere existence must not be treated as proof of ownership or authority.
+- All decisions that depend on locks or leases (for example, “may I mutate this entity under the current tick?”) are made exclusively by Lua scripts that:
+  - Re-read `tick-executor-lease:{tenantId}:{regionId}`.
+  - Validate both the current lease token and the relevant lock token(s) in a single atomic script invocation.
+- Application code and maintenance tools must therefore treat tick locks as **internal implementation details** of the tick engine, not as general-purpose coordination primitives.
+
 ### TTL Envelopes and Worst-Case Pauses
 
 For self-hosted and hobby deployments, FireMUD keeps lease and lock TTLs intentionally simple:
@@ -408,8 +486,10 @@ Entity locks are acquired once per tick execution and are not extended automatic
 
 An optional lock refresh helper exists for extremely long commands, but it itself enforces correctness:
 
-- It only extends the TTL if the executor still holds the current lease token and the same lock token.
+- It only extends the TTL if the executor still holds the current lease token and the same lock token, and it re-validates both inside the Lua script before writing.
 - It is called explicitly by scripts that document the need for extra headroom; the default assumption is that locks are not refreshed and act as a fixed execution budget.
+- It may be invoked at most a **small, fixed number of times** per logical command (for example, once or twice), and the **total effective lock lifetime** must remain bounded by a simple envelope such as `min(2 × lock_ttl_ms, lease_ttl_ms)`. Scripts that would exceed this bound must be refactored into multiple ticks instead of relying on repeated refreshes.
+- Its usage is **observable**: callers increment metrics such as `redis.tick.lock_refresh_requests_total` and `redis.tick.lock_refresh_denied_total`, and dashboards/alerts highlight regions where refresh is used frequently so those commands can be decomposed into shorter work units.
 
 This discipline keeps locks bounded and makes it easy to reason about the “one executor per region” invariant even when leases and lock TTLs interact badly: whenever a lease is lost, scripts receiving a `STALE_LEASE` response abort immediately, and the remaining stale locks simply expire under `lock_ttl_ms`, preventing any stateful writes from proceeding in a conflicting epoch.
  
@@ -422,15 +502,17 @@ However, **correctness never depends on wall-clock time**: lease safety is defin
 
 ### Hash Tags and Redis Cluster Slotting
 
-FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. Tick-related keys (locks, queues, pending state, retries, timers) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
+FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. In this document, **literal Redis keys** are shown with curly braces exactly where the Redis Cluster hash tag lives. For example, `tick:{tenantId}:{regionId}:lock:<entityId>` denotes a key whose hash tag is the literal substring `{tenantId}:{regionId}`; the braces are part of the key name, not just notation.
 
-- `tick:{tenantId}:{regionId}:lock:{entityId}`
+Tick-related keys (locks, queues, pending state, retries, timers) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
+
+- `tick:{tenantId}:{regionId}:lock:<entityId>`
 - `tick:{tenantId}:{regionId}:pending`
-- `tick:{tenantId}:{regionId}:queue:{entityId}`
+- `tick:{tenantId}:{regionId}:queue:<entityId>`
 - `retry:{tenantId}:{regionId}`
 - `timer:{tenantId}:{regionId}`
 
-The substring inside the braces (`{tenantId}:{regionId}`) forms the hash tag and is identical for all keys that a script may touch during a tick. This guarantees that:
+The substring inside the braces (`{tenantId}:{regionId}`) forms the Redis Cluster hash tag and is identical for all keys that a script may touch during a tick. This guarantees that:
 
 - Lua scripts can atomically read/write locks, queues, and pending state without `CROSSSLOT` errors.
 - Each tick region’s keys remain **shard-local** while still supporting multi-key operations.
@@ -450,6 +532,8 @@ Under a given normalization version, the `tenantId` and `regionId` segments that
 - Use a restricted character set such as lowercase letters, digits, and `-` / `_` (for example `[a-z0-9_-]+`).
 - If an external tenant or region identifier does not meet these constraints (for example, it contains Unicode, braces, or colons), it is first mapped to a stable normalized form (for example, a slug, hex-encoded UUID, or other opaque token) before being used in Redis keys.
 - The same normalized `tenantId` / `regionId` values are reused consistently across all tick-related keys so that a given `{tenantId, regionId}` hash tag always represents the same shard-local region.
+
+> **Notation rule:** `{tenantId}:{regionId}` always denotes the **literal hash tag** inside a Redis key (including braces). Other placeholders in this document (for example `<entityId>`, `<roomId>`) are not part of the hash tag and do not use braces. Implementations must include the braces exactly as shown for Cluster to route keys to the same slot; omitting `{}` or placing normalized IDs outside the braces breaks shard-local guarantees.
 
 #### Normalization Migration Strategy
 
@@ -481,6 +565,21 @@ Changing how identifiers are normalized or how hash tags are formed (for example
       - Treat it as a pure infrastructure operation: no changes to normalization helpers or hash-tag format.
       - Application code continues to use the current normalization version while slots move underneath.
   - If both changes are required in a small deployment, they are sequenced explicitly: normalization migration first (with stable cluster topology), then resharding as a separate, later step.
+
+##### Normalization Migration Protocol for Small/Self-Hosted Deployments
+
+For hobby and small/self-hosted servers, the simplest and safest way to change normalization behavior (for example, moving from `NORMALIZATION_V1` to `NORMALIZATION_V2`) is to **treat coordination state as disposable** and rebuild it from PostgreSQL and new gameplay activity:
+
+- Preferred protocol:
+  - Schedule a maintenance window.
+  - Stop accepting new commands and pause ticks for all game instances (or at least for tenants/regions affected by the normalization change).
+  - Deploy application code that uses `NORMALIZATION_V2` in the shared helpers.
+  - Start a fresh Coordination Redis deployment (or logical database) with an empty keyspace:
+    - Point Game Session and other coordination clients at the new deployment.
+    - Do not attempt to migrate existing coordination keys; allow locks, queues, and timers to rebuild naturally as ticks resume.
+  - Resume ticks and player traffic once services are healthy. Existing game instances may require restart or reconnection; in-flight coordination state is lost but authoritative state in PostgreSQL remains intact.
+
+This protocol keeps migration operationally simple and avoids subtle cross-version key placement issues. For larger or more strictly available deployments that cannot afford to drop all coordination state, a more advanced migration (moving keys from old tags to new tags in place) can be implemented as a dedicated maintenance tool using the shared key builders and following the general phases above, but such flows are intentionally out of scope for the default hobby/self-hosted profile.
 
 Session and timer keys do not participate in tick multi-key scripts and may use simpler patterns as long as they preserve `tenantId` prefixes and avoid cross-shard assumptions. In particular:
 
@@ -538,10 +637,20 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
 Pull requests that introduce new tick-related keys or Lua scripts must:
 
 - Add or update the corresponding script descriptor, Lua source, and key-builder/registry APIs in the `firemud-common` library.
-- Extend the shared Redis test suite in `firemud-common` to prove:
-  - Correct `KEYS` ordering and hash-tag alignment.
-  - Enforcement of the declared prefix constraints (for example, tests that intentionally supply a mismatched prefix and assert a fast failure or no-op).
+  - Extend the shared Redis test suite in `firemud-common` to prove:
+    - Correct `KEYS` ordering and hash-tag alignment.
+    - Enforcement of the declared prefix constraints (for example, tests that intentionally supply a mismatched prefix and assert a fast failure or no-op).
 - Avoid ad-hoc `EVAL`/`EVALSHA` calls; all script invocations in services go through registry-backed helpers exported from `firemud-common` that resolve the SHA and build `KEYS` from descriptors.
+
+This yields a simple **client usage contract** for coordination Redis:
+
+- **Production services**:
+  - Never call `EVAL` or `EVALSHA` directly against coordination prefixes.
+  - Never build `KEYS` arrays or `tick:`/`timer:`/`retry:`/`remote:` keys by hand; they always call registry helpers and key builders from `firemud-common`.
+  - Use only the high-level coordination APIs exposed by `firemud-common` (for example, “stage tick”, “commit tick”, “acquire lock”) rather than raw Redis templates.
+- **Static analysis and CI**:
+  - A repository-wide check fails builds if `EVAL`/`EVALSHA` literals, or direct `tick:`/`timer:`/`retry:`/`remote:` string prefixes, appear in non-test source sets outside `firemud-common`.
+  - Shared tests in `firemud-common` are the only place where low-level Redis client calls for coordination prefixes are allowed; service modules use those helpers instead of talking to Redis directly.
 
 Scripts that hard-code non-hash-tagged tick keys, mix forbidden prefixes, or produce `CROSSSLOT` errors under tests are rejected.
 
@@ -632,9 +741,12 @@ The Lua Script Registry and key-shape rules assume that **all multi-key coordina
   - Human operators and tools (Redis CLI, RedisInsight, ad-hoc scripts) connect using a separate **read-only ops user** (for example, `ops_ro`) that:
     - Is restricted to `@read` commands and explicitly **denied** `EVAL`, `EVALSHA`, `SCRIPT LOAD`, and write commands (`SET`, `DEL`, `EXPIRE`, `PEXPIRE`, etc.) for the coordination deployment.
     - May still read coordination keys (`GET`, `HGETALL`, `ZRANGE`, `SCAN`, etc.) for inspection and debugging.
+  - Other application users (for example cache/rate-limit clients) must not have permissions on coordination prefixes at all; they operate on separate logical databases or instances dedicated to their workloads.
 
 - **Operational expectations**
-  - All coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, and automation/tick scheduler keys that share their hash tags) are treated as **write-only via application code**. Ad-hoc write commands against these prefixes from CLI or external scripts are not supported and are considered unsafe.
+  - All coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*`, and automation/tick scheduler keys that share their hash tags) are treated as **write-only via application code** and **control-only via registered Lua scripts**:
+    - Ad-hoc write commands against these prefixes from CLI, batch jobs, or external scripts are not supported and are considered unsafe.
+    - Ad-hoc *control flow* that reads these keys directly (for example “if lock key exists, then proceed”) is also prohibited; any logic that needs to consult locks or leases must call through the shared helpers that invoke the Lua Script Registry so lease and lock tokens are validated together.
   - If coordination state must be repaired or migrated, operators:
     - Prefer to stop or drain the Game Session Service for affected tenants/regions.
     - Use dedicated, versioned tools or maintenance code paths that go through the same script registry and key-builder helpers as normal ticks, rather than issuing raw Redis commands.
@@ -705,11 +817,30 @@ This ensures that tick execution never proceeds on a shard that cannot execute i
 
 These measures ensure that `NOSCRIPT` handling remains correct under failover and resharding while keeping the load profile predictable, even when many workers hit a freshly promoted node at once. During topology changes, each `(nodeId, scriptId)` pair sees at most one `SCRIPT LOAD` in the hot path, and any additional reload work is shifted into the background preload cycle instead of all workers rediscovering missing scripts independently.
 
-If a script repeatedly fails to reload or `NOSCRIPT` errors persist beyond a short, configurable retry window, the Game Session Service:
+To keep behavior predictable, the registry also distinguishes between **core** and **optional** scripts:
+
+- **Core scripts** are required for basic tick and session operation:
+  - Tick lock acquisition and release.
+  - Tick staging, commit, and rollback.
+  - Timer and retry queue updates for active regions.
+  - Session binding/unbinding and other primitives explicitly called out in the tick and session designs.
+- **Optional scripts** support auxiliary flows:
+  - Maintenance or repair tools.
+  - Low-frequency administrative operations.
+  - Debugging helpers or diagnostics that are not part of the main tick/session loop.
+
+If a **core** script repeatedly fails to reload or `NOSCRIPT` errors persist beyond a short, configurable retry window, the Game Session Service:
 
 - Logs a structured error with script name, region, and tenant context.
-- Emits a metric such as `redis.lua.script_load_failures` for alerting.
-- Treats the affected tick region as **degraded** until the underlying Redis issue is resolved.
+- Emits a metric such as `redis.lua.script_load_failures` and `redis.lua.script_missing_for_region` for alerting.
+- Treats the affected `{tenantId, regionId}` as **unschedulable** for ticks:
+  - The scheduler stops starting new ticks for that region.
+  - Any attempts to run tick work for that region short-circuit with a clear error, rather than attempting partial progress without the required script.
+- Keeps the region in this hard-fail state until either:
+  - The script is successfully loaded and a health check confirms normal operation, or
+  - Operators deliberately reset coordination state for the region (for example, via the AOF/flush runbooks) and restart services.
+
+If an **optional** script fails to load, its specific feature degrades or is temporarily disabled, but core tick and session scripts must still be present and healthy before any new ticks are scheduled for a region.
 
 ### Script Evolution and Deployment Order
 
@@ -878,6 +1009,8 @@ Redis is **required** for tick coordination, sessions, and automation. When Redi
     - Tick scheduling stops globally.
     - New gameplay sessions and commands that depend on ticks or sessions are rejected until Redis connectivity recovers.
   - Non-gameplay services that do not depend on Redis (for example, Account, Game Design, Logging & Admin) may remain available; this is the primary form of “graceful degradation” at the product level.
+
+FireMUD intentionally does **not** provide a secondary “database-only” tick path or alternative coordination mechanism when Coordination Redis is unhealthy. At the scales and deployment model this project targets, the supported behavior is to halt ticks and reject gameplay commands until Redis is restored, rather than attempting to run a parallel, Redis-free tick engine with different semantics.
 
 This policy applies consistently across the conditions described elsewhere in this document: replication failures or sustained lag, `OOM`/evictions of coordination keys, repeated over-TTL ticks, and client-level connection timeouts all drive regions through the same **healthy → degraded → halted** progression, rather than each caller inventing its own ad-hoc behavior. Cases where Redis remains healthy but downstream services are unavailable (for example, database or gRPC outages) are handled as **stalled regions** at the tick scheduler layer, as described in the Tick System design; leases continue to enforce single-writer coordination, while stalled/healthy status reflects whether that writer is actually making progress.
 
@@ -1287,6 +1420,8 @@ refreshed. Once the TTL elapses:
 - Any associated volatile coordination state for that session (queued commands, conflict metadata) is treated as
   abandoned and will not be replayed.
 
+For reconnect flows, **presence of the `session:{tenantId}:{sessionId}` key in Coordination Redis is the sole authority for whether a session can be resumed**: if the key no longer exists, the session is treated as expired and cannot be resumed, even if related database records still exist for audit or game-instance lifecycle.
+
 In practice, `FIREMUD_AUTH_SESSION_EXPIRATION_MS` therefore defines the **maximum reconnection window** for gameplay
 sessions. Deployments should keep this value aligned with or slightly longer than `FIREMUD_AUTH_JWT_EXPIRATION_MS` so
 that JWT and server-side session lifetimes remain coherent. Configuration validation enforces this relationship in
@@ -1296,6 +1431,8 @@ non-dev profiles:
  - If configuration attempts to set a shorter Redis session TTL than the JWT lifetime in production or staging, the authentication and Game Session services treat it as a misconfiguration: startup fails fast (or falls back to a safe, derived TTL when running in special “emergency” contexts) and logs a clear error rather than silently allowing “JWT still valid but session state already expired” behavior.
  - Services running in staging/production refuse to boot if this invariant is violated; promoting a dev profile with weaker validation to a player-facing environment requires an explicit config review and manual override that is documented in the runbooks.
  - Operators who intentionally want a shorter reconnection window than the JWT lifetime should make that choice explicit via environment profiles and documentation; in that case, reconnect flows will reject resumptions once the Redis TTL has elapsed even if the JWT remains technically valid.
+
+From a capacity perspective, gameplay sessions are treated as **part of the normal coordination footprint**, not as a separate, tightly budgeted workload. At the expected hobby/self-hosted scale and reconnection windows, `session:*` keys are assumed to consume a relatively small, bounded share of Coordination Redis memory compared to tick locks, timers, and pending state. The design therefore does **not** introduce explicit per-tenant session quotas or dedicated session Redis topologies by default; general coordination memory thresholds, eviction/OOM alerts, and the ability to lower session TTLs or limit concurrent sessions per tenant are considered sufficient safeguards. If real-world usage ever shows `session:*` keys dominating memory or triggering coordination `OOM` conditions, the preferred remediation is to adjust TTLs or admission-control limits first, and only consider new Redis deployments for sessions if those simple measures prove inadequate.
 
 Long-running, headless coordination contexts (for example automation bots, replays, or background AI runners) may need richer lifetimes than interactive clients. Those workloads use dedicated prefixes such as `session:headless:{tenantId}:{sessionId}` and leverage a separate TTL (for example `FIREMUD_AUTH_HEADLESS_EXPIRATION_MS`) that is allowed to exceed the interactive reconnection window. Their Lua scripts explicitly document how often they renew their TTLs and operate without relying on JWT-limited reconnections, so they do not compete with player-facing sessions for the same expiration governance. This separation ensures the “maximum reconnection window” statement remains true for human players while still supporting long-lived actors that stay bound to a running game instance.
 

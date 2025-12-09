@@ -177,6 +177,8 @@ This service participates in tick processing by acquiring Redis locks before mut
 
 Entity Management treats `lock_ttl_ms` as an opaque value supplied by shared helpers; it does not define its own lock TTL configuration. This keeps locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
 
+At runtime, the Game Session Service also compares **observed tick execution time** to `lock_ttl_ms` as described in the [Tick System design](../../system-architecture-ticks.md#timeout-and-fairness-policy). Regions whose `p99` tick runtime begins to approach or exceed a configured fraction of `lock_ttl_ms` are treated as degraded, and operators are expected to either increase the tick interval or simplify per-tick work. Entity Management does not adjust TTLs itself; it relies on the shared helpers and scheduler behavior to keep lock usage within safe bounds.
+
 Entity Management assumes the **per-command execution phases** described in the [Tick System design](../../system-architecture-ticks.md#per-command-execution-phases): commands that touch multiple entities in the same region resolve their target set first (for example, the two parties in a trade or all entities in a room for AoE effects), then acquire the necessary `tick:{tenantId}:{regionId}:lock:{entityId}` keys in a deterministic order. If any required lock is unavailable, the command fails, staged changes are rolled back via Redis, and the Game Session Service reschedules the work using the retry mechanisms described in the Tick System and Redis designs.
 
 ### Tick Idempotency
