@@ -13,9 +13,9 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
   - Static or topology data (world geometry, room/zone graphs, published templates, configuration) changes infrequently and is a good fit for aggressive caching with long TTLs or manual invalidation.
 - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
 - Purpose-driven caching only. Objects should be cached because they are expensive to compute or fetch and appear on hot paths, not “just in case.” Profiling and production telemetry will drive what actually lands in Redis.
-- Coordination workload isolation:
-  - In **QA, staging, and production** (any environment used for load tests or player traffic), read-side caches and gateway rate limits are placed on one or more **separate Redis cache/rate-limit deployments**, distinct from the **Coordination Redis** used for ticks, locks, timers, and sessions. Coordination Redis does **not** host caches or rate-limit keys in these environments.
-  - In **local developer** and other low-concurrency lab setups, a single Redis instance may be shared for convenience (see below), but this topology is not considered representative for performance or failure behavior and must not be reused for QA, staging, or production.
+  - Coordination workload isolation:
+  - In environments used for sustained load or player traffic (for example **QA, staging, and production**), read-side caches and gateway rate limits are **strongly recommended** to run on one or more separate Redis cache/rate-limit deployments, distinct from the **Coordination Redis** used for ticks, locks, timers, and sessions. Coordination Redis should not host large, eviction-driven caches in these environments.
+  - In **local developer** and other low-concurrency lab setups, a single Redis instance may be shared for convenience (see below). Smaller self-hosted deployments may also choose to share a single Redis process for both roles if they keep cache TTLs conservative and memory usage bounded; the logical separation in configuration remains the same either way.
 
 ## Candidate Cacheable Object Types
 
