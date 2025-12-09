@@ -50,6 +50,7 @@ Testing:
 - Load: Gatling
 - New features must include unit tests and, where applicable, integration tests.
 - Verify coverage with JaCoCo by running `./gradlew check` before committing.
+- When invoking Gradle from AI tooling or scripts, prefer the default daemon (no `--no-daemon` flag) so repeated tasks stay fast; only use `--no-daemon` when explicitly debugging daemon issues.
 
 When advising on architecture or operations, keep the “well-engineered hobby/self-hosted deployment” mindset front and center: prefer clean, high-quality patterns but avoid introducing new knobs, clusters, or heavy operational plans unless evidence shows a future need beyond the anticipated single-admin usage. Favor **simple automation and one-shot tools** (for example, a small CLI that drives a reset, migration, or health check) over complex, manual runbooks whenever they reduce day-to-day operator effort without adding long-term complexity.
 

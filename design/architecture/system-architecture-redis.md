@@ -24,7 +24,7 @@ Redis is always treated as **non-authoritative for game data**: all canonical ga
 
 - In **development and ephemeral test environments**, Redis behaves as a **disposable coordination cache**. Helm may wipe its AOF between runs, and no guarantees are made about preserving in-flight ticks, sessions, or timers across deployments.
 - In **staging and production-equivalent environments**, Redis behaves as a **long-lived coordination log**. AOF is preserved across normal rollouts and node restarts; crash recovery and replay semantics described in this document apply and must not be bypassed by automatic AOF resets.
--
+
 The acceptable loss window is intentionally capped to a **small, bounded tail of recent coordination state per `{tenantId, regionId}`**. In staging and production-like deployments the target is on the order of **one to two seconds of activity** per region. For typical tick intervals (for example `tick-interval-ms >= 250`), this corresponds to losing at most a handful of ticks for an affected region during a routine failover. Anything materially beyond this (for example, repeated effective loss windows greater than **2 seconds** or more than **2×** the configured tick interval, or a growing backlog of pending effects) is treated as an incident requiring investigation, not as “normal” volatility.
 
 All subsequent sections assume the **staging/production coordination mode** unless explicitly labeled as “dev/ephemeral only.” Deployment and runbook docs call out where behavior differs by environment.
@@ -338,9 +338,10 @@ On restart, Redis replays AOF entries in order, including `EVAL`/`EVALSHA` calls
   - Use set-style semantics for staged effects and queues so duplicate inserts become no-ops.
 
 Coordination payloads (pending ticks, timers, retry queues, remote queues) also expose a `schemaVersion` so Lua scripts can safely evolve. New script revisions:
-  - Read the stored `schemaVersion` and either handle the expected version or return `UNSUPPORTED_SCHEMA_VERSION` without making writes.
-  - Implement multi-version handling when releasing a breaking change, allowing the new version to coexist with the old one while Redis entries with the legacy version are drained or explicitly flushed.
-  - Use lightweight migration tools (e.g., tenant-scoped cleaners that drop or rewrite old-version payloads) rather than assuming a full keyspace flush is acceptable.
+
+- Read the stored `schemaVersion` and either handle the expected version or return `UNSUPPORTED_SCHEMA_VERSION` without making writes.
+- Implement multi-version handling when releasing a breaking change, allowing the new version to coexist with the old one while Redis entries with the legacy version are drained or explicitly flushed.
+- Use lightweight migration tools (e.g., tenant-scoped cleaners that drop or rewrite old-version payloads) rather than assuming a full keyspace flush is acceptable.
 
 As a result:
 
@@ -492,7 +493,7 @@ An optional lock refresh helper exists for extremely long commands, but it itsel
 - Its usage is **observable**: callers increment metrics such as `redis.tick.lock_refresh_requests_total` and `redis.tick.lock_refresh_denied_total`, and dashboards/alerts highlight regions where refresh is used frequently so those commands can be decomposed into shorter work units.
 
 This discipline keeps locks bounded and makes it easy to reason about the “one executor per region” invariant even when leases and lock TTLs interact badly: whenever a lease is lost, scripts receiving a `STALE_LEASE` response abort immediately, and the remaining stale locks simply expire under `lock_ttl_ms`, preventing any stateful writes from proceeding in a conflicting epoch.
- 
+
 Implementations may also use local monotonic clocks or Redis’s `TIME` command **for diagnostics only**, for example to:
 
 - Log warnings when an executor believes it has held a lease significantly longer than `game.tick-lease-ttl-ms` would suggest under normal renewal cadence, or
@@ -599,10 +600,10 @@ Automation and scripting keys follow a similar pattern:
 
 If future automation features legitimately require **region-local, atomic coordination** with tick keys, the migration path is clear:
 
- - Introduce new keys `automation_queue:{tenantId}:{regionId}:{entityId}` that adopt the same `{tenantId}:{regionId}` hash tag as tick keys so they map to the same shard.
- - Update the shared key-building helpers, Lua Script Registry descriptors, and code generation so every automation script that touches regional queues must validate the hash tag and align with the tick region.
- - Migrate producers/consumers gradually, writing to both the old and new key shapes during the transition and iterating until the automation workload is fully region-local.
- - Treat this as an architectural shift: document the migration, review sharding implications, and implement it via the shared helpers rather than ad-hoc string concat.
+- Introduce new keys `automation_queue:{tenantId}:{regionId}:{entityId}` that adopt the same `{tenantId}:{regionId}` hash tag as tick keys so they map to the same shard.
+- Update the shared key-building helpers, Lua Script Registry descriptors, and code generation so every automation script that touches regional queues must validate the hash tag and align with the tick region.
+- Migrate producers/consumers gradually, writing to both the old and new key shapes during the transition and iterating until the automation workload is fully region-local.
+- Treat this as an architectural shift: document the migration, review sharding implications, and implement it via the shared helpers rather than ad-hoc string concat.
 
 These key-shape and hash-tag rules are **enforced**, not just conventions:
 
@@ -1344,7 +1345,6 @@ These metrics form the contract for Coordination Redis observability; alerts or 
 Treat these thresholds as normative requirements for the coordination cluster; future tooling should reference this table rather than scattering metric checks throughout the doc.
 
 ### Graceful Degradation Modes and Alert Thresholds
-### Graceful Degradation Modes and Alert Thresholds
 
 Redis outages or sustained high latency on the **coordination cluster** are treated as explicit failure modes with well-defined behavior for ticks, locks, leases, and sessions.
 
@@ -1369,14 +1369,14 @@ Redis outages or sustained high latency on the **coordination cluster** are trea
   - Example triggers:
     - `redis.up` gauge reports down for the coordination cluster or for the shard that owns a given `{tenantId, regionId}` hash tag.
     - High error rates for basic commands (for example `GET`/`SET` on tick/session keys) over a short window.
-  - Behavior for affected regions:
-    - Game Session **hard-fails new gameplay commands** that require ticks, returning a clear “service unavailable” style error for those regions.
-    - It **freezes tick scheduling** for affected `{tenantId, regionId}` pairs rather than attempting to buffer commands in memory or continue without coordination guarantees.
-    - Existing locks and leases are treated as **lost** for scheduling purposes; the scheduler does not assume they survived the outage and simply waits for Redis to return before attempting further work in those regions.
+- Behavior for affected regions:
+  - Game Session **hard-fails new gameplay commands** that require ticks, returning a clear “service unavailable” style error for those regions.
+  - It **freezes tick scheduling** for affected `{tenantId, regionId}` pairs rather than attempting to buffer commands in memory or continue without coordination guarantees.
+  - Existing locks and leases are treated as **lost** for scheduling purposes; the scheduler does not assume they survived the outage and simply waits for Redis to return before attempting further work in those regions.
 - Behavior for unaffected regions:
-    - Regions whose hash tags map to healthy shards may continue processing ticks, as long as global SLOs (latency, error rates) remain acceptable.
-  - In all cases:
-    - The system does not attempt to run ad-hoc in-memory fallbacks for ticks, locks, or sessions; correctness takes precedence over partial gameplay.
+  - Regions whose hash tags map to healthy shards may continue processing ticks, as long as global SLOs (latency, error rates) remain acceptable.
+- In all cases:
+  - The system does not attempt to run ad-hoc in-memory fallbacks for ticks, locks, or sessions; correctness takes precedence over partial gameplay.
   - Operators are alerted via high-severity alerts so they can restore Redis; gameplay for affected regions resumes only once Coordination Redis is healthy again.
 
 ### Client Backpressure Policy
@@ -1427,10 +1427,10 @@ sessions. Deployments should keep this value aligned with or slightly longer tha
 that JWT and server-side session lifetimes remain coherent. Configuration validation enforces this relationship in
 non-dev profiles:
 
- - `FIREMUD_AUTH_SESSION_EXPIRATION_MS` must be **greater than or equal to** `FIREMUD_AUTH_JWT_EXPIRATION_MS` (optionally plus a small safety margin). This ensures that, under normal conditions, a JWT never outlives its corresponding Redis session entry.
- - If configuration attempts to set a shorter Redis session TTL than the JWT lifetime in production or staging, the authentication and Game Session services treat it as a misconfiguration: startup fails fast (or falls back to a safe, derived TTL when running in special “emergency” contexts) and logs a clear error rather than silently allowing “JWT still valid but session state already expired” behavior.
- - Services running in staging/production refuse to boot if this invariant is violated; promoting a dev profile with weaker validation to a player-facing environment requires an explicit config review and manual override that is documented in the runbooks.
- - Operators who intentionally want a shorter reconnection window than the JWT lifetime should make that choice explicit via environment profiles and documentation; in that case, reconnect flows will reject resumptions once the Redis TTL has elapsed even if the JWT remains technically valid.
+- `FIREMUD_AUTH_SESSION_EXPIRATION_MS` must be **greater than or equal to** `FIREMUD_AUTH_JWT_EXPIRATION_MS` (optionally plus a small safety margin). This ensures that, under normal conditions, a JWT never outlives its corresponding Redis session entry.
+- If configuration attempts to set a shorter Redis session TTL than the JWT lifetime in production or staging, the authentication and Game Session services treat it as a misconfiguration: startup fails fast (or falls back to a safe, derived TTL when running in special “emergency” contexts) and logs a clear error rather than silently allowing “JWT still valid but session state already expired” behavior.
+- Services running in staging/production refuse to boot if this invariant is violated; promoting a dev profile with weaker validation to a player-facing environment requires an explicit config review and manual override that is documented in the runbooks.
+- Operators who intentionally want a shorter reconnection window than the JWT lifetime should make that choice explicit via environment profiles and documentation; in that case, reconnect flows will reject resumptions once the Redis TTL has elapsed even if the JWT remains technically valid.
 
 From a capacity perspective, gameplay sessions are treated as **part of the normal coordination footprint**, not as a separate, tightly budgeted workload. At the expected hobby/self-hosted scale and reconnection windows, `session:*` keys are assumed to consume a relatively small, bounded share of Coordination Redis memory compared to tick locks, timers, and pending state. The design therefore does **not** introduce explicit per-tenant session quotas or dedicated session Redis topologies by default; general coordination memory thresholds, eviction/OOM alerts, and the ability to lower session TTLs or limit concurrent sessions per tenant are considered sufficient safeguards. If real-world usage ever shows `session:*` keys dominating memory or triggering coordination `OOM` conditions, the preferred remediation is to adjust TTLs or admission-control limits first, and only consider new Redis deployments for sessions if those simple measures prove inadequate.
 
