@@ -92,12 +92,28 @@ Cache/Rate‑Limit Redis (gateway rate limiting, caches):
 | `FIREMUD_REDIS_CACHE_HOST` | Cache/Rate‑Limit Redis host | Defaults to `FIREMUD_REDIS_HOST` when unset |
 | `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis port | Defaults to `FIREMUD_REDIS_PORT` when unset |
 
+Precedence and safety rules:
+
+- In any **player-facing or shared test environment** (production, staging, QA, or load-testing clusters):
+  - Coordination clients must resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
+  - Cache/rate‑limit clients must resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
+  - The generic `FIREMUD_REDIS_HOST` / `FIREMUD_REDIS_PORT` pair is treated as **dev-only** and is ignored by coordination/cache clients when the more specific `*_COORD_*` / `*_CACHE_*` variables are set.
+- Services running with non‑`dev` Spring profiles **fail fast at startup** if:
+  - They require Coordination Redis but see only `FIREMUD_REDIS_HOST`/`PORT` and no `FIREMUD_REDIS_COORD_*`, or
+  - They require Cache/Rate‑Limit Redis but see only `FIREMUD_REDIS_HOST`/`PORT` and no `FIREMUD_REDIS_CACHE_*`.
+- In pure local‑dev setups, it is acceptable to point all three (`FIREMUD_REDIS_HOST`, `FIREMUD_REDIS_COORD_HOST`, and `FIREMUD_REDIS_CACHE_HOST`) at the same single‑node Redis instance, but this topology must **not** be reused for shared QA/staging/production without explicitly setting separate `*_COORD_*` / `*_CACHE_*` hosts.
+
 Player‑facing environments (production, staging, and any environment used to
 validate performance or correctness) **must** configure Coordination Redis and
 Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the
 same host/port for both in those environments is considered non‑compliant with
 the Redis architecture because it reintroduces eviction and latency coupling
-between coordination keys and cache/rate‑limit traffic.
+between coordination keys and cache/rate‑limit traffic. If an operator must
+deliberately run with a shared Redis instance in such an environment (for
+example, an extremely small self‑hosted deployment), they must opt in via a
+profile or environment flag dedicated to that purpose; accidental reuse of
+`FIREMUD_REDIS_HOST` for both coordination and cache traffic is treated as a
+configuration error, not a supported pattern.
 
 ### gRPC TLS Certificates
 

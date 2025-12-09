@@ -33,6 +33,8 @@ This document describes how FireMUD collects logs, metrics, and traces across al
   - Additional application metrics track:
     - Failed lock acquisitions per region (for example `redis.tick.lock_acquire_failed`) to highlight contention hotspots.
     - The ratio of replayed ticks to total ticks (for example `gamesession.tick.replayed_total` vs `gamesession.tick.executed_total`) so operators can see when idempotent recovery paths are being exercised frequently.
+    - Tick runtime safety margins per region, such as `gamesession.tick.execution_time_ms` histograms with derived ratios `p95(lock.ttl_ratio)` / `p99(lock.ttl_ratio)` that compare tick execution time to `lock_ttl_ms`. Regions where `p99` runtime regularly exceeds a configured fraction of `lock_ttl_ms` (for example `0.5×` for warning, `0.75×` for critical) are treated as **degraded** and surfaced in dashboards.
+    - Lock refresh usage, via counters such as `redis.tick.lock_refresh_requests_total` and `redis.tick.lock_refresh_denied_total`, so operators can detect commands that routinely rely on the optional lock refresh helper instead of completing within the normal lock TTL.
 - **Automation & Scripting metrics** surface scheduler, quota, and sandbox behavior:
   - Scheduler and budget meters such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `automation_script_queue_delay_seconds`, `automation_script_leadership_changes_total`, and `automation_script_tenant_budget_seconds{tenantId, tier}`.
   - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`.
