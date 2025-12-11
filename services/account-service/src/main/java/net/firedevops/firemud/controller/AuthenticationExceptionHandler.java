@@ -8,7 +8,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-/** Maps {@link AuthenticationException} to a structured API error so clients keep seeing predictable responses. */
+/**
+ * Maps {@link AuthenticationException} to a structured API error so clients keep seeing predictable
+ * responses.
+ */
 @RestControllerAdvice
 public class AuthenticationExceptionHandler {
   @ExceptionHandler(AuthenticationException.class)
