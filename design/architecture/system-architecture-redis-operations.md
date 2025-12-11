@@ -149,7 +149,30 @@ Smaller self-hosted deployments may prefer a single primary (with an optional re
 
 Fine-grained, live migration of mis-sharded coordination keys is **not** the default; it is considered an advanced, optional extension when dropping coordination state is unacceptable for particular tenants.
 
----
+## Dual-Leader Detection & Coordination Reset
+
+**Goal:** Detect Redis split-brain or conflicting primaries for coordination slots and recover via a coordinated reset before duplicate logical effects can escape the tick subsystem.
+
+**Signals**
+
+- Repeated `STALE_LEASE`, `UNSUPPORTED_EPOCH`, or other Lua script responses that reference inconsistent `region_epoch` values for the same `{tenantId, regionId}`.
+- PostgreSQL epoch validation rejecting writes because a second executor attempted to bump the same `coordination_meta` row with an older epoch.
+- Redis/Sentinel/Cluster alerts showing simultaneous primaries for the same hash slot or other signs of split-brain.
+
+**Runbook**
+
+1. Pause tick scheduling for the affected `{tenantId, regionId}` pairs (or globally if multiple slots are impacted).
+2. Verify the coordination metadata table’s `region_epoch` reflects the highest-authoritative epoch and that Redis has converged to a single primary for the impacted slots.
+3. Use the coordination reset tooling:
+   - Stop Redis or fail over to a clean node if necessary.
+   - Delete or recreate the AOF volume so the keyspace resets.
+   - Restart Redis, preload scripts, and allow the Game Session Service to acquire the new epoch.
+4. Clear or reconcile any stale metadata (locks, pending entries) in PostgreSQL if required.
+5. Resume ticks only once Redis, PostgreSQL, and the epoch metadata are consistent to guarantee a single executor is in charge again.
+
+Treat split-brain as an operational incident, not a service-level retry: the reset deliberately drops volatile coordination state and rebuilds it from PostgreSQL so that the single-authority invariant is re-established before gameplay continues.
+
+----
 
 ## Normalization and Hash-Tag Migration
 

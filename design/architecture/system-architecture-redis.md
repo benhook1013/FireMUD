@@ -142,6 +142,18 @@ These behaviors are treated as acceptable trade-offs for a high-performance tick
 - Truly non-loss-tolerant flows (for example, payments or cross-service sagas) avoid Redis-based tick coordination and instead use the stronger guarantees described in [Transaction Strategies](./system-architecture-transactions.md).
 - Metrics and alerts make any **skipped or replayed ticks** visible so operators can quantify impact and decide on tenant-specific remediation when needed.
 
+#### Trust Model & Split-Brain Assumptions
+
+The “at most one active tick executor per region” invariant depends on Redis behaving as a single authoritative coordination cluster per `{tenantId, regionId}` hash tag. In the event of Redis split-brain or dual primaries, two executors could independently observe a valid lease token and mutate their local keyspaces even though their histories diverge, violating the guarantees the tick system depends on.
+
+To stay resilient:
+
+- Deployments must prevent or quickly resolve split-brain through Redis cluster/Sentinel best practices; any confirmed dual-leader detection immediately marks the affected regions as `COORDINATION_UNTRUSTWORTHY`, pauses tick scheduling, and alerts operators to run the coordination reset tooling described in the runbooks.
+- Detection relies on both Redis-side signals (for example repeated `STALE_LEASE` or `UNSUPPORTED_EPOCH` responses from Lua scripts) and the PostgreSQL-backed epoch fence (added later in the leadership section), so operators can distinguish transient latency from a genuine split-brain.
+- The trust model explicitly treats Redis as single-writer for coordination prefixes; no automated fallback is provided for multi-primary contention—operator intervention and a coordinated reset are required before ticks resume.
+
+This section documents the boundary of the single-executor guarantee before the document moves on to network and deployment guidance.
+
 ### Network Security and Access Control
 
 Redis is treated as an **internal infrastructure component**, not a public-facing service:
@@ -370,6 +382,8 @@ Each `{tenantId, regionId}` is owned by a **single authoritative tick executor**
 
 - `tick-executor-lease:{tenantId}:{regionId}` – stores the current executor identity (for example a `nodeId` or `instanceId`) and an expiry.
 
+To guard against split-brain, the Game Session Service also tracks a PostgreSQL-backed `region_epoch` for each `{tenantId, regionId}` (for example in a `coordination_meta` table). Lease acquisition increments that `region_epoch` inside a `SELECT FOR UPDATE`, and the new epoch is stored alongside the Redis lease token. All Lua scripts and tick commit paths carry both the lease token and the current `region_epoch`, validating them together before mutating tick or retry state. If a Redis primary diverges during a partition, its epoch will be stale and every script or domain write against that epoch is treated as untrusted even if the Redis lease token still matches.
+
 Lease management is split into two distinct operations:
 
 - **Acquire:** When no lease exists for `{tenantId, regionId}`, a Game Session instance competes to acquire leadership using:
@@ -402,7 +416,7 @@ This lease acts as the **macro-level lock** for a region: it prevents multiple e
 
 To avoid “split-brain” scenarios during GC pauses or network stalls (for example, executor A holds the lease, pauses until its TTL expires, executor B acquires the lease, and then A resumes), the lease value stores a **random, opaque token** (for example, a UUID) in addition to the executor identity. The Game Session Service:
 
-- Treats this token as a **lease epoch** for `{tenantId, regionId}` and passes it as an argument to all tick-related Lua scripts along with `tickId`.
+ - Treats this token plus the PostgreSQL-backed `region_epoch` as a **lease epoch** for `{tenantId, regionId}` and passes both values as arguments to all tick-related Lua scripts along with `tickId`. The epoch is persisted in the coordination metadata table so failover or split-brain incidents can be detected even if Redis accepts divergent writes.
 - Requires every mutating script (staging, commit, rollback, timer updates, retry queue updates) to:
   - Read the current `tick-executor-lease:{tenantId}:{regionId}` value, and
   - Abort immediately if the stored lease token does not match the token it was invoked with.
