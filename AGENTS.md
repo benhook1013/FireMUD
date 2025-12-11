@@ -7,7 +7,7 @@ Please read the following documents before using AI tooling or submitting code c
 
 Gradle project paths do **not** include the `services:` prefix even though the modules live under the `services/` directory. Use commands like `./gradlew :tcp-proxy-service:test` instead of `./gradlew :services:tcp-proxy-service:test` when running or referencing tasks.
 
-When running heavier Gradle tasks/tests locally, prefer executing them inside WSL to avoid Windows file-locking issues. Use `dev-tools/sync-to-wsl.ps1` to mirror the repo into `~/firemud-wsl`, run `./gradlew <task>` from that directory, and sync changes back if needed.
+When running heavier Gradle tasks/tests locally, prefer executing them inside WSL to avoid Windows file-locking issues. Run `./gradlew <task>` from a WSL shell in this repository directory (for example `/mnt/c/.../FireMUD`).
 
 Before editing, run `dev-tools/print-lines-with-numbers.ps1 <file>` (optionally with `-StartLine`, `-Count`, and `-EndLine`) to view numbered ranges and pinpoint the slice you need without extra tooling.
 
