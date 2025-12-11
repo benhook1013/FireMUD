@@ -19,12 +19,12 @@ The invariants and contracts in `system-architecture-redis.md` remain authoritat
 
 **Goal:** Keep Coordination Redis restart behavior predictable and avoid unbounded AOF growth.
 
-**Targets**
+### Targets
 
 - Soft AOF size limit per node: **1–2 GiB**.
 - Typical restart time (AOF or RDB+AOF replay): **30–60 seconds**.
 
-**Runbook: AOF too large or restarts too slow**
+### Runbook: AOF too large or restarts too slow
 
 1. Confirm via metrics or `INFO`:
    - AOF size substantially exceeds the soft limit, or
@@ -47,14 +47,14 @@ Manual AOF “surgery” is **not supported**. Either the AOF is trusted and rep
 
 **Goal:** Roll out Lua script changes safely, knowing when coordination state must be reset.
 
-**Inputs**
+### Inputs
 
 - The **Lua Compatibility Registry** (in `firemud-common`) declares, per script:
   - `schemaVersionsSupported`.
   - `KEYS`/`ARGV` contract.
   - A compatibility tag: `compatible` or `breaking_requires_reset`.
 
-**Runbook: Upgrading scripts**
+### Runbook: Upgrading scripts
 
 1. Classify changes:
    - Tag each modified script as `compatible` or `breaking_requires_reset` based on the registry rules (no change to KEYS/ARGV shape, semantics, or supported schemas for `compatible`).
@@ -88,13 +88,13 @@ The registry remains the **single source of truth** for whether coordination sta
 
 **Goal:** Handle Redis replica promotion without violating tick/replay guarantees.
 
-**Facts**
+### Facts
 
 - Coordination Redis uses **asynchronous replication**.
 - A promoted replica may be missing recent coordination writes.
 - The **new primary’s keyspace is authoritative** after promotion.
 
-**Behavior**
+### Behavior
 
 - Promotion from a replica with modest lag is equivalent to a small AOF tail-loss window:
   - Missing keys are treated as if they never existed.
@@ -103,13 +103,13 @@ The registry remains the **single source of truth** for whether coordination sta
   - Mutating scripts validate lease tokens, lock tokens, `tickId`, and `generation` before writing.
   - The tick effect ledger and idempotency guards in PostgreSQL remain the source of truth for “has this effect applied?”
 
-**Lag envelopes (tie lag to tick interval)**
+### Lag envelopes (tie lag to tick interval)
 
 - **Target:** p99 replication lag < ~0.25 × `tick_interval_ms`.
 - **Warning:** sustained lag between ~0.25 × and 1.0 × `tick_interval_ms`.
 - **Red line:** lag ≥ 1× `tick_interval_ms` for a shard.
 
-**Runbook: Promotion decisions**
+### Runbook: Promotion decisions
 
 1. Monitor replication lag via metrics (see Observability section in the main Redis doc).
 2. If lag is within the **target** envelope:
@@ -135,7 +135,7 @@ Smaller self-hosted deployments may prefer a single primary (with an optional re
 
 **Coordination keys** (`tick:*`, `timer:*`, `retry:*`, `remote:*`, leases, and tick-related locks) are treated as volatile and backed by PostgreSQL + replay.
 
-**Runbook: Mis-sharded coordination keys**
+### Runbook: Mis-sharded coordination keys
 
 1. Detect the issue:
    - Hash-tag or key-shape mistakes discovered via CI, logs, or metrics (for example, CROSSSLOT errors or inconsistent region placement).
@@ -157,7 +157,7 @@ Fine-grained, live migration of mis-sharded coordination keys is **not** the def
 
 See the “Hash Tag Normalization” section in `system-architecture-redis.md` for the conceptual contract. This section focuses on the operational steps.
 
-**Runbook: Normalization migration via reset (simplest path)**
+### Runbook: Normalization migration via reset (simplest path)
 
 1. Plan the change:
    - Implement the new normalization version (for example `NORMALIZATION_V2`) in shared helpers.
@@ -172,7 +172,7 @@ See the “Hash Tag Normalization” section in `system-architecture-redis.md` f
    - Existing game instances may require restart or reconnection.
    - Coordination state is rebuilt from PostgreSQL and new activity.
 
-**Runbook: In-place normalization migration (advanced option)**
+### Runbook: In-place normalization migration (advanced option)
 
 When dropping all coordination state is not acceptable, operators may implement a dedicated migration tool using the shared key builders:
 
@@ -190,4 +190,3 @@ When dropping all coordination state is not acceptable, operators may implement 
 6. Separately, perform any required Redis Cluster resharding as a **later, independent maintenance** once normalization is stable.
 
 For most self-hosted deployments, the **reset-based migration** is preferred. In-place migrations are reserved for cases where coordination state for specific tenants cannot simply be dropped.
-

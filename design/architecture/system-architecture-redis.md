@@ -323,7 +323,9 @@ These conventions provide **logical tenant isolation** at the keyspace level. Ev
 
 We also track lightweight per-tenant counters for key counts, queue length, and timer density, but those budgets only become enforceable when the shard already shows contention signals from the observability contract (lock-acquire failures, eviction spikes, high blocked-client duration). Once a tenant-region pair contributes to a degraded shard, the scheduler temporarily sheds its new commands, retries them later in the tick cycle, and logs `redis.tick.tenant_queue_length_exceeded` so dashboards highlight which tenant triggered the mitigation. When the shard is quiet, tenants may use the full headroom—this keeps the fairness rules dormant until contention exists while still giving you a lever to protect other tenants when a noisy workload starts to dominate.
 
-### Key Format Examples (Cheat Sheet)
+### Key Format Examples
+
+Cheat Sheet
 
 This table lists the most important coordination keys and their responsibilities.
 
