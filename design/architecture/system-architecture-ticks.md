@@ -124,8 +124,7 @@ Lease expiry and failover remain strictly about **coordination safety** (avoidin
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
 - `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#key-naming-and-shard-discipline))
-- `SET NX PX` with expiry for exclusive ownership, via a shared lock helper
-- Lua-based atomic checks to avoid race conditions
+- **Lua-based lock/lease scripts** registered in the shared Lua Script Registry for acquisition, verification, and release. Tick and lease keys are **never** created or modified via ad-hoc `SET NX PX` calls; all coordination flows use the registry-backed Lua helpers so lock tokens and lease epochs are consistently enforced.
 
 In practice, the system keeps this simple by exposing a **single primary knob**—the region tick interval—and deriving lock/lease TTLs from that:
 
@@ -133,9 +132,11 @@ In practice, the system keeps this simple by exposing a **single primary knob**�
 - Internally, the Game Session Service computes a soft execution budget (for example `tick_budget_ms = tick_interval_ms * 0.8`) and then derives TTLs using fixed multipliers:
   - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
   - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)`
-- These multipliers are **hard-coded defaults** for hobby/self‑hosted deployments; they are chosen to give generous headroom for GC pauses and hiccups without requiring per‑environment tuning.
+- These multipliers are **hard-coded defaults** chosen to give generous headroom for GC pauses and hiccups without requiring per‑environment tuning. Deployment profiles that need different behavior can adjust `tick-interval-ms` and, optionally, the TTL safety multiplier described in the Redis architecture.
 
 This keeps configuration light—typically you only adjust `tick_interval_ms`—while still ensuring locks live long enough for normal work to finish and stale locks are cleared after a bounded window.
+
+Region health transitions (`HEALTHY` → `DEGRADED` → `HALTED`) and the thresholds that drive them are defined in [Redis Availability, Consistency, and Safety Guarantees](./system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees) and the Redis observability contract. This section focuses on how TTLs interact with that shared health model.
 
 Rare, extreme pauses (for example long GC) may still exceed `lock_ttl_ms`. In those cases:
 
@@ -184,13 +185,13 @@ Many gameplay commands conceptually touch **multiple entities** (for example tra
   - Coordination between legs (for example ensuring that both sides of a trade succeed or fail together) occurs via PostgreSQL and/or small coordinator records, not by holding multiple Redis entity locks simultaneously.
   - There is an explicit **fan-in cap** per command (for example `MAX_LOCKED_ENTITIES_PER_COMMAND`); features that need to touch more entities must do so over multiple ticks or via chunked follow-up commands.
 
-- **Exceptions require a global lock ordering and all-or-nothing behavior:**
+  - **Exceptions require a global lock ordering and all-or-nothing behavior:**
   - If a future command truly cannot be decomposed and must take more than one entity lock inside a single script, it **must** acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire locks in ascending order) and operate within a single `{tenantId, regionId}` shard; cross-region multi-lock commands are not allowed.
   - If any lock in that ordered set cannot be acquired, the script immediately releases all previously acquired locks, returns a contention result, and the Game Session Service reschedules the command using the standard backoff rules; no partial logical effects are applied for that command.
   - Such scripts are treated as special cases, reviewed carefully, and documented with their lock ordering assumptions and maximum entity counts. The Redis architecture and Lua Script Registry reinforce this by:
-    - Declaring, per script, a `max_entity_locks` value in the script descriptor (default `1` for normal tick scripts).
-    - Requiring explicit opt-in to an **ordered multi-lock** mode (and associated tests) for any script that needs `max_entity_locks > 1`.
-    - Failing CI when a Lua script attempts to use more entity lock keys than declared or bypasses the ordered multi-lock contract.
+    - Declaring, per script, a `max_entity_locks` value in the script descriptor (default `1` for normal tick scripts) and a **hard fan-in cap** (for example `MAX_ENTITY_LOCKS_PER_MULTI_LOCK_SCRIPT = 2`) for any multi-lock script. Scripts that need more than this cap are not permitted; their features must be redesigned to use one-lock-per-entity patterns.
+    - Maintaining an explicit, small **whitelist** of scripts allowed to set `max_entity_locks > 1` in the registry. Adding a new multi-lock script is treated as an architectural change and requires updating this whitelist and associated documentation; by default, no tick scripts are multi-lock.
+    - Failing CI when a Lua script attempts to use more entity lock keys than declared, bypasses the ordered multi-lock contract, or sets `max_entity_locks > 1` without being on the registry whitelist.
 
 By treating “one entity lock per script” as the default contract, enforcing a small, explicit fan-in cap, and reserving ordered multi-lock patterns for rare, all-or-nothing cases, the tick system:
 

@@ -687,6 +687,10 @@ Per-tenant and per-script metrics include:
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total`, tagged with reasons such as `quota`, `tenant_budget_exceeded`, or `cluster_limit_reached`.
 - `script_quota_allowed_total` / `script_quota_denied_total` for per-script quota checks.
 - Queue-level metrics such as `automation_queue_enqueued_total` and `automation_queue_drained_total` are defined and documented in the Automation & Scripting Service README and should be used alongside the metrics above to monitor how quickly automation queues are filling and draining per tenant and script.
+- A lightweight **orphan detection** signal helps catch drift between automation queues and tick execution:
+  - `automation_queue_orphaned_entries_total` counts work items that have remained in `automation_queue:{tenantId}:{entityId}` beyond a bounded age window (for example, N ticks or seconds) without corresponding staging in `automation:tick:{tenantId}:{scriptId}:...` or entries in the tick effect ledger.
+  - `automation_queue_oldest_entry_age_seconds` records the age of the oldest sampled queue item per tenant/script so operators can see when automation backlogs are failing to drain into ticks.
+  - A small, bounded inspector loop in `ScriptTickService` samples a subset of queues per interval to update these metrics; it does **not** attempt to repair or delete items itself, but surfaces misalignment between automation and tick processing for investigation.
 
 - **Outcome and policy context**
   - `outcome` – canonical outcome enum value (see [Failure Modes and Error Handling](#failure-modes-and-error-handling)), for example `success`, `quota_denied`, `skipped_disabled`, `tenant_budget_exceeded`, `disabled_unsafe_component`.
