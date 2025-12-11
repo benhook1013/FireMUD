@@ -1,15 +1,15 @@
 [versions]
 spring-boot = "3.5.5"
-flyway = "11.18.0"
+flyway = "11.19.0"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
 grpc = "1.77.0"
 protobuf = "4.33.1"
 opentelemetry = "1.57.0"
-micrometer = "1.16.0"
+micrometer = "1.16.1"
 jjwt = "0.13.0"
-aws-sdk = "2.40.3"
+aws-sdk = "2.40.6"
 argon2 = "2.12"
 h2 = "2.4.240"
 
@@ -65,11 +65,11 @@ postgresql = { module = "org.postgresql:postgresql", version = "42.7.8" }
 aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "aws-sdk" }
 h2 = { module = "com.h2database:h2", version.ref = "h2" }
 
-springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "2.8.9" }
-stripe-java = { module = "com.stripe:stripe-java", version = "29.3.0" }
+springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.0" }
+stripe-java = { module = "com.stripe:stripe-java", version = "31.0.0" }
 otp-java = { module = "com.github.bastiaanjansen:otp-java", version = "2.1.0" }
-slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.13" }
-spring-cloud-gateway = { module = "org.springframework.cloud:spring-cloud-starter-gateway", version = "4.3.0" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.17" }
+spring-cloud-gateway = { module = "org.springframework.cloud:spring-cloud-starter-gateway", version = "4.3.2" }
 
 [libraries.testcontainers-junit-jupiter]
 module = "org.testcontainers:junit-jupiter"
