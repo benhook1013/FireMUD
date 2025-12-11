@@ -128,7 +128,7 @@ Operational dashboards track `used_memory`, `maxmemory`, and eviction counters f
 - Alert when eviction counters climb steadily while `keyspace_hits` drop or `blocked_clients` rise, which usually signals a hot key or TTL that is too long.
 - Alert when memory usage grows despite expected TTL decay so cache scans can be inspected before coordination workloads are affected.
 
-These alerts keep you aware of misconfigurations early without hard-coding percentages that don’t make sense at hobby scale.
+These alerts keep you aware of misconfigurations early without hard-coding percentages that don’t make sense at small self-hosted scale.
 
 Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestRateLimiter`) should be designed to avoid **hot keys** under heavy load:
 
