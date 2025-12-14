@@ -25,8 +25,8 @@ jobs:
             const pr = context.payload.pull_request;
             if (!pr) return;
 
-            // Only auto-merge into main and non-draft PRs
-            if (pr.base.ref !== 'main' || pr.draft) {
+            // Only auto-merge non-draft PRs into develop/main
+            if (!['develop', 'main'].includes(pr.base.ref) || pr.draft) {
               core.info(`Skipping PR #${pr.number} (base=${pr.base.ref}, draft=${pr.draft})`);
               return;
             }
