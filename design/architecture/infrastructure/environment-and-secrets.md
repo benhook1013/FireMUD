@@ -59,17 +59,12 @@ These values are typically provided via Kubernetes Secrets in production.
 
 ### Redis Connection
 
-Redis stores transient queues and caches. In **player-facing environments** the
-architecture uses separate Redis deployments for:
+Redis stores transient queues and caches. All environments, including local development, use **separate Redis deployments** for:
 
 - **Coordination Redis** – tick locks, timers, sessions, and other
   gameplay‑critical coordination keys.
 - **Cache/Rate‑Limit Redis** – gateway rate limiting and best‑effort read‑side
   caches.
-
-For **local development and low‑concurrency lab environments**, a single Redis
-instance is acceptable. In that case, all services may point at the same host
-and port.
 
 Baseline variables (primarily for development and simple single‑node setups):
 
@@ -94,26 +89,22 @@ Cache/Rate‑Limit Redis (gateway rate limiting, caches):
 
 Precedence and safety rules:
 
-- In any **player-facing or shared test environment** (production, staging, QA, or load-testing clusters):
-  - Coordination clients must resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
-  - Cache/rate‑limit clients must resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
-  - The generic `FIREMUD_REDIS_HOST` / `FIREMUD_REDIS_PORT` pair is treated as **dev-only** and is ignored by coordination/cache clients when the more specific `*_COORD_*` / `*_CACHE_*` variables are set.
+- All Spring profiles (dev and non‑dev) are expected to configure distinct endpoints for coordination and cache/rate-limit traffic:
+  - Coordination clients resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
+  - Cache/rate‑limit clients resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
+  - The generic `FIREMUD_REDIS_HOST` / `FIREMUD_REDIS_PORT` pair is retained for backwards compatibility and simple local setups, but should typically point at the same host as `FIREMUD_REDIS_COORD_HOST` while `FIREMUD_REDIS_CACHE_HOST` points at a second instance.
 - Services running with non‑`dev` Spring profiles **fail fast at startup** if:
-  - They require Coordination Redis but see only `FIREMUD_REDIS_HOST`/`PORT` and no `FIREMUD_REDIS_COORD_*`, or
-  - They require Cache/Rate‑Limit Redis but see only `FIREMUD_REDIS_HOST`/`PORT` and no `FIREMUD_REDIS_CACHE_*`.
-- In pure local‑dev setups, it is acceptable to point all three (`FIREMUD_REDIS_HOST`, `FIREMUD_REDIS_COORD_HOST`, and `FIREMUD_REDIS_CACHE_HOST`) at the same single‑node Redis instance, but this topology must **not** be reused for shared QA/staging/production without explicitly setting separate `*_COORD_*` / `*_CACHE_*` hosts.
+  - They require Coordination Redis but lack `FIREMUD_REDIS_COORD_*`, or
+  - They require Cache/Rate‑Limit Redis but lack `FIREMUD_REDIS_CACHE_*`.
 
-Player‑facing environments (production, staging, and any environment used to
+Player‑facing environments (production, staging, QA, and any environment used to
 validate performance or correctness) **must** configure Coordination Redis and
 Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the
 same host/port for both in those environments is considered non‑compliant with
 the Redis architecture because it reintroduces eviction and latency coupling
-between coordination keys and cache/rate‑limit traffic. If an operator must
-deliberately run with a shared Redis instance in such an environment (for
-example, an extremely small self‑hosted deployment), they must opt in via a
-profile or environment flag dedicated to that purpose; accidental reuse of
-`FIREMUD_REDIS_HOST` for both coordination and cache traffic is treated as a
-configuration error, not a supported pattern.
+between coordination keys and cache/rate‑limit traffic. Any ad-hoc “single Redis
+for all roles” topology is treated as an unsupported experiment and must not be
+used for shared or player-facing environments.
 
 ### gRPC TLS Certificates
 
@@ -158,12 +149,13 @@ is described in [System Architecture: Security](../system-architecture-security.
 | `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Server-side session TTL in milliseconds and Redis session key TTL | `3600000` |
+| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
 
-`FIREMUD_AUTH_SESSION_EXPIRATION_MS` defines the maximum window during which a disconnected gameplay session can be
-resumed. The Game Session Service uses this value both for its in-memory/session bookkeeping and as the TTL for
-`session:{tenantId}:{sessionId}` keys in Redis (see [Redis Architecture](../system-architecture-redis.md#session-keys-and-gameplay-binding)).
-After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
+Server-side gameplay sessions use a **derived lifetime** instead of a separately tuned TTL knob:
+
+- `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
+
+This value defines the maximum window during which a disconnected gameplay session can be resumed. The Game Session Service uses the derived value both for its in-memory/session bookkeeping and as the TTL for `session:{tenantId}:{sessionId}` keys in Redis (see [Redis Architecture](../system-architecture-redis.md#session-keys-and-gameplay-binding)). After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
 
 ### Service Discovery
 

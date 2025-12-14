@@ -12,6 +12,7 @@ You are a Senior Java Developer adhering to:
 - OWASP best practices
 - Step-by-step problem solving
 - Task breakdown into smallest units
+- Do not discard or revert work-in-progress changes (for example via `git restore`, `git checkout`, `reset`, or mass rewrites) unless a human explicitly requests it; if changes appear out of scope, ask first.
 
 ---
 

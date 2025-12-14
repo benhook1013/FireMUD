@@ -94,6 +94,46 @@ Tick coordination relies on Redis for the fast staging surface, but PostgreSQL r
 
 With this contract, operators and automation can detect whether replay occurred, how long effects sat in `SCHEDULED`, and whether any stale `pending` entries were consciously abandoned instead of silently forgotten.
 
+### Tick Effect Identity and Idempotency Contract
+
+Redis coordination and AOF replay provide **at-least-once execution** for tick work, not exactly-once. Network retries, executor failover, and AOF replay can all cause the same logical tick effect to be attempted more than once. FireMUD therefore pins replay safety to an explicit, cross-service idempotency contract.
+
+#### Canonical `EffectId`
+
+Every tick effect has a canonical identity (`EffectId`) that is deterministic and stable across retries and replay.
+
+`EffectId` is treated as a structured tuple composed of:
+
+- `tenantId`
+- `tickId` (the region tick counter for `{tenantId, regionId}`)
+- `effectKey` (a stable, human-readable effect descriptor such as `damage:entity:<id>:command:<commandId>` or `move:entity:<id>:to_room:<roomId>:command:<commandId>`)
+- `targetAggregateType` (for example `ENTITY`, `INVENTORY`, `ROOM_STATE`, `QUEST`, `ACHIEVEMENT`)
+- `targetAggregateId` (the stable ID of the aggregate root being mutated)
+- Optional `domainScope` (for example `entity-management`, `world-management`) when needed to avoid collisions across independently owned domains
+
+The Game Session Service derives `EffectId` values while computing tick outcomes, records the `effectKey` in the tick effect ledger, and passes `EffectId` to every tick-invoked domain mutation call. Services must not generate fresh random request identifiers for idempotency in tick paths; the canonical identity is derived from tick context and target aggregate identity.
+
+#### Required Endpoint Retry Semantics
+
+Every gRPC endpoint that can be invoked from tick execution must document and implement:
+
+- **Duplicate handling:** duplicate `EffectId` must return **OK / no-op** semantics (for example “already applied”) rather than an application error that triggers indefinite retries.
+- **Already-in-desired-state:** if the domain state already reflects the intended outcome (for example item already added, quest already advanced), the endpoint returns OK with an “already applied” outcome and does not emit additional side effects.
+- **Retry classification:** errors must be classified as retryable (transient infrastructure issues) vs terminal (invalid inputs, missing aggregates). Terminal errors must transition the tick effect ledger to `ABANDONED` with a reason instead of causing infinite retries.
+
+This ensures that idempotent storage is matched by idempotent error semantics: “replayed work” converges rather than thrashing.
+
+#### Side-Effect Categories and Enforced Idempotency Primitives
+
+Services may implement idempotency using different persistence primitives, but the mechanism for each side-effect category must be explicit and tied back to `EffectId`:
+
+- **Award once** (items, currency, XP): a durable “effect applied” ledger keyed by `EffectId` (or a unique equivalent) with insert-if-absent semantics; if the insert fails due to uniqueness, treat as already applied and return OK.
+- **Monotonic state changes** (achievements/unlocks): a monotonic field or unique constraint (for example `(tenantId, playerId, achievementId)` unique) plus a mapping to `EffectId` when the achievement triggers additional side effects (rewards, notifications).
+- **Notifications / events:** transactional outbox entries keyed by `EffectId` (often `eventId == EffectId`); producer-side dedup is primary, consumer-side dedup is defense-in-depth.
+- **State transitions / versioned aggregates:** compare-and-set/version checks must treat replay-stale writes as OK/no-op outcomes, not as “conflict” errors that cause retries forever.
+
+The design intentionally treats “idempotent tick effects” as a **service-level guarantee**: Redis and the tick effect ledger provide replay orchestration and visibility, while each owning domain service ensures its persistent mutations and side effects are safe to attempt multiple times.
+
 ### Region Progress vs Lease Ownership
 
 Region leases are intentionally **short‑lived coordination hints**, not full health indicators. It is possible for an executor to:

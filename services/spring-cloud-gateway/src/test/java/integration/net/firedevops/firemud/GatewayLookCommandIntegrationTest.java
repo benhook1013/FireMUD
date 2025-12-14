@@ -31,8 +31,8 @@ import org.springframework.http.codec.ServerCodecConfigurer;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
-import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.CloseStatus;
+import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 import org.springframework.web.socket.TextMessage;
@@ -94,10 +94,10 @@ class GatewayLookCommandIntegrationTest {
   private static GatewayHolder startGateway() {
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(GatewayStubApplication.class)
-        .properties(
-            "server.port=0",
-            "spring.main.web-application-type=reactive",
-            "spring.main.allow-bean-definition-overriding=true")
+            .properties(
+                "server.port=0",
+                "spring.main.web-application-type=reactive",
+                "spring.main.allow-bean-definition-overriding=true")
             .run();
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GatewayHolder(context, port);
@@ -185,14 +185,14 @@ class GatewayLookCommandIntegrationTest {
       }
 
       Flux<String> commands =
-          session.receive()
+          session
+              .receive()
               .map(WebSocketMessage::getPayloadAsText)
               .map(String::trim)
               .filter(StringUtils::hasText)
               .doOnNext(stub::recordCommand);
 
-      Flux<WebSocketMessage> replies =
-          commands.map(cmd -> session.textMessage(responseFor(cmd)));
+      Flux<WebSocketMessage> replies = commands.map(cmd -> session.textMessage(responseFor(cmd)));
       return session.send(replies);
     }
 

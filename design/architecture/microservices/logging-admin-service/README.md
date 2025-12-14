@@ -10,10 +10,21 @@ Centralized logging and administration tools for the platform. Collects log data
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
 - Enforce moderation actions such as bans via secured APIs
 - Record audit trails for feature flag changes and account events.
+- Monitor **coordination and tick health** across tenants/regions and drive automated remediation where safe (for example, pausing ticks or triggering scoped coordination resets based on Redis/DB signals exposed by the Game Session Service).
 
 ## Architecture / Design Notes
 
-Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs and applying moderation actions. It consumes Kibana and Grafana APIs to embed existing dashboards within the admin interface.
+Uses the common stack outlined in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and exposes admin endpoints for reviewing logs, managing coordination health, and applying moderation actions. It consumes Kibana and Grafana APIs to embed existing dashboards within the admin interface.
+
+In addition to log and moderation tooling, the service acts as a **control-plane coordinator** for tick and coordination health:
+
+- Consumes metrics and health information published by the Game Session Service (for example, per-region status such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY`).
+- Exposes admin APIs and UI controls to:
+  - Pause or resume tick execution for specific `{tenantId, regionId}` pairs.
+  - Trigger **scoped coordination resets** using the runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) (for example, per-region or per-deployment resets).
+- Implements guarded automation that:
+  - Automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected.
+  - Optionally performs safe, narrow coordination resets (such as single-region resets with clean tick ledgers) without requiring an operator to be present, while still emitting audit events for every action.
 All admin APIs are secured via role-based access control integrated with the Account Service.
 
 - gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.

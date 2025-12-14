@@ -20,6 +20,7 @@
 | Session state storage (volatile, Redis) | | | | ✔ | | | | | | | |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |
+| Tick & coordination health metrics (per region) | | | | ✔ | | | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
 | NPC state, inventory, and stats | | | | | ✔ | | | | | | |
 | Player inventory and stats | | | | | ✔ | | | | | | |
@@ -39,6 +40,7 @@
 | Admin panel and feature flag toggling | | | | | | | | | ✔ | | |
 | Game moderation tools | | | | | | | | | ✔ | | |
 | Game moderation policy definition | | | | | | | | | ✔ | | |
+| Automated tick/coordination remediation (pause/resume/reset) | | | | | | | | | ✔ | | |
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |
 | Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
 | WebSocket upgrade, routing, and auth gateway | | | | | | | | | | | ✔ |

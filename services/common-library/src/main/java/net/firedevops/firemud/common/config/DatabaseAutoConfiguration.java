@@ -20,7 +20,11 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisTemplate;
 
 @Configuration
-@ConditionalOnProperty(prefix = "firemud.database", name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(
+    prefix = "firemud.database",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 @EnableConfigurationProperties({PostgresProperties.class, RedisProperties.class})
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",

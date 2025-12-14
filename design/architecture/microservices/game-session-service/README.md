@@ -10,6 +10,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Queue player commands and dispatch them to Game Logic Service
 - Broadcast lifecycle events and world updates to other services
 - Support reconnection and recovery of running games
+- Publish **coordination and tick health metrics** (per `{tenantId, regionId}`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
 
 ## Architecture / Design Notes
 

@@ -134,7 +134,7 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 variables.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
-JWT signing keys use `FIREMUD_AUTH_JWT_SECRET` or `FIREMUD_AUTH_JWT_SECRET_PATH` with lifetimes set by `FIREMUD_AUTH_JWT_EXPIRATION_MS` and `FIREMUD_AUTH_SESSION_EXPIRATION_MS`.
+JWT signing keys use `FIREMUD_AUTH_JWT_SECRET` or `FIREMUD_AUTH_JWT_SECRET_PATH`. Server-side session TTL is derived from JWT lifetime using `FIREMUD_AUTH_JWT_EXPIRATION_MS` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`.
 
 Additional variables configure outbound email delivery:
 
@@ -152,7 +152,7 @@ Additional variables configure outbound email delivery:
 | `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_AUTH_SESSION_EXPIRATION_MS` | Server-side session TTL in milliseconds | `3600000` |
+| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
 
 ## Proto Files
 
@@ -203,7 +203,11 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{tokenHash}`, where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT), and expire according to `session-expiration-ms` in `AuthProperties`. The TTL is configured via the `FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variable described in [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication).
+Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{tokenHash}`, where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). Their TTL is derived from the JWT lifetime:
+
+- `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
+
+See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication).
 
 ### Two-Factor Authentication
 

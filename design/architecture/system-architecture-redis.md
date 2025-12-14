@@ -95,6 +95,9 @@ Coordination Redis also enforces its role via ACL and simple self‑checks:
   `cache_app`) and ACLs that explicitly deny access to coordination prefixes,
   so even if environment variables are misconfigured, cache clients cannot read
   or mutate tick/session keys.
+- Human operators and generic tools connect via **read-only ops users** (for example `coord_ops_ro`) that:
+  - Are restricted to `@read` commands for coordination deployments.
+  - Are explicitly denied `EVAL`, `EVALSHA`, `SCRIPT LOAD`, and write commands (`SET`, `DEL`, `EXPIRE`, `PEXPIRE`, etc.) against coordination databases to prevent ad-hoc modification of tick/session prefixes from interactive shells.
 - Coordination clients perform a lightweight startup self‑check in non‑dev
   profiles (for example, verifying expected role markers or DB selections and
   confirming that scripts for tick/session prefixes can be loaded). If these
@@ -142,7 +145,7 @@ These behaviors are treated as acceptable trade-offs for a high-performance tick
 - Truly non-loss-tolerant flows (for example, payments or cross-service sagas) avoid Redis-based tick coordination and instead use the stronger guarantees described in [Transaction Strategies](./system-architecture-transactions.md).
 - Metrics and alerts make any **skipped or replayed ticks** visible so operators can quantify impact and decide on tenant-specific remediation when needed.
 
-#### Trust Model & Split-Brain Assumptions
+### Trust Model & Split-Brain Assumptions
 
 The “at most one active tick executor per region” invariant depends on Redis behaving as a single authoritative coordination cluster per `{tenantId, regionId}` hash tag. In the event of Redis split-brain or dual primaries, two executors could independently observe a valid lease token and mutate their local keyspaces even though their histories diverge, violating the guarantees the tick system depends on.
 
@@ -255,15 +258,15 @@ Manual “surgery” on AOF contents is **not supported** in FireMUD runbooks. E
 
 Operational runbooks (AOF sizing/reset, Lua upgrades, replica promotion, key-shape remediation, and normalization/hash-tag migration) are documented in detail in `system-architecture-redis-operations.md`. This section summarizes the core expectations:
 
-- Coordination Redis is **simple to reset**: when correctness can be re-established from PostgreSQL and idempotent replay, operators prefer to drop volatile coordination state and rebuild it rather than surgery on AOF contents.
+- Coordination Redis is **simple to reset** for workloads that are explicitly designed as **reset-tolerant**: when correctness can be re-established from PostgreSQL and idempotent replay, operators prefer to drop volatile coordination state and rebuild it rather than surgery on AOF contents.
 - Lua script changes are classified via the **Lua Compatibility Registry**; changes tagged `breaking_requires_reset` require a coordination reset, orchestrated by the upgrade planner and reset tooling.
 - Replica promotion is treated as an extension of the AOF tail-loss model; acceptable replication lag is tied to `tick_interval_ms`, and promoting from a significantly behind replica is treated as a deliberate “drop recent coordination state” event.
-- Mis-keyed or mis-sharded coordination keys are remediated via **coordination resets** using shared key builders and reset tools, rather than ad-hoc key rewrites.
+- Mis-keyed or mis-sharded coordination keys are remediated via **coordination resets** using shared key builders and reset tools, rather than ad-hoc key rewrites, but only for prefixes and workloads classified as reset-tolerant.
 - Normalization and hash-tag changes are handled via either:
   - A reset-based migration (simplest path, rebuild from PostgreSQL), or
   - An advanced in-place migration tool that rewrites keys using shared helpers while preserving shard-local invariants.
 
-Full procedures, including step-by-step actions and maintenance window guidance, are in `system-architecture-redis-operations.md`.
+Full procedures, including step-by-step actions and maintenance window guidance, are in `system-architecture-redis-operations.md`. That document also defines which prefixes and features are reset-tolerant versus **reset-sensitive** or **reset-forbidden**, and how reset tooling takes those classifications into account when planning and executing coordination resets.
 
 #### Replica Promotion and Missed Writes
 
@@ -273,6 +276,7 @@ From the tick system’s perspective this is equivalent to a larger AOF tail-los
 
 - Missing keys are treated as if they never existed; ticks, retries, and timers are either re-enqueued from surviving state/PostgreSQL or skipped within the same tail-loss envelope described earlier.
 - Stale keys cannot cause double-apply or split-brain behavior because all mutating scripts validate lease tokens, lock tokens, `tickId`, and `generation` fields before writing, and the tick effect ledger / idempotency guards in PostgreSQL remain the source of truth for “has this effect applied?”.
+- “No double-apply” ultimately depends on domain services applying tick effects idempotently with respect to a canonical `EffectId`, not on Redis providing exactly-once execution. The effect identity and idempotency contract is defined in [Tick Effect Identity and Idempotency Contract](./system-architecture-ticks.md#tick-effect-identity-and-idempotency-contract).
 
 Replication-lag metrics (see Observability) tie acceptable lag to the tick interval:
 
@@ -333,7 +337,15 @@ These conventions provide **logical tenant isolation** at the keyspace level. Ev
 
 ### Conditional Tenant Fairness
 
-We also track lightweight per-tenant counters for key counts, queue length, and timer density, but those budgets only become enforceable when the shard already shows contention signals from the observability contract (lock-acquire failures, eviction spikes, high blocked-client duration). Once a tenant-region pair contributes to a degraded shard, the scheduler temporarily sheds its new commands, retries them later in the tick cycle, and logs `redis.tick.tenant_queue_length_exceeded` so dashboards highlight which tenant triggered the mitigation. When the shard is quiet, tenants may use the full headroom—this keeps the fairness rules dormant until contention exists while still giving you a lever to protect other tenants when a noisy workload starts to dominate.
+FireMUD is designed for a **small/self-hosted** operational model where simplicity matters more than proactive per-tenant throttling. As a result, FireMUD does **not** enforce strict per-tenant fairness budgets by default.
+
+The system still tracks lightweight per-tenant counters for key counts, queue length, and timer density so operators can detect “noisy tenant” scenarios if they ever arise. If real-world usage later shows that one tenant can monopolize Coordination Redis capacity and push others into degraded states, FireMUD may add coarse, opt-in controls as a future design:
+
+- Alerting and dashboards that attribute coordination pressure to `{tenantId, regionId}`.
+- Manual operator controls to pause or throttle a tenant/region.
+- A small set of coarse admission controls (for example, max queue depth per tenant) that activate only after repeated incidents are observed.
+
+Until that need is proven, tenant fairness remains an observability-only concern rather than an enforced throttling system.
 
 ### Key Format Examples
 
@@ -416,7 +428,7 @@ This lease acts as the **macro-level lock** for a region: it prevents multiple e
 
 To avoid “split-brain” scenarios during GC pauses or network stalls (for example, executor A holds the lease, pauses until its TTL expires, executor B acquires the lease, and then A resumes), the lease value stores a **random, opaque token** (for example, a UUID) in addition to the executor identity. The Game Session Service:
 
- - Treats this token plus the PostgreSQL-backed `region_epoch` as a **lease epoch** for `{tenantId, regionId}` and passes both values as arguments to all tick-related Lua scripts along with `tickId`. The epoch is persisted in the coordination metadata table so failover or split-brain incidents can be detected even if Redis accepts divergent writes.
+- Treats this token plus the PostgreSQL-backed `region_epoch` as a **lease epoch** for `{tenantId, regionId}` and passes both values as arguments to all tick-related Lua scripts along with `tickId`. The epoch is persisted in the coordination metadata table so failover or split-brain incidents can be detected even if Redis accepts divergent writes.
 - Requires every mutating script (staging, commit, rollback, timer updates, retry queue updates) to:
   - Read the current `tick-executor-lease:{tenantId}:{regionId}` value, and
   - Abort immediately if the stored lease token does not match the token it was invoked with.
@@ -637,6 +649,7 @@ This yields a simple **client usage contract** for coordination Redis:
 - **Static analysis and CI**:
   - A repository-wide check fails builds if `EVAL`/`EVALSHA` literals, or direct `tick:`/`timer:`/`retry:`/`remote:` string prefixes, appear in non-test source sets outside `firemud-common`.
   - Shared tests in `firemud-common` are the only place where low-level Redis client calls for coordination prefixes are allowed; service modules use those helpers instead of talking to Redis directly.
+  - Additional linters and CI checks scan **dev-tools**, operational scripts, and Helm hooks to ensure they also avoid raw `EVAL` and hand-built coordination keys. Maintenance tooling that needs to inspect or manipulate coordination state must import the same shared helpers rather than issuing direct Redis commands.
 
 Scripts that hard-code non-hash-tagged tick keys, mix forbidden prefixes, or produce `CROSSSLOT` errors under tests are rejected.
 
@@ -952,6 +965,14 @@ To make sure locks do not routinely expire while legitimate work is still in fli
     - `tick.stale_lock_max_remaining_ttl_ms` repeatedly approaches `lock_ttl_ms`, indicating that new leaders are frequently waiting out nearly full lock TTLs.
   - Warning alerts fire when a region enters the stale-lock degraded state; critical alerts fire when it remains in that state beyond a hard, configurable window.
   - In extreme cases where stale locks effectively block most entities in a region until expiry, the scheduler may treat the region as temporarily halted and refuse new commands until the lock TTL window has passed or operators intervene.
+
+In addition to over-TTL and stale-lock signals, coordination scripts return **`STALE_LEASE` and `STALE_LOCK` outcomes** when epoch or token checks fail. The Game Session Service and the Logging & Admin control plane aggregate these into per-region counters (for example, `tick.stale_lease_total`, `tick.stale_lock_total`). Regions that see sustained rates of stale outcomes—even when Redis itself remains healthy—are automatically:
+
+- Marked **degraded** or **coordination-untrustworthy** depending on severity.
+- Subject to a tick slowdown or pause, and new commands into those regions may be rejected with explicit “region under load” errors instead of being endlessly retried.
+- Highlighted on dashboards and alerts so operators can address underlying causes (for example, heavy GC, slow downstream calls, or mis-sized tick budgets).
+
+For narrow, well-understood cases the Logging & Admin control plane may additionally trigger **scoped coordination resets** (as described in the Redis operations runbook) once a region remains in this state beyond a configured window. In all cases, epoch and token checks remain the source of correctness; TTLs serve as guardrails that drive degraded modes and remediation rather than silent failures.
 
 ### Graceful Degradation & Redis Outage Policy
 
@@ -1398,27 +1419,28 @@ Redis stores transient gameplay session state for each connected player, includi
 Session keys use the prefix `session:{tenantId}:{sessionId}` as described in the
 [Game Session Service README](./microservices/game-session-service/README.md#redis-keys). The `sessionId` is an opaque server-side identifier (for example, a UUID or a fixed-length hash derived from the underlying JWT or account/session tuple) chosen to keep key length bounded and independent of the raw token size.
 
-Session entries expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds as
-configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication). The Game Session
-Service sets the Redis TTL for each `session:{tenantId}:{sessionId}` key to this value when the session is created or
-refreshed. Once the TTL elapses:
+Session entries expire after a **derived session TTL** as configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication). The Game Session
+Service sets both:
 
-- The session key is removed from Redis.
-- Reconnect / resume flows for that `sessionId` are rejected as **expired**, and the player must perform a fresh `LOGIN`.
+- A **logical expiry timestamp** (for example `logicalExpiryAtMs = issuedAtMs + session_expiration_ms`) inside the structured value stored under `session:{tenantId}:{sessionId}`, and
+- The Redis TTL for each `session:{tenantId}:{sessionId}` key to the same derived duration when the session is created or refreshed.
+
+The logical expiry timestamp is treated as the **authoritative bound** on the reconnection window; the TTL is a best-effort enforcement mechanism that may drift slightly under AOF replay or failover but never extends the logical window.
+
+Once the logical expiry is reached:
+
+- The reconnect / resume flows for that `sessionId` are rejected as **expired** (the Game Session Service compares the embedded logical expiry timestamp against the current time on every resume attempt), and the player must perform a fresh `LOGIN` even if the Redis TTL has not yet removed the key due to restart/AOF drift.
+- The session key will naturally be removed from Redis once its TTL elapses.
 - Any associated volatile coordination state for that session (queued commands, conflict metadata) is treated as
   abandoned and will not be replayed.
 
-For reconnect flows, **presence of the `session:{tenantId}:{sessionId}` key in Coordination Redis is the sole authority for whether a session can be resumed**: if the key no longer exists, the session is treated as expired and cannot be resumed, even if related database records still exist for audit or game-instance lifecycle.
+For reconnect flows, **both the presence of the `session:{tenantId}:{sessionId}` key and an unexpired logical expiry timestamp are required for a session to be resumable**. If the key no longer exists, or if the logical expiry has passed, the session is treated as expired and cannot be resumed, even if related database records still exist for audit or game-instance lifecycle.
 
-In practice, `FIREMUD_AUTH_SESSION_EXPIRATION_MS` therefore defines the **maximum reconnection window** for gameplay
-sessions. Deployments should keep this value aligned with or slightly longer than `FIREMUD_AUTH_JWT_EXPIRATION_MS` so
-that JWT and server-side session lifetimes remain coherent. Configuration validation enforces this relationship in
-non-dev profiles:
+In practice, the derived `session_expiration_ms` defines the **maximum reconnection window** for gameplay sessions. It is intentionally computed from the JWT lifetime to eliminate subtle mismatches between “JWT still valid” and “server-side session already expired”:
 
-- `FIREMUD_AUTH_SESSION_EXPIRATION_MS` must be **greater than or equal to** `FIREMUD_AUTH_JWT_EXPIRATION_MS` (optionally plus a small safety margin). This ensures that, under normal conditions, a JWT never outlives its corresponding Redis session entry.
-- If configuration attempts to set a shorter Redis session TTL than the JWT lifetime in production or staging, the authentication and Game Session services treat it as a misconfiguration: startup fails fast (or falls back to a safe, derived TTL when running in special “emergency” contexts) and logs a clear error rather than silently allowing “JWT still valid but session state already expired” behavior.
-- Services running in staging/production refuse to boot if this invariant is violated; promoting a dev profile with weaker validation to a player-facing environment requires an explicit config review and manual override that is documented in the runbooks.
-- Operators who intentionally want a shorter reconnection window than the JWT lifetime should make that choice explicit via environment profiles and documentation; in that case, reconnect flows will reject resumptions once the Redis TTL has elapsed even if the JWT remains technically valid.
+- `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
+
+Services validate that `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` is non-negative in non-dev profiles and refuse to start if it is not, so the session window cannot be shorter than the JWT lifetime by accident. Operators who intentionally want a shorter reconnection window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a second, independent session TTL knob.
 
 From a capacity perspective, gameplay sessions are treated as **part of the normal coordination footprint**, not as a separate, tightly budgeted workload. At the expected self-hosted scale and reconnection windows, `session:*` keys are assumed to consume a relatively small, bounded share of Coordination Redis memory compared to tick locks, timers, and pending state. The design therefore does **not** introduce explicit per-tenant session quotas or dedicated session Redis topologies by default; general coordination memory thresholds, eviction/OOM alerts, and the ability to lower session TTLs or limit concurrent sessions per tenant are considered sufficient safeguards. If real-world usage ever shows `session:*` keys dominating memory or triggering coordination `OOM` conditions, the preferred remediation is to adjust TTLs or admission-control limits first, and only consider new Redis deployments for sessions if those simple measures prove inadequate.
 
@@ -1503,14 +1525,14 @@ When `UNSUPPORTED_SCHEMA_VERSION` appears in metrics or logs, runbooks treat it 
 - A sign that session schema or deployment versions are out of sync (for example, services writing a newer `schemaVersion` than the CAS script supports, or an incomplete rollback).
 - A trigger to:
   - Align deployments so all Game Session Service instances run scripts that understand the highest `schemaVersion` currently in use, and
-  - Optionally run a **session schema cleanup** tool for specific tenants that scans `session:{tenantId}:*` keys for unknown versions and deletes or aggressively expires those entries. Cleanup is run as a one-off, single-worker maintenance task (per Coordination Redis deployment) to avoid competing with ticks; because Redis sessions are non-authoritative and bounded by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`, removing unknown-version sessions is acceptable and affected players simply need to perform a fresh `LOGIN`.
+  - Optionally run a **session schema cleanup** tool for specific tenants that scans `session:{tenantId}:*` keys for unknown versions and deletes or aggressively expires those entries. Cleanup is run as a one-off, single-worker maintenance task (per Coordination Redis deployment) to avoid competing with ticks; because Redis sessions are non-authoritative and bounded by the derived `session_expiration_ms` window, removing unknown-version sessions is acceptable and affected players simply need to perform a fresh `LOGIN`.
 
 ### Session Schema Cleanup and Large Keyspaces
 
 Session schema cleanup is a **hygiene and recovery tool**, not a required part of normal operation:
 
 - The primary safety mechanisms for sessions are:
-  - TTL-based expiry governed by `FIREMUD_AUTH_SESSION_EXPIRATION_MS`.
+  - TTL-based expiry governed by the derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`).
   - The CAS script’s conservative behavior for unknown `schemaVersion` values (no mutation + explicit `UNSUPPORTED_SCHEMA_VERSION` outcome and metrics).
 - In steady state, it is acceptable to:
   - Rely on TTL for natural drainage of older or unknown-version sessions.
