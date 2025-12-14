@@ -8,7 +8,11 @@ import org.springframework.stereotype.Component;
 public class LookTextRenderer {
   public String render(LookResult result) {
     StringBuilder out = new StringBuilder();
-    out.append("Room: ").append(result.getRoomName()).append(" (ID: ").append(result.getRoomId()).append(")\n");
+    out.append("Room: ")
+        .append(result.getRoomName())
+        .append(" (ID: ")
+        .append(result.getRoomId())
+        .append(")\n");
     out.append("Short: ").append(result.getShortDescription()).append("\n");
     out.append("Long: ").append(result.getLongDescription()).append("\n");
     out.append("Exits: ");
@@ -25,9 +29,7 @@ public class LookTextRenderer {
           .append("\"")
           .append(entity.getRole().isEmpty() ? "" : " (" + entity.getRole() + ")");
       if (!entity.getStateFlagsList().isEmpty()) {
-        out.append(" [")
-            .append(String.join(",", entity.getStateFlagsList()))
-            .append("]");
+        out.append(" [").append(String.join(",", entity.getStateFlagsList())).append("]");
       }
       out.append("\n");
     }

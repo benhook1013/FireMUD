@@ -20,11 +20,7 @@ public class LookCacheTestConfiguration {
 
     @Override
     public void cache(
-        long tenantId,
-        long sessionId,
-        String roomId,
-        String renderedText,
-        String protocolText) {
+        long tenantId, long sessionId, String roomId, String renderedText, String protocolText) {
       cache.put(
           key(tenantId, sessionId),
           new CachedLook(roomId, renderedText, protocolText, System.currentTimeMillis()));

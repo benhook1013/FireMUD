@@ -1,9 +1,9 @@
 package net.firedevops.firemud.test;
 
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.gamelogic.v1.EntityType;
 import net.firedevops.firemud.gamelogic.v1.LookExit;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
-import net.firedevops.firemud.gamelogic.v1.EntityType;
 import net.firedevops.firemud.gamelogic.v1.RoomEntity;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
@@ -19,7 +19,8 @@ public final class LookTestFixtures {
     return RoomSnapshot.newBuilder()
         .setRoomId(ROOM_ID)
         .setRoomName(ROOM_NAME)
-        .setShortDescription("You stand in a basalt chamber warmed by the brazier near the western wall.")
+        .setShortDescription(
+            "You stand in a basalt chamber warmed by the brazier near the western wall.")
         .setLongDescription(
             "Stalactites drip along the northern wall while a faint draft carries the smell of "
                 + "damp earth from the lower tunnels. Torches flicker in alcoves, casting motion "

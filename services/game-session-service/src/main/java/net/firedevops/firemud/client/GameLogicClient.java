@@ -25,7 +25,9 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-@SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Injected configuration is stored internally")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected configuration is stored internally")
 public class GameLogicClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties grpcClientProperties;
@@ -48,7 +50,9 @@ public class GameLogicClient implements AutoCloseable {
       var sslContext =
           GrpcSslContexts.forClient()
               .trustManager(new File(grpcClientProperties.getCaCert()))
-              .keyManager(new File(grpcClientProperties.getCertChain()), new File(grpcClientProperties.getPrivateKey()))
+              .keyManager(
+                  new File(grpcClientProperties.getCertChain()),
+                  new File(grpcClientProperties.getPrivateKey()))
               .build();
       channel =
           NettyChannelBuilder.forAddress(host, port)
@@ -61,8 +65,7 @@ public class GameLogicClient implements AutoCloseable {
     stub = GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
-  public LookResult resolveLook(
-      String tenantId, String sessionId, String playerId, String roomId) {
+  public LookResult resolveLook(String tenantId, String sessionId, String playerId, String roomId) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)

@@ -21,14 +21,13 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import net.firedevops.firemud.cache.LookCacheService;
-import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 
 /** Simple Netty-based Telnet server that forwards input to the gateway via WebSocket. */
 @Component
@@ -90,7 +89,8 @@ public final class TelnetServer {
             activeConnections,
             java.util.concurrent.atomic.AtomicInteger::get)
         .register(meterRegistry);
-    Gauge.builder("tcpproxy.buffer.depth", bufferDepth, java.util.concurrent.atomic.AtomicInteger::get)
+    Gauge.builder(
+            "tcpproxy.buffer.depth", bufferDepth, java.util.concurrent.atomic.AtomicInteger::get)
         .register(meterRegistry);
     meterRegistry.counter("tcpproxy.websocket.reconnects").increment(0.0);
     if (tlsEnabled) {
@@ -109,7 +109,8 @@ public final class TelnetServer {
   private void validateTlsConfiguration() {
     if (!StringUtils.hasText(certPath) || !StringUtils.hasText(keyPath)) {
       tlsMisconfigCounter.increment();
-      String message = "TCP proxy TLS is enabled but TCP_PROXY_TLS_CERT and TCP_PROXY_TLS_KEY must be set";
+      String message =
+          "TCP proxy TLS is enabled but TCP_PROXY_TLS_CERT and TCP_PROXY_TLS_KEY must be set";
       logger.error(message);
       throw new IllegalStateException(message);
     }
@@ -121,7 +122,10 @@ public final class TelnetServer {
       String message =
           "TCP proxy TLS configuration invalid: certificate or key file does not exist or is unreadable";
       logger.error(
-          "{} (certPath={}, keyPath={})", message, certFile.getAbsolutePath(), keyFile.getAbsolutePath());
+          "{} (certPath={}, keyPath={})",
+          message,
+          certFile.getAbsolutePath(),
+          keyFile.getAbsolutePath());
       throw new IllegalStateException(message);
     }
   }
@@ -147,20 +151,20 @@ public final class TelnetServer {
                       .addLast(new LineBasedFrameDecoder(1024, false, true))
                       .addLast(new StringDecoder(StandardCharsets.ISO_8859_1))
                       .addLast(new StringEncoder(StandardCharsets.ISO_8859_1))
-                          .addLast(
-                              new TelnetServerHandler(
-                                  gatewayWsUrl,
-                                  devIsolated,
-                                  activeConnections::incrementAndGet,
-                                  activeConnections::decrementAndGet,
-                                  connectionCounter,
-                                  discardedCommandCounter,
-                                  advertiseMcp,
-                                  meterRegistry,
-                                  TelnetServerHandler::createWebSocket,
-                                  eventService,
-                                  bufferDepth,
-                                  lookCacheService));
+                      .addLast(
+                          new TelnetServerHandler(
+                              gatewayWsUrl,
+                              devIsolated,
+                              activeConnections::incrementAndGet,
+                              activeConnections::decrementAndGet,
+                              connectionCounter,
+                              discardedCommandCounter,
+                              advertiseMcp,
+                              meterRegistry,
+                              TelnetServerHandler::createWebSocket,
+                              eventService,
+                              bufferDepth,
+                              lookCacheService));
                 }
               });
       serverChannel = b.bind(port).sync().channel();
@@ -190,8 +194,7 @@ public final class TelnetServer {
       }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-    }
-    finally {
+    } finally {
       serverChannel = null;
     }
     bossGroup.shutdownGracefully();

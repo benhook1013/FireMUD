@@ -8,22 +8,19 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.client.AccountClient;
 import net.firedevops.firemud.client.GameLogicClient;
-import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.command.text.LoginCommandHandler;
 import net.firedevops.firemud.command.text.LookCommandHandler;
 import net.firedevops.firemud.command.text.LookTextRenderer;
-import net.firedevops.firemud.command.text.LoginCommandHandler;
-import net.firedevops.firemud.command.text.TextCommand;
-import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.SayCommandHandler;
+import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
-import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameLogicProperties;
 import net.firedevops.firemud.config.GameSessionProperties;
@@ -46,7 +43,8 @@ class SessionResumptionFlowTest {
   private static final String LOOK_PAYLOAD = "LOOK";
 
   private final CommandService commandService = Mockito.mock(CommandService.class);
-  private final GameInstanceRepository instanceRepository = Mockito.mock(GameInstanceRepository.class);
+  private final GameInstanceRepository instanceRepository =
+      Mockito.mock(GameInstanceRepository.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
@@ -122,21 +120,17 @@ class SessionResumptionFlowTest {
 
   @Test
   void secondConnectionResumesAndContinuesLookFlow() {
-    TextCommandInterpretationResult firstLogin =
-        interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(firstLogin.commandResult().accepted());
 
-    TextCommandInterpretationResult firstLook =
-        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
     assertEquals("OK LOOK text", firstLook.responseText());
 
-    TextCommandInterpretationResult secondLogin =
-        interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
 
-    TextCommandInterpretationResult secondLook =
-        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    TextCommandInterpretationResult secondLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
     assertEquals("OK LOOK text", secondLook.responseText());
 
@@ -146,18 +140,14 @@ class SessionResumptionFlowTest {
 
   @Test
   void secondConnectionTakesOverAndFirstConnectionIsUnauthenticated() {
-    TextCommandInterpretationResult firstLogin =
-        interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(firstLogin.commandResult().accepted());
-    TextCommandInterpretationResult firstLook =
-        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
 
-    TextCommandInterpretationResult secondLogin =
-        interpreter.interpret("2", LOGIN_PAYLOAD, false);
+    TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
-    TextCommandInterpretationResult secondLook =
-        interpreter.interpret("2", LOOK_PAYLOAD, false);
+    TextCommandInterpretationResult secondLook = interpreter.interpret("2", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
     assertEquals("OK LOOK text", secondLook.responseText());
 
@@ -190,7 +180,8 @@ class SessionResumptionFlowTest {
     }
 
     @Override
-    public Optional<SessionContext> findByAccountAndPlayer(long tenantId, long accountId, long playerId) {
+    public Optional<SessionContext> findByAccountAndPlayer(
+        long tenantId, long accountId, long playerId) {
       return Optional.ofNullable(identityMap.get(identityKey(tenantId, accountId, playerId)));
     }
 

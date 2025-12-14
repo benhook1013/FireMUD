@@ -7,14 +7,13 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.File;
-import java.nio.file.Path;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
-import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.WorldManagementServiceBlockingStub;
-import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
@@ -78,9 +77,12 @@ public class GameLogicGrpcClientConfig {
     if (grpcClientProperties.isPlaintext()) {
       return ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
     }
-    var sslBuilder = GrpcSslContexts.forClient().trustManager(new File(grpcClientProperties.getCaCert()));
+    var sslBuilder =
+        GrpcSslContexts.forClient().trustManager(new File(grpcClientProperties.getCaCert()));
     if (grpcClientProperties.getCertChain() != null) {
-      sslBuilder.keyManager(new File(grpcClientProperties.getCertChain()), new File(grpcClientProperties.getPrivateKey()));
+      sslBuilder.keyManager(
+          new File(grpcClientProperties.getCertChain()),
+          new File(grpcClientProperties.getPrivateKey()));
     }
     return NettyChannelBuilder.forAddress(host, port).sslContext(sslBuilder.build()).build();
   }

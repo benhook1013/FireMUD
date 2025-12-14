@@ -2,9 +2,13 @@ package crossservice.net.firedevops.firemud;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
+import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.stub.StreamObserver;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Tracer;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -31,57 +35,53 @@ import net.firedevops.firemud.GameLogicServiceApplication;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
+import net.firedevops.firemud.common.config.CommonAutoConfiguration;
+import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.config.GameSessionProperties;
+import net.firedevops.firemud.config.GrpcClientProperties;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
+import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.GatewayRoute;
 import net.firedevops.firemud.service.GatewayRouteService;
-import net.firedevops.firemud.service.GameInstanceService;
+import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
+import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.test.ChatTestFixtures;
 import net.firedevops.firemud.test.LookTestFixtures;
 import net.firedevops.firemud.test.stubs.ChatEntityManagementStubServer;
 import net.firedevops.firemud.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.test.stubs.WorldManagementStubServer;
-import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
-import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
-import io.opentelemetry.api.GlobalOpenTelemetry;
-import io.opentelemetry.api.trace.Tracer;
-import org.lognet.springboot.grpc.GRpcServicesRegistry;
-import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
-import io.grpc.health.v1.HealthCheckResponse;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
+import org.lognet.springboot.grpc.GRpcServicesRegistry;
+import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.TestSocketUtils;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
-import net.firedevops.firemud.config.GameSessionProperties;
-import net.firedevops.firemud.config.GrpcClientProperties;
-import org.springframework.boot.SpringBootConfiguration;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.domain.EntityScan;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -119,8 +119,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static GatewayHolder GATEWAY;
 
   @Autowired private TelnetServer telnetServer;
+
   @SuppressWarnings("removal")
-  @MockBean private GRpcServerRunner grpcServerRunner;
+  @MockBean
+  private GRpcServerRunner grpcServerRunner;
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
@@ -178,7 +180,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
         PrintWriter writer =
             new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1), true);
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
         BufferedReader reader =
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
@@ -200,8 +203,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(websocketResponses.get(1).trim())
         .isEqualTo(LookTestFixtures.canonicalLookText().trim());
     assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(0));
-    assertThat(telnetLookResponse.trim())
-        .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+    assertThat(telnetLookResponse.trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
 
     assertThat(ACCOUNT_STUB.capturedRequests())
         .anyMatch(
@@ -218,7 +220,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
         PrintWriter writer =
             new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1), true);
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
         BufferedReader reader =
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
@@ -235,8 +238,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         .hasValueSatisfying(
             request -> {
               assertThat(request.getContent()).isEqualTo("Hello travelers");
-      assertThat(request.getType())
-          .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+              assertThat(request.getType())
+                  .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
             });
 
     assertMetricEventually("gamesession_command_say_invocations_total{tenantId=\"1\"}", 1.0);
@@ -358,9 +361,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.datasource.password", POSTGRES.getPassword());
     props.put("spring.jpa.hibernate.ddl-auto", "none");
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GameSessionTestApplication.class)
-            .properties(props)
-            .run();
+        new SpringApplicationBuilder(GameSessionTestApplication.class).properties(props).run();
 
     JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
     jdbc.execute(
@@ -383,9 +384,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             "initial",
             ACCOUNT_ID,
             "ACTIVE");
-    int port = ((org.springframework.boot.web.context.WebServerApplicationContext) context)
-        .getWebServer()
-        .getPort();
+    int port =
+        ((org.springframework.boot.web.context.WebServerApplicationContext) context)
+            .getWebServer()
+            .getPort();
     return new GameSessionHolder(context, port, insertedId);
   }
 
@@ -397,9 +399,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 "spring.main.web-application-type=reactive",
                 "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game")
             .run();
-    int port = ((org.springframework.boot.web.context.WebServerApplicationContext) context)
-        .getWebServer()
-        .getPort();
+    int port =
+        ((org.springframework.boot.web.context.WebServerApplicationContext) context)
+            .getWebServer()
+            .getPort();
     return new GatewayHolder(context, port);
   }
 

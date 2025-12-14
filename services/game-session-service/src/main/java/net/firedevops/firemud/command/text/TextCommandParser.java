@@ -14,12 +14,13 @@ public class TextCommandParser {
 
     String[] tokens = trimmed.split("\\s+");
     TextCommandType type = TextCommandType.fromToken(tokens[0]);
-    List<String> args = switch (type) {
-      case LOGIN -> parseRemainingTokens(tokens);
-      case LOOK, NOOP -> List.of();
-      case SAY -> extractSayMessage(trimmed);
-      case UNKNOWN -> parseRemainingTokens(tokens);
-    };
+    List<String> args =
+        switch (type) {
+          case LOGIN -> parseRemainingTokens(tokens);
+          case LOOK, NOOP -> List.of();
+          case SAY -> extractSayMessage(trimmed);
+          case UNKNOWN -> parseRemainingTokens(tokens);
+        };
     return new TextCommand(type, args, source);
   }
 

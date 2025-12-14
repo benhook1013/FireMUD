@@ -13,8 +13,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(scanBasePackages = "net.firedevops.firemud")
 @EnableScheduling
-@EnableConfigurationProperties(
-    {GrpcClientProperties.class, GameSessionProperties.class, GameLogicProperties.class})
+@EnableConfigurationProperties({
+  GrpcClientProperties.class,
+  GameSessionProperties.class,
+  GameLogicProperties.class
+})
 @Import({DatabaseAutoConfiguration.class, CommonAutoConfiguration.class})
 public class GameSessionServiceApplication {
   public static void main(String[] args) {

@@ -33,7 +33,8 @@ public class SayCommandHandler {
     Objects.requireNonNull(sessionId, "sessionId must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
-    Optional<SessionContext> maybeContext = sessionAuthenticationService.resolveSessionContext(sessionId);
+    Optional<SessionContext> maybeContext =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
     String tenantTag = determineTenantTag(maybeContext);
     meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
 
@@ -75,8 +76,7 @@ public class SayCommandHandler {
                 ? response.getError().getCode()
                 : "UNAVAILABLE";
         logFailure(errorTag, errorMessage, tenantTag, null);
-        return new SayCommandHandlingResult(
-            CommandEnqueueResult.failure(code, errorMessage), null);
+        return new SayCommandHandlingResult(CommandEnqueueResult.failure(code, errorMessage), null);
       }
 
       String responseText = formatSuccessResponse(response);

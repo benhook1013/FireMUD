@@ -8,11 +8,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
-import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.SessionStateService;
@@ -104,12 +104,7 @@ class TcpProxyServiceImplTest {
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals(
-        1.0,
-        meterRegistry
-            .get("grpc.app_error")
-            .tag("code", "INVALID_ARGUMENT")
-            .counter()
-            .count());
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());
     Mockito.verifyNoInteractions(sessionStateService);
   }
 
@@ -213,12 +208,7 @@ class TcpProxyServiceImplTest {
 
     assertEquals("RATE_LIMIT", ref.get().getError().getCode());
     assertEquals(
-        1.0,
-        meterRegistry
-            .get("grpc.app_error")
-            .tag("code", "RATE_LIMIT")
-            .counter()
-            .count());
+        1.0, meterRegistry.get("grpc.app_error").tag("code", "RATE_LIMIT").counter().count());
     Mockito.verify(commandService).enqueue("22", "first", false);
     Mockito.verify(commandService).enqueue("22", "second", false);
     Mockito.verify(commandService, Mockito.never()).enqueue("22", "third", false);

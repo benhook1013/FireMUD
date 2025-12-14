@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
  * Health indicator that delegates to the local ping service.
  *
  * <p>This keeps the actuator health endpoint in sync with the REST and gRPC ping endpoints so the
- * gateway can determine service availability without extra calls.</p>
+ * gateway can determine service availability without extra calls.
  */
 @Component
 public class PingHealthIndicator implements HealthIndicator {

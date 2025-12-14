@@ -8,6 +8,7 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
@@ -16,7 +17,6 @@ import net.firedevops.firemud.service.GameInstanceService;
 import net.firedevops.firemud.service.IpConnectionLimiter;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.TickService;
-import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -46,8 +46,7 @@ class GameSessionGrpcServicePingIntegrationTest {
     Server server =
         InProcessServerBuilder.forName(serverName).directExecutor().addService(grpcService).build();
     server.start();
-    ManagedChannel channel =
-        InProcessChannelBuilder.forName(serverName).directExecutor().build();
+    ManagedChannel channel = InProcessChannelBuilder.forName(serverName).directExecutor().build();
     try {
       GameSessionServiceGrpc.GameSessionServiceBlockingStub stub =
           GameSessionServiceGrpc.newBlockingStub(channel);

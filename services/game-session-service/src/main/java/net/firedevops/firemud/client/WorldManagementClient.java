@@ -9,10 +9,10 @@ import jakarta.annotation.PostConstruct;
 import java.io.File;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
-import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.config.GrpcClientProperties;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.config.DevIsolatedProperties;
+import net.firedevops.firemud.config.GrpcClientProperties;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -21,7 +21,10 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for the World Management Service. */
 @Component
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Configuration and channel references remain internal")
@@ -45,7 +48,8 @@ public final class WorldManagementClient implements AutoCloseable {
   @PostConstruct
   void init() throws SSLException {
     if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; skipping WorldManagementClient channel initialization");
+      logger.info(
+          "Dev-isolated mode enabled; skipping WorldManagementClient channel initialization");
       return;
     }
     String target = endpoints.getWorldManagementService();

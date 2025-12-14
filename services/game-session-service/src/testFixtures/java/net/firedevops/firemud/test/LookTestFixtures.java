@@ -19,7 +19,8 @@ public final class LookTestFixtures {
     return RoomSnapshot.newBuilder()
         .setRoomId(ROOM_ID)
         .setRoomName(ROOM_NAME)
-        .setShortDescription("You stand in a basalt chamber warmed by the brazier near the western wall.")
+        .setShortDescription(
+            "You stand in a basalt chamber warmed by the brazier near the western wall.")
         .setLongDescription(
             "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.")
         .addExits(

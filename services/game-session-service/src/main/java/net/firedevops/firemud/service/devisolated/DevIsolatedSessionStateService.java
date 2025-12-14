@@ -20,6 +20,7 @@ public class DevIsolatedSessionStateService implements SessionStateService {
 
   @Override
   public void deleteState(Long tenantId, Long sessionId) {
-    logger.info("Dev-isolated mode enabled; skipping session state delete for {}:{}", tenantId, sessionId);
+    logger.info(
+        "Dev-isolated mode enabled; skipping session state delete for {}:{}", tenantId, sessionId);
   }
 }

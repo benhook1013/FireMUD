@@ -17,11 +17,16 @@ import org.springframework.stereotype.Service;
 
 /** Default implementation of {@link CommandService}. */
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 public class CommandServiceImpl implements CommandService {
   private static final Logger logger = LoggingUtil.getLogger(CommandServiceImpl.class);
 
-  @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Injected dependencies are internal")
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected dependencies are internal")
   private final TickService tickService;
 
   private final SessionRateLimiter sessionRateLimiter;
@@ -40,7 +45,8 @@ public class CommandServiceImpl implements CommandService {
   }
 
   @Override
-  public CommandEnqueueResult enqueue(String sessionIdText, String command, boolean requiresSoloTick) {
+  public CommandEnqueueResult enqueue(
+      String sessionIdText, String command, boolean requiresSoloTick) {
     String traceId = Span.current().getSpanContext().getTraceId();
     String tenantContext = resolveTenantContext(sessionIdText);
     try (MDC.MDCCloseable trace = MDC.putCloseable("traceId", traceId);

@@ -13,7 +13,10 @@ import org.springframework.stereotype.Service;
 
 /** Default Redis-backed implementation of {@link SessionStateService}. */
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 @RequiredArgsConstructor
 public final class SessionStateServiceImpl implements SessionStateService {
   private static final Logger logger = LoggingUtil.getLogger(SessionStateServiceImpl.class);

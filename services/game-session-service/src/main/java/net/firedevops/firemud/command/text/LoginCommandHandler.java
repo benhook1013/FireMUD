@@ -16,8 +16,8 @@ import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -141,17 +141,11 @@ public final class LoginCommandHandler {
     sessionContextService
         .findByAccountAndPlayer(tenantId, accountId, playerId)
         .ifPresent(
-            existing ->
-                handleExistingSession(sessionId, tenantId, accountId, playerId, existing));
+            existing -> handleExistingSession(sessionId, tenantId, accountId, playerId, existing));
 
     SessionContext context =
         new SessionContext(
-            sessionId,
-            tenantId,
-            accountId,
-            playerId,
-            result.gameInstanceId(),
-            result.jwt());
+            sessionId, tenantId, accountId, playerId, result.gameInstanceId(), result.jwt());
     sessionContextService.save(context);
     logger.debug(
         "Updated session context for tenant {} session {} account {} player {}",
@@ -167,8 +161,7 @@ public final class LoginCommandHandler {
       long accountId,
       long playerId,
       SessionContext existing) {
-    try (MDC.MDCCloseable tenant =
-            MDC.putCloseable("tenantId", String.valueOf(tenantId));
+    try (MDC.MDCCloseable tenant = MDC.putCloseable("tenantId", String.valueOf(tenantId));
         MDC.MDCCloseable account = MDC.putCloseable("accountId", String.valueOf(accountId));
         MDC.MDCCloseable player = MDC.putCloseable("playerId", String.valueOf(playerId))) {
       if (existing.sessionId() == incomingSessionId) {
@@ -199,17 +192,13 @@ public final class LoginCommandHandler {
     meterRegistry.counter(name, "tenantId", String.valueOf(tenantId)).increment();
   }
 
-  private Optional<LoginResult> buildLoginResult(GameInstance instance, long accountId, String jwt) {
+  private Optional<LoginResult> buildLoginResult(
+      GameInstance instance, long accountId, String jwt) {
     if (instance == null) {
       return Optional.empty();
     }
     return Optional.of(
-        new LoginResult(
-            accountId,
-            instance.getTenantId(),
-            accountId,
-            instance.getId(),
-            jwt));
+        new LoginResult(accountId, instance.getTenantId(), accountId, instance.getId(), jwt));
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =
@@ -268,14 +257,16 @@ public final class LoginCommandHandler {
   private LoginCommandHandlingResult invalidAccountFailure() {
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.failure(
-            LoginCommandConstants.INVALID_ACCOUNT_CODE, LoginCommandConstants.INVALID_ACCOUNT_MESSAGE),
+            LoginCommandConstants.INVALID_ACCOUNT_CODE,
+            LoginCommandConstants.INVALID_ACCOUNT_MESSAGE),
         null);
   }
 
   private LoginCommandHandlingResult accountMismatchFailure() {
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.failure(
-            LoginCommandConstants.ACCOUNT_MISMATCH_CODE, LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE),
+            LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
+            LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE),
         null);
   }
 }

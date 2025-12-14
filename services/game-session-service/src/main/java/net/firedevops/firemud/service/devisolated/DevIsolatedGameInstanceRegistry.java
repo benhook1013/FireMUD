@@ -8,8 +8,8 @@ import net.firedevops.firemud.entity.GameInstance;
 import org.springframework.stereotype.Component;
 
 /**
- * Tracks the lightweight GameInstance metadata created while dev-isolated mode is enabled.
- * These instances never hit a real database, but need to be visible to LOGIN handling.
+ * Tracks the lightweight GameInstance metadata created while dev-isolated mode is enabled. These
+ * instances never hit a real database, but need to be visible to LOGIN handling.
  */
 @Component
 public final class DevIsolatedGameInstanceRegistry {

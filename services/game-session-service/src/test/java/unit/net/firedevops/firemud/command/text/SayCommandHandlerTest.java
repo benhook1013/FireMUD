@@ -6,16 +6,16 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.command.text.SayCommandHandler;
 import net.firedevops.firemud.command.text.SayCommandHandlingResult;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandType;
-import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.config.GameLogicProperties;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -60,12 +60,12 @@ class SayCommandHandlerTest {
     SayCommandHandlingResult result =
         handler.handle(
             "session-1",
-            new TextCommand(TextCommandType.SAY, List.of("Hello travelers"), "SAY Hello travelers"));
+            new TextCommand(
+                TextCommandType.SAY, List.of("Hello travelers"), "SAY Hello travelers"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.responseText()).isNotNull();
-    List<String> lines =
-        result.responseText().lines().map(String::trim).toList();
+    List<String> lines = result.responseText().lines().map(String::trim).toList();
     assertThat(lines)
         .containsExactly(
             "OK SAY",
@@ -102,7 +102,8 @@ class SayCommandHandlerTest {
                 .build());
 
     SayCommandHandlingResult result =
-        handler.handle("session-1", new TextCommand(TextCommandType.SAY, List.of("Hello"), "SAY Hello"));
+        handler.handle(
+            "session-1", new TextCommand(TextCommandType.SAY, List.of("Hello"), "SAY Hello"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("SAY_NOT_DELIVERED");
@@ -115,11 +116,15 @@ class SayCommandHandlerTest {
         .thenReturn(Optional.empty());
 
     SayCommandHandlingResult result =
-        handler.handle("anonymous", new TextCommand(TextCommandType.SAY, List.of("Hello"), "SAY Hello"));
+        handler.handle(
+            "anonymous", new TextCommand(TextCommandType.SAY, List.of("Hello"), "SAY Hello"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("NOT_AUTHENTICATED");
-    assertThat(meterRegistry.counter("gamesession.command.say.invocations", "tenantId", "unknown").count())
+    assertThat(
+            meterRegistry
+                .counter("gamesession.command.say.invocations", "tenantId", "unknown")
+                .count())
         .isEqualTo(1.0);
   }
 }

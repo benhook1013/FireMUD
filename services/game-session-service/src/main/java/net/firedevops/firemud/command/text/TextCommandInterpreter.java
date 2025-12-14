@@ -1,13 +1,6 @@
 package net.firedevops.firemud.command.text;
 
 import java.util.Objects;
-import net.firedevops.firemud.command.text.LoginCommandHandlingResult;
-import net.firedevops.firemud.command.text.LookCommandHandler;
-import net.firedevops.firemud.command.text.LoginCommandHandler;
-import net.firedevops.firemud.command.text.SayCommandHandler;
-import net.firedevops.firemud.command.text.SayCommandHandlingResult;
-import net.firedevops.firemud.command.text.TextCommandType;
-import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -46,8 +39,7 @@ public class TextCommandInterpreter {
       SessionAuthenticationService sessionAuthenticationService,
       SayCommandHandler sayHandler,
       TextCommandParser parser) {
-    this.commandService =
-        Objects.requireNonNull(commandService, "commandService must not be null");
+    this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.lookHandler = Objects.requireNonNull(lookHandler, "lookHandler must not be null");
     this.loginHandler = Objects.requireNonNull(loginHandler, "loginHandler must not be null");
     this.sessionAuthenticationService =

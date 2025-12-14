@@ -17,8 +17,7 @@ import org.springframework.data.redis.core.ValueOperations;
 class RedisSessionContextServiceTest {
   private static final Duration TTL = Duration.ofMillis(1000L);
 
-  private final RedisTemplate<String, Object> redisTemplate =
-      Mockito.mock(RedisTemplate.class);
+  private final RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
   private final ValueOperations<String, Object> valueOperations =
       Mockito.mock(ValueOperations.class);
   private RedisSessionContextService service;
@@ -35,10 +34,8 @@ class RedisSessionContextServiceTest {
 
     service.save(context);
 
-    verify(valueOperations)
-        .set("sessionctx:10:1:context", context, TTL);
-    verify(valueOperations)
-        .set("sessionctx:10:identity:20:30:context", context, TTL);
+    verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
+    verify(valueOperations).set("sessionctx:10:identity:20:30:context", context, TTL);
   }
 
   @Test

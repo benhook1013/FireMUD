@@ -15,11 +15,11 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
-import net.firedevops.firemud.service.SayAggregationService;
 import net.firedevops.firemud.logic.dto.CommandResult;
 import net.firedevops.firemud.logic.service.CommandService;
 import net.firedevops.firemud.service.LookAggregationService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.SayAggregationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 
@@ -86,7 +86,8 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     } catch (StatusRuntimeException ex) {
       responseObserver.onError(ex);
     } catch (Exception ex) {
-      responseObserver.onError(Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
+      responseObserver.onError(
+          Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
     }
   }
 

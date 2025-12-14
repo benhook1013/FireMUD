@@ -2,23 +2,22 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import java.util.Properties;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventClient;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.lognet.springboot.grpc.GRpcServerRunner;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.metrics.export.prometheus.PrometheusScrapeEndpoint;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.lognet.springboot.grpc.GRpcServerRunner;
-import io.micrometer.prometheusmetrics.PrometheusConfig;
-import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
-import org.springframework.boot.actuate.metrics.export.prometheus.PrometheusScrapeEndpoint;
-import java.util.Properties;
-import net.firedevops.firemud.tcpproxy.service.TcpProxyEventClient;
 
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
@@ -45,7 +44,8 @@ class PrometheusMetricsIntegrationTest {
   @Test
   void prometheusEndpointExposesTcpProxyMetrics() {
     String body =
-        restTemplate.getForObject("http://localhost:" + port + "/actuator/prometheus", String.class);
+        restTemplate.getForObject(
+            "http://localhost:" + port + "/actuator/prometheus", String.class);
 
     assertThat(body)
         .contains("tcpproxy_buffer_depth")

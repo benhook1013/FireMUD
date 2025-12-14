@@ -28,8 +28,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,8 +74,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private WebSocket webSocket;
   private volatile boolean connectedOnce;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
-  private final Set<CompletableFuture<WebSocket>> outstandingSends =
-      ConcurrentHashMap.newKeySet();
+  private final Set<CompletableFuture<WebSocket>> outstandingSends = ConcurrentHashMap.newKeySet();
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
@@ -173,11 +172,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @FunctionalInterface
   interface WebSocketConnector {
     CompletableFuture<WebSocket> connect(
-        String gatewayWsUrl,
-        String clientIp,
-        String sessionId,
-        String tenantId,
-        Listener listener);
+        String gatewayWsUrl, String clientIp, String sessionId, String tenantId, Listener listener);
   }
 
   static CompletableFuture<WebSocket> createWebSocket(
@@ -283,7 +278,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       return;
     }
     Timer.Sample sample = Timer.start(meterRegistry);
-    CompletableFuture<WebSocket> pingFuture = socket.sendPing(ByteBuffer.wrap(new byte[] {1, 2, 3, 4}));
+    CompletableFuture<WebSocket> pingFuture =
+        socket.sendPing(ByteBuffer.wrap(new byte[] {1, 2, 3, 4}));
     outstandingSends.add(pingFuture);
     pingFuture.whenComplete(
         (ws, error) -> {
@@ -334,10 +330,13 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     updateBufferDepthGauge();
     onConnect.run();
     logger.info(
-        "Telnet client connected from {} targeting {}", clientIp != null ? clientIp : remote, gatewayWsUrl);
+        "Telnet client connected from {} targeting {}",
+        clientIp != null ? clientIp : remote,
+        gatewayWsUrl);
     if (devIsolated) {
       logger.info(
-          "Dev-isolated mode enabled; bridging Telnet commands to {} (echo/dev stub)", gatewayWsUrl);
+          "Dev-isolated mode enabled; bridging Telnet commands to {} (echo/dev stub)",
+          gatewayWsUrl);
     }
   }
 
@@ -532,15 +531,17 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     if (devIsolated || !sessionContext.isReady() || buffered.isEmpty()) {
       return;
     }
-    CompletableFuture
-        .supplyAsync(
+    CompletableFuture.supplyAsync(
             () ->
                 eventService.pushBufferedInput(
                     sessionContext.sessionId(), buffered, sessionContext.tenantId()))
         .thenAccept(
             response -> {
               if (!isOk(response)) {
-                String code = response != null && response.hasError() ? response.getError().getCode() : "UNKNOWN";
+                String code =
+                    response != null && response.hasError()
+                        ? response.getError().getCode()
+                        : "UNKNOWN";
                 logger.warn(
                     "Failed to push buffered input for session {} with code {}",
                     sessionContext.sessionId(),
@@ -581,7 +582,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     if (devIsolated || connectEventRecorded || !sessionContext.isReady()) {
       return;
     }
-    eventService.recordConnectEvent(sessionContext.sessionId(), sessionContext.tenantId(), clientIp);
+    eventService.recordConnectEvent(
+        sessionContext.sessionId(), sessionContext.tenantId(), clientIp);
     connectEventRecorded = true;
   }
 
@@ -607,8 +609,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
                 cachedLookDelivered = true;
               });
     } catch (NumberFormatException ex) {
-      logger.debug(
-          "Invalid cached LOOK identifiers tenant={} session={}", tenantId, sessionId, ex);
+      logger.debug("Invalid cached LOOK identifiers tenant={} session={}", tenantId, sessionId, ex);
     } catch (RuntimeException ex) {
       logger.debug("Unable to read cached LOOK for session {}", sessionId, ex);
     }
@@ -828,7 +829,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return cleaned.isBlank() ? null : cleaned;
   }
 
-  private int handleIacSequence(ChannelHandlerContext ctx, byte[] bytes, int index, StringBuilder sb) {
+  private int handleIacSequence(
+      ChannelHandlerContext ctx, byte[] bytes, int index, StringBuilder sb) {
     if (index >= bytes.length) {
       discardedCommandCounter.increment();
       return bytes.length;

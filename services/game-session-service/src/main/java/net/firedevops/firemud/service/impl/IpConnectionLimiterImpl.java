@@ -11,7 +11,10 @@ import org.springframework.stereotype.Service;
 
 /** Redis-backed implementation of {@link IpConnectionLimiter}. */
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",

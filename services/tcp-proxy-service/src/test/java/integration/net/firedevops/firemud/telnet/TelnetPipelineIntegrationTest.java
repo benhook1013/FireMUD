@@ -13,10 +13,10 @@ import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class TelnetPipelineIntegrationTest {
 

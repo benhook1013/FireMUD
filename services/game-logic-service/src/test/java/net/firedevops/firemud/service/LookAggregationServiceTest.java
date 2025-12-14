@@ -6,21 +6,19 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
-import java.util.List;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.gamelogic.v1.LookExit;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
-import net.firedevops.firemud.service.LookResultRenderer;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -88,9 +86,7 @@ class LookAggregationServiceTest {
     assertThat(result.getRoomId()).isEqualTo("1021");
     assertThat(result.getRoomName()).isEqualTo("Candle-lit Antechamber");
     assertThat(result.getShortDescription()).isEqualTo("short desc");
-    assertThat(result.getExitsList())
-        .extracting(LookExit::getTargetRoomId)
-        .containsExactly("2045");
+    assertThat(result.getExitsList()).extracting(LookExit::getTargetRoomId).containsExactly("2045");
     assertThat(result.getEntitiesList()).hasSize(1);
     assertThat(result.getEntitiesList().get(0).getDisplayName()).isEqualTo("Kobold");
     assertThat(result.getAmbientStateMap()).containsEntry("lighting", "dim");

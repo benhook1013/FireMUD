@@ -23,13 +23,15 @@ class CommandServiceImplTest {
     SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(tickService, rateLimiter, new DevIsolatedProperties(true), repository);
+        new CommandServiceImpl(
+            tickService, rateLimiter, new DevIsolatedProperties(true), repository);
 
     CommandEnqueueResult result = service.enqueue("non-numeric", "look", false);
 
     assertTrue(result.accepted());
     verify(rateLimiter, never()).allow(Mockito.anyLong());
-    verify(tickService, never()).enqueueCommand(Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
+    verify(tickService, never())
+        .enqueueCommand(Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
   }
 
   @Test
@@ -39,13 +41,15 @@ class CommandServiceImplTest {
     Mockito.when(rateLimiter.allow(5L)).thenReturn(false);
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     CommandServiceImpl service =
-        new CommandServiceImpl(tickService, rateLimiter, new DevIsolatedProperties(false), repository);
+        new CommandServiceImpl(
+            tickService, rateLimiter, new DevIsolatedProperties(false), repository);
 
     CommandEnqueueResult result = service.enqueue("5", "look", false);
 
     assertTrue(result.hasError());
     assertEquals("RATE_LIMIT", result.errorCode());
-    verify(tickService, never()).enqueueCommand(Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
+    verify(tickService, never())
+        .enqueueCommand(Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
   }
 
   @Test
@@ -58,7 +62,8 @@ class CommandServiceImplTest {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
     CommandServiceImpl service =
-        new CommandServiceImpl(tickService, rateLimiter, new DevIsolatedProperties(false), repository);
+        new CommandServiceImpl(
+            tickService, rateLimiter, new DevIsolatedProperties(false), repository);
 
     CommandEnqueueResult result = service.enqueue("7", "look", true);
 
