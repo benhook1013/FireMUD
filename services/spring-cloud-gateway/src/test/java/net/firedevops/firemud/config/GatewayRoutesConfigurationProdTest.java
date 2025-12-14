@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.route.RouteDefinition;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest(
@@ -24,6 +25,7 @@ import org.springframework.test.context.ActiveProfiles;
       "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration"
     })
 @ActiveProfiles("prod")
+@Import(TestGatewayRateLimiterConfig.class)
 class GatewayRoutesConfigurationProdTest {
 
   @MockBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
