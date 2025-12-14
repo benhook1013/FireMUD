@@ -9,12 +9,12 @@ import static org.mockito.Mockito.when;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import java.util.Optional;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.client.LoggingAdminClient;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.config.MailProperties;
 import net.firedevops.firemud.dto.AccountDto;
-import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.dto.AuthenticationResult;
 import net.firedevops.firemud.dto.CreateAccountRequest;
 import net.firedevops.firemud.dto.PasswordResetRequest;
@@ -31,8 +31,8 @@ import net.firedevops.firemud.repository.ProfileRepository;
 import net.firedevops.firemud.repository.SubscriptionRepository;
 import net.firedevops.firemud.service.EmailService;
 import net.firedevops.firemud.service.NotificationService;
-import net.firedevops.firemud.service.session.SessionService;
 import net.firedevops.firemud.service.exception.AuthenticationException;
+import net.firedevops.firemud.service.session.SessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -129,8 +129,7 @@ class AccountServiceImplTest {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
         assertThrows(
-            AuthenticationException.class,
-            () -> service.authenticate(1L, "demo", "bad", null));
+            AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad", null));
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 

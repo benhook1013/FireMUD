@@ -6,13 +6,13 @@ import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ResultStatus;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.lognet.springboot.grpc.GRpcServicesRegistry;
-import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
 import org.lognet.springboot.grpc.autoconfigure.GRpcServerProperties;
+import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -60,8 +60,7 @@ class DevIsolatedGameSessionSmokeTest {
 
   @Test
   void startSessionIsAcceptedAndLogged(CapturedOutput output) {
-    StartSessionRequest request =
-        new StartSessionRequest(42L, "1.0.0", "patch-1", 100L);
+    StartSessionRequest request = new StartSessionRequest(42L, "1.0.0", "patch-1", 100L);
 
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
@@ -71,10 +70,7 @@ class DevIsolatedGameSessionSmokeTest {
 
     ResponseEntity<ApiResponse<GameInstanceDto>> response =
         restTemplate.exchange(
-            "http://localhost:" + port + "/sessions",
-            HttpMethod.POST,
-            entity,
-            responseType);
+            "http://localhost:" + port + "/sessions", HttpMethod.POST, entity, responseType);
 
     assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
 

@@ -15,12 +15,12 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
+import net.firedevops.firemud.gamelogic.v1.ChatAlias;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
-import net.firedevops.firemud.gamelogic.v1.ChatAlias;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -155,7 +155,9 @@ public class SayAggregationService {
   private BroadcastSayResponse errorResponse(
       BroadcastSayResponse.Builder builder, StatusRuntimeException ex, String source) {
     String description =
-        Optional.ofNullable(ex.getStatus().getDescription()).filter(s -> !s.isBlank()).orElse("unreachable");
+        Optional.ofNullable(ex.getStatus().getDescription())
+            .filter(s -> !s.isBlank())
+            .orElse("unreachable");
     return errorResponse(builder, ex.getStatus().getCode().name(), source + ": " + description);
   }
 

@@ -6,8 +6,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import net.firedevops.firemud.service.PingService;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;

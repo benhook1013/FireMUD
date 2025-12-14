@@ -361,10 +361,10 @@ These documents explain how the compose setup differs from production and provid
 - Spring Cloud Gateway also provides a `./gradlew :spring-cloud-gateway:bootRunDevIsolated` task that runs with the `dev` profile and enables `TCP_PROXY_DEV_ISOLATED` for local WebSocket debugging that mirrors the proxy’s dev-isolated behavior.
 - The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, and `SessionResumptionFlowTest`) are currently annotated with `@Disabled` and reference the TODO in `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`. They should be revisited and re-enabled once the real Account/Redis/GameInstance wiring is available so Gradle runs against production services instead of the stubbed dev-isolated path.
 
-### Syncing the repo into WSL
+### Running Gradle from WSL
 
-- Running Gradle inside WSL avoids the Windows file-locking issues that can block `build/test-results/**`. Use `dev-tools/sync-to-wsl.ps1` to copy the current working tree into a mirror inside WSL (default `~/firemud-wsl`) and keep it up to date. Run the script without arguments to sync Windows → WSL, and pass `-Reverse` to copy changes back from the WSL mirror.
-- After syncing, open a WSL shell, `cd ~/firemud-wsl`, and run the usual `./gradlew …` commands there. This keeps your editor on Windows while letting long-running builds/tests execute on a Linux filesystem.
+- Running Gradle inside WSL avoids the Windows file-locking issues that can block `build/test-results/**`. Open a WSL shell, `cd` into this repository via the `/mnt/c/.../FireMUD` path, and run the usual `./gradlew …` commands there.
+- You can keep your editor on Windows while letting long-running builds/tests execute on the Linux filesystem by pointing it at the same working tree.
 
 ---
 

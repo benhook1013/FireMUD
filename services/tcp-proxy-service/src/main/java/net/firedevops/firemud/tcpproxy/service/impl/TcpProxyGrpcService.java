@@ -2,9 +2,9 @@ package net.firedevops.firemud.tcpproxy.service.impl;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.PingService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PingRequest;

@@ -5,8 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
 /**
- * Holds the session metadata negotiated over Telnet so it can be forwarded to the gateway and
- * Game Session Service.
+ * Holds the session metadata negotiated over Telnet so it can be forwarded to the gateway and Game
+ * Session Service.
  */
 final class TelnetSessionContext {
   private static final Logger logger = LoggerFactory.getLogger(TelnetSessionContext.class);

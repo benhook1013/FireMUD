@@ -13,7 +13,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 public class GameManifestServiceImpl implements GameManifestService {
   private static final Logger logger = LoggingUtil.getLogger(GameManifestServiceImpl.class);
   private final GameManifestRepository repository;

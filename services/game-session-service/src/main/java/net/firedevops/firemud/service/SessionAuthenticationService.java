@@ -6,7 +6,6 @@ import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
-import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;

@@ -38,8 +38,12 @@ public class RedisLookCacheService implements LookCacheService {
     payload.protocolText = protocolText;
     payload.cachedAtMs = System.currentTimeMillis();
     try {
-      redisTemplate.opsForValue().set(
-          key(tenantId, sessionId), objectMapper.writeValueAsString(payload), Duration.ofMillis(ttlMs));
+      redisTemplate
+          .opsForValue()
+          .set(
+              key(tenantId, sessionId),
+              objectMapper.writeValueAsString(payload),
+              Duration.ofMillis(ttlMs));
     } catch (JsonProcessingException e) {
       throw new IllegalStateException("Failed to serialize LOOK cache payload", e);
     }

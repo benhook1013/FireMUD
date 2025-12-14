@@ -3,7 +3,6 @@ package crossservice.net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
-import net.firedevops.firemud.test.LookTestFixtures;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -22,16 +21,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
-import net.firedevops.firemud.command.text.LookCommandConstants;
+import net.firedevops.firemud.test.LookTestFixtures;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -57,7 +56,6 @@ import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -68,8 +66,8 @@ import reactor.core.publisher.Mono;
     classes = TcpProxyServiceApplication.class)
 class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
-private static GameSessionStubHolder GAME_SESSION_STUB;
-private static GatewayHolder GATEWAY;
+  private static GameSessionStubHolder GAME_SESSION_STUB;
+  private static GatewayHolder GATEWAY;
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
 
   @DynamicPropertySource
@@ -84,8 +82,10 @@ private static GatewayHolder GATEWAY;
   @Autowired private TestRestTemplate restTemplate;
 
   @Autowired private TelnetServer telnetServer;
+
   @SuppressWarnings("removal")
-  @MockBean private GRpcServerRunner grpcServerRunner;
+  @MockBean
+  private GRpcServerRunner grpcServerRunner;
 
   @AfterAll
   static void stopTestServices() {
@@ -108,7 +108,8 @@ private static GatewayHolder GATEWAY;
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
         PrintWriter writer =
             new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1), true);
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
         BufferedReader reader =
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
@@ -135,7 +136,8 @@ private static GatewayHolder GATEWAY;
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
         PrintWriter writer =
             new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1), true);
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
         BufferedReader reader =
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
@@ -194,7 +196,8 @@ private static GatewayHolder GATEWAY;
       int port = ((WebServerApplicationContext) context).getWebServer().getPort();
       return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
     } catch (RuntimeException ex) {
-      throw new IllegalStateException("Failed to start game session stub (grpcPort=" + grpcPort + ")", ex);
+      throw new IllegalStateException(
+          "Failed to start game session stub (grpcPort=" + grpcPort + ")", ex);
     }
   }
 
@@ -285,6 +288,7 @@ private static GatewayHolder GATEWAY;
       mapping.setUrlMap(urlMap);
       return mapping;
     }
+
     @Bean
     WebSocketHandlerAdapter webSocketHandlerAdapter() {
       return new WebSocketHandlerAdapter();
@@ -366,7 +370,8 @@ private static GatewayHolder GATEWAY;
     @Override
     public Mono<Void> handle(WebSocketSession session) {
       Flux<String> commands =
-          session.receive()
+          session
+              .receive()
               .map(WebSocketMessage::getPayloadAsText)
               .map(String::trim)
               .filter(StringUtils::hasText)
@@ -385,5 +390,4 @@ private static GatewayHolder GATEWAY;
       return "processed:" + command;
     }
   }
-
 }

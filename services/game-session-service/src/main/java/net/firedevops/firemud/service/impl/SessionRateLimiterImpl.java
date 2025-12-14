@@ -11,7 +11,10 @@ import org.springframework.stereotype.Service;
 
 /** Redis-backed implementation of {@link SessionRateLimiter}. */
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 public class SessionRateLimiterImpl implements SessionRateLimiter {
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",

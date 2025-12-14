@@ -11,7 +11,7 @@ import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 
 @Configuration
-@Profile("dev")
+@Profile({"dev", "test"})
 public class DevWebSocketConfig {
 
   @Bean

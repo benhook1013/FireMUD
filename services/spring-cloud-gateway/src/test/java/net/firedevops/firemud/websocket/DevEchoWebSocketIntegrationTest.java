@@ -20,22 +20,24 @@ import reactor.test.StepVerifier;
     classes = net.firedevops.firemud.SpringCloudGatewayApplication.class,
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {
-        "spring.flyway.enabled=false",
-        "firemud.database.enabled=false",
-        "spring.cloud.gateway.default-filters[0]=",
-        "grpc.server.security.enabled=false",
-        "grpc.server.port=0",
-        "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration",
-        "spring.main.web-application-type=reactive"
+      "spring.flyway.enabled=false",
+      "firemud.database.enabled=false",
+      "firemud.auth.jwt-secret=test-jwt-secret-test-jwt-secret-test-jwt-secret-test-jwt-secret",
+      "grpc.server.security.enabled=false",
+      "grpc.server.port=0",
+      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration",
+      "spring.main.web-application-type=reactive"
     })
-@ActiveProfiles("dev")
+@ActiveProfiles("test")
 class DevEchoWebSocketIntegrationTest {
 
   @LocalServerPort private int port;
 
   @MockBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
   @MockBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
-  @MockBean private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
+
+  @MockBean
+  private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
 
   @Autowired private ReactorNettyWebSocketClient client;
 

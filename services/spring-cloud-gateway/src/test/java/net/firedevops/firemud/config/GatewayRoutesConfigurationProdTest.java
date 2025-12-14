@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.route.RouteDefinition;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 @SpringBootTest(
@@ -24,11 +25,14 @@ import org.springframework.test.context.ActiveProfiles;
       "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration"
     })
 @ActiveProfiles("prod")
+@Import(TestGatewayRateLimiterConfig.class)
 class GatewayRoutesConfigurationProdTest {
 
   @MockBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
   @MockBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
-  @MockBean private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
+
+  @MockBean
+  private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
 
   @Autowired private GatewayProperties gatewayProperties;
 
@@ -50,7 +54,6 @@ class GatewayRoutesConfigurationProdTest {
             .map(predicate -> predicate.getArgs())
             .orElseThrow(() -> new AssertionError("Session route should have a Path predicate"));
 
-    assertThat(pathArgs.values())
-        .containsExactlyInAnyOrder("/api/session/**", "/ws/game/**");
+    assertThat(pathArgs.values()).containsExactlyInAnyOrder("/api/session/**", "/ws/game/**");
   }
 }

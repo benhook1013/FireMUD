@@ -3,9 +3,9 @@ package net.firedevops.firemud.websocket;
 import java.io.IOException;
 import net.firedevops.firemud.command.text.LookCommandHandler;
 import net.firedevops.firemud.command.text.TextCommand;
-import net.firedevops.firemud.command.text.TextCommandParser;
-import net.firedevops.firemud.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
+import net.firedevops.firemud.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.command.text.TextCommandParser;
 import net.firedevops.firemud.command.text.TextCommandType;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import org.slf4j.Logger;
@@ -37,18 +37,20 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {
-    logger.debug("WebSocket session {} established with headers {}", session.getId(), session.getHandshakeHeaders());
+    logger.debug(
+        "WebSocket session {} established with headers {}",
+        session.getId(),
+        session.getHandshakeHeaders());
     String sessionId = resolveSessionId(session);
     String tenantId = resolveTenantId(session);
     if (StringUtils.hasText(sessionId) && StringUtils.hasText(tenantId)) {
-      lookHandler
-          .cachedLook(tenantId, sessionId)
-          .ifPresent(text -> sendCachedLook(session, text));
+      lookHandler.cachedLook(tenantId, sessionId).ifPresent(text -> sendCachedLook(session, text));
     }
   }
 
   @Override
-  protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
+  protected void handleTextMessage(WebSocketSession session, TextMessage message)
+      throws IOException {
     String sessionId = resolveSessionId(session);
     if (!StringUtils.hasText(sessionId)) {
       session.sendMessage(new TextMessage("ERROR INVALID_ARGUMENT sessionId header required"));
@@ -78,7 +80,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return session.getHandshakeHeaders().getFirst(TENANT_HEADER);
   }
 
-  private String formatResponse(TextCommand command, TextCommandInterpretationResult interpretation) {
+  private String formatResponse(
+      TextCommand command, TextCommandInterpretationResult interpretation) {
     CommandEnqueueResult result = interpretation.commandResult();
     if (result.accepted()) {
       String base = "OK " + command.type().name();

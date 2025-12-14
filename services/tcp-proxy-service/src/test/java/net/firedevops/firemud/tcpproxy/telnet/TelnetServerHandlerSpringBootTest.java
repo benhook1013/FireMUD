@@ -15,13 +15,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
-import org.springframework.test.context.TestPropertySource;
-import org.mockito.Mockito;
 
 @SpringBootTest(classes = TelnetServerHandlerSpringBootTest.TestConfig.class)
 class TelnetServerHandlerSpringBootTest {
@@ -81,8 +80,7 @@ class TelnetServerHandlerSpringBootTest {
       channel.writeInbound(
           Unpooled.copiedBuffer(
               "SESSION " + sessionId + " " + tenantId + "\r\n", StandardCharsets.ISO_8859_1));
-      channel.writeInbound(
-          Unpooled.copiedBuffer("look\r\n", StandardCharsets.ISO_8859_1));
+      channel.writeInbound(Unpooled.copiedBuffer("look\r\n", StandardCharsets.ISO_8859_1));
 
       verify(eventService, timeout(1000))
           .recordConnectEvent(sessionId, tenantId, clientAddress.getAddress().getHostAddress());

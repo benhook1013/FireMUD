@@ -11,7 +11,10 @@ import org.springframework.stereotype.Service;
 
 /** Persists session context metadata in Redis keys scoped by tenant/session. */
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = true)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = true)
 public final class RedisSessionContextService implements SessionContextService {
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration sessionTtl;
@@ -22,8 +25,7 @@ public final class RedisSessionContextService implements SessionContextService {
   public RedisSessionContextService(
       RedisTemplate<String, Object> redisTemplate,
       @Value("${FIREMUD_AUTH_SESSION_EXPIRATION_MS:3600000}") long sessionExpirationMs) {
-    this.redisTemplate =
-        redisTemplate; // injection target is internal, no defensive copy needed
+    this.redisTemplate = redisTemplate; // injection target is internal, no defensive copy needed
     this.sessionTtl = Duration.ofMillis(sessionExpirationMs);
   }
 
@@ -48,9 +50,7 @@ public final class RedisSessionContextService implements SessionContextService {
       long tenantId, long accountId, long playerId) {
     return Optional.ofNullable(
         (SessionContext)
-            redisTemplate
-                .opsForValue()
-                .get(identityKey(tenantId, accountId, playerId)));
+            redisTemplate.opsForValue().get(identityKey(tenantId, accountId, playerId)));
   }
 
   @Override
@@ -62,6 +62,7 @@ public final class RedisSessionContextService implements SessionContextService {
             redisTemplate.delete(
                 identityKey(context.tenantId(), context.accountId(), context.playerId())));
   }
+
   private String contextKey(long tenantId, long sessionId) {
     return String.format(CONTEXT_KEY_TEMPLATE, tenantId, sessionId);
   }

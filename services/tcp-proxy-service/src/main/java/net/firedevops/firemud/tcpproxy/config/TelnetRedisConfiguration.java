@@ -12,7 +12,11 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisTemplate;
 
 @Configuration
-@ConditionalOnProperty(prefix = "firemud.redis", name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(
+    prefix = "firemud.redis",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 @EnableConfigurationProperties(RedisProperties.class)
 @Import(RedisLookCacheService.class)
 public class TelnetRedisConfiguration {

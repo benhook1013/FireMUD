@@ -12,7 +12,11 @@ Authentication is performed via plaintext `LOGIN` commands. Clients are stateles
 
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards this OTP when a player logs in.
 
-Issued JWTs are stored in Redis using keys `session:{tenantId}:{tokenHash}` where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use an expiration controlled by `session-expiration-ms` (default `3600000` ms). JWT and session lifetimes are configured via the `FIREMUD_AUTH_JWT_EXPIRATION_MS` and `FIREMUD_AUTH_SESSION_EXPIRATION_MS` environment variables documented in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
+Issued JWTs are stored in Redis using keys `session:{tenantId}:{tokenHash}` where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
+
+- `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
+
+JWT lifetime and the session safety margin are documented in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
 ---
 
@@ -130,7 +134,7 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
   - Managing Redis session state (e.g. `playerId`, `tenantId`, tick region)
   - Managing JWTs for backend interactions
 
-- Session entries in Redis expire after `FIREMUD_AUTH_SESSION_EXPIRATION_MS` milliseconds so abandoned sessions cannot linger indefinitely. The default value is `3600000` ms as defined by `AuthProperties.sessionExpirationMs`.
+- Session entries in Redis expire after the derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) so abandoned sessions cannot linger indefinitely.
 
 > 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 
@@ -144,7 +148,7 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 | JWT Usage | Internal-only for backend gRPC auth |
 | Claims | `accountId`, `globalRoles[]`, `scopedRoles{}` |
 | Session State | Stored in Redis; bound to socket by Game Session Service |
-| Session TTL | Controlled by `FIREMUD_AUTH_SESSION_EXPIRATION_MS` |
+| Session TTL | Derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS` + `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` |
 | Reauthentication | Required after disconnect; resumes via Redis if valid |
 | Role Enforcement | Meta/control services only; gameplay services trust Game Session Service |
 | Role Updates | Refreshed in-session; no client interaction needed |

@@ -44,9 +44,7 @@ public class TickLockServiceImpl implements TickLockService {
   public boolean acquireLock(Long tenantId, Long entityId) {
     String key = lockKey(tenantId, entityId);
     Boolean result =
-        redisTemplate
-            .opsForValue()
-            .setIfAbsent(key, "1", Duration.ofMillis(computeLockTtlMs()));
+        redisTemplate.opsForValue().setIfAbsent(key, "1", Duration.ofMillis(computeLockTtlMs()));
     boolean acquired = Boolean.TRUE.equals(result);
     if (!acquired) {
       lockContentionCounter.increment();

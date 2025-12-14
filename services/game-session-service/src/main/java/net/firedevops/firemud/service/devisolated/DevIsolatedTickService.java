@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 /**
  * TickService implementation used when GAME_SESSION_DEV_ISOLATED=true.
  *
- * <p>Provides in-memory no-op behavior so the application can start without Redis.</p>
+ * <p>Provides in-memory no-op behavior so the application can start without Redis.
  */
 @Service
 @ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")

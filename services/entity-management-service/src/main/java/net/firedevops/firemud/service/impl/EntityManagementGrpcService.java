@@ -20,13 +20,11 @@ import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
-import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
 import net.firedevops.firemud.service.CharacterService;
 import net.firedevops.firemud.service.InventoryService;
-import net.firedevops.firemud.dto.RoomEntityDto;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.RoomEntityService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -49,6 +47,7 @@ public class EntityManagementGrpcService
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is thread-safe and stored as injected")
   private final MeterRegistry meterRegistry;
+
   private final RoomEntityService roomEntityService;
 
   public EntityManagementGrpcService(
@@ -202,8 +201,7 @@ public class EntityManagementGrpcService
   @Override
   @Timed(value = "entityGrpc.listRoomEntities")
   public void listRoomEntities(
-      ListRoomEntitiesRequest request,
-      StreamObserver<ListRoomEntitiesResponse> responseObserver) {
+      ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
       var entities = roomEntityService.listEntities(request.getTenantId(), request.getRoomId());
       var builder = ListRoomEntitiesResponse.newBuilder();

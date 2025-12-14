@@ -9,8 +9,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
- * In-memory {@link SessionContextService} used when the dev-isolated profile is enabled.
- * This keeps the LOGIN path runnable without Redis while still sharing the same API.
+ * In-memory {@link SessionContextService} used when the dev-isolated profile is enabled. This keeps
+ * the LOGIN path runnable without Redis while still sharing the same API.
  */
 @Service
 @ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")

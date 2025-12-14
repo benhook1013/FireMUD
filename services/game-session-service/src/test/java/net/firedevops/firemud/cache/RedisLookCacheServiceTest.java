@@ -12,8 +12,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 class RedisLookCacheServiceTest {
   private RedisTemplate<String, String> redisTemplate;
@@ -25,14 +25,12 @@ class RedisLookCacheServiceTest {
     redisTemplate = Mockito.mock(RedisTemplate.class);
     valueOperations = Mockito.mock(ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-    cacheService =
-        new RedisLookCacheService(redisTemplate, new ObjectMapper());
+    cacheService = new RedisLookCacheService(redisTemplate, new ObjectMapper());
   }
 
   @Test
   void cacheWritesSerializedPayload() {
-    cacheService.cache(
-        22L, 1L, "R-1021", "OK LOOK text", "OK LOOK\nOK LOOK text\n\n");
+    cacheService.cache(22L, 1L, "R-1021", "OK LOOK text", "OK LOOK\nOK LOOK text\n\n");
 
     ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
@@ -58,5 +56,4 @@ class RedisLookCacheServiceTest {
     when(valueOperations.get(any(String.class))).thenReturn(null);
     assertThat(cacheService.get(22L, 1L)).isEmpty();
   }
-
 }

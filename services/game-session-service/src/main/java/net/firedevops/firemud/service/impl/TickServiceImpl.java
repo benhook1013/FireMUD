@@ -33,7 +33,10 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are kept internal")
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 @RequiredArgsConstructor
 public class TickServiceImpl implements TickService {
   private static final Logger logger = LoggingUtil.getLogger(TickServiceImpl.class);
@@ -49,6 +52,12 @@ public class TickServiceImpl implements TickService {
 
   @Value("${game.tick-max-commands:50}")
   private int tickMaxCommands;
+
+  @Value("${game.tick-budget-ms:100}")
+  private long tickBudgetMs;
+
+  @Value("${game.solo-tick-budget-ms:500}")
+  private long soloTickBudgetMs;
 
   private Counter enqueueCounter;
   private Counter redisErrorCounter;
@@ -131,7 +140,9 @@ public class TickServiceImpl implements TickService {
   public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
     if (devIsolatedProperties.isDevIsolated()) {
       logger.info(
-          "Dev-isolated mode enabled; recording enqueue request for session {} command {}", sessionId, command);
+          "Dev-isolated mode enabled; recording enqueue request for session {} command {}",
+          sessionId,
+          command);
       return;
     }
 

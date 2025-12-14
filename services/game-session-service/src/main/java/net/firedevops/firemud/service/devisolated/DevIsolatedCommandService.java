@@ -21,7 +21,8 @@ public class DevIsolatedCommandService implements CommandService {
   }
 
   @Override
-  public CommandEnqueueResult enqueue(String sessionIdText, String command, boolean requiresSoloTick) {
+  public CommandEnqueueResult enqueue(
+      String sessionIdText, String command, boolean requiresSoloTick) {
     logger.info(
         "Dev-isolated mode enabled; acknowledging enqueue for session {} command {}",
         sessionIdText,

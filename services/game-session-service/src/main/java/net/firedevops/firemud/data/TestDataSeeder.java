@@ -17,7 +17,11 @@ import org.springframework.transaction.annotation.Transactional;
 /** Seeds minimal records for local development when running with the {@code dev} Spring profile. */
 @Component
 @Profile("dev")
-@ConditionalOnProperty(prefix = "firemud.database", name = "enabled", havingValue = "true", matchIfMissing = false)
+@ConditionalOnProperty(
+    prefix = "firemud.database",
+    name = "enabled",
+    havingValue = "true",
+    matchIfMissing = false)
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
   private final GameManifestRepository gameManifestRepository;

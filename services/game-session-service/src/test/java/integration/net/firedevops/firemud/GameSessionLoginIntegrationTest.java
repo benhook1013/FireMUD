@@ -1,7 +1,6 @@
 package net.firedevops.firemud;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -26,11 +25,10 @@ import net.firedevops.firemud.service.SessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
+import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.mockito.ArgumentCaptor;
 import org.springframework.util.concurrent.ListenableFuture;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
@@ -106,11 +104,7 @@ class GameSessionLoginIntegrationTest {
 
     ArgumentCaptor<String> tenantCaptor = ArgumentCaptor.forClass(String.class);
     verify(accountClient)
-        .authenticate(
-            tenantCaptor.capture(),
-            eq("demo@example.com"),
-            eq("swordfish"),
-            eq(""));
+        .authenticate(tenantCaptor.capture(), eq("demo@example.com"), eq("swordfish"), eq(""));
     assertThat(tenantCaptor.getValue()).isEqualTo("42");
   }
 }

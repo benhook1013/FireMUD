@@ -13,13 +13,12 @@ import net.firedevops.firemud.gamelogic.v1.LookExit;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.RoomEntity;
-import net.firedevops.firemud.service.LookResultRenderer;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -48,9 +47,7 @@ public class LookAggregationService {
             .addAllRoomFlags(snapshot.getRoomFlagsList());
 
     snapshot.getExitsList().forEach(exit -> builder.addExits(toLookExit(exit)));
-    entityResponse.getEntitiesList().stream()
-        .map(this::toRoomEntity)
-        .forEach(builder::addEntities);
+    entityResponse.getEntitiesList().stream().map(this::toRoomEntity).forEach(builder::addEntities);
 
     LookResult result = builder.build();
     LOG.debug("Rendered LOOK text:\n{}", renderer.render(result));
@@ -114,7 +111,9 @@ public class LookAggregationService {
 
   private StatusRuntimeException rethrowWithSource(StatusRuntimeException ex, String source) {
     String description =
-        Optional.ofNullable(ex.getStatus().getDescription()).filter(s -> !s.isBlank()).orElse("unreachable");
+        Optional.ofNullable(ex.getStatus().getDescription())
+            .filter(s -> !s.isBlank())
+            .orElse("unreachable");
     return Status.fromCode(ex.getStatus().getCode())
         .withDescription(source + ": " + description)
         .asRuntimeException();

@@ -195,10 +195,8 @@ public class TcpProxyEventClient implements AutoCloseable {
     }
     File file = new File(configuredPath);
     if (!file.exists()) {
-      throw new IOException("TLS file does not exist for property "
-          + propertyName
-          + ": "
-          + configuredPath);
+      throw new IOException(
+          "TLS file does not exist for property " + propertyName + ": " + configuredPath);
     }
     Path path = file.toPath();
     return new TlsResource(() -> Files.newInputStream(path), path);

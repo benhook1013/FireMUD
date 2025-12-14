@@ -6,7 +6,6 @@ import java.util.Map;
 import net.firedevops.firemud.config.LookProperties;
 import net.firedevops.firemud.dto.RoomEntityDto;
 import net.firedevops.firemud.service.RoomEntityService;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 @Service

@@ -34,6 +34,15 @@ This model provides:
 
 > 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md) for detail on how ticks provide transactional guarantees.
 
+### Tick Effects Are At-Least-Once: Idempotency Is Mandatory
+
+Tick execution is replayable: retries, failover, and Redis AOF replay can cause the same logical effect to be attempted more than once. For gameplay commands this is expected and safe only because tick-invoked domain mutations are required to be idempotent with respect to a canonical `EffectId`.
+
+- The Game Session Service computes and propagates a stable `EffectId` (derived from `tenantId`, `tickId`, `effectKey`, and the target aggregate identity).
+- Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
+
+> 🔗 The canonical `EffectId` contract and per-side-effect patterns are defined in [Tick Effect Identity and Idempotency Contract](./system-architecture-ticks.md#tick-effect-identity-and-idempotency-contract).
+
 ---
 
 ## When Sagas *Are* Used (Out-of-Band Workflows)

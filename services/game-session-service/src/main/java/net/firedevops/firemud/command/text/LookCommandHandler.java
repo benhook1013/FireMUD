@@ -6,7 +6,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.cache.LookCacheService;
-import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameLogicProperties;
@@ -34,7 +33,8 @@ public final class LookCommandHandler {
   private final DevIsolatedProperties devIsolatedProperties;
 
   public String describe(String sessionId) {
-    Optional<SessionContext> maybeContext = sessionAuthenticationService.resolveSessionContext(sessionId);
+    Optional<SessionContext> maybeContext =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
       meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", "unknown").increment();
       return null;
@@ -74,10 +74,11 @@ public final class LookCommandHandler {
     Status.Code code = ex.getStatus().getCode();
     return switch (code) {
       case NOT_FOUND -> "ROOM_NOT_FOUND";
-      case UNAVAILABLE -> ex.getStatus().getDescription() != null
-          && ex.getStatus().getDescription().contains("EntityManagement")
-          ? "ENTITY_UNAVAILABLE"
-          : "WORLD_UNAVAILABLE";
+      case UNAVAILABLE ->
+          ex.getStatus().getDescription() != null
+                  && ex.getStatus().getDescription().contains("EntityManagement")
+              ? "ENTITY_UNAVAILABLE"
+              : "WORLD_UNAVAILABLE";
       case DEADLINE_EXCEEDED -> "WORLD_UNAVAILABLE";
       case PERMISSION_DENIED -> "NOT_AUTHORIZED";
       default -> "LOOK_UNAVAILABLE";
@@ -85,13 +86,19 @@ public final class LookCommandHandler {
   }
 
   private String formatErrorResponse(String code, String description) {
-    String message = description != null && !description.isBlank() ? description : "Look unavailable";
+    String message =
+        description != null && !description.isBlank() ? description : "Look unavailable";
     return "ERROR " + code + " " + message;
   }
 
   private void recordFailure(String tenantTag, String errorTag, RuntimeException ex) {
     meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorTag).increment();
-    LOG.warn("LOOK failed for tenantId={}, error={}, sessionId={}", tenantTag, errorTag, ex.getMessage(), ex);
+    LOG.warn(
+        "LOOK failed for tenantId={}, error={}, sessionId={}",
+        tenantTag,
+        errorTag,
+        ex.getMessage(),
+        ex);
   }
 
   private void cacheLook(SessionContext context, LookResult lookResult, String rendered) {
@@ -127,7 +134,8 @@ public final class LookCommandHandler {
           ex);
       return Optional.empty();
     }
-    Optional<SessionContext> maybeContext = sessionAuthenticationService.resolveSessionContext(sessionIdHeader);
+    Optional<SessionContext> maybeContext =
+        sessionAuthenticationService.resolveSessionContext(sessionIdHeader);
     if (maybeContext.isEmpty() || maybeContext.get().tenantId() != tenantId) {
       return Optional.empty();
     }

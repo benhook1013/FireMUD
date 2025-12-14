@@ -25,11 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
-import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
-import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
 import net.firedevops.firemud.test.ChatTestFixtures;
-import net.firedevops.firemud.test.LookTestFixtures;
 import net.firedevops.firemud.test.stubs.ChatEntityManagementStubServer;
 import net.firedevops.firemud.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.test.stubs.WorldManagementStubServer;
@@ -108,13 +104,14 @@ class SayWebSocketCrossServiceTest {
     assertThat(responses.get(0)).startsWith("OK LOGIN");
     assertThat(responses.get(1).trim()).isEqualTo(ChatTestFixtures.canonicalSayText());
     assertThat(SOCIAL_STUB.lastRequest())
-        .hasValueSatisfying(request -> {
-          assertThat(request.getContent()).isEqualTo("Hello travelers");
-          assertThat(request.getType()).isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
-        });
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getContent()).isEqualTo("Hello travelers");
+              assertThat(request.getType())
+                  .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+            });
 
-    assertMetricEventually(
-        "gamesession_command_say_invocations_total{tenantId=\"1\"}", 1.0);
+    assertMetricEventually("gamesession_command_say_invocations_total{tenantId=\"1\"}", 1.0);
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
@@ -131,19 +128,14 @@ class SayWebSocketCrossServiceTest {
       SOCIAL_STUB = new SocialGroupsStubServer(TestSocketUtils.findAvailableTcpPort());
     }
     if (GAME_LOGIC == null) {
-      GAME_LOGIC =
-          startGameLogic(
-              WORLD_STUB.port(), ENTITY_STUB.port(), SOCIAL_STUB.port());
+      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port(), SOCIAL_STUB.port());
     }
     if (GAME_SESSION == null) {
-      GAME_SESSION =
-          startGameSession(
-              GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
+      GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
     }
   }
 
-  private static GameLogicHolder startGameLogic(
-      int worldPort, int entityPort, int socialPort) {
+  private static GameLogicHolder startGameLogic(int worldPort, int entityPort, int socialPort) {
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("server.port", "0");
@@ -246,7 +238,8 @@ class SayWebSocketCrossServiceTest {
     return responses;
   }
 
-  private void waitForResponseCount(List<String> responses, int expected) throws InterruptedException {
+  private void waitForResponseCount(List<String> responses, int expected)
+      throws InterruptedException {
     long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
     while (System.currentTimeMillis() < deadline) {
       if (responses.size() >= expected) {
@@ -254,7 +247,8 @@ class SayWebSocketCrossServiceTest {
       }
       Thread.sleep(50);
     }
-    throw new AssertionError("Expected at least " + expected + " responses, got " + responses.size());
+    throw new AssertionError(
+        "Expected at least " + expected + " responses, got " + responses.size());
   }
 
   private void assertMetricEventually(String metric, double expectedValue) throws Exception {

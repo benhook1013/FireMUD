@@ -10,34 +10,33 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.client.AccountClient;
 import net.firedevops.firemud.cache.LookCacheService;
-import net.firedevops.firemud.command.text.LookCommandHandler;
-import net.firedevops.firemud.command.text.LookTextRenderer;
+import net.firedevops.firemud.client.AccountClient;
+import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.command.text.LoginCommandConstants;
 import net.firedevops.firemud.command.text.LoginCommandHandler;
+import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.command.text.LookTextRenderer;
+import net.firedevops.firemud.command.text.SayCommandHandler;
+import net.firedevops.firemud.command.text.SayCommandHandlingResult;
 import net.firedevops.firemud.command.text.TextCommand;
 import net.firedevops.firemud.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.command.text.TextCommandInterpreter;
-import net.firedevops.firemud.command.text.SayCommandHandler;
-import net.firedevops.firemud.command.text.SayCommandHandlingResult;
 import net.firedevops.firemud.command.text.TextCommandType;
-import net.firedevops.firemud.client.GameLogicClient;
 import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameLogicProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
+import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContext;
 import net.firedevops.firemud.service.SessionContextService;
 import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
-import net.firedevops.firemud.gamelogic.v1.LookResult;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -78,7 +77,8 @@ class TextCommandInterpreterTest {
   @BeforeEach
   void setUp() {
     meterRegistry.clear();
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.account.v1.AuthenticateResponse.newBuilder()
                 .setAuthToken("auth")
@@ -100,10 +100,10 @@ class TextCommandInterpreterTest {
     demoInstance.setId(1L);
     demoInstance.setTenantId(22L);
     demoInstance.setOwnerAccountId(123L);
-    when(gameInstanceRepository.findById(Mockito.anyLong()))
-        .thenReturn(Optional.of(demoInstance));
+    when(gameInstanceRepository.findById(Mockito.anyLong())).thenReturn(Optional.of(demoInstance));
     when(sessionAuthenticationService.isAuthenticated(Mockito.anyString())).thenReturn(true);
-    when(sessionAuthenticationService.resolveSessionContext("123")).thenReturn(Optional.of(sessionContext));
+    when(sessionAuthenticationService.resolveSessionContext("123"))
+        .thenReturn(Optional.of(sessionContext));
     interpreter =
         new TextCommandInterpreter(
             commandService, lookHandler, loginHandler, sessionAuthenticationService, sayHandler);
@@ -114,8 +114,7 @@ class TextCommandInterpreterTest {
     CommandEnqueueResult success = CommandEnqueueResult.success();
     when(commandService.enqueue("123", "LOOK", false)).thenReturn(success);
 
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("123", "LOOK", false);
+    TextCommandInterpretationResult interpretation = interpreter.interpret("123", "LOOK", false);
 
     assertTrue(interpretation.commandResult().accepted());
     verify(commandService).enqueue("123", "LOOK", false);
@@ -126,10 +125,13 @@ class TextCommandInterpreterTest {
     LookCommandHandler mockLookHandler = Mockito.mock(LookCommandHandler.class);
     TextCommandInterpreter interpreterWithMockLook =
         new TextCommandInterpreter(
-            commandService, mockLookHandler, loginHandler, sessionAuthenticationService, sayHandler);
+            commandService,
+            mockLookHandler,
+            loginHandler,
+            sessionAuthenticationService,
+            sayHandler);
     when(commandService.enqueue("123", "LOOK", false)).thenReturn(CommandEnqueueResult.success());
-    when(mockLookHandler.describe("123"))
-        .thenReturn("ERROR ROOM_NOT_FOUND mysterious room");
+    when(mockLookHandler.describe("123")).thenReturn("ERROR ROOM_NOT_FOUND mysterious room");
 
     TextCommandInterpretationResult interpretation =
         interpreterWithMockLook.interpret("123", "LOOK", false);
@@ -218,8 +220,7 @@ class TextCommandInterpreterTest {
 
     assertFalse(result.accepted());
     assertEquals(LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE, result.errorCode());
-    assertEquals(
-        LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE, result.errorMessage());
+    assertEquals(LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE, result.errorMessage());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -227,8 +228,7 @@ class TextCommandInterpreterTest {
   void gameplayCommandRequiresAuthentication() {
     when(sessionAuthenticationService.isAuthenticated("321")).thenReturn(false);
 
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("321", "LOOK", false);
+    TextCommandInterpretationResult interpretation = interpreter.interpret("321", "LOOK", false);
 
     CommandEnqueueResult result = interpretation.commandResult();
     assertFalse(result.accepted());
@@ -242,8 +242,7 @@ class TextCommandInterpreterTest {
     CommandEnqueueResult success = CommandEnqueueResult.success();
     when(commandService.enqueue("999", "LOOK", false)).thenReturn(success);
 
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("999", "LOOK", false);
+    TextCommandInterpretationResult interpretation = interpreter.interpret("999", "LOOK", false);
 
     assertTrue(interpretation.commandResult().accepted());
     verify(commandService).enqueue("999", "LOOK", false);

@@ -25,12 +25,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class SayAggregationServiceTest {
-  @Mock
-  private SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
+  @Mock private SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
 
   @Mock
   private net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc
-      .EntityManagementServiceBlockingStub entityStub;
+          .EntityManagementServiceBlockingStub
+      entityStub;
 
   private MeterRegistry meterRegistry;
   private SayAggregationService service;

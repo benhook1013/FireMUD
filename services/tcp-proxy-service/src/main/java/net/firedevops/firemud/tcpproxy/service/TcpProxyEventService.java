@@ -3,8 +3,8 @@ package net.firedevops.firemud.tcpproxy.service;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import java.util.List;
 import java.time.Duration;
+import java.util.List;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
@@ -110,21 +110,18 @@ public class TcpProxyEventService {
       incrementIfError(safeResponse.getError());
       return safeResponse;
     }
-    return NotifyDisconnectResponse.newBuilder(safeResponse)
-        .setError(ok(okMessage))
-        .build();
+    return NotifyDisconnectResponse.newBuilder(safeResponse).setError(ok(okMessage)).build();
   }
 
-  private PushBufferedInputResponse normalize(PushBufferedInputResponse response, String okMessage) {
+  private PushBufferedInputResponse normalize(
+      PushBufferedInputResponse response, String okMessage) {
     PushBufferedInputResponse safeResponse =
         response != null ? response : PushBufferedInputResponse.getDefaultInstance();
     if (safeResponse.hasError()) {
       incrementIfError(safeResponse.getError());
       return safeResponse;
     }
-    return PushBufferedInputResponse.newBuilder(safeResponse)
-        .setError(ok(okMessage))
-        .build();
+    return PushBufferedInputResponse.newBuilder(safeResponse).setError(ok(okMessage)).build();
   }
 
   private ErrorDetail ok(String message) {

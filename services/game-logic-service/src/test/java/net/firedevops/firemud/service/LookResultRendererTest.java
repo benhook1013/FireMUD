@@ -2,8 +2,8 @@ package net.firedevops.firemud.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import net.firedevops.firemud.test.LookTestFixtures;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.test.LookTestFixtures;
 import org.junit.jupiter.api.Test;
 
 class LookResultRendererTest {

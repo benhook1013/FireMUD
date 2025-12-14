@@ -37,7 +37,11 @@ class TickServiceImplTest {
     repository = mock(net.firedevops.firemud.repository.GameInstanceRepository.class);
     service =
         new TickServiceImpl(
-            redisTemplate, meterRegistry, conflictTracker, repository, new DevIsolatedProperties(false));
+            redisTemplate,
+            meterRegistry,
+            conflictTracker,
+            repository,
+            new DevIsolatedProperties(false));
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.entity.GameInstance();
     instance.setTenantId(1L);

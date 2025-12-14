@@ -38,9 +38,6 @@ class ScriptTickServiceImplTest {
     service =
         new ScriptTickServiceImpl(redisTemplate, meterRegistry, quotaService, conflictTracker);
     ((ScriptTickServiceImpl) service).init();
-    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickBudgetMs", 100L);
-    org.springframework.test.util.ReflectionTestUtils.setField(service, "minLockTtlMs", 500L);
-    org.springframework.test.util.ReflectionTestUtils.setField(service, "maxLockTtlMs", 5000L);
   }
 
   @Test
@@ -81,7 +78,7 @@ class ScriptTickServiceImplTest {
     when(redisTemplate.execute(any(RedisScript.class), any(List.class))).thenReturn(1L);
     when(listOps.size(any())).thenReturn(0L);
 
-    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickBudgetMs", 0L);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickDurationMs", 0L);
 
     service.processTick(1L, 2L);
 

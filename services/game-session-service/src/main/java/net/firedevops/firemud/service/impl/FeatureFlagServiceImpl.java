@@ -18,7 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 public class FeatureFlagServiceImpl implements FeatureFlagService {
   private static final Logger logger = LoggingUtil.getLogger(FeatureFlagServiceImpl.class);
 

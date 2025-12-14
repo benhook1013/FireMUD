@@ -11,13 +11,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
-import java.time.Duration;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,10 +28,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.test.LookTestFixtures;
 import net.firedevops.firemud.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.test.stubs.WorldManagementStubServer;
-import net.firedevops.firemud.GameLogicServiceApplication;
-import net.firedevops.firemud.GameSessionServiceApplication;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.context.WebServerApplicationContext;
@@ -102,8 +99,7 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses.get(1).trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
     assertThat(responses.get(2)).startsWith("ERROR ROOM_NOT_FOUND");
 
-    assertMetricEventually(
-        "gamesession_command_look_invocations_total{tenantId=\"1\"}", 2.0);
+    assertMetricEventually("gamesession_command_look_invocations_total{tenantId=\"1\"}", 2.0);
     assertMetricEventually(
         "gamesession_command_look_failures_total{tenantId=\"1\",error=\"ROOM_NOT_FOUND\"}", 1.0);
   }
@@ -232,7 +228,8 @@ class LookWebSocketCrossServiceTest {
     return responses;
   }
 
-  private void waitForResponseCount(List<String> responses, int expected) throws InterruptedException {
+  private void waitForResponseCount(List<String> responses, int expected)
+      throws InterruptedException {
     long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
     while (System.currentTimeMillis() < deadline) {
       if (responses.size() >= expected) {
@@ -240,7 +237,8 @@ class LookWebSocketCrossServiceTest {
       }
       Thread.sleep(50);
     }
-    throw new AssertionError("Expected at least " + expected + " responses, got " + responses.size());
+    throw new AssertionError(
+        "Expected at least " + expected + " responses, got " + responses.size());
   }
 
   private void assertMetricEventually(String metric, double expectedValue) throws Exception {
@@ -271,7 +269,8 @@ class LookWebSocketCrossServiceTest {
                   new AccountServiceGrpc.AccountServiceImplBase() {
                     @Override
                     public void authenticate(
-                        AuthenticateRequest request, io.grpc.stub.StreamObserver<AuthenticateResponse> responseObserver) {
+                        AuthenticateRequest request,
+                        io.grpc.stub.StreamObserver<AuthenticateResponse> responseObserver) {
                       AuthenticateResponse response =
                           AuthenticateResponse.newBuilder()
                               .setAccountId(String.valueOf(ACCOUNT_ID))

@@ -28,7 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are not exposed externally")
 @Service
-@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "false", matchIfMissing = false)
+@ConditionalOnProperty(
+    name = "game-session.dev-isolated",
+    havingValue = "false",
+    matchIfMissing = false)
 public final class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
 
@@ -86,7 +89,7 @@ public final class GameInstanceServiceImpl implements GameInstanceService {
   public GameInstanceDto startSession(StartSessionRequest request) {
     if (devIsolatedProperties.isDevIsolated()) {
       logger.info(
-          "Dev-isolated mode enabled; acknowledging start for tenant {} version {} patch {}", 
+          "Dev-isolated mode enabled; acknowledging start for tenant {} version {} patch {}",
           request.tenantId(),
           request.runtimeVersion(),
           request.scriptPatchVersion());

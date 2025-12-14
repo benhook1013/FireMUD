@@ -13,9 +13,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
 
-/**
- * Development-only echo handler for verifying the TCP proxy <-> gateway WebSocket bridge.
- */
+/** Development-only echo handler for verifying the TCP proxy <-> gateway WebSocket bridge. */
 public class DevEchoWebSocketHandler implements WebSocketHandler {
   private static final String ENDPOINT_TAG_VALUE = "dev-echo";
   private static final String METRIC_CONNECTIONS_ACTIVE = "gateway.connections.active";
@@ -55,7 +53,8 @@ public class DevEchoWebSocketHandler implements WebSocketHandler {
         session.getHandshakeInfo().getRemoteAddress());
 
     Flux<WebSocketMessage> outbound =
-        session.receive()
+        session
+            .receive()
             .doOnNext(
                 message -> {
                   String payload = message.getPayloadAsText();

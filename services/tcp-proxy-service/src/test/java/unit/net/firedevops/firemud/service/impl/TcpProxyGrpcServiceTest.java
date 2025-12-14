@@ -7,13 +7,13 @@ import static org.junit.jupiter.api.Assertions.fail;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.PingService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
+import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PingRequest;
 import net.firedevops.firemud.tcpproxy.v1.PingResponse;
-import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.util.StringUtils;
@@ -90,8 +90,8 @@ class TcpProxyGrpcServiceTest {
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
     PushBufferedInputResponse upstream =
         PushBufferedInputResponse.newBuilder()
-            .setError(ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage("bad")
-                .build())
+            .setError(
+                ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage("bad").build())
             .build();
     Mockito.when(
             eventService.pushBufferedInput(
@@ -130,7 +130,9 @@ class TcpProxyGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
     PushBufferedInputResponse upstream = PushBufferedInputResponse.newBuilder().build();
-    Mockito.when(eventService.pushBufferedInput(Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
+    Mockito.when(
+            eventService.pushBufferedInput(
+                Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
         .thenReturn(upstream);
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -165,7 +167,9 @@ class TcpProxyGrpcServiceTest {
   void pushBufferedInputNormalizesRuntimeFailure() {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
-    Mockito.when(eventService.pushBufferedInput(Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
+    Mockito.when(
+            eventService.pushBufferedInput(
+                Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
         .thenThrow(new RuntimeException("boom"));
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -344,7 +348,9 @@ class TcpProxyGrpcServiceTest {
         PushBufferedInputResponse.newBuilder()
             .setError(ErrorDetail.newBuilder().setCode("OK").setMessage("ok").build())
             .build();
-    Mockito.when(eventService.pushBufferedInput(Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
+    Mockito.when(
+            eventService.pushBufferedInput(
+                Mockito.anyString(), Mockito.anyList(), Mockito.anyString()))
         .thenReturn(upstream);
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -370,7 +376,10 @@ class TcpProxyGrpcServiceTest {
         });
 
     Mockito.verify(eventService)
-        .pushBufferedInput(Mockito.eq("sess-123"), Mockito.eq(List.of("look", "say hi")), Mockito.eq("tenant-xyz"));
+        .pushBufferedInput(
+            Mockito.eq("sess-123"),
+            Mockito.eq(List.of("look", "say hi")),
+            Mockito.eq("tenant-xyz"));
   }
 
   @Test

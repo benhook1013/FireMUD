@@ -5,14 +5,11 @@ import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.service.GameInstanceService;
-import net.firedevops.firemud.service.devisolated.DevIsolatedGameInstanceRegistry;
 import org.slf4j.Logger;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
-/**
- * GameInstanceService implementation for dev-isolated mode that avoids database access.
- */
+/** GameInstanceService implementation for dev-isolated mode that avoids database access. */
 @Service
 @ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")
 public class DevIsolatedGameInstanceService implements GameInstanceService {

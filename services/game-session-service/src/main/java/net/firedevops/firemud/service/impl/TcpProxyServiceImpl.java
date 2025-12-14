@@ -99,7 +99,8 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   @Override
   @Timed("tcpProxyGrpc.pushBufferedInput")
   public void pushBufferedInput(
-      PushBufferedInputRequest request, StreamObserver<PushBufferedInputResponse> responseObserver) {
+      PushBufferedInputRequest request,
+      StreamObserver<PushBufferedInputResponse> responseObserver) {
     logger.debug(
         "PushBufferedInput session={} tenant={} commands={}",
         request.getSessionId(),
@@ -144,17 +145,16 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     try {
       sessionId = Long.parseLong(sessionIdText);
     } catch (NumberFormatException ex) {
-      return SessionValidationResult.failed(
-          error("INVALID_ARGUMENT", "sessionId must be numeric"));
+      return SessionValidationResult.failed(error("INVALID_ARGUMENT", "sessionId must be numeric"));
     }
     try {
       tenantId = Long.parseLong(tenantIdText);
     } catch (NumberFormatException ex) {
-      return SessionValidationResult.failed(
-          error("INVALID_ARGUMENT", "tenantId must be numeric"));
+      return SessionValidationResult.failed(error("INVALID_ARGUMENT", "tenantId must be numeric"));
     }
     // Dev-isolated mode never persists GameInstance records, so this lookup currently always fails
-    // and propagates NOT_FOUND. We should skip the DB check or seed the session state when dev-isolated
+    // and propagates NOT_FOUND. We should skip the DB check or seed the session state when
+    // dev-isolated
     // mode is enabled so buffered input/disconnect hooks remain usable in that profile.
     if (devIsolatedProperties.isDevIsolated()) {
       return new SessionValidationResult(
