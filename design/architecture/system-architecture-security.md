@@ -37,6 +37,21 @@ JWT signing keys rotate manually or through cert-manager automation.
   - Distributed via **Kubernetes Secrets**
   - Trusted using the Kubernetes CA chain
 
+### TLS Termination for Gateway
+
+TLS for player and Telnet flows is applied hop-by-hop so traffic stays protected while keeping the DMZ boundary explicit:
+
+- **Browser / Web client path**
+  - Browser client → external load balancer over `https://` / `wss://` using a certificate issued by cert-manager (for example, via an Ingress or `LoadBalancer` Service).
+  - The external load balancer terminates Internet-facing TLS and forwards plain `http://` / `ws://` traffic to Spring Cloud Gateway pods in the DMZ namespace.
+  - Spring Cloud Gateway then connects to backend microservices over mTLS-protected gRPC using certificates configured via `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` as described in [Environment & Secrets Management](./infrastructure/environment-and-secrets.md#grpc-tls-certificates).
+- **Telnet gameplay path**
+  - Telnet client → TCP Proxy Service over raw TCP by default, or optionally over TLS when `TCP_PROXY_TLS_ENABLED=true` and `TCP_PROXY_TLS_CERT` / `TCP_PROXY_TLS_KEY` are provided.
+  - TCP Proxy Service → Spring Cloud Gateway over `wss://` using mutual TLS. The proxy presents a client certificate and key from `FIREMUD_GRPC_CERT_CHAIN_PATH` / `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and validates the gateway certificate against `FIREMUD_GRPC_CA_CERT_PATH` with hostname verification enabled using the host from `GATEWAY_WS_URL`.
+  - Spring Cloud Gateway → Game Session Service (and other backends) over mTLS gRPC using the same `FIREMUD_GRPC_*` variables that all services share.
+
+Local Docker Compose environments may use plain `http://` / `ws://` for simplicity, but the production Kubernetes profile is expected to follow this termination chain so that only the Internet edge terminates TLS and all intra-cluster hops to and from the gateway are either mTLS (gRPC) or `wss://` with mTLS for the Telnet bridge.
+
 ---
 
 ## Cross-Service Trust
@@ -82,7 +97,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 ## Telnet Command Handling and Controls
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ. It forwards **all gameplay traffic** to the backend exclusively via WebSocket through Spring Cloud Gateway and uses a narrow, mTLS-protected gRPC link to the **Game Session Service** only to emit `NotifyDisconnect` lifecycle events (no gameplay payloads).
-- The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences. See [`TelnetServerHandler`](../../services/tcp-proxy-service/src/main/java/net/firedevops/firemud/tcpproxy/telnet/TelnetServerHandler.java) for the implementation.
+- The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences, using a dedicated Telnet pipeline in the TCP Proxy Service (currently implemented by `TelnetServerHandler`).
 
 ---
 

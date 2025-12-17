@@ -334,7 +334,7 @@ Cluster operators **may** additionally configure Redis replication safety knobs 
 - Gameplay logic does not depend on them for correctness.
 - Enabling them trades write availability for additional replication guarantees and must be evaluated per environment.
 
-**Recommended settings and alerts**
+### Recommended settings and alerts
 
 To keep effective tail-loss within the **one to two second** SLO envelope for Coordination Redis:
 
@@ -597,7 +597,7 @@ Despite the hash-tag discipline above, mistakes in key shape or hash-tag constru
 
 - **Coordination keys (`tick:*`, `timer:*`, `retry:*`, `remote:*`, leases, and tick-related locks)**:
   - These keys are treated as **volatile coordination state** and are always backed by authoritative PostgreSQL state and idempotent replay.
-- The default remediation for incorrect hash tags or mis-sharded coordination keys is to use the **coordination reset** tooling described in [Coordination Reset Model](#coordination-reset-model):
+  - The default remediation for incorrect hash tags or mis-sharded coordination keys is to use the **coordination reset** tooling described in [Coordination Reset Model](#coordination-reset-model):
     - Pause tick scheduling (globally or for affected tenants/regions).
     - Reset the Coordination Redis keyspace (per-node or per-tenant/region).
     - Allow ticks and sessions to rebuild coordination state from PostgreSQL and fresh gameplay activity.
@@ -1726,7 +1726,7 @@ Once the logical expiry is reached:
 - Any associated volatile coordination state for that session (queued commands, conflict metadata) is treated as
   abandoned and will not be replayed.
 
-##### Clock and NTP Assumptions for Sessions
+### Clock and NTP Assumptions for Sessions
 
 Logical expiry timestamps and Redis TTLs rely on **reasonably synchronized clocks** on Game Session nodes:
 

@@ -23,6 +23,12 @@ of truth and reconcile code/tests accordingly.
   the target-state mutual TLS setup using the shared `FIREMUD_GRPC_*` certificate
   paths. Remaining work is tracked in
   `design/project-management/task-list-tcp-proxy-service.md` under the mTLS task.
+- **MCP negotiation and richer Telnet heuristics** – MCP 2.1 negotiation,
+  extended Telnet abuse heuristics, and advanced connection throttling behaviour
+  are documented here as target-state features. Portions of this behaviour are
+  still being implemented and hardened; any gaps should be reconciled against
+  the tasks in `design/project-management/task-list-tcp-proxy-service.md` before
+  treating this document as fully representative of production behaviour.
 - **Connection limits and abuse protection** – Connection caps, idle timeouts,
   and input size limits are documented here as the desired safeguards for the
   DMZ boundary. When adding or modifying limits in code, keep metric names and
@@ -51,10 +57,10 @@ of truth and reconcile code/tests accordingly.
   See [Security Architecture](../../system-architecture-security.md).
 - Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC link to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events.
 - Sanitizes incoming Telnet data and enforces a whitelist of
-   **Telnet protocol commands** as described in the
-   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
+  **Telnet protocol commands** as described in the
+  [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
 - Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
- - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
+- Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ### Reconnection Behaviour at the Proxy Layer
@@ -191,7 +197,7 @@ missing either identifier. Once captured, `sessionId` and `tenantId` are
 propagated over the WebSocket bridge (`X-Session-Id` and `X-Tenant-Id` headers)
 and also drive the event and metric generation below.
 
-**Where `sessionId` and `tenantId` come from**
+#### Where `sessionId` and `tenantId` come from
 
 - Cross-service tests and advanced clients typically obtain a `sessionId` by calling the Game Session REST API (for example `POST /sessions`) and then send `SESSION <sessionId> <tenantId>` when attaching to that session. See:
   - `design/project-management/look-smoke-tests.md` (WebSocket and Telnet flows)
@@ -201,7 +207,7 @@ and also drive the event and metric generation below.
   and rely on the Game Session Service to derive session and tenant context from
   the login flow, matching the behavior of WebSocket clients.
 
-**Envelope and command handling rules**
+#### Envelope and command handling rules
 
 - **Without any `SESSION` envelope** – all lines, including `LOGIN`, are forwarded
   verbatim to the gateway; the proxy does not drop or delay gameplay commands.
@@ -258,7 +264,7 @@ The proxy sanitizes incoming bytes and allows only a safe subset of
 This avoids implementing the full Telnet specification while still protecting
 against malformed negotiation sequences and other legacy edge cases.
 
-Example filtering logic from `TelnetServerHandler`:
+Example filtering logic from the Telnet sanitization layer (currently implemented by `TelnetServerHandler`):
 
 ```java
 private static final byte IAC = (byte) 255;
@@ -289,6 +295,21 @@ details on how Telnet connections are integrated into the platform.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - A simple `smoke-test.sh` script in the service directory checks the REST and gRPC endpoints.
 
+### Metrics Summary
+
+TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions described in
+[Logging & Monitoring](../../system-architecture-logging-monitoring.md). Key meters include:
+
+- `tcpproxy.connections.total`, `tcpproxy.connections.active`, and `tcpproxy.buffer.depth` for socket and buffer utilisation at the edge.
+- `tcpproxy.connection.events{type="connect"|"disconnect"}` and `tcpproxy.connection.duration` for connection lifecycle and lifetime tracking.
+- `tcpproxy.command`, `tcpproxy.heartbeat`, `tcpproxy.idleClose`, and `tcpproxy.websocket.reconnect.delay` timers, plus `tcpproxy.websocket.reconnects` counters, for Telnet → Gateway bridge behaviour.
+- `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}` for TLS and mTLS failures.
+- `tcpproxy.telnet.discarded` and related `tcpproxy.disconnect.notify.failure` counters for abuse and error visibility.
+
+Labels on these metrics are intentionally low-cardinality (for example `type`, and occasionally `tenantId`)
+to keep Prometheus usage aligned with the global guidelines. Detailed context such as client IP, `sessionId`,
+and error details is captured in structured logs and tracing spans rather than metric labels.
+
 ### Local development and echo loop
 
 There are two common local flows, depending on whether you want to test the full Telnet → WebSocket bridge or run the proxy completely standalone.
@@ -303,7 +324,7 @@ Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to valida
 4. Connect from a Telnet/MUD client: `telnet localhost 2323`.
 5. Type any text. The proxy logs the input at INFO and you should see the same text echoed back via the Gateway `/dev/echo` handler.
 
-**2. Proxy dev-isolated mode (standalone echo)**
+### Proxy dev-isolated mode (standalone echo)
 
 When `TCP_PROXY_DEV_ISOLATED=true`, the proxy runs with an in-process Telnet echo handler:
 

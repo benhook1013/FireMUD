@@ -54,6 +54,7 @@ services so Docker Compose environments work out of the box.
 
 - Authentication, rate limiting, and logging filters run before routing.
 - `JwtAuthFilter` requires an `Authorization` header on admin routes and forwards the JWT unmodified. Spring Cloud Gateway never parses or validates JWTs; validation occurs entirely in the consuming service.
+- Rate limiting behavior (keying strategy, WebSocket vs HTTP semantics, and division of responsibility with the TCP Proxy Service and Game Session Service) follows the design in [Rate Limiting & Abuse Protection](../../system-architecture-gateway.md#rate-limiting--abuse-protection); this service configures the `RequestRateLimiter` filter to use the Cache/Rate‑Limit Redis instance defined by `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`.
 - WebSocket upgrades are forwarded transparently using Spring Cloud Gateway's built-in support. The `ConnectionMetricsFilter` records active connections for observability.
 - Tracing for WebSocket sessions captures connection‑level metadata (route ID, tenant, session identifiers, basic timing) without logging full text payloads by default.
 - Full request and response payload tracing for WebSocket sessions is an opt‑in diagnostic mode and must be enabled only for tightly scoped debugging scenarios, with sampling and redaction aligned to the [Logging & Monitoring](../../system-architecture-logging-monitoring.md) guidelines.

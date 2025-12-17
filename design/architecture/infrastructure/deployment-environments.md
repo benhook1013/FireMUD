@@ -58,7 +58,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Internal microservices communicate directly over gRPC, bypassing the Spring Cloud Gateway.
 - The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly.
 - The external load balancer exposes only the Gateway and TCP Proxy Service, forming a DMZ that shields internal services.
-- See [Security Architecture](../system-architecture-security.md) for TLS termination, mTLS certificates, and network policy details.
+- See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain (browser/Telnet clients → load balancer → Spring Cloud Gateway → backend services) and DMZ boundary details; this document avoids duplicating those rules.
 - Sample `NetworkPolicy` manifests to restrict internal traffic are provided in
   [`k8s/network-policies`](../../../k8s/network-policies) and can be applied after
   deploying the base manifests.

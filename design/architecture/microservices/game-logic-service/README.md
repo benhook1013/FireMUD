@@ -20,7 +20,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 ## Architecture / Design Notes
 
 - Stateless service accessed over gRPC by other microservices.
-- Uses a modular command parser for extensibility. The text protocol’s **system commands** (such as `LOGIN`, `LOGON`, and `PING`) are interpreted and completed by the Game Session Service; this service focuses on **gameplay commands** only, as described in the [Game Session Service](./game-session-service/README.md#minimal-text-command-protocol) documentation.
+- Uses a modular command parser for extensibility. The text protocol’s **system commands** (such as `LOGIN`, `LOGON`, and `PING`) are interpreted and completed by the Game Session Service; this service focuses on **gameplay commands** only, as described in the [Game Session Service](../game-session-service/README.md#minimal-text-command-protocol) documentation.
 - Deterministic rule execution; random seeds come from the Game Session Service.
 - Fetches contextual world and entity data on demand via gRPC.
 - Gameplay rules are read from this service's own versioned data when a version

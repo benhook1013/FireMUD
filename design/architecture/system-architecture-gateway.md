@@ -96,10 +96,6 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 
 - JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
-- `application.yml` defines `RequestRateLimiter` and `Retry` filters that apply to every route by default.
-  - The rate limiter stores tokens in Redis. The gateway connects to the **Cache/Rate‑Limit Redis** deployment via
-    `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`, keeping rate
-    limiting isolated from tick/session coordination as described in the Redis architecture. All environments configure this cache endpoint explicitly; there is no fallback to a generic Redis host/port.
 
 > **Redis topology guidance:** Sharing a single Redis instance for both
 > Coordination Redis and Cache/Rate‑Limit Redis is acceptable only for local
@@ -111,9 +107,32 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 > [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#redis-connection)
 > and [Redis Architecture](./system-architecture-redis.md#redis-profiles) for
 > reference profiles.
+
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
 - TLS termination and mTLS between services are described in [Security Architecture](./system-architecture-security.md).
+
+## Rate Limiting & Abuse Protection
+
+Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecting the platform from abusive traffic:
+
+- **Keying strategy**
+  - Gateway rate limiting is primarily **per-client IP** with optional route-level differentiation. The default `RequestRateLimiter` configuration uses the Cache/Rate‑Limit Redis deployment and derives keys from the client IP (as seen by the gateway after load balancer and TCP Proxy headers) and route ID, keeping key cardinality modest.
+  - Game Session Service enforces **per-session and per-command** limits (for example, commands per tick region) using Redis coordination keys. See [Reconnection Strategy](./system-architecture-reconnection.md) and [Redis Architecture](./system-architecture-redis.md) for session/tick-level controls.
+- **WebSocket vs HTTP semantics**
+  - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet/WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
+  - Once a WebSocket connection is established to `/ws/game/**`, ongoing gameplay messages traverse the connection without additional gateway-level rate limiting; downstream services (especially Game Session Service) enforce per-session and per-command safety.
+- **Edge vs core responsibilities**
+  - The **TCP Proxy Service** enforces **connection-level and per-socket safety** for Telnet clients: idle timeouts, per-IP connection caps, buffer depth limits, and basic abuse heuristics. It relies on Spring Cloud Gateway and Game Session Service for cross-tenant and content-aware rate limiting.
+  - **Spring Cloud Gateway** enforces **request- and connection-creation limits** using the Cache/Rate‑Limit Redis instance configured via `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`, protecting backend services from floods of new connections or HTTP calls.
+  - The **Game Session Service** applies **fine-grained gameplay limits** (per-session command rates, login attempt throttling, and region-level protections) so in-game abuse is handled close to business logic.
+
+This layered model avoids over-counting Telnet/WebSocket frames while still protecting the platform: the gateway guards connection churn and HTTP floods, the TCP Proxy Service governs raw Telnet behavior, and the Game Session Service enforces gameplay-specific policies.
+
+## TLS Termination for Gateway
+
+- **Browser / Web clients** – External `https://` / `wss://` connections terminate at the Internet-facing load balancer. The load balancer forwards `http://` / `ws://` traffic to Spring Cloud Gateway pods in the DMZ, and the gateway connects onward to backend services over mTLS-protected gRPC as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway).
+- **Telnet clients** – Telnet or Telnet-over-TLS connections terminate at the TCP Proxy Service. The proxy then connects to the canonical gameplay route `/ws/game/**` on Spring Cloud Gateway over `wss://` using mutual TLS, and the gateway forwards gameplay to the Game Session Service over mTLS gRPC. Detailed certificate and environment variable mappings are documented in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway) and [Protocol Bridging](./system-architecture-protocol-bridging.md#websocket-bridge-configuration).
 
 ## Management Plane Security
 
