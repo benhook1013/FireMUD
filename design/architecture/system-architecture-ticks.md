@@ -63,8 +63,8 @@ This makes it explicit that **tick heartbeats and script timers are driven by gR
 Tick regions are coordinated by a **single authoritative executor** at any point in time:
 
 - For each `{tenantId, regionId}` there is exactly one active tick executor (a Game Session Service instance / worker) that:
-  - Reads commands from `tick:{tenantId}:{regionId}:queue:*`, timers from `timer:{tenantId}:{regionId}`, and retries from `retry:{tenantId}:{regionId}`.
-  - Drives `tick:{tenantId}:{regionId}:pending` and the associated commit/rollback scripts.
+  - Reads commands from `tick:{tenantRegionTag}:queue:*`, timers from `timer:{tenantRegionTag}`, and retries from `retry:{tenantRegionTag}`.
+  - Drives `tick:{tenantRegionTag}:pending` and the associated commit/rollback scripts.
   - Issues tick-scoped gRPC calls to domain services (Entity Management, World Management, Social Groups, Automation, etc.).
 - Other workers may be running but **do not process ticks for that region** while the current executor holds the leadership lease described in the [Redis Architecture](./system-architecture-redis.md#region-leadership-and-tick-executor-lease).
 
@@ -80,6 +80,13 @@ The **region boundary** is therefore the unit of atomicity and authority:
 - No lock, Lua script, or tick context spans multiple regions. Cross-region flows are modeled as **messages between region executors**, not shared locks.
 
 ### Tick Effect Ledger and Replay Guarantees
+
+Redis key construction for tick regions, including the `{tenantRegionTag}` hash
+tag and normalization helpers, is defined in
+the [Redis Architecture](./system-architecture-redis.md#hash-tags-and-redis-cluster-slotting).
+Tick-related examples in this document (such as
+`tick:{tenantRegionTag}:queue:{entityId}` and `tick:{tenantRegionTag}:pending`)
+assume callers use those shared helpers rather than hand-rolled key strings.
 
 Tick coordination relies on Redis for the fast staging surface, but PostgreSQL remains the source of truth for whether a tick effect was ever applied. To make this explicit:
 
@@ -122,6 +129,18 @@ Every gRPC endpoint that can be invoked from tick execution must document and im
 - **Retry classification:** errors must be classified as retryable (transient infrastructure issues) vs terminal (invalid inputs, missing aggregates). Terminal errors must transition the tick effect ledger to `ABANDONED` with a reason instead of causing infinite retries.
 
 This ensures that idempotent storage is matched by idempotent error semantics: “replayed work” converges rather than thrashing.
+
+Endpoints that participate in tick-driven effects are also expected to emit a small, standardized metric that distinguishes “first apply” from “replay/no-op” outcomes, using the shared idempotency helper from `firemud-common`. A representative shape is:
+
+- `tick.effect_outcome_total{service, effect_type, outcome}`
+  - `service` – the owning microservice (for example `entity-management-service`).
+  - `effect_type` – a low-cardinality label describing the side-effect category (for example `entity_state`, `inventory`, `quest`, `room_state`), **not** the full `EffectId`.
+  - `outcome` – one of `first_apply`, `replay_ok`, or `guard_error` (where `guard_error` represents unexpected failures at the idempotency guard boundary).
+
+This metric is intentionally simple and global:
+
+- It does not introduce per-tenant or per-environment tuning.
+- It provides a cross-service view of how often replay paths are exercised and highlights services that are not honoring the canonical idempotency contract.
 
 #### Side-Effect Categories and Enforced Idempotency Primitives
 
@@ -328,7 +347,7 @@ Within a region’s tick, each **command** is treated as a small, idempotent wor
 
 1. **Enqueue**
    - The Game Session Service accepts commands from Telnet/WebSocket clients or automation.
-   - It enqueues them into per-entity or per-region queues in Redis (for example `tick:{tenantId}:{regionId}:queue:{entityId}`).
+   - It enqueues them into per-entity or per-region queues in Redis (for example `tick:{tenantRegionTag}:queue:{entityId}`).
 
 2. **Target Resolution (read-only)**
    - During the relevant tick, the executor computes the target set for the command using the pinned snapshot for that `{tenantId, regionId}`:
@@ -588,7 +607,7 @@ Domain services treat `tickId` as the canonical idempotency token for every tick
 
 The idempotency rules in this section apply to any operation that is:
 
-- Invoked as part of tick execution (driven by commands dequeued from `tick:{tenantId}:{regionId}:queue:{entityId}` or by timers/retries tied to the same `tickId` stream), **and**
+- Invoked as part of tick execution (driven by commands dequeued from `tick:{tenantRegionTag}:queue:{entityId}` or by timers/retries tied to the same `tickId` stream), **and**
 - Persists or triggers side effects outside Redis, including:
   - PostgreSQL mutations (rows in Entity Management, World Management, Social, etc.).
   - Durable queues or outboxes consumed by other services.
@@ -676,7 +695,7 @@ The crash-recovery story depends on domain services implementing these patterns 
 When introducing a new command type that will run under tick control, implementers must answer the following questions in design docs and code review:
 
 - **Is this command tick-driven?**
-  - Does it run because an entry is dequeued from `tick:{tenantId}:{regionId}:queue:{entityId}` or a tick-timer/retry fired?
+  - Does it run because an entry is dequeued from `tick:{tenantRegionTag}:queue:{entityId}` or a tick-timer/retry fired?
   - If not, it may follow different idempotency rules and does not belong in this section.
 - **What is the idempotency key?**
   - For single-aggregate updates: which `last_tick_id` field and table enforce “at most one update per tick” for that aggregate?

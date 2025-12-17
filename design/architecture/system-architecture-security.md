@@ -81,7 +81,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 
 ## Telnet Command Handling and Controls
 
-- Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ and **never contacts internal services directly**.
+- Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ. It forwards **all gameplay traffic** to the backend exclusively via WebSocket through Spring Cloud Gateway and uses a narrow, mTLS-protected gRPC link to the **Game Session Service** only to emit `NotifyDisconnect` lifecycle events (no gameplay payloads).
 - The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences. See [`TelnetServerHandler`](../../services/tcp-proxy-service/src/main/java/net/firedevops/firemud/tcpproxy/telnet/TelnetServerHandler.java) for the implementation.
 
 ---
@@ -103,9 +103,9 @@ JWT signing keys rotate manually or through cert-manager automation.
 | TLS Termination | Load balancer |
 | Internal Encryption | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
-| Brute-Force Defense | Game Session Service enforces per-IP connection and command rate limits; Gateway applies Redis rate limiting |
+| Brute-Force Defense | Spring Cloud Gateway enforces Redis-backed request rate limiting for HTTP/WebSocket/Telnet-bridged traffic; Game Session Service enforces per-IP connection and command rate limits |
 | Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
-| Telnet Controls | Telnet protocol command whitelist + sanitization implemented |
+| Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service |
 | Admin Role Access | JWT-only; no special network-level restrictions |
 | Zero Trust | Enforced via mTLS and JWT-based validation |
 | 2FA | Available for admin and moderator accounts via TOTP codes |

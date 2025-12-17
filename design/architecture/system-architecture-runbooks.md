@@ -80,10 +80,10 @@ For local development, use `./gradlew devUp` to start Docker Compose and
      - When Coordination Redis recovers after an outage or severe degradation:
        - Tick executors:
          - Do **not** attempt to resume in-flight locks or leases based on in-memory state.
-         - Rely solely on surviving Redis keys (`tick:{tenantId}:{regionId}:pending`, `tick-executor-lease:{tenantId}:{regionId}`, and lock keys) plus PostgreSQL idempotency guards to decide what work needs replay.
+         - Rely solely on surviving Redis keys (`tick:{tenantRegionTag}:pending`, `tick-executor-lease:{tenantRegionTag}`, and lock keys) plus PostgreSQL idempotency guards to decide what work needs replay.
          - If `pending` survives for a region, the next executor for that `{tenantId, regionId}` replays the tick as described in the tick system design. If `pending` is missing (for example due to AOF tail loss), the scheduler treats partially executed work as lost and advances to the next `tickId`, relying on monitoring to surface inconsistencies.
        - Leases:
-         - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantId}:{regionId}` in Redis and treat previously held leases as invalid.
+         - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
        - Sessions:
          - If `session:{tenantId}:{sessionId}` keys survive, reconnect flows behave normally.
          - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).

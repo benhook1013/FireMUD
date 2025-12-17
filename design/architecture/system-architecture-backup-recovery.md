@@ -93,6 +93,7 @@ Redis is treated as a **transient coordination layer** in terms of data authorit
     - All volatile tick state, timers, and queues to be discarded.
     - Games to restart from authoritative PostgreSQL state on next login.
   - Any workflow that resets Redis in staging/production must be documented as a runbook with clear player‑impact notes; it is not part of the default CI/CD pipeline.
+  - The **scope** of any reset (single region, single tenant, or entire cluster) must follow the guidelines in the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model) so that player impact and recovery behavior are predictable.
 
 This behavior is distinct from **failover**:
 

@@ -27,15 +27,14 @@ Public login APIs exist for administrators and account portals, but gameplay cli
   multiple games without data leakage. Every query enforces this tenant filter as
   described in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
   design.
-- Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
-  via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
-- All service-to-service communication is protected by mutual TLS.
-- Client authentication is initiated via the `LOGIN` command flow described in
-  [Authentication & Authorization](../../system-architecture-authentication.md).
-  Session tokens stored in Redis allow seamless reconnection by the Game Session
-  Service without re-entering credentials.
-- Sends notification emails when the Game Session Service reports suspicious
-  login activity. See
+ - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
+   via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
+ - All service-to-service communication is protected by mutual TLS.
+ - Client authentication is initiated via the `LOGIN` command flow described in
+   [Authentication & Authorization](../../system-architecture-authentication.md).
+   Session tokens stored in Redis allow seamless reconnection by the Game Session
+   Service without re-entering credentials.
+- Owns brute-force defense and login abuse handling for the platform. The service monitors login attempts per account and per IP, applies throttling and temporary blacklisting policies, and emits structured signals (for example, `AUTH_ACCOUNT_LOCKED`) that the Game Session Service and other consumers honor when binding gameplay sessions. Suspicious activity triggers notification emails and audit events as described in
   [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Non-gameplay workflows such as account creation or billing updates are
   orchestrated using the Saga pattern outlined in
@@ -203,7 +202,7 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{tokenHash}`, where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). Their TTL is derived from the JWT lifetime:
+Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{tokenHash}` (hash-tagging on `tenantId` only), where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). Their TTL is derived from the JWT lifetime:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 

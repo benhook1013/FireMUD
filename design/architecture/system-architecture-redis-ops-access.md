@@ -1,6 +1,6 @@
 # Coordination Redis Ops Access & Tooling
 
-This document expands on the access control and operational guardrails described in `system-architecture-redis.md`. It focuses on how human operators and maintenance tooling are allowed to interact with **coordination prefixes**.
+This document expands on the access control and operational guardrails described in `system-architecture-redis.md`. It focuses on how human operators and maintenance tooling are allowed to interact with **coordination prefixes** and how those tools participate in the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model).
 
 ## Coordination Redis Access Rules
 

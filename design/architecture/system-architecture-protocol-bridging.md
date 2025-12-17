@@ -57,7 +57,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Buffers active input while the client remains connected and discards it if the TCP connection drops.
 - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and session recovery are handled as described in [Reconnection Strategy](./system-architecture-reconnection.md).
 - Disconnect handling is **layered**: the proxy cleans up Telnet sessions, Spring Cloud Gateway automatically recreates WebSocket backends, and the Game Session Service reloads state from Redis.
-- The proxy defines gRPC events `NotifyDisconnect` and `PushBufferedInput` so the Game Session Service can recover Telnet sessions.
+- The proxy defines a `NotifyDisconnect` gRPC event so the Game Session Service can recover Telnet sessions when Telnet clients drop.
 - Metrics are exported at `/actuator/prometheus` and tracing data is sent to the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ### WebSocket Bridge Configuration

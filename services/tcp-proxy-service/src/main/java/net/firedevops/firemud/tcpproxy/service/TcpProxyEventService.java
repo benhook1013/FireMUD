@@ -4,10 +4,8 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
-import java.util.List;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -80,29 +78,6 @@ public class TcpProxyEventService {
     }
   }
 
-  public PushBufferedInputResponse pushBufferedInput(
-      String sessionId, List<String> commands, String tenantId) {
-    if (!StringUtils.hasText(sessionId) || !StringUtils.hasText(tenantId)) {
-      return PushBufferedInputResponse.newBuilder()
-          .setError(error("INVALID_ARGUMENT", "sessionId and tenantId are required"))
-          .build();
-    }
-    if (commands == null || commands.isEmpty()) {
-      return PushBufferedInputResponse.newBuilder()
-          .setError(error("INVALID_ARGUMENT", "At least one buffered command is required"))
-          .build();
-    }
-    try {
-      PushBufferedInputResponse response = client.pushBufferedInput(sessionId, commands, tenantId);
-      return normalize(response, "Buffered commands forwarded");
-    } catch (RuntimeException ex) {
-      logger.warn("Failed to push buffered commands", ex);
-      return PushBufferedInputResponse.newBuilder()
-          .setError(error("UPSTREAM_FAILURE", "Failed to push buffered commands"))
-          .build();
-    }
-  }
-
   private NotifyDisconnectResponse normalize(NotifyDisconnectResponse response, String okMessage) {
     NotifyDisconnectResponse safeResponse =
         response != null ? response : NotifyDisconnectResponse.getDefaultInstance();
@@ -111,17 +86,6 @@ public class TcpProxyEventService {
       return safeResponse;
     }
     return NotifyDisconnectResponse.newBuilder(safeResponse).setError(ok(okMessage)).build();
-  }
-
-  private PushBufferedInputResponse normalize(
-      PushBufferedInputResponse response, String okMessage) {
-    PushBufferedInputResponse safeResponse =
-        response != null ? response : PushBufferedInputResponse.getDefaultInstance();
-    if (safeResponse.hasError()) {
-      incrementIfError(safeResponse.getError());
-      return safeResponse;
-    }
-    return PushBufferedInputResponse.newBuilder(safeResponse).setError(ok(okMessage)).build();
   }
 
   private ErrorDetail ok(String message) {

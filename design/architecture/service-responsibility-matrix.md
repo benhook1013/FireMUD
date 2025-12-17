@@ -43,7 +43,7 @@
 | Automated tick/coordination remediation (pause/resume/reset) | | | | | | | | | ✔ | | |
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |
 | Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
-| WebSocket upgrade, routing, and auth gateway | | | | | | | | | | | ✔ |
+| WebSocket upgrade, routing, and admin auth gating | | | | | | | | | | | ✔ |
 | Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
 

@@ -14,7 +14,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 | Layer | Responsibility |
 | --- | --- |
-| **TCP Proxy Service** | Parses Telnet input and clears buffered commands; exposes gRPC hooks for session recovery |
+| **TCP Proxy Service** | Parses Telnet input and clears buffered commands; exposes a gRPC hook for disconnect notification |
 | **Spring Cloud Gateway** | Stateless WebSocket passthrough; reconnects backend automatically |
 | **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers |
 
@@ -33,7 +33,7 @@ TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
 - No gameplay state is preserved across reconnects — Game Session Service handles recovery
-- Provides gRPC hooks (`NotifyDisconnect`, `PushBufferedInput`) for session recovery integration
+- Provides a `NotifyDisconnect` gRPC hook for session recovery integration
 - Runtime options such as the listening port and Spring Cloud Gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables)).
 
 ### Spring Cloud Gateway (Web Clients)

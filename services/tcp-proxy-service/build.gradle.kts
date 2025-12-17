@@ -58,7 +58,6 @@ tasks.register<BootRun>("bootRunDevIsolated") {
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
     environment("TCP_PROXY_DEV_ISOLATED", "true")
-    environment("GATEWAY_WS_URL", "ws://localhost:8080/dev/echo")
 }
 
 val generatedDevCertsRelativePath = "build/generated/dev-certs"

@@ -28,9 +28,10 @@ the multi-tenant requirements in the
 - Redis keys prefix the `tenantId` as described in the
   [Redis Architecture](./system-architecture-redis.md#key-format-examples) so
   cached session state and runtime data remain isolated. For tick-related keys,
-  this prefix is combined with a region identifier inside a Redis Cluster hash
-  tag (for example `tick:{tenantId}:{regionId}:lock:{entityId}`), ensuring both
-  **tenant isolation** and **shard-local atomic operations** within a region.
+  this prefix is combined with a region identifier into a single normalized
+  region hash tag token (for example `tick:{tenantRegionTag}:lock:{entityId}`),
+  ensuring both **tenant isolation** and **shard-local atomic operations**
+  within a region.
 - The React frontend loads per-tenant, version-scoped assets from a published
   `manifest.json` in object storage; the Game Design Service is not queried at
   runtime.

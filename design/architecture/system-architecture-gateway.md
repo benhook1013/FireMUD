@@ -34,6 +34,11 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
 - Initial route targets are loaded on startup, but operators can override them using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
 
+### Authentication Responsibilities
+
+- Spring Cloud Gateway never parses or validates JWTs. It only enforces the presence of an `Authorization` header on selected admin routes and forwards tokens unchanged.
+- All JWT validation and authorization logic lives in downstream admin and meta services (such as the Logging & Admin Service and Account Service), which must treat Spring Cloud Gateway as a dumb proxy and may not assume it has performed any authentication checks.
+
 ---
 
 ## WebSocket Support
@@ -60,6 +65,18 @@ spring:
 
 The gateway uses the `ws://` scheme so Spring Cloud Gateway upgrades HTTP requests into WebSocket connections automatically. The `ClientIpHeaderFilter` copies or preserves the `X-Client-IP` header during the handshake so backend services (and the TCP Proxy bridge) can rely on it when routing gameplay sessions.
 
+### Gameplay WebSocket Route
+
+- **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service. The `/api/session/**` predicate remains a legacy alias and is kept only for backward compatibility.
+- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value is set to `wss://…/ws/game` so the proxy–gateway hop is always encrypted.
+- **Required headers** – Spring Cloud Gateway preserves or sets:
+  - `X-Client-IP` with the originating client address (Telnet clients via the TCP Proxy Service; web clients via the external load balancer).
+  - `X-Session-Id` and `X-Tenant-Id` when provided by advanced Telnet clients via the `SESSION` envelope, so the Game Session Service can correlate gameplay with Redis session state.
+  - Standard correlation and trace headers defined in the logging/observability guidelines.
+- **TLS expectations**
+  - External clients connect over `wss://` to the public load balancer, which forwards to Spring Cloud Gateway as described in [Security Architecture](./system-architecture-security.md#tls-termination--internal-encryption).
+  - The TCP Proxy Service connects to `/ws/game/**` using `wss://` with mutual TLS in production; plain `ws://` is reserved for local/dev-only flows.
+
 ---
 
 ## Telnet / TCP Bridging
@@ -80,36 +97,35 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 - `application.yml` defines `RequestRateLimiter` and `Retry` filters that apply to every route by default.
-  - The rate limiter stores tokens in Redis. In player‑facing environments the
-    gateway connects to the **Cache/Rate‑Limit Redis** deployment via
+  - The rate limiter stores tokens in Redis. The gateway connects to the **Cache/Rate‑Limit Redis** deployment via
     `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`, keeping rate
-    limiting isolated from tick/session coordination. In local development and
-    other single‑node setups, these variables may be omitted and the gateway
-    falls back to `FIREMUD_REDIS_HOST` and `FIREMUD_REDIS_PORT`, which can
-    safely point at a single shared Redis instance. Larger production
-    environments are expected to run rate limiting against a **separate Redis
-    cluster or logical instance** so noisy throttling traffic cannot impact tick
-    latency.
+    limiting isolated from tick/session coordination as described in the Redis architecture. All environments configure this cache endpoint explicitly; there is no fallback to a generic Redis host/port.
+
+> **Redis topology guidance:** Sharing a single Redis instance for both
+> Coordination Redis and Cache/Rate‑Limit Redis is acceptable only for local
+> development and very small hobby deployments. For any player-facing
+> environment where you expect more than a handful of concurrent players or
+> sustained HTTP/WebSocket traffic, configure the Gateway to use a **separate
+> Cache/Rate‑Limit Redis deployment** so rate limiting and cache activity cannot
+> interfere with tick/session coordination. See
+> [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#redis-connection)
+> and [Redis Architecture](./system-architecture-redis.md#redis-profiles) for
+> reference profiles.
 - Service isolation through route-based access control
 - Easy expansion of routes for new microservices
 - TLS termination and mTLS between services are described in [Security Architecture](./system-architecture-security.md).
 
-## Dynamic Route Management
+## Management Plane Security
 
-The gateway supports **runtime configuration** of custom routes. Operators can
-add, update, or remove routes using either the REST API (`/routes`) or the
-`GatewayManagementService` gRPC API. This allows on‑the‑fly changes without
-restarting the service. See the
-[Spring Cloud Gateway microservice documentation](./microservices/spring-cloud-gateway/README.md#rest--grpc-endpoints)
-for example requests and supported fields. The gRPC interface is defined in [`gateway_management_service.proto`](../../protos/spring-cloud-gateway/v1/gateway_management_service.proto) and the REST schema in [`openapi.yaml`](../../services/spring-cloud-gateway/src/main/resources/openapi.yaml).
-Dynamic routes are stored only in memory and are lost on service restart. A PostgreSQL `route_config` table stores persistent routes.
-The gRPC management API listens on port `6565` as configured in `application.yml`.
+- Spring Cloud Gateway exposes REST and gRPC management endpoints (such as dynamic route operations and `GatewayManagementService` RPCs) **only on internal network surfaces**, not via the public player-facing ingress.
+- In Kubernetes, these endpoints are reachable only from inside the cluster or a dedicated admin network segment via `ClusterIP` Services, private ingress, and `NetworkPolicy` rules; the public Service/Ingress is limited to HTTP/WebSocket data-plane traffic.
+- Authentication and authorization for these management endpoints follow the same mTLS and JWT patterns described in [Security Architecture](./system-architecture-security.md#tls-termination--internal-encryption) and [Admin Interface Access Model](./system-architecture-security.md#admin-interface-access-model). Implementation details and port-level separation are documented in the [Spring Cloud Gateway service README](./microservices/spring-cloud-gateway/README.md#management-plane-security).
 
 ## Observability
 
 All gateway gRPC endpoints are instrumented with the shared `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor`.
-WebSocket traffic is tracked using the `ConnectionMetricsFilter`. Full request and response tracing for WebSocket sessions is enabled.
-These interceptors and filters record structured logs, Prometheus metrics, and OpenTelemetry spans so usage and performance can be monitored across the cluster.
+WebSocket traffic is tracked using the `ConnectionMetricsFilter`. By default, tracing for WebSocket sessions records **connection-level metadata only** (for example, route ID, tenant, session identifiers, and basic timing) without full text payloads.
+Full request/response payload tracing for WebSocket sessions is treated as an **opt‑in diagnostic mode**: it is disabled in player‑facing environments and, when enabled for debugging, must use aggressive sampling and redaction as described in [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ## Internal gRPC Communication
 

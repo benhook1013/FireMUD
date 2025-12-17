@@ -21,14 +21,16 @@ The invariants and contracts in `system-architecture-redis.md` remain authoritat
 
 ### Targets
 
-- Soft AOF size limit per node: **1–2 GiB**.
-- Typical restart time (AOF or RDB+AOF replay): **30–60 seconds**.
+- Soft AOF size limit per node: **1–2 GiB** for small/self-hosted deployments; larger clusters may accept proportionally larger files if restart budgets remain within the targets below.
+- Typical restart time (AOF or RDB+AOF replay): **30–60 seconds** during planned maintenance for Coordination Redis nodes.
+- Effective daily AOF growth for coordination workloads should normally stay below **~250–500 MiB/day** per node in steady state; sustained growth beyond that envelope warrants investigation.
 
 ### Runbook: AOF too large or restarts too slow
 
 1. Confirm via metrics or `INFO`:
-   - AOF size substantially exceeds the soft limit, or
-   - Restart time is routinely above 60 seconds.
+   - AOF size substantially exceeds the soft limit for the profile you are running (for example, > 2 GiB on a small self-hosted node), or
+   - Restart time is routinely above 60 seconds for Coordination Redis nodes, or
+   - Daily AOF growth is consistently above ~500 MiB/day per node without a clear explanation (for example, a deliberate large-scale test).
 2. Schedule a maintenance window.
 3. Stop game services for affected tenants/regions (or globally for a single-node deployment).
 4. Reset Coordination Redis:
@@ -39,9 +41,75 @@ The invariants and contracts in `system-architecture-redis.md` remain authoritat
    - Expect players to re-login or restart games.
    - Coordination state is rebuilt from PostgreSQL and fresh gameplay activity.
 
+If metrics show **spiky but short-lived** AOF growth (for example, a load test that briefly increases AOF by a few hundred MiB and then stabilizes), you may choose to defer a reset until the next planned maintenance window. Sustained, unexplained growth or restart times outside the budget should be treated as signals of either:
+
+- Misuse of Coordination Redis (for example, using it as a general-purpose cache or log), or
+- A need to raise capacity or move to a more appropriate Redis profile as described in the main Redis architecture doc.
+
 Manual AOF “surgery” is **not supported**. Either the AOF is trusted and replayed as-is, or it is discarded and Redis restarts from a clean keyspace.
 
+### Rule-of-Thumb Coordination Capacity per Region
+
+**Goal:** Give operators a simple mental model for when a single `{tenantId, regionId}` is likely exceeding healthy coordination usage.
+
+These are approximate guidelines for typical tick intervals (for example `tick_interval_ms >= 250`) and modestly sized worlds on a small/self-hosted deployment. Larger clusters with more memory and CPU can scale beyond these values, but **ratios and trends** remain useful signals.
+
+- **Per-region coordination footprint (steady state)**
+  - Active entity locks: typically **≤ a few hundred** per region; spikes are expected during busy ticks but should not remain at thousands for long durations.
+  - Pending tick entries: on the order of **a few ticks worth of work**, not thousands of uncommitted `pending` entries.
+  - Timers and retry queue items: typically **≤ tens of thousands** per busy region; consistently higher counts indicate that timers or retries are being used as general-purpose data stores.
+  - Session keys: roughly **one key per active session** for that region, expiring when sessions end or age out.
+- **Operator guidance**
+  - If a single `{tenantId, regionId}` routinely exceeds these envelopes and is responsible for a disproportionate share of memory usage or AOF growth:
+    - Review gameplay and automation features for that tenant/region to ensure they are not using Coordination Redis for long-lived data.
+    - Consider applying per-tenant caps on active regions, sessions, timers, or queued commands so coordination footprints remain bounded.
+    - If mis-keyed or runaway coordination state is suspected, use the relevant coordination reset runbooks (either per-region or per-tenant) to drop volatile state and rebuild from PostgreSQL.
+
+These rules of thumb are intentionally conservative. For a single-admin hobby deployment, they help distinguish “normal busy evening” from “this one tenant/region is using Redis in a way the architecture did not intend”.
+
 ---
+
+### Runbook: Explicit Coordination Reset
+
+**Goal:** Provide a single, clear mechanism for deliberately starting Coordination Redis from an empty keyspace while keeping the normal posture “AOF persists across rollouts”.
+
+This reset is intentionally **rare** – it is used for controlled scenarios such as:
+
+- Validating reset-tolerant behavior in a test or preview environment.
+- Recovering from mis-keyed coordination prefixes where dropping state is acceptable.
+- Applying a `breaking_requires_reset` Lua change when the upgrade planner indicates a reset is required.
+
+The steps mirror the “AOF too large” runbook but are driven by operator intent rather than metric thresholds:
+
+1. **Plan scope**
+   - Decide whether the reset applies:
+     - To a whole Coordination Redis deployment (single-node dev, small clusters), or
+     - To one logical deployment / tenant subset in larger setups (for example, a specific Coordination Redis instance per environment or shard).
+   - Confirm that all affected workloads are classified as **reset-tolerant** in the main Redis architecture doc; do not use this runbook for prefixes marked reset-sensitive or reset-forbidden.
+2. **Quiesce gameplay**
+   - Pause ticks and stop accepting new gameplay commands for the affected scope using the Game Session admin/control APIs (or by shutting down dependent services for small/self-hosted installs).
+   - Wait for in-flight requests to drain; regions should stop advancing and no new `pending` entries should be created.
+3. **Run the reset tooling**
+   - For Kubernetes/Helm deployments:
+     - Run the coordination-reset Job or script provided with the charts (for example, the `redis-aof-reset` Job under `charts/firemud/templates/redis-aof-reset-job.yaml`), which:
+       - Stops or disconnects the target Redis instance.
+       - Deletes or recreates the PersistentVolume/volume contents that hold the AOF.
+       - Restarts Redis with the desired AOF configuration (`appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`, etc.).
+   - For local dev / Docker Compose:
+     - Use the dedicated Gradle task or helper script (for example, `./gradlew devRedisReset` once implemented) that:
+       - Stops the dev stack.
+       - Clears the Redis data directory/volume used for Coordination Redis.
+       - Restarts the stack so Redis comes up with an empty coordination keyspace.
+4. **Verify health**
+   - Ensure Coordination Redis is reachable and scripts preload successfully (no persistent `NOSCRIPT` errors).
+   - Run a lightweight smoke test:
+     - Schedule a tick for a test region.
+     - Confirm that locks, `pending`, and timers can be created and cleared as expected.
+5. **Resume gameplay**
+   - Unpause ticks and re-enable command intake for the affected tenants/regions.
+   - Expect players to re-login or restart games; coordination state (locks, queues, timers, sessions) is rebuilt from PostgreSQL and fresh tick activity.
+
+Normal Helm upgrades and restarts **do not** run this reset by default. The reset is always an explicit, operator-driven action guarded by this runbook so that “AOF persists across rollouts” remains the common case.
 
 ## Reset Tolerance Classes
 

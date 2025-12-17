@@ -44,6 +44,8 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
                                                              +-------------------------------------------+
 ```
 
+Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks, separate from player-facing HTTP/WebSocket traffic.
+
 ## Related Documentation
 
 - [Gateway Architecture](./system-architecture-gateway.md)

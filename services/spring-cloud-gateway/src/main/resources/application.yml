@@ -48,8 +48,8 @@ spring:
     activate:
       on-profile: dev
   redis:
-    host: ${FIREMUD_REDIS_HOST:redis}
-    port: ${FIREMUD_REDIS_PORT:6379}
+    host: ${FIREMUD_REDIS_CACHE_HOST:redis}
+    port: ${FIREMUD_REDIS_CACHE_PORT:6379}
   cloud:
     gateway:
       metrics:
@@ -90,8 +90,8 @@ spring:
     activate:
       on-profile: prod
   redis:
-    host: ${FIREMUD_REDIS_HOST:redis}
-    port: ${FIREMUD_REDIS_PORT:6379}
+    host: ${FIREMUD_REDIS_CACHE_HOST:redis}
+    port: ${FIREMUD_REDIS_CACHE_PORT:6379}
   cloud:
     gateway:
       metrics:

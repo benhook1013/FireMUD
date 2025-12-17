@@ -4,6 +4,13 @@
 
 Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. Acts as the central hub for gameplay state.
 
+### Terminology
+
+- **Tenant** – a logical game instance or customer, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
+- **Game instance** – a running game session owned by a tenant, tracked in the `game_instances` table. Multiple game instances may exist for a single tenant (for example, separate campaigns).
+- **Player session** – a single player’s live connection and gameplay context bound to a specific game instance. Player sessions are stored in Redis under `session:{tenantId}:{sessionId}` and are purged when the session ends.
+- **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `{tenantId, regionId}` and do not follow individual player session lifecycles.
+
 ### Responsibilities
 
 - Maintain session state and tick timing in Redis
@@ -26,20 +33,18 @@ Orchestrates live game sessions, including tick execution, player input validati
   instead of buffering authoritative commands only in memory.
 - Every session record includes a `tenantId` identifying the game instance.
   Redis keys and database tables prefix this value so sessions from different
-  games remain isolated. The platform may enforce per-game resource quotas at this level so one tenant cannot exhaust cluster capacity.
+  games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
-  Session state for reconnect recovery lives in Redis using keys of the form
-  `session:{tenantId}:{sessionId}` and is purged when the session ends. All tick queues, locks and pending sets share this tenant-prefixed scheme.
-  - Restores sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
+  Player session state for reconnect recovery lives in Redis using keys of the form
+  `session:{tenantId}:{sessionId}` (only `tenantId` appears inside the hash tag braces) and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `{tenantId, regionId}` lifecycles rather than individual player sessions.
+  - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../../system-architecture-transactions.md).
 - Saga workflows use the shared `SagaBuilder` and emit metrics with correlation
   IDs via `SagaRunner`.
-- Monitors login attempts per IP and temporarily blacklists repeat
-  offenders. Global spikes introduce small delays and suspicious activity
-  triggers notification emails to the account holder. See
-  [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling).
+- Delegates brute-force defense responsibilities to the Account Service, which monitors login attempts, applies per-IP/account throttling and blacklisting, and triggers notification emails as described in
+  [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling). Game Session relies on these signals when binding gameplay sessions but does not implement its own credential or abuse detection logic.
 - Session objects are created as soon as a client connects. They remain unauthenticated until the Account Service verifies credentials and issues a token.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -175,6 +180,10 @@ The generated classes appear under `net.firedevops.firemud.gamesession.v1` in `b
 
 Telnet and WebSocket clients share a minimal line-based command protocol that powers the initial MVP gameplay set. Clients send ASCII lines terminated by `\n`; the first token is the command name (case-insensitive) and the rest of the line is command-specific arguments. Empty lines are ignored.
 
+At the protocol level, commands are split into two groups:
+
+- **System commands** – session and connectivity operations fully owned by the Game Session Service (for example, `LOGIN`, `LOGON`, `PING`, and simple state/introspection queries that do not touch gameplay rules). These commands are interpreted and completed entirely within this service.
+- **Gameplay commands** – all other text commands that express in-world actions (for example, `LOOK`, `SAY`, `YELL`, `WHISPER`, movement, combat). Game Session validates the session and authorization, normalizes the input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics or business rules for these commands.
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
@@ -193,11 +202,11 @@ Delivered-To: Emberline, Sora, Kobold Scout
 Message: Hello travelers
 ```
 
-`Speaker` annotations let clients highlight who originated the message while `Delivered-To` lists the recipients that observed the chat frame, mirroring the metadata exposed to both Telnet and WebSocket clients. The `Message` line echoes the trimmed text so transport implementations can prefer the structured metadata or stitched narratives, e.g., `Emberline says, "Hello travelers"` in-game view layers.
+`Speaker` annotations let clients highlight who originated the message while `Delivered-To` lists the recipients that observed the chat frame, mirroring the metadata exposed to both Telnet and WebSocket clients. The `Message` line echoes the trimmed text so transport implementations can prefer the structured metadata or stitched narratives, e.g., `Emberline says, "Hello travelers"` in-game view layers. In production gameplay, the `Delivered-To` list is scoped to recipients that are visible to the speaking player and may be further redacted or disabled behind feature flags; its primary purpose is to support deterministic tests and debugging so future features such as stealth or limited eavesdropping do not have to expose full recipient sets to every client.
 
 Chat parsing enforces that `SAY` and `YELL` include at least one non-whitespace character and that `WHISPER` provides both an existing player identifier and the message text. Submitting an empty/whitespace-only payload or exceeding the configured message limit (currently 512 characters) yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`. A missing whisper target or text also returns `ERROR INVALID_ARGUMENT` with the same guidance so clients can keep their parsers simple.
 
-This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature. `LOOK` is treated as a fully data-driven command: Game Session enforces authentication, forwards it to Game Logic, which fetches room metadata from World Management and visible entities from Entity Management before the response is rendered over Telnet or WebSocket.
+This small command table defines the initial MVP gameplay command set delivered by the Telnet-to-gameplay vertical slice; it should stay intentionally minimal while the protocol and interpreter mature. `LOOK` is treated as a fully data-driven gameplay command: Game Session enforces authentication, forwards it to Game Logic, which fetches room metadata from World Management and visible entities from Entity Management before the response is rendered over Telnet or WebSocket.
 
 ### Login / Logon semantics
 
@@ -279,15 +288,19 @@ Entities:
 - Player "Sora" (now near the south stair, waving to a passing engineer)
 ```
 
-### Implementation status (vertical slice)
+### Command interpretation and immediate vs queued behavior
+
+The `TextCommandInterpreter` returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic, but the following rules apply:
+
+- **System commands** (such as `LOGIN`, `LOGON`, `PING`, and lightweight state queries) are allowed to produce synchronous responses without enqueuing any gameplay actions. Their side effects are limited to session binding, health checks, or read-only projections.
+- **Gameplay commands** (such as `LOOK`, `SAY`, movement, combat) are treated as tick-driven actions. Game Session validates the session, authorizes the command, and emits enqueue metadata; any immediate response is strictly informational (for example, echoing normalized text) and must not perform gameplay state changes outside the tick executor.
+- If the interpreter produces both immediate text and enqueue metadata and the enqueue step fails (for example, a Redis outage), Game Session surfaces a single `ERROR` response for the command and logs the failure; it does not report success and then silently drop the enqueued action. Commands are designed to be idempotent with respect to retries at the queue level, so a successfully enqueued action may be retried by the tick executor without requiring the client to resend the original text.
 
 For the current Telnet-to-gameplay vertical slice, the implementation intentionally separates "system" commands (session and login related) from gameplay commands:
 
 - `LOGIN` / `LOGON` are treated as system commands owned by the Game Session Service and will be wired into the authentication and world-selection flow described in [Authentication & Authorization](../../system-architecture-authentication.md). At this stage they are defined in the protocol and parser, but the full login flow is still being implemented under `design/project-management/task-list-game-session-service.md`.
 - `LOOK` is implemented through the Game Logic Service's data-driven resolver (`ResolveLook`), which orchestrates room snapshots from World Management and visible entities from Entity Management; Game Session formats that aggregated result, caches the last successful snapshot per session, and streams it back to Telnet and WebSocket clients so the gameplay flow remains deterministic while drawing from the shared world state.
-- `SAY` and additional gameplay commands will follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
-
-The `TextCommandInterpreter` currently returns a result that includes both enqueue metadata (for the tick/command queue) and optional immediate response text. This shape is intended to remain stable as the implementation shifts from hard-coded handlers to data-driven gameplay logic. Once this login slice lands, gameplay commands such as `LOOK` and `SAY` only execute for authenticated sessions (outside of explicitly documented dev/test bypasses), so the interpreter rejects untrusted text with `ERROR NOT_AUTHENTICATED` before the command queue ever sees it.
+- `SAY` and additional gameplay commands follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
 
 ### SAY request flow
 

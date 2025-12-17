@@ -8,11 +8,11 @@ Authentication is performed via plaintext `LOGIN` commands. Clients are stateles
 
 - **Account Service** – Verifies credentials (including OTP), issues JWTs, and publishes JWKS for validation.
 - **Game Session Service** – Fronts the `LOGIN` command, stores session context in Redis, and rebinds sockets on reconnect.
-- **Spring Cloud Gateway** – Pass-through for gameplay login; validates tokens only for admin/meta flows.
+- **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected routes but does not validate tokens.
 
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards this OTP when a player logs in.
 
-Issued JWTs are stored in Redis using keys `session:{tenantId}:{tokenHash}` where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
+Issued JWTs are stored in Redis using keys `session:{tenantId}:{tokenHash}` (hash-tagging on `tenantId` only) where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 

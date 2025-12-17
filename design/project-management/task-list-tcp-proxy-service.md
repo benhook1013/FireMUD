@@ -8,7 +8,7 @@
 - [x] Define Telnet bridge gRPC APIs for TCP Proxy Service
 - [x] Implement Telnet networking and WebSocket bridging
 - [x] Support TLS termination for secure Telnet clients
-- [ ] Support mutual TLS when forwarding WebSocket traffic to the gateway
+- [ ] Wire mutual TLS for Proxy → Gateway WebSocket traffic (update the TCP Proxy Service WebSocket client to use `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` so it matches the target-state design described in `design/architecture/microservices/tcp-proxy-service/README.md` and `design/architecture/system-architecture-overview.md`)
 - [ ] Handle Telnet option negotiation and character encoding quirks
 - [ ] Negotiate the Mud Client Protocol (MCP) when supported
 - [ ] Add a developer-local WebSocket echo target and console logging path so Telnet/MUD clients can validate stubbed traffic without a full gateway stack
@@ -16,13 +16,11 @@
 
 ## Connection Management
 
-- [x] Buffer Telnet input and discard on disconnect to support reconnection
+- [x] Buffer Telnet input in memory while connected and discard on disconnect
 - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
 - [x] Enforce Telnet protocol command whitelist and input sanitization
 - [ ] Implement connection throttling and rate limits
-- [ ] Resend buffered commands after reconnect via `PushBufferedInput`
-- [ ] Invoke `NotifyDisconnect` and `PushBufferedInput` gRPC events for session recovery (currently dev-isolated stubs)
-- [ ] Integrate with the Reconnection Strategy to resume sessions transparently
+- [ ] Integrate `NotifyDisconnect` with the Reconnection Strategy to resume sessions transparently
 
 ## Security
 

@@ -9,8 +9,12 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
 - [FireMUD System Architecture: Redis](#firemud-system-architecture-redis)
   - [Table of Contents](#table-of-contents)
   - [How to Read This Document](#how-to-read-this-document)
+  - [Redis Usage by Service](#redis-usage-by-service)
+  - [Redis Coordination Invariants](#redis-coordination-invariants)
+  - [Redis Profiles](#redis-profiles)
   - [Redis as a Volatile State Layer](#redis-as-a-volatile-state-layer)
   - [Redis Availability, Consistency, and Safety Guarantees](#redis-availability-consistency-and-safety-guarantees)
+  - [Coordination Reset Model](#coordination-reset-model)
   - [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)
   - [Atomicity and Concurrency Control](#atomicity-and-concurrency-control)
   - [Tick Integration (Resilience, Locking, Staging)](#tick-integration-resilience-locking-staging)
@@ -37,14 +41,121 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
 
 ---
 
-Redis is always treated as **non-authoritative for game data**: all canonical game data (accounts, entities, items, rooms, game instances) lives in **PostgreSQL**, owned by domain-specific services. Redis provides **volatile coordination state** — ticks, locks, timers, sessions, queues — that participates in gameplay availability and recovery in two distinct deployment modes:
+## Redis Usage by Service
 
-- In **development and ephemeral test environments**, Redis behaves as a **disposable coordination cache**. Helm may wipe its AOF between runs, and no guarantees are made about preserving in-flight ticks, sessions, or timers across deployments.
-- In **staging and production-equivalent environments**, Redis behaves as a **long-lived coordination log**. AOF is preserved across normal rollouts and node restarts; crash recovery and replay semantics described in this document apply and must not be bypassed by automatic AOF resets.
+The following table summarizes how each core service uses Redis. The detailed behavior is described in the sections that follow and in the per-service design documents.
+
+| Service | Redis Usage |
+| --- | --- |
+| **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis-backed session state used for reconnection. All tick/coordination keys and Lua scripts are owned here. |
+| **Automation & Scripting Service** | Reads tick heartbeats via gRPC, uses Redis for script scheduling queues and per-tenant/per-entity automation keys as described in the tick and automation docs; it does **not** own tick queues or locks directly. |
+| **Spring Cloud Gateway** | Uses **Cache/Rate-Limit Redis** for token-bucket rate limiting and best-effort caches only; it never touches tick/coordination prefixes. |
+| **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not access Coordination Redis directly at runtime. They rely on Game Session, PostgreSQL, and gRPC contracts for gameplay state. Some may use Cache Redis in the future for read-side caches following the cache design doc. |
+
+These boundaries are part of the **Redis Coordination Invariants** below and are enforced via shared key helpers, Lua registry descriptors, and CI tooling.
+
+## Redis Coordination Invariants
+
+This checklist captures the core coordination rules that design and code reviews must uphold. The sections linked in each bullet provide deeper context.
+
+- **Ownership:** The **Game Session Service** is the only service that owns tick and coordination prefixes (`tick:*`, `timer:*`, `retry:*`, region leases, entity locks, and related Lua scripts). Other services interact with ticks via gRPC APIs and higher-level contracts, not by touching these keys directly. See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Game Session Service](./microservices/game-session-service/README.md).
+- **Key construction:** All tick/coordination keys are built via shared key helpers in the common library and must include a single `{tenantRegionTag}` hash tag for per-region keys. Ad-hoc string concatenation of tick/coordination keys is not allowed. See [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
+- **Script safety:** Every mutating Lua script that touches coordination keys **must** validate lease tokens, lock tokens (when applicable), and `tickId`/other monotonic guards before writing, and must be idempotent when re-run with the same `KEYS`/`ARGV`. See [Atomicity and Concurrency Control](#atomicity-and-concurrency-control) and [FireMUD Redis Lua Patterns](./system-architecture-redis-lua-patterns.md).
+- **Multi-key access:** Multi-key operations on coordination prefixes (tick queues, `pending`, timers, retry sets, locks, region leases) are only permitted inside registered Lua scripts that follow the shard-local key rules and are described in the Lua Script Registry. Direct multi-key Redis commands against these prefixes from application code or maintenance tools are not allowed. Multi-key commands—including `MGET`, `DEL key1 key2`, or `MULTI/EXEC` blocks—must never include keys from more than one `{tenantRegionTag}`; cross-region workflows are implemented as per-region calls or higher-level sagas, not as cross-region Redis transactions. See [Atomicity and Concurrency Control](#atomicity-and-concurrency-control) and [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
+
+When in doubt, treat these invariants as the **default contract** and extend behavior by updating the shared helpers and Lua registry rather than introducing new one-off patterns.
+
+## Redis Profiles
+
+FireMUD supports a small set of reference deployment profiles for **Coordination Redis** and **Cache/Rate-Limit Redis**. All profiles respect the non-authoritative semantics described in this document; they differ mainly in durability, topology, and operational expectations. Player-facing environments (staging, QA, production, and long-lived test stacks) are expected to run Coordination Redis in **Cluster mode**; smaller setups use **smaller clusters**, not a different coordination architecture.
+
+### Dev / Single-Node Sandbox
+
+Intended for local development and short-lived preview stacks.
+
+- **Topology**
+  - Single Redis instance, typically running in Docker Compose.
+  - Coordination and cache/rate-limit workloads **may share** the same process for convenience.
+- **AOF settings and expectations**
+  - `appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`.
+  - AOF files are preserved across restarts during a given dev session but may be discarded freely (for example, via the dev reset tooling).
+  - Expected restart time: on the order of a few seconds, even with an AOF up to ~1 GiB.
+- **Snapshot / RDB settings**
+  - Use Redis defaults or disable RDB snapshots entirely if local disk is constrained; dev correctness relies on AOF replay and tick idempotency, not on RDB snapshots.
+- **Reset & recovery path**
+  - Use the local dev reset helpers (for example `./gradlew devDown && ./gradlew devUp` or the `dev-tools` scripts) to wipe and recreate the single-node instance. Manual `rm` of Docker volumes is acceptable in this profile because no player-facing guarantees apply.
+- **Cache/Rate-Limit Redis**
+  - Allowed to share the same host/port as Coordination Redis in this profile.
+  - Accept that rate-limiter traffic can affect tick latency; this is fine for low-concurrency development and smoke tests.
+- **Mandatory metrics and dashboards**
+  - Basic Redis health: uptime, used memory, command latency.
+  - AOF size and restart time (primarily to spot obvious misconfigurations).
+  - Tick health metrics from Game Session (`tick_interval_ms`, `tail_loss_ms`, region health states) to validate behavior under small failures.
+
+### Small Self-Hosted Production (One Primary + Optional Replica)
+
+Intended for a single-admin deployment with real players but modest scale.
+
+- **Topology**
+  - Coordination Redis: a **small Redis Cluster** sized for the expected load (for example, a small number of masters with replicas) rather than a fundamentally different single-node architecture.
+  - Cache/Rate-Limit Redis: **separate Redis deployment or logical instance** from Coordination Redis to isolate tick latency from bursty gateway traffic.
+- **AOF settings and expectations**
+  - `appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes` (or equivalent settings tuned for the host).
+  - Soft AOF size target: ~1–2 GiB per node, with restart times ≤ 30–60 seconds as captured in the Redis Operations doc.
+  - Operators treat “AOF too large / restarts too slow” as a trigger to perform a coordination reset for affected tenants/regions or nodes. See [Redis Operations & Migrations](#redis-operations--migrations).
+- **Snapshot / RDB settings**
+  - Keep RDB snapshots enabled with conservative intervals (for example, Redis defaults or slightly slower) as a belt-and-braces safety net; AOF remains the primary durability mechanism for coordination state.
+- **Reset & recovery path**
+  - Use the explicit **coordination reset** tooling documented in the Redis Operations runbooks (typically a Kubernetes Job or one-shot script) to drop volatile coordination state for affected tenants/regions and rebuild from PostgreSQL. Avoid manual deletion of AOF files or PVC contents; treat any such actions as equivalent to running the coordinated reset and follow the same post-reset health checks.
+- **Cache/Rate-Limit Redis**
+  - Runs as a separate process or pod. Gateway connects via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
+  - Reusing the Coordination Redis instance in this profile is discouraged except as a temporary migration step.
+- **Mandatory metrics and dashboards**
+  - All dev metrics, plus:
+    - Per-node memory usage and key counts for coordination prefixes (tick queues, `pending`, timers, retry sets, session keys).
+    - `tail_loss_ms` / `tail_loss_ticks` per `{tenantId, regionId}` and corresponding health state (`HEALTHY`, `DEGRADED`, `COORDINATION_UNTRUSTWORTHY`).
+    - AOF size and rewrite activity; restart-duration samples during maintenance windows.
+    - Basic replication lag metrics if a replica is configured.
+
+### Larger Clustered Deployment
+
+Intended for higher-concurrency environments or multi-tenant setups where a **larger Redis Cluster** is justified.
+
+- **Topology**
+  - Coordination Redis deployed as a Redis Cluster with multiple masters and replicas.
+  - Tick-region keys are shard-local per `{tenantId, regionId}` using `{tenantRegionTag}` hash tags as documented in [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
+  - Cache/Rate-Limit Redis runs on a **separate cluster or logical deployment** with its own scaling and eviction policies.
+- **AOF settings and expectations**
+  - Coordination nodes use `appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes` (or analogous HA settings) and are monitored for AOF size and replay duration.
+  - Replica promotion decisions respect the tail-loss model and replication lag thresholds described in the main Redis doc and in [Redis Operations & Migrations](#redis-operations--migrations).
+  - AOF corruption or cluster-wide anomalies are handled via the coordinated reset tooling, treating coordination state as reset-tolerant and rebuilding from PostgreSQL.
+- **Snapshot / RDB settings**
+  - Keep RDB snapshots enabled with intervals tuned to operational requirements; use them primarily for disaster investigation or full-node recovery, not for routine tick replay. Coordination semantics always assume the AOF/tail-loss model described earlier.
+- **Reset & recovery path**
+  - For isolated regions or tenants, use targeted coordination-reset tooling that operates on specific hash tags / prefixes while the cluster remains online. For cluster-wide anomalies, use the documented “cluster-wide coordination reset” procedure that pauses tick scheduling, clears coordination state in a controlled fashion, and runs health checks before resuming. Never attempt ad-hoc repair with multi-key CLI commands against `tick:*` / `session:*` prefixes.
+- **Cache/Rate-Limit Redis**
+  - Independently scaled and configured with eviction tuned for token buckets and cache patterns. It must not share nodes with Coordination Redis where noisy cache/rate-limit workloads could affect tick latencies.
+- **Mandatory metrics and dashboards**
+  - All small self-hosted metrics, plus:
+    - Per-slot / per-shard command latency and error rates.
+    - Replication lag distributions with thresholds tied to `tick_interval_ms`.
+    - Cluster topology health (node up/down status, failovers, slot rebalancing events).
+    - Lock contention, timer and retry queue depths, and Lua script execution percentiles as described in [Observability and Reliability](#observability-and-reliability) and [Logging & Monitoring](./system-architecture-logging-monitoring.md).
+
+These profiles are reference points, not hard requirements; operators may choose intermediate configurations as long as they preserve the non-authoritative semantics, invariants, and shard-local key discipline described in this document.
+
+---
+
+Redis is always treated as **non-authoritative for game data**: all canonical game data (accounts, entities, items, rooms, game instances) lives in **PostgreSQL**, owned by domain-specific services. Redis provides **volatile coordination state** — ticks, locks, timers, sessions, queues — that participates in gameplay availability and recovery and is treated as a **long-lived coordination log** in all persistent environments (local development, staging, and production-equivalent clusters):
+
+- Coordination Redis uses durable storage (for example, Kubernetes `PersistentVolumeClaim`s) and AOF is preserved across normal rollouts and node restarts.
+- Crash recovery and replay semantics described in this document apply whenever an environment uses this persistent profile; automatic “wipe on deploy” jobs are **not** part of the default posture.
+- When operators intentionally want a fresh coordination keyspace (for example, to run a reset-tolerant test, clear mis-keyed state, or perform a planned migration), they invoke the explicit **coordination reset** tooling and runbooks described in the Redis Operations documentation instead of relying on pods restarting with empty data directories.
+- Short-lived preview stacks or CI environments may still choose to treat Coordination Redis as disposable by mounting ephemeral storage and/or running reset jobs on every launch. Those deployments are considered **ephemeral variants** of this design and inherit only the reset-tolerant guarantees documented for coordination resets; they are not where replay or tail-loss SLOs are validated.
 
 The acceptable loss window is intentionally capped to a **small, bounded tail of recent coordination state per `{tenantId, regionId}`**. In staging and production-like deployments the target is on the order of **one to two seconds of activity** per region. For typical tick intervals (for example `tick-interval-ms >= 250`), this corresponds to losing at most a handful of ticks for an affected region during a routine failover. Anything materially beyond this (for example, repeated effective loss windows greater than **2 seconds** or more than **2×** the configured tick interval, or a growing backlog of pending effects) is treated as an incident requiring investigation, not as “normal” volatility.
 
-All subsequent sections assume the **staging/production coordination mode** unless explicitly labeled as “dev/ephemeral only.” Deployment and runbook docs call out where behavior differs by environment.
+All subsequent sections assume this **long-lived coordination log** behavior for Coordination Redis unless explicitly labeled as “ephemeral only” or “reset-on-start” scenarios. Deployment and runbook docs call out where behavior deliberately opts into disposable coordination state.
 
 > 🔗 For full tick execution, retries, and lock behavior, see [Tick System and Runtime Design](./system-architecture-ticks.md). Out-of-band workflows rely on the **gRPC-based Saga approach** described in [Transaction Strategies](./system-architecture-transactions.md).
 
@@ -72,18 +183,19 @@ FireMUD distinguishes between two **logical roles** for Redis:
   Spring Cloud Gateway) connect using `FIREMUD_REDIS_CACHE_HOST` /
   `FIREMUD_REDIS_CACHE_PORT`.
 
-These are **logical roles, not hard requirements about instance count**:
+In **supported FireMUD deployments** (including hobby/self‑hosted setups with real players), these roles map to at least **two Redis deployments**:
 
-- In small or single‑admin deployments, both roles may point at the **same Redis instance** (single container or VM) with conservative configuration.
-- In higher‑throughput or multi‑tenant deployments, operators can point them at **separate instances or clusters** to isolate eviction policies, memory, and failure domains.
+- A Coordination Redis deployment dedicated to tick/session/lock/timer workloads.
+- A Cache/Rate‑Limit Redis deployment dedicated to read‑side caches and token buckets.
 
-Environment variables make this split **config‑driven**:
+These deployments may share the same host or Kubernetes node, but they run as **separate processes or containers** (for example `redis-coord` and `redis-cache` in Docker Compose and Helm). This keeps configuration aligned with larger clustered environments while keeping the infrastructure footprint light.
 
-- When `FIREMUD_REDIS_COORD_*` or `FIREMUD_REDIS_CACHE_*` are unset, services fall back to `FIREMUD_REDIS_HOST` / `FIREMUD_REDIS_PORT` as documented in
-  [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#redis-connection).
-- When both sets are configured, services respect the separation and treat the corresponding deployments as independent roles.
+Environment variables make the split **config‑driven and explicit**:
 
-Production‑quality deployments are strongly encouraged to **avoid mixing heavy caches with coordination workloads** on the same Redis process, because misconfiguration (for example, eviction policies or memory limits) can silently impact coordination keys and gameplay availability. However, the architecture and code paths remain the same whether roles share an instance or not; only capacity and failure characteristics change.
+- Services that participate in ticks, locks, timers, sessions, or automation queues resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
+- Services that perform only rate limiting or cache-style reads resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
+
+Production‑quality and small self‑hosted deployments are strongly encouraged to **avoid mixing heavy caches with coordination workloads** on the same Redis process, because misconfiguration (for example, eviction policies or memory limits) can silently impact coordination keys and gameplay availability. The only supported exception is short‑lived, non‑player‑facing experiments (for example, ad‑hoc local tests) where both `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` may temporarily point at the same instance; those runs are treated as outside coordination SLOs and must not be used for QA, staging, or production.
 
 Coordination Redis also enforces its role via ACL and simple self‑checks:
 
@@ -203,7 +315,7 @@ FireMUD explicitly targets a **small tail-loss window** for coordination state i
 
 Correctness in the presence of such loss is preserved by:
 
-- Treating Redis as non-authoritative and replaying ticks based on PostgreSQL and any surviving `tick:{tenantId}:{regionId}:pending` keys.
+- Treating Redis as non-authoritative and replaying ticks based on PostgreSQL and any surviving `tick:{tenantRegionTag}:pending` keys.
 - Relying on the idempotent tick and domain logic described in [Crash Recovery and Replay](./system-architecture-ticks.md#crash-recovery-and-replay) so replays never apply new logical effects twice.
 - Enforcing that mutating Lua scripts validate lease/lock tokens and monotonic guards (`tickId`, `generation`) before writing so stale coordination keys cannot double-apply effects.
 
@@ -222,13 +334,66 @@ Cluster operators **may** additionally configure Redis replication safety knobs 
 - Gameplay logic does not depend on them for correctness.
 - Enabling them trades write availability for additional replication guarantees and must be evaluated per environment.
 
-#### Cluster-Wide Anomalies and Coordinated Reset
+**Recommended settings and alerts**
 
-Mass failovers or misconfigured Redis clusters can produce **widespread, inconsistent coordination state** (for example multiple regions simultaneously marked `coordination-untrustworthy` by the health rules above). FireMUD treats these situations as **explicit reset events**, not as normal volatility:
+To keep effective tail-loss within the **one to two second** SLO envelope for Coordination Redis:
+
+- Non-ephemeral environments (staging, production-equivalent, and serious self-hosted) should enable `appendonly yes` and use `appendfsync everysec` (or stricter) on coordination nodes, with `aof-use-rdb-preamble yes` or equivalent where supported.
+- Replication settings (`repl-timeout`, `repl-backlog-size`, and optional `min-replicas-to-write` / `min-replicas-max-lag`) should be tuned so typical replication lag stays well below one second under normal load.
+- Application metrics should alert when `tail_loss_ms` regularly exceeds **2000 ms** or **2×** the configured `tick_interval_ms` for a region over a short window, and when replication lag exceeds the same envelope. Those alerts gate investigations into disk, network, or configuration issues before they erode gameplay guarantees.
+
+Exact numeric thresholds and environment-specific variations live in the Redis operations and deployment docs, but new deployments are expected to justify any material deviation from these defaults.
+
+---
+
+## Coordination Reset Model
+
+Mass failovers, mis-keyed prefixes, or misconfigured Redis clusters can produce **widespread or localized inconsistencies** in coordination state. FireMUD treats these situations as **explicit reset events**, not as normal volatility, and constrains how resets are performed.
+
+Resets come in three scopes:
+
+- **Region-level reset** – targets a single `{tenantId, regionId}` hash tag:
+  - Typical triggers: one region stuck in `COORDINATION_UNTRUSTWORTHY`, mis-keyed locks or timers for that region, or repeated script failures limited to that region.
+  - Preconditions: tick scheduling for the region is paused; active executors relinquish leases; operators confirm PostgreSQL tick watermarks and domain state are healthy.
+  - Behavior: tooling deletes or recreates only coordination keys that share the affected `{tenantRegionTag}` (for example `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*` for that region).
+  - Postconditions: the region restarts from PostgreSQL and fresh gameplay activity; metrics and health checks return to `HEALTHY` or `DEGRADED` before normal scheduling resumes.
+
+- **Tenant-level reset** – targets all regions for a single tenant:
+  - Typical triggers: tenant-scoped misconfiguration, schema mistakes affecting many regions, or test tenants where a full “world restart” is acceptable.
+  - Preconditions: ticks are paused for all regions belonging to the tenant; cross-tenant traffic is unaffected.
+  - Behavior: tooling wipes coordination keys for the tenant’s regions (and any tenant-scoped session/auth keys) while leaving other tenants untouched.
+  - Postconditions: the tenant’s gameplay world restarts from PostgreSQL state; audit logs record the reset scope and reason.
+
+- **Cluster-wide reset** – targets the entire Coordination Redis deployment:
+  - Typical triggers: cluster-wide anomalies (for example, many regions marked `COORDINATION_UNTRUSTWORTHY`), AOF corruption where no clean replica exists, or deliberate “world restart” maintenance events.
+  - Preconditions: tick scheduling is paused globally; operators acknowledge the impact (all sessions and transient tick state will be discarded) and confirm PostgreSQL is healthy.
+  - Behavior: a coordinated reset Job or one-shot tool clears coordination keyspace on affected nodes (for example via controlled AOF reset or prefix-scoped deletion) and then runs basic health checks (Lua scripts load, sample ticks can schedule and commit).
+  - Postconditions: once checks pass, ticks resume and coordination state is rebuilt from PostgreSQL and new commands.
+
+When deciding which scope to use:
+
+- Prefer **region-level** resets when anomalies are tightly scoped and player impact must be minimized.
+- Use **tenant-level** resets when problems are tenant-specific or when a tenant explicitly requests a world restart.
+- Reserve **cluster-wide** resets for systemic issues or controlled maintenance windows where global disruption is acceptable.
+
+In all cases, **PostgreSQL is the sole authority for domain history** (entities, rooms, effects applied, etc.). When Redis and PostgreSQL disagree after a split-brain or failover:
+
+- Operators never choose a “winning Redis side”.
+- The only canonical history is whatever made it into PostgreSQL; both Redis coordination histories for the affected regions are treated as disposable.
+- The reset workflow is therefore always:
+  1. Pause tick scheduling for affected scopes and verify PostgreSQL invariants (leadership rows, tick watermarks, and domain data) are healthy.
+  2. Use region-/tenant-/cluster-level coordination reset tooling to clear coordination keys for those scopes.
+  3. Resume ticks so Coordination Redis is rebuilt from PostgreSQL and new commands, relying on idempotent tick logic and `tail_loss_ms` / region health metrics to bound and surface any lost recent coordination state.
+
+All reset tooling routes through the same key builders and Lua descriptors used by application code and is classified by **reset tolerance** in the Redis operations docs (reset-tolerant, reset-sensitive, reset-forbidden). Operators must not perform ad-hoc manual edits to `tick:*`, `session:*`, `timer:*`, `retry:*`, or `remote:*` prefixes; any such needs should be implemented as changes to the reset tooling itself.
+
+### Cluster-Wide Anomalies
+
+Cluster-wide anomalies are a special case of the model above:
 
 - The Game Session Service classifies each `{tenantId, regionId}` into coarse states such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY` based on:
   - Tail-loss estimates and SLO violations.
-  - Stuck or missing `tick:{tenantId}:{regionId}:pending` entries relative to PostgreSQL tick watermarks.
+  - Stuck or missing `tick:{tenantRegionTag}:pending` entries relative to PostgreSQL tick watermarks.
   - Repeated Lua/script failures for core coordination scripts in that region.
 - When a **small number of regions** are degraded but remain within the documented tail-loss window, operators may allow them to self-heal while monitoring metrics.
 - When **multiple regions** across a deployment enter the `COORDINATION_UNTRUSTWORTHY` state in a short window, the system treats this as a **cluster-wide anomaly**. In these cases a small, automated “coordination reset” tool (part of FireMUD’s dev-tools) can:
@@ -337,15 +502,17 @@ These conventions provide **logical tenant isolation** at the keyspace level. Ev
 
 ### Conditional Tenant Fairness
 
-FireMUD is designed for a **small/self-hosted** operational model where simplicity matters more than proactive per-tenant throttling. As a result, FireMUD does **not** enforce strict per-tenant fairness budgets by default.
+FireMUD is designed for a **small/self-hosted** operational model where simplicity matters more than proactive per-tenant throttling. As a result, FireMUD does **not** implement per-tenant fairness policies or per-tenant configuration knobs. All tenants share the same global coordination budgets and safety invariants.
 
-The system still tracks lightweight per-tenant counters for key counts, queue length, and timer density so operators can detect “noisy tenant” scenarios if they ever arise. If real-world usage later shows that one tenant can monopolize Coordination Redis capacity and push others into degraded states, FireMUD may add coarse, opt-in controls as a future design:
+The system still tracks lightweight per-tenant counters for key counts, queue length, and timer density so operators can detect “noisy tenant” scenarios if they ever arise. Protection against worst-case behavior comes from **global, always-on safety caps**, not from fine-grained fairness tuning:
 
-- Alerting and dashboards that attribute coordination pressure to `{tenantId, regionId}`.
-- Manual operator controls to pause or throttle a tenant/region.
-- A small set of coarse admission controls (for example, max queue depth per tenant) that activate only after repeated incidents are observed.
+- Every `{tenantRegionTag}` is subject to global, hard caps on per-entity queue depth and per-region timer cardinality as described under [Size and Complexity Budgets](#size-and-complexity-budgets). When those caps are exceeded, the system **always sheds load** (rejecting new commands or timers with clear errors) instead of allowing unbounded growth.
+- These caps are **global invariants**, not per-tenant or per-environment settings; environments may only move them within a conservative range, and doing so is treated as an architectural change that must update this document.
 
-Until that need is proven, tenant fairness remains an observability-only concern rather than an enforced throttling system.
+Beyond these safety caps, tenant fairness remains an **observability + operational decision** concern rather than an enforced throttling system:
+
+- Alerting and dashboards attribute coordination pressure to `{tenantId, regionId}`.
+- Operators may pause or throttle a tenant/region using admin tooling when metrics show that a tenant is consistently noisy.
 
 ### Key Format Examples
 
@@ -355,12 +522,11 @@ This table lists the most important coordination keys and their responsibilities
 
 | Redis Key | Description |
 | --- | --- |
-| `tick:{tenantId}:{regionId}:lock:{entityId}` | Lock for entity during tick execution within a region |
-| `tick:{tenantId}:{regionId}:pending` | Staged results for a tick region (single in-flight tick) |
-| `tick:{tenantId}:{regionId}:queue:{entityId}` | Per-entity command queue within a region |
-| `room:{tenantId}:{roomId}` | Hot room cache as JSON (occupants and metadata) |
-| `retry:{tenantId}:{regionId}` | Retry queue for failed actions |
-| `timer:{tenantId}:{regionId}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata |
+| `tick:{tenantRegionTag}:lock:{entityId}` | Lock for entity during tick execution within a region |
+| `tick:{tenantRegionTag}:pending` | Staged results for a tick region (single in-flight tick) |
+| `tick:{tenantRegionTag}:queue:{entityId}` | Per-entity command queue within a region |
+| `retry:{tenantRegionTag}` | Retry queue for failed actions |
+| `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata |
 | `remote:{tenantId}:{entityId}` | Queue for cross-region command follow-ups |
 | `automation:tick:{tenantId}:{scriptId}:lock` / `queue` / `pending` | Per-script automation tick locks and staging (Automation & Scripting Service) |
 
@@ -369,13 +535,69 @@ This table lists the most important coordination keys and their responsibilities
 > 📌 For session-related keys and structure, see [Session Keys and Gameplay Binding](#session-keys-and-gameplay-binding)
 > ⚠️ Tick regions and player sessions are **always scoped to a single Redis shard** to preserve atomicity. Cross-shard operations are avoided.
 
+#### Key Slotting Cheat Sheet
+
+To make Redis Cluster slotting rules explicit:
+
+- **Region-scoped keys (hash on `{tenantRegionTag}`):**
+  - `tick:{tenantRegionTag}:lock:{entityId}`
+  - `tick:{tenantRegionTag}:pending`
+  - `tick:{tenantRegionTag}:queue:{entityId}`
+  - `retry:{tenantRegionTag}`
+  - `timer:{tenantRegionTag}`
+  - `tick-executor-lease:{tenantRegionTag}`
+- **Tenant-scoped session/auth keys (hash on `{tenantId}` only):**
+  - `session:{tenantId}:{sessionId}` – gameplay sessions and reconnect context
+  - `session:{tenantId}:{tokenHash}` – Account/JWT bindings for internal auth
+- **Other keys (no region hash tag by default):**
+  - `remote:{tenantId}:{entityId}` and similar prefixes may be sharded independently or live on separate Redis roles (for example cache/rate-limit Redis), as described in the cache and infrastructure docs. Cached room views and other read-side aggregates use cache-specific prefixes such as `view:roomLook:{tenantId}:{roomId}` and are stored on Cache/Rate-Limit Redis, not Coordination Redis.
+
+All multi-key Lua scripts that need atomic coordination use only region-scoped keys (sharing the same `{tenantRegionTag}`) or only tenant-scoped session keys; no script mixes region and session hash tags in a single `EVALSHA` call.
+
+#### Size and Complexity Budgets
+
+To keep Coordination Redis predictable and avoid single-key pathologies that blow AOF size or latency SLOs, FireMUD applies conservative envelopes to core coordination structures. These budgets fall into two categories:
+
+- **Global safety invariants** – hard caps that are always enforced (for example, maximum per-entity queue depth and maximum per-region timer cardinality). These are *not* per-tenant or per-environment tunables; changing them requires an explicit design update.
+- **Alerting thresholds and tuning guidance** – soft budgets that drive warnings and degraded-region behavior but may be adjusted within a conservative range as deployments evolve.
+
+New code is expected to honor both: never exceed the hard caps, and stay within the soft budgets unless a design explicitly extends them and updates this section.
+
+- `tick:{tenantRegionTag}:pending` (per region, one in-flight tick)
+  - Target maximum serialized payload size: roughly **32–64 KB**.
+  - Target maximum staged effects per tick: on the order of **≤128** effect entries.
+  - If either envelope is exceeded:
+    - The tick executor logs a structured warning with `{tenantId, regionId, tickId}` and approximate payload size/effect count.
+    - Metrics such as `redis.tick.pending_oversized_total` and `redis.tick.pending_effects_over_budget_total` are incremented.
+    - The region may be marked **degraded**; command intake can be throttled or shed until the workload is reduced.
+- `tick:{tenantRegionTag}:queue:{entityId}` (per-entity command queue)
+  - Global safety cap on queue depth per entity: **≤50–100** commands (exact value defined in shared configuration and applied uniformly across all tenants and environments).
+  - When a queue reaches this cap:
+    - New commands for that entity are **always** rejected or shed with a clear error (for example “queue full / region under load”) rather than growing unbounded queues.
+    - A `redis.tick.command_queue_overflow_total` metric is incremented, tagged by `{tenantId, regionId}`, so operators can see which regions are hitting the cap frequently.
+- `timer:{tenantRegionTag}` (per-region timer ZSET)
+  - Global safety cap on timer cardinality per region: on the order of **a few thousand** timers (for example ≤10 000; exact value defined in shared configuration and applied uniformly).
+  - Per-tick processing remains bounded by a configured `maxTimersPerTick` value; timers beyond that budget are processed in later ticks.
+  - When cardinality or per-tick processing budgets are exceeded:
+    - The region is marked **degraded** and emits `redis.tick.timers_over_budget_total` metrics.
+    - Additional timer insertions beyond the hard cap are **shed** with a clear error or dropped according to simple, documented rules (for example, rejecting new timers for low-priority effects first).
+    - Operators can decide whether to lower timer density (design issue) or slow ticks (operational tuning), but the hard cap prevents unbounded growth.
+- `session:{tenantId}:{sessionId}` (per-player session payload)
+  - Target maximum serialized session value size: roughly **≤16–32 KB**.
+  - Session payloads may contain routing, bindings, and lightweight metadata, but must not embed large blobs or full gameplay history.
+  - When a session value exceeds the budget:
+    - The binding logic logs a warning and increments `redis.session.payload_oversized_total`.
+    - Implementations treat oversize sessions as an error in the caller; they may drop optional fields, reject binding, or force a fresh `LOGIN` rather than writing very large values.
+
+These budgets complement the AOF size and restart targets in the Redis Operations doc. In environments where profiling shows different realistic envelopes, operators may tune the concrete numeric thresholds, but the contract remains the same: coordination keys stay small and bounded, and exceeding a budget results in **explicit logs + metrics + controlled failure modes**, not silent degradation or unbounded growth.
+
 ### Key Shape Mistakes and Migration Strategy
 
 Despite the hash-tag discipline above, mistakes in key shape or hash-tag construction may occur over time. FireMUD treats these in two broad categories:
 
 - **Coordination keys (`tick:*`, `timer:*`, `retry:*`, `remote:*`, leases, and tick-related locks)**:
   - These keys are treated as **volatile coordination state** and are always backed by authoritative PostgreSQL state and idempotent replay.
-  - The default remediation for incorrect hash tags or mis-sharded coordination keys is to use the **coordination reset** tooling described in [Cluster-Wide Anomalies and Coordinated Reset](#cluster-wide-anomalies-and-coordinated-reset):
+- The default remediation for incorrect hash tags or mis-sharded coordination keys is to use the **coordination reset** tooling described in [Coordination Reset Model](#coordination-reset-model):
     - Pause tick scheduling (globally or for affected tenants/regions).
     - Reset the Coordination Redis keyspace (per-node or per-tenant/region).
     - Allow ticks and sessions to rebuild coordination state from PostgreSQL and fresh gameplay activity.
@@ -390,62 +612,89 @@ Despite the hash-tag discipline above, mistakes in key shape or hash-tag constru
 
 ### Region Leadership and Tick Executor Lease
 
-Each `{tenantId, regionId}` is owned by a **single authoritative tick executor** at any point in time. Leadership is coordinated via a lightweight lease key:
+Each `{tenantId, regionId}` is owned by a **single authoritative tick executor** at any point in time. Leadership is coordinated via a combination of a PostgreSQL-backed **epoch fence** and a lightweight Redis lease key:
 
-- `tick-executor-lease:{tenantId}:{regionId}` – stores the current executor identity (for example a `nodeId` or `instanceId`) and an expiry.
+- PostgreSQL stores a `region_leadership` row per `{tenantId, regionId}` (for example in a `coordination_meta` table) with fields such as:
+  - `tenant_id`, `region_id`
+  - `epoch` (monotonic, incremented on each leadership change)
+  - `executor_id` (current tick executor identity)
+  - `version` / `updated_at` (optimistic locking / audit).
+- To acquire leadership, a Game Session instance:
+  - Reads the current row for `{tenantId, regionId}`.
+  - Attempts an **optimistic update** that increments `epoch` and sets its own `executor_id`, conditioned on the previous `epoch`/`version` still matching.
+  - Treats any failed update as a lost race and does not proceed as leader.
+- Once the Postgres update succeeds, the new leader:
+  - Constructs a lease token that embeds `{tenantId, regionId, epoch, executorId}`.
+  - Writes that token into `tick-executor-lease:{tenantRegionTag}` in Coordination Redis.
+  - Passes the same token (or its epoch component) into `ARGV` for all tick/session Lua scripts.
 
-To guard against split-brain, the Game Session Service also tracks a PostgreSQL-backed `region_epoch` for each `{tenantId, regionId}` (for example in a `coordination_meta` table). Lease acquisition increments that `region_epoch` inside a `SELECT FOR UPDATE`, and the new epoch is stored alongside the Redis lease token. All Lua scripts and tick commit paths carry both the lease token and the current `region_epoch`, validating them together before mutating tick or retry state. If a Redis primary diverges during a partition, its epoch will be stale and every script or domain write against that epoch is treated as untrusted even if the Redis lease token still matches.
+Redis therefore **reflects** the Postgres-backed leadership epoch but never decides leadership on its own.
+
+The Redis lease key has the form:
+
+- `tick-executor-lease:{tenantRegionTag}` – stores the current executor identity and expiry along with the opaque lease token.
 
 Lease management is split into two distinct operations:
 
 - **Acquire:** When no lease exists for `{tenantId, regionId}`, a Game Session instance competes to acquire leadership using:
-  - `SET tick-executor-lease:{tenantId}:{regionId} <leaseToken> NX PX lease_ttl_ms`
+  - `SET tick-executor-lease:{tenantRegionTag} <leaseToken> NX PX lease_ttl_ms`
   - `leaseToken` is a random, opaque value (for example, a UUID) chosen by the prospective leader.
   - A successful `SET` indicates that this instance holds the lease for the current epoch; a failed `SET` means another executor already owns it.
 - **Renew:** While holding the lease, the active executor extends its TTL using a **Lua-based compare-and-extend helper**, not `SET NX`:
   - Inputs:
-    - `KEYS[1] = tick-executor-lease:{tenantId}:{regionId}`
+    - `KEYS[1] = tick-executor-lease:{tenantRegionTag}`
     - `ARGV[1] = expectedLeaseToken`
     - `ARGV[2] = lease_ttl_ms`
   - Behavior (sketch):
     - Read `KEYS[1]`; if it is missing or its stored token does not equal `expectedLeaseToken`, return a `"STALE_LEASE"` outcome and perform **no writes**.
     - If the stored token matches, update the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
   - Callers interpret `"STALE_LEASE"` as “this instance no longer owns the lease” and must immediately stop acting as leader for that `{tenantId, regionId}`. They may later attempt a fresh acquisition with a new `leaseToken` via the normal `SET NX` path.
-  - No other component (including ad-hoc operational scripts) may write `tick-executor-lease:{tenantId}:{regionId}` directly; all renewals go through the compare-and-extend helper so token semantics remain consistent.
+  - No other component (including ad-hoc operational scripts) may write `tick-executor-lease:{tenantRegionTag}` directly; all renewals go through the compare-and-extend helper so token semantics remain consistent.
 
 - Only the holder of a valid lease may:
   - Consume commands from region queues.
-  - Drive `tick:{tenantId}:{regionId}:pending` and commit/rollback flow.
-  - Update region timers (`timer:{tenantId}:{regionId}`) and retry queues (`retry:{tenantId}:{regionId}`).
+  - Drive `tick:{tenantRegionTag}:pending` and commit/rollback flow.
+  - Update region timers (`timer:{tenantRegionTag}`) and retry queues (`retry:{tenantRegionTag}`).
 - The active executor periodically refreshes the lease as long as it remains healthy.
 - If the lease expires or is deliberately allowed to lapse:
   - Other Game Session instances may compete to acquire the lease.
   - The new leader resumes tick processing for `{tenantId, regionId}` using the existing Redis state (`pending`, queues, timers, retry metadata) and the idempotency rules described in the Tick System design.
 
-This lease acts as the **macro-level lock** for a region: it prevents multiple executors from driving ticks concurrently for the same `{tenantId, regionId}` while still allowing fast failover and rebalancing. Fine-grained entity locks (`tick:{tenantId}:{regionId}:lock:{entityId}`) are used *within* a leader to coordinate per-command work and crash recovery; they do not replace the leadership lease.
+This lease acts as the **macro-level lock** for a region: it prevents multiple executors from driving ticks concurrently for the same `{tenantId, regionId}` while still allowing fast failover and rebalancing. Fine-grained entity locks (`tick:{tenantRegionTag}:lock:{entityId}`) are used *within* a leader to coordinate per-command work and crash recovery; they do not replace the leadership lease.
 
 ### Lease Token and Epoch Semantics
 
 To avoid “split-brain” scenarios during GC pauses or network stalls (for example, executor A holds the lease, pauses until its TTL expires, executor B acquires the lease, and then A resumes), the lease value stores a **random, opaque token** (for example, a UUID) in addition to the executor identity. The Game Session Service:
 
-- Treats this token plus the PostgreSQL-backed `region_epoch` as a **lease epoch** for `{tenantId, regionId}` and passes both values as arguments to all tick-related Lua scripts along with `tickId`. The epoch is persisted in the coordination metadata table so failover or split-brain incidents can be detected even if Redis accepts divergent writes.
+- Treats this token plus the PostgreSQL-backed `epoch` from the `region_leadership` row as a **lease epoch** for `{tenantId, regionId}` and passes both values as arguments to all tick-related Lua scripts along with `tickId`. The epoch is persisted in the coordination metadata table so failover or split-brain incidents can be detected even if Redis accepts divergent writes.
 - Requires every mutating script (staging, commit, rollback, timer updates, retry queue updates) to:
-  - Read the current `tick-executor-lease:{tenantId}:{regionId}` value, and
+  - Read the current `tick-executor-lease:{tenantRegionTag}` value, and
   - Abort immediately if the stored lease token does not match the token it was invoked with.
 - Re-validates the lease token at key points in the tick lifecycle:
   - Before starting a new tick (to ensure the worker still holds leadership).
   - Before committing staged work or releasing locks (to ensure leadership has not moved since staging began).
 
+In addition to lease tokens, executors and scripts enforce the Postgres epoch fence on every critical path:
+
+- Lease acquisition/renewal helpers:
+  - Read the current `epoch` for `{tenantId, regionId}` from Postgres (or from a cached value refreshed on a short interval).
+  - Compare that `epoch` to the epoch embedded in the existing `tick-executor-lease:{tenantRegionTag}` value and in the caller’s lease token.
+  - Refuse to extend or create a lease if the epochs differ, returning `"UNSUPPORTED_EPOCH"` / `"STALE_LEASE"` without mutation.
+- Tick/session Lua scripts:
+  - Receive the current lease token and epoch in `ARGV`.
+  - Re-read `tick-executor-lease:{tenantRegionTag}` and verify that the stored token/epoch matches their `ARGV` before proceeding.
+  - Abort with a non-mutating outcome when the lease token or epoch no longer match, so executors that have lost leadership cannot continue committing coordination state even if their local Redis partition still holds old keys.
+
 Combined with the **lock token semantics** described in the Tick System design, this ensures that:
 
 - A worker that resumes after losing the lease cannot commit or roll back tick state, even if it still holds local lock tokens.
-- Only the current lease holder (epoch) can progress `tick:{tenantId}:{regionId}:pending`, timers, and retry metadata for that region; any stale workers see a lease-token mismatch and abort, returning a retry outcome instead of applying stateful changes.
+- Only the current lease holder (epoch) can progress `tick:{tenantRegionTag}:pending`, timers, and retry metadata for that region; any stale workers see a lease-token mismatch and abort, returning a retry outcome instead of applying stateful changes.
 
 From the coordination layer’s perspective, **lease and lock tokens are meaningful only when interpreted together inside registered Lua scripts**:
 
-- Lock keys (`tick:{tenantId}:{regionId}:lock:{entityId}`) are considered **opaque artifacts** outside Lua; their mere existence must not be treated as proof of ownership or authority.
+- Lock keys (`tick:{tenantRegionTag}:lock:{entityId}`) are considered **opaque artifacts** outside Lua; their mere existence must not be treated as proof of ownership or authority.
 - All decisions that depend on locks or leases (for example, “may I mutate this entity under the current tick?”) are made exclusively by Lua scripts that:
-  - Re-read `tick-executor-lease:{tenantId}:{regionId}`.
+  - Re-read `tick-executor-lease:{tenantRegionTag}`.
   - Validate both the current lease token and the relevant lock token(s) in a single atomic script invocation.
 - Application code and maintenance tools must therefore treat tick locks as **internal implementation details** of the tick engine, not as general-purpose coordination primitives.
 
@@ -457,7 +706,7 @@ For self-hosted deployments, FireMUD keeps lease and lock TTLs intentionally sim
 - The Game Session Service derives internal values from that single knob using fixed multipliers:
   - `tick_budget_ms = tick_interval_ms * 0.8` (soft execution budget, not exposed as config).
   - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)` – entity lock TTL.
-  - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)` – region lease TTL for `tick-executor-lease:{tenantId}:{regionId}`.
+  - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)` – region lease TTL for `tick-executor-lease:{tenantRegionTag}`.
 
 This keeps the relationship simple and predictable:
 
@@ -500,38 +749,45 @@ However, **correctness never depends on wall-clock time**: lease safety is defin
 
 ### Hash Tags and Redis Cluster Slotting
 
-FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. In this document, **literal Redis keys** are shown with curly braces exactly where the Redis Cluster hash tag lives. For example, `tick:{tenantId}:{regionId}:lock:<entityId>` denotes a key whose hash tag is the literal substring `{tenantId}:{regionId}`; the braces are part of the key name, not just notation.
+FireMUD runs Redis in **Cluster mode**, so all keys used inside a single Lua script must map to the **same hash slot**. In this document, **literal Redis keys** are shown with curly braces exactly where the Redis Cluster hash tag lives. For example, `tick:{tenantRegionTag}:lock:<entityId>` denotes a key whose hash tag is the literal substring `{tenantRegionTag}`; the braces are part of the key name, not just notation.
 
 Tick-related keys (locks, queues, pending state, retries, timers) therefore share a common **hash tag** derived from `{tenantId, regionId}`:
 
-- `tick:{tenantId}:{regionId}:lock:<entityId>`
-- `tick:{tenantId}:{regionId}:pending`
-- `tick:{tenantId}:{regionId}:queue:<entityId>`
-- `retry:{tenantId}:{regionId}`
-- `timer:{tenantId}:{regionId}`
+To keep the Redis Cluster hash-tag rules correct and unambiguous, FireMUD combines the normalized `tenantId` and `regionId` into a **single region hash tag token**:
 
-The substring inside the braces (`{tenantId}:{regionId}`) forms the Redis Cluster hash tag and is identical for all keys that a script may touch during a tick. This guarantees that:
+- `tenantRegionTag = normalizeTenantIdV1(tenantId) .. "~" .. normalizeRegionIdV1(regionId)`
+
+Tick-related keys then embed exactly one pair of braces around this combined token:
+
+- `tick:{tenantRegionTag}:lock:<entityId>`
+- `tick:{tenantRegionTag}:pending`
+- `tick:{tenantRegionTag}:queue:<entityId>`
+- `retry:{tenantRegionTag}`
+- `timer:{tenantRegionTag}`
+
+The substring inside the first pair of braces (`{tenantRegionTag}`) forms the Redis Cluster hash tag and is identical for all keys that a script may touch during a tick. This guarantees that:
 
 - Lua scripts can atomically read/write locks, queues, and pending state without `CROSSSLOT` errors.
 - Each tick region’s keys remain **shard-local** while still supporting multi-key operations.
 
 To keep hash tags unambiguous and compatible with Redis Cluster’s parsing rules, FireMUD relies on a **versioned normalization scheme**:
 
-- A canonical normalization function (for example `normalizeTenantIdV1(...)`, `normalizeRegionIdV1(...)`) produces the internal `tenantId` / `regionId` used in Redis keys and related database fields.
-- The current hash-tag format is:
-  - `"{tenantId}:{regionId}"` under `NORMALIZATION_V1`, where `tenantId` / `regionId` are the outputs of the V1 normalization functions.
+- Canonical normalization functions (for example `normalizeTenantIdV1(...)`, `normalizeRegionIdV1(...)`) produce internal `tenantId` / `regionId` identifiers used in Redis keys and related database fields.
+- A derived helper (for example `tenantRegionTagV1(tenantId, regionId)`) combines them into the region hash tag token used inside braces.
+- Under `NORMALIZATION_V1`, the region hash tag token is:
+  - `tenantRegionTag = normalizeTenantIdV1(tenantId) .. "~" .. normalizeRegionIdV1(regionId)`
 - All services that construct keys or shard assignments must:
   - Use shared helper functions from the common library to obtain normalized IDs and hash tags.
   - Treat changes to normalization behavior (for example, different case folding or slug rules) as **schema changes** that require a migration plan, not as local implementation details.
 
-Under a given normalization version, the `tenantId` and `regionId` segments that appear inside hash tags are **normalized identifiers**, not arbitrary external IDs. They must:
+Under a given normalization version, the normalized `tenantId`, `regionId`, and the combined `tenantRegionTag` are **normalized identifiers**, not arbitrary external IDs. They must:
 
 - Omit `{`, `}`, and `:` characters (since `{}` delimit hash tags and `:` is used as a separator in key names).
 - Use a restricted character set such as lowercase letters, digits, and `-` / `_` (for example `[a-z0-9_-]+`).
 - If an external tenant or region identifier does not meet these constraints (for example, it contains Unicode, braces, or colons), it is first mapped to a stable normalized form (for example, a slug, hex-encoded UUID, or other opaque token) before being used in Redis keys.
-- The same normalized `tenantId` / `regionId` values are reused consistently across all tick-related keys so that a given `{tenantId, regionId}` hash tag always represents the same shard-local region.
+- The same normalized `tenantId` / `regionId` values are reused consistently across all tick-related keys so that a given `{tenantRegionTag}` always represents the same shard-local region.
 
-> **Notation rule:** `{tenantId}:{regionId}` always denotes the **literal hash tag** inside a Redis key (including braces). Other placeholders in this document (for example `<entityId>`, `<roomId>`) are not part of the hash tag and do not use braces. Implementations must include the braces exactly as shown for Cluster to route keys to the same slot; omitting `{}` or placing normalized IDs outside the braces breaks shard-local guarantees.
+> **Notation rule:** `{tenantRegionTag}` always denotes the **literal region hash tag token** inside a Redis key (including braces). Other placeholders in this document (for example `<tenantId>`, `<regionId>`, `<entityId>`, `<roomId>`) are not part of the hash tag and do not use braces. Implementations must include exactly one pair of braces around `tenantRegionTag` for Cluster to route keys to the same slot; omitting `{}` or attempting to spread `tenantId`/`regionId` across multiple brace pairs breaks shard-local guarantees.
 
 #### Normalization Migration Strategy
 
@@ -558,7 +814,7 @@ Changing how identifiers are normalized or how hash tags are formed (for example
     - When changing normalization:
       - Treat the cluster slot map as fixed for the duration of the migration.
       - Pause or drain ticks and new commands for affected tenants/regions.
-      - Migrate keys according to the steps above, validate that each `{tenantId, regionId}` now lives under its new hash tag, then resume ticks.
+      - Migrate keys according to the steps above, validate that each `{tenantRegionTag}` now maps the intended `{tenantId, regionId}` pair to a single shard, then resume ticks.
     - When resharding the cluster:
       - Treat it as a pure infrastructure operation: no changes to normalization helpers or hash-tag format.
       - Application code continues to use the current normalization version while slots move underneath.
@@ -593,18 +849,18 @@ Automation and scripting keys follow a similar pattern:
   - Scripts that operate on `automation_queue` keys treat them as single-key operations from Redis Cluster’s perspective and do not attempt to combine them atomically with tick-region keys inside the same Lua script.
 - When automation needs to interact with tick keys, it enqueues work via:
   - Dedicated staging keys such as `automation:tick:{tenantId}:{scriptId}:...`, which are region-agnostic, and
-  - Follow-up tick commands into region-local queues (`tick:{tenantId}:{regionId}:queue:{entityId}`) once the appropriate region is resolved.
+  - Follow-up tick commands into region-local queues (`tick:{tenantRegionTag}:queue:{entityId}`) once the appropriate region is resolved.
 
 If future automation features legitimately require **region-local, atomic coordination** with tick keys, the migration path is clear:
 
-- Introduce new keys `automation_queue:{tenantId}:{regionId}:{entityId}` that adopt the same `{tenantId}:{regionId}` hash tag as tick keys so they map to the same shard.
+- Introduce new keys `automation_queue:{tenantRegionTag}:{entityId}` that adopt the same `{tenantRegionTag}` hash tag as tick keys so they map to the same shard.
 - Update the shared key-building helpers, Lua Script Registry descriptors, and code generation so every automation script that touches regional queues must validate the hash tag and align with the tick region.
 - Migrate producers/consumers gradually, writing to both the old and new key shapes during the transition and iterating until the automation workload is fully region-local.
 - Treat this as an architectural shift: document the migration, review sharding implications, and implement it via the shared helpers rather than ad-hoc string concat.
 
 These key-shape and hash-tag rules are **enforced**, not just conventions:
 
-- All tick-related keys are constructed via shared **Key Naming** helpers in the common library; direct string concatenation of `tick:`, `retry:`, or `timer:` keys in application code is not allowed. To prevent accidental `CROSSSLOT` errors, those helpers are the only permitted way to build multi-key `KEYS` arrays—CI/linting rejects any descriptor whose sample keys produce differing `{tenantId}:{regionId}` hash tags, and compiler/tooling flags constructions done outside the helpers.
+- All tick-related keys are constructed via shared **Key Naming** helpers in the common library; direct string concatenation of `tick:`, `retry:`, or `timer:` keys in application code is not allowed. To prevent accidental `CROSSSLOT` errors, those helpers are the only permitted way to build multi-key `KEYS` arrays—CI/linting rejects any descriptor whose sample keys produce differing `{tenantRegionTag}` hash tags, and compiler/tooling flags constructions done outside the helpers.
 - Unit tests in the Game Session Service (or a shared Redis test suite):
   - Construct keys using the same helpers used in production.
   - Assert that all keys passed to a given Lua script share the same hash tag substring (the content inside `{}`).
@@ -615,7 +871,7 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
     - The required number and order of `KEYS` (with symbolic names such as `lockKey`, `pendingKey`, `leaseKey`, `timerKey`).
     - The allowed key prefixes for each position (for example `tick:`/`retry:`/`timer:` for tick scripts, `session:` only for session scripts).
     - Whether the script is expected to be **multi-key shard-local** or **single-key**.
-    - How many entity lock keys (`tick:{tenantId}:{regionId}:lock:{entityId}`) it is allowed to touch (for example `max_entity_locks = 1` for the default case).
+    - How many entity lock keys (`tick:{tenantRegionTag}:lock:{entityId}`) it is allowed to touch (for example `max_entity_locks = 1` for the default case).
     - Whether the script participates in an **ordered multi-lock** pattern (rare) where more than one entity lock is acquired under a deterministic ordering, as described in the tick design.
   - Java key-builder APIs and registry helpers for each script are defined in `firemud-common` and generated from (or validated against) these descriptors so that:
     - Builders construct `KEYS[...]` in exactly the declared order.
@@ -624,7 +880,7 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
     - The script’s `KEYS` count matches the descriptor.
     - All sample `KEYS` produced by the Java builders share the same hash tag for multi-key scripts.
     - Single-key scripts receive exactly one key.
-    - The number of entity lock keys referenced by the script (for example via `lockKey` entries and `tick:{tenantId}:{regionId}:lock:` prefixes) does not exceed the declared `max_entity_locks`.
+    - The number of entity lock keys referenced by the script (for example via `lockKey` entries and `tick:{tenantRegionTag}:lock:` prefixes) does not exceed the declared `max_entity_locks`.
     - Scripts that declare `max_entity_locks > 1` also opt in to the ordered multi-lock mode and include tests that prove they acquire and release locks in a deterministic order.
 - Static analysis and linting enforce prefix and shard-locality rules at the script level:
   - A Lua linter scans each script for literal key prefixes (`"tick:"`, `"session:"`, `"retry:"`, `"timer:"`, `"remote:"`, cache prefixes) and compares them with the script’s descriptor.
@@ -680,7 +936,7 @@ Additional guardrails for script authors:
 - Scripts must **never mix** tick-prefixed keys (`tick:*`, `retry:*`, `timer:*`, `remote:*`) and `session:*` keys in the same `EVALSHA` call. Tick coordination and session management are kept separate:
   - Tick scripts operate on region-scoped tick keys plus their associated timers/retries.
   - Session scripts operate on per-session keys only (and are therefore single-key from Redis Cluster’s perspective).
-- Any script that accepts **multiple keys** must be bound to a single `{tenantId}:{regionId}` hash tag via its `KEYS[1]` argument. Cross-region or “global” multi-key scripts (for example, scripts that operate on keys without a region hash tag or that span multiple regions) are **not allowed**; those flows must either be decomposed into multiple single-region scripts or use database-level coordination instead.
+- Any script that accepts **multiple keys** must be bound to a single `{tenantRegionTag}` hash tag via its `KEYS[1]` argument. Cross-region or “global” multi-key scripts (for example, scripts that operate on keys without a region hash tag or that span multiple regions) are **not allowed**; those flows must either be decomposed into multiple single-region scripts or use database-level coordination instead.
 
 > 🔗 For use during tick execution, see [Distributed Locking](./system-architecture-ticks.md#🔐-distributed-locking)
 
@@ -697,7 +953,7 @@ Every new or modified Lua script that participates in tick coordination, session
 
 - **Key shape and shard-locality**
   - For multi-key scripts:
-    - `KEYS[1]` is a tick-region key whose `{tenantId}:{regionId}` hash tag defines shard locality.
+    - `KEYS[1]` is a tick-region key whose `{tenantRegionTag}` hash tag defines shard locality.
     - All other keys share the same hash tag.
     - Unit tests use the generated builders and `CLUSTER KEYSLOT` (in dev/test) to verify alignment.
   - For single-key scripts:
@@ -709,20 +965,20 @@ Every new or modified Lua script that participates in tick coordination, session
     - Session scripts: `session:` only.
     - Cache/rate-limit scripts: their own non-coordination prefixes and **never** `tick:`/`session:`.
   - CI fails if the script text references forbidden prefixes.
-  - Coordination-related lock and lease keys (`tick:{tenantId}:{regionId}:lock:{entityId}`, `tick-executor-lease:{tenantId}:{regionId}`, and related coordination keys) are **only** created, updated, or deleted from within registry-backed Lua scripts. Direct `SET`, `SET NX`, `DEL`, or similar commands against these prefixes in application code are forbidden; ad-hoc locking for unrelated maintenance flows must use distinct, non-`tick:` prefixes (for example `maintenance-lock:{tenantId}:...`) so they cannot interfere with tick invariants.
+  - Coordination-related lock and lease keys (`tick:{tenantRegionTag}:lock:{entityId}`, `tick-executor-lease:{tenantRegionTag}`, and related coordination keys) are **only** created, updated, or deleted from within registry-backed Lua scripts. Direct `SET`, `SET NX`, `DEL`, or similar commands against these prefixes in application code are forbidden; ad-hoc locking for unrelated maintenance flows must use distinct, non-`tick:` prefixes (for example `maintenance-lock:{tenantId}:...`) so they cannot interfere with tick invariants.
 
 - **Idempotency and safety**
   - The script is idempotent with respect to its inputs (`KEYS`/`ARGV`):
     - Re-invocation with the same arguments does not apply new logical effects.
     - Where applicable, token and `tickId`/`generation` checks are performed before any mutation.
-  - Every mutating script must re-validate the current `tick-executor-lease:{tenantId}:{regionId}` token (and any relevant lock token) before writing. Scripts that skip this check are rejected because they undermine the single-authority guarantee; likewise, the script descriptor must mark which keys carry the lease/lock tokens so generated helpers can enforce the validation.
+  - Every mutating script must re-validate the current `tick-executor-lease:{tenantRegionTag}` token (and any relevant lock token) before writing. Scripts that skip this check are rejected because they undermine the single-authority guarantee; likewise, the script descriptor must mark which keys carry the lease/lock tokens so generated helpers can enforce the validation.
   - Unit tests cover:
     - First invocation from a clean state.
     - Second invocation with identical `KEYS`/`ARGV` (asserting no additional changes).
     - Replay after partial progress (by prepopulating keys to simulate a crash mid-way).
 
 - **Schema awareness (where applicable)**
-  - Scripts that operate on structured values (for example, session bindings or `tick:{tenantId}:{regionId}:pending` payloads) understand an explicit **versioned schema** (`schemaVersion`) and:
+  - Scripts that operate on structured values (for example, session bindings or `tick:{tenantRegionTag}:pending` payloads) understand an explicit **versioned schema** (`schemaVersion`) and:
     - Treat unknown versions conservatively (no mutation + clear error/metric).
     - Support at least the **current** and **previous** schema versions during migrations so they can read data written by both old and new service code.
     - Follow a simple rollout rule: **scripts first, then writers**. New scripts that understand multiple schema versions are deployed cluster‑wide before services start writing the new version; services are updated next to emit the new `schemaVersion`. Cleanup (dropping old‑version branches in scripts) happens only after metrics show the old version has effectively drained from the keyspace.
@@ -757,18 +1013,32 @@ The Lua Script Registry and key-shape rules assume that **all multi-key coordina
   - Ad-hoc `SET`/`DEL` or `EVAL`/`EVALSHA` may be used for **non-coordination workloads** (for example, cache or rate-limit deployments) where invariants are looser and keys are explicitly segregated by prefix and Redis instance.
   - Even in those environments, it is recommended to follow a similar “app user vs. ops user” split so that accidental destructive commands in a CLI session cannot impact coordination keys.
 
-- **Break-glass behavior**
-  - In rare emergency scenarios where direct modification of coordination keys is deemed unavoidable (for example, to unblock a stuck test cluster), such actions:
-    - Are performed only with an explicitly documented “break-glass” superuser account, not with `coord_app` or `ops_ro`.
-    - Are treated as violating some of the replay/idempotency assumptions in this document for affected tenants/regions and require:
-      - Pre-approval or post-hoc retro documentation logged with tenant/region context in a centralized audit ledger (for example via a dedicated GitHub issue or incident tracker entry) capturing the keys touched, the operator identity, and the reason.
-      - A follow-up flush/rebuild runbook for the impacted `{tenantId, regionId}` hash tags whenever possible (for example re-running affected tick scripts via tick effect ledger or deleting stale pending keys and recording the reconciliation).
-      - Written notes in the runbook that operators must verify after the fact (for example, via automated scripts that check `tick_effects` entries are `ABANDONED` or that no `pending` entries remain for the touched slots).
-  - Production incident runbooks should favor:
-    - Halting ticks, draining regions, or flushing coordination state for specific tenants/regions, over hand-editing individual keys.
-    - Redeploying services or rerunning maintenance tools that use the normal script registry, instead of issuing raw Redis commands against coordination prefixes.
-
 These guardrails keep the script registry’s guarantees meaningful: application code and registered scripts are solely responsible for mutating coordination keys, while human operators and tooling default to **read-only** access for those prefixes.
+
+### Reset & Recovery: Allowed vs Unsupported Paths
+
+Because coordination keys encode multi-step invariants (leases, lock tokens, `tickId` fences, schema versions), **interactive repair via `redis-cli` or GUI tools is not supported**. Operators must use the same scripted flows that normal tick execution uses.
+
+Supported reset and recovery mechanisms:
+
+- **Dev / single-node sandbox**
+  - Use `./gradlew devDown && ./gradlew devUp` or the `dev-tools` reset helpers to recreate the local Coordination Redis instance. This is equivalent to wiping the dev AOF/volume; no player-facing guarantees apply.
+- **Small self-hosted production**
+  - Use the **coordination reset** Job or one-shot script described in the Redis Operations runbook to:
+    - Pause tick scheduling for affected tenants/regions.
+    - Clear coordination prefixes for the target scope using registered Lua scripts or purpose-built maintenance flows.
+    - Run basic health checks (script load, sample ticks, tail-loss metrics) before resuming.
+- **Larger clustered deployments**
+  - Use **per-tenant/region coordination reset** tooling for localized issues (for example, mis-keyed state in one `{tenantId, regionId}`), and the documented **cluster-wide coordination reset** procedure for anomalies that affect many regions at once.
+
+Unsupported and unsafe operations:
+
+- Interactive writes against coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, leases, locks) from `redis-cli`, RedisInsight, or ad-hoc scripts are **not supported** and are treated as equivalent to running an undocumented reset. The system does not guarantee correctness after such edits, even if they appear to “fix” a region temporarily.
+- Attempts to “just delete a lock” or “manually clear a `pending` key” must instead be expressed as changes to the coordination reset tooling or maintenance scripts, so that they:
+  - Go through the same Lua Script Registry and key-builder helpers as normal ticks.
+  - Can be tested, versioned, and rolled out consistently across environments.
+
+These reset rules ensure that when coordination state is dropped or rebuilt, it happens through known, repeatable mechanisms, not one-off CLI experiments.
 
 ### Script Loading, `EVALSHA`, and Failover Behavior
 
@@ -787,7 +1057,7 @@ Redis Cluster does **not** guarantee that loaded scripts survive `SCRIPT FLUSH`,
   - It immediately retries the call using `EVALSHA` with the refreshed SHA value.
 - All tick-related script helpers:
   - Encapsulate this `NOSCRIPT` handling so callers do not need to implement retries themselves.
-  - Ensure that the **first key argument** for each script is a tick key whose hash tag (`{tenantId}:{regionId}`) matches all other keys in the call, so Redis Cluster routes the script to the correct slot.
+  - Ensure that the **first key argument** for each script is a tick key whose hash tag (`{tenantRegionTag}`) matches all other keys in the call, so Redis Cluster routes the script to the correct slot.
 
 To avoid **thundering herds** of `SCRIPT LOAD` operations when cluster topology changes (for example, resharding or adding a new master), the client-side loader applies additional safeguards:
 
@@ -1044,7 +1314,7 @@ To keep behavior consistent across environments, FireMUD defines **recommended S
 - **Coordination key inspection and admin commands**
   - For coordination prefixes (`tick:*`, `retry:*`, `timer:*`, `remote:*`, `session:*` and related automation/tick-scheduler keys that share their hash tags):
     - Operators use **single-key** commands (`GET`, `HGETALL`, `ZRANGE`, `DEL key`) or app-level maintenance tools; they must not issue multi-key commands such as `MGET` or `DEL key1 key2` that span arbitrary keys.
-    - If a multi-key command against these prefixes produces a `CROSSSLOT` error, that is treated as a signal that the operation is mixing shards or regions incorrectly; the correct fix is to narrow the operation (for example, to a single `{tenantId}:{regionId}` hash tag) or use application-level tools, not to work around `CROSSSLOT` via client-side retries.
+    - If a multi-key command against these prefixes produces a `CROSSSLOT` error, that is treated as a signal that the operation is mixing shards or regions incorrectly; the correct fix is to narrow the operation (for example, to a single `{tenantRegionTag}` hash tag) or use application-level tools, not to work around `CROSSSLOT` via client-side retries.
   - Bulk inspection or cleanup for coordination keys (for example, deleting all tick keys for a region) should be implemented as:
     - Application-level maintenance flows or scripts that:
       - Use shared key builders and Lua helpers.
@@ -1109,19 +1379,19 @@ To keep responses consistent across incidents, the following “first response�
 
 Lock acquisition follows a **single allowed pattern** and is always performed via a shared helper in the Game Session Service:
 
-1. Generate a unique lock token (for example, a UUID) and acquire `tick:{tenantId}:{regionId}:lock:{entityId}` using `SET NX PX` with that token as the value and the computed TTL (`lock_ttl_ms`), via the shared lock helper. This ensures transient pauses do not cause the lock to expire while normal work is still in progress, but stale locks are automatically cleared after a bounded window.
-2. Stage updates under `tick:{tenantId}:{regionId}:pending` via Lua script while the lock is held.
+1. Generate a unique lock token (for example, a UUID) and acquire `tick:{tenantRegionTag}:lock:{entityId}` using `SET NX PX` with that token as the value and the computed TTL (`lock_ttl_ms`), via the shared lock helper. This ensures transient pauses do not cause the lock to expire while normal work is still in progress, but stale locks are automatically cleared after a bounded window.
+2. Stage updates under `tick:{tenantRegionTag}:pending` via Lua script while the lock is held.
 3. On successful commit or rollback, call a **single canonical Lua script entrypoint** for “tick commit/rollback + lock release” that:
    - Receives `KEYS` in a fixed order such as `[lockKey, pendingKey, leaseKey, …]`.
    - Receives `ARGV` values that include both the `lockToken` and the current `leaseToken` for `{tenantId, regionId}`.
-   - Verifies `GET tick:{tenantId}:{regionId}:lock:{entityId}` still matches the original `lockToken`.
-   - Reads and verifies the `tick-executor-lease:{tenantId}:{regionId}` value still matches the provided `leaseToken`.
-   - Deletes the lock key and clears or updates the staged `tick:{tenantId}:{regionId}:pending` entry only when both tokens match and the expected `tickId` is present.
+   - Verifies `GET tick:{tenantRegionTag}:lock:{entityId}` still matches the original `lockToken`.
+   - Reads and verifies the `tick-executor-lease:{tenantRegionTag}` value still matches the provided `leaseToken`.
+   - Deletes the lock key and clears or updates the staged `tick:{tenantRegionTag}:pending` entry only when both tokens match and the expected `tickId` is present.
 4. If the lock expires before commit:
-   - The next tick cycle detects the presence of `tick:{tenantId}:{regionId}:pending` and replays the staged effects using the idempotency rules described in the Tick System design.
+   - The next tick cycle detects the presence of `tick:{tenantRegionTag}:pending` and replays the staged effects using the idempotency rules described in the Tick System design.
    - Any worker that finds `pending` present but fails to reacquire the lock (because another worker has already taken it with a new token) aborts its work for that tick and returns a retry outcome; it does **not** attempt to apply domain updates without first holding a valid lock token.
 
-Tick locks are **never** released or modified via raw `DEL`, `PEXPIRE`, or similar commands from application code. The only allowed non-Lua operation on `tick:{tenantId}:{regionId}:lock:{entityId}` keys is acquisition via the shared `SET NX PX` helper. All lock validation and release flows run through the shared Lua scripts that enforce token checks, so no worker can accidentally release or reuse another worker’s lock after a TTL expiry or leadership change. Code review and CI guardrails (for example, grep-based checks that forbid `DEL tick:{tenantId}:{regionId}:lock:*` outside the canonical scripts) enforce this policy so ad-hoc lock manipulation cannot slip into the codebase.
+Tick locks are **never** released or modified via raw `DEL`, `PEXPIRE`, or similar commands from application code. The only allowed non-Lua operation on `tick:{tenantRegionTag}:lock:{entityId}` keys is acquisition via the shared `SET NX PX` helper. All lock validation and release flows run through the shared Lua scripts that enforce token checks, so no worker can accidentally release or reuse another worker’s lock after a TTL expiry or leadership change. Code review and CI guardrails (for example, grep-based checks that forbid `DEL tick:{tenantRegionTag}:lock:*` outside the canonical scripts) enforce this policy so ad-hoc lock manipulation cannot slip into the codebase.
 
 To keep this behavior enforceable in a growing codebase:
 
@@ -1130,7 +1400,7 @@ To keep this behavior enforceable in a growing codebase:
   - Verifies that only the canonical release script can successfully clear the lock key under normal conditions.
   - Simulates loss of lock keys (for example, via TTL expiry) and asserts that late commit attempts fail with the appropriate status and do not mutate domain-facing state.
 - Static checks and tests prevent ad-hoc manipulation of lock keys:
-  - Build-time checks scan for direct `DEL`/`PEXPIRE` operations on `tick:{tenantId}:{regionId}:lock:*` outside the shared helper and canonical Lua scripts, and fail the build if any are found.
+  - Build-time checks scan for direct `DEL`/`PEXPIRE` operations on `tick:{tenantRegionTag}:lock:*` outside the shared helper and canonical Lua scripts, and fail the build if any are found.
   - Any future “force unlock” or administrative behavior must be implemented via dedicated, reviewed scripts or admin endpoints, not raw Redis commands, and must be documented with their operational semantics and risks.
 
 ### Canonical Commit/Rollback Script API
@@ -1139,10 +1409,10 @@ The canonical “tick commit/rollback + lock release” script is treated as a s
 
 - **Logical name:** `tick_commit_and_release` (exact filename may vary, but callers refer to this logical identifier when resolving the script SHA).
 - **Keys (`KEYS`):**
-  - `KEYS[1]` – `tick:{tenantId}:{regionId}:lock:{entityId}` (entity lock key).
-  - `KEYS[2]` – `tick:{tenantId}:{regionId}:pending` (region-level pending entry for the current tick).
-  - `KEYS[3]` – `tick-executor-lease:{tenantId}:{regionId}` (region leadership lease).
-  - `KEYS[4]` (optional) – tick-local retry/timer structure if the script needs to adjust retry metadata as part of commit/rollback; when present it must share the same `{tenantId}:{regionId}` hash tag (for example `retry:{tenantId}:{regionId}` or `timer:{tenantId}:{regionId}`).
+  - `KEYS[1]` – `tick:{tenantRegionTag}:lock:{entityId}` (entity lock key).
+  - `KEYS[2]` – `tick:{tenantRegionTag}:pending` (region-level pending entry for the current tick).
+  - `KEYS[3]` – `tick-executor-lease:{tenantRegionTag}` (region leadership lease).
+  - `KEYS[4]` (optional) – tick-local retry/timer structure if the script needs to adjust retry metadata as part of commit/rollback; when present it must share the same `{tenantRegionTag}` hash tag (for example `retry:{tenantRegionTag}` or `timer:{tenantRegionTag}`).
 - **Arguments (`ARGV`):**
   - `ARGV[1]` – `tickId` being committed or rolled back.
   - `ARGV[2]` – `lockToken` that the caller believes it holds for `KEYS[1]`.
@@ -1171,7 +1441,7 @@ This API ensures that all commit/rollback behavior flows through a single, easil
 
 ### Pending Tick Value Model
 
-Each `tick:{tenantId}:{regionId}:pending` entry stores a **single in-flight tick** for that region. Its value includes:
+Each `tick:{tenantRegionTag}:pending` entry stores a **single in-flight tick** for that region. Its value includes:
 
 - A `tickId` that is monotonically increasing per `{tenantId, regionId}` tick stream
 - The staged effects for that tick (for example, serialized entity mutations or event descriptors)
@@ -1179,13 +1449,13 @@ Each `tick:{tenantId}:{regionId}:pending` entry stores a **single in-flight tick
 
 This tight Redis/PostgreSQL coupling guarantees that replay is never silent: redis-managed pending state cannot exist without a ledger entry, and the ledger’s terminal states prove whether replay re-applied or consciously abandoned each effect.
 
-Lua scripts treat the presence of `tick:{tenantId}:{regionId}:pending` as meaning **“this tick may need to be (re)applied”**, regardless of whether a previous attempt completed. Domain updates are designed to be idempotent with respect to `tickId` and effect identity, so reapplying the same `tickId` after a crash or failover does not corrupt state. The `pending` key is created **without a TTL** so it survives primary crashes and failover; it is only removed when the tick has been successfully applied or explicitly abandoned.
+Lua scripts treat the presence of `tick:{tenantRegionTag}:pending` as meaning **“this tick may need to be (re)applied”**, regardless of whether a previous attempt completed. Domain updates are designed to be idempotent with respect to `tickId` and effect identity, so reapplying the same `tickId` after a crash or failover does not corrupt state. The `pending` key is created **without a TTL** so it survives primary crashes and failover; it is only removed when the tick has been successfully applied or explicitly abandoned.
 
-On successful completion, the same Lua script that releases locks also deletes `tick:{tenantId}:{regionId}:pending` so there is no follow-up work for that tick on the next cycle.
+On successful completion, the same Lua script that releases locks also deletes `tick:{tenantRegionTag}:pending` so there is no follow-up work for that tick on the next cycle.
 
 This **single `pending` per region** rule is a **hard architectural constraint** for the current design:
 
-- The TickScheduler in the Game Session Service treats a region as **busy** while `tick:{tenantId}:{regionId}:pending` exists for its current `tickId` and does not start a new tick for that `{tenantId, regionId}` until the entry is removed.
+- The TickScheduler in the Game Session Service treats a region as **busy** while `tick:{tenantRegionTag}:pending` exists for its current `tickId` and does not start a new tick for that `{tenantId, regionId}` until the entry is removed.
 - There is intentionally **no support** for overlapping ticks, pipelines, or speculative pre-staging of the next tick within the same region keyspace. Any future change that requires concurrent ticks in a region must first extend this Redis model (for example with multiple `pending` slots and a different locking scheme) and update the canonical Lua scripts accordingly.
 - Implementations must not bypass this constraint by creating ad-hoc `pending`-like keys or alternative staging flows; doing so would undermine the replay and idempotency guarantees documented here.
 
@@ -1195,12 +1465,12 @@ Redis-based replay and crash recovery depend on a **shared, explicit idempotency
 
 - **Scope – which operations are in play**
   - Any handler that is invoked as part of tick execution and **persists state outside Redis** (for example PostgreSQL rows, durable queues, or external side effects) is considered **tick-driven** and must obey this contract.
-  - Examples include: HP changes, inventory moves, room occupancy changes, quest progress, cooldown/application of effects, and any other mutation driven by commands read from `tick:{tenantId}:{regionId}:queue:{entityId}`.
+  - Examples include: HP changes, inventory moves, room occupancy changes, quest progress, cooldown/application of effects, and any other mutation driven by commands read from `tick:{tenantRegionTag}:queue:{entityId}`.
   - Read-only queries and best-effort observability (metrics, logs) are exempt; they may be “at least once” without an idempotency guard.
   - Flows that cannot be made idempotent or compensatable at the domain layer (for example, billing events, emails, webhooks to third-party systems) **must not** be wired directly into tick scripts; they must use stronger patterns such as outbox tables and sagas as described in [Transaction Strategies](./system-architecture-transactions.md).
 
 - Each domain service that applies tick-driven effects (for example Entity Management, World Management, Social Groups) maintains an **idempotency guard** keyed by a composite such as `(tenantId, regionId, tickId, effectKey)`:
-  - `tickId` is the monotonically increasing identifier from `tick:{tenantId}:{regionId}:pending`.
+  - `tickId` is the monotonically increasing identifier from `tick:{tenantRegionTag}:pending`.
   - `effectKey` uniquely identifies a logical effect within that tick from the domain service’s perspective (for example, `"entity:{entityId}:hp"` or `"inventory:{containerId}"`).
 - When handling a tick-driven request, the service:
   - Starts a local database transaction.
@@ -1320,6 +1590,23 @@ FireMUD actively monitors Redis performance and tick health:
 
 > 🔗 Redis observability feeds into the common stack described in [Logging & Monitoring](./system-architecture-logging-monitoring.md)
 
+### Metrics Cardinality and Aggregation
+
+Redis and tick-related metrics often carry `{tenantId, regionId}` labels so operators can pinpoint noisy tenants or regions. To keep Prometheus/Grafana usable as the number of tenants and regions grows:
+
+- **Limit high-cardinality labels**
+  - Metrics tagged with `{tenantId, regionId}` are permitted for coordination/tick health, but additional per-entity or per-command labels (for example `playerId`, `commandId`) are forbidden on exported Redis/tick metrics.
+  - Cache and rate-limit metrics should prefer cluster-level or tenant-only labels (for example `{tenantId}`) over full `{tenantId, regionId}` unless a design explicitly justifies the finer granularity.
+- **Age out inactive regions**
+  - Exporters and services emit `{tenantId, regionId}` time series only for regions that have been active within a recent window (for example the last N minutes); idle regions should naturally age out as their metrics stop being scraped.
+  - When designing new metrics, prefer gauges and counters that reset or naturally drop out for inactive regions rather than quasi-permanent series.
+- **Provide roll-up views**
+  - Dashboards should include:
+    - Cluster-level aggregates without tenant/region labels for quick “is Redis healthy?” checks.
+    - Per-tenant aggregates (no region label) to spot noisy tenants.
+    - Focused `{tenantId, regionId}` panels only where needed to debug specific coordination issues.
+  - Alerting for global SLOs (for example tail-loss, script latency) should trigger on aggregated signals; per-region alerts should be reserved for a bounded set of active regions to avoid unmanageable alert fan-out in large deployments.
+
 ---
 
 ### Redis Metrics & Thresholds Contract
@@ -1339,6 +1626,11 @@ These metrics form the contract for Coordination Redis observability. They are s
 | `redis.coordination_oom_errors` | ≥1 | 1m | Core | Critical — halt ticks, escalate to on-call, investigate `maxmemory`/payloads. |
 | `redis.tick.pending_stuck_total` | >0 | 2 tick intervals | Core | Halt ticks for the region, inspect the tick effect ledger, repair or reset coordination state, then resume. |
 | `redis.tick.command_shed_total` | >0 ongoing | N/A | Extended | Exposed by backpressure logic (see below); use to tune client shedding behavior. |
+| `redis.tick.pending_oversized_total` | ≥1 per region | 10m | Extended | Investigate tick payload shape; if repeated, mark region degraded and refactor commands to stay within `pending` size budgets. |
+| `redis.tick.pending_effects_over_budget_total` | ≥1 per region | 10m | Extended | Review commands generating many effects in a single tick; consider splitting across ticks or tightening admission controls. |
+| `redis.tick.command_queue_overflow_total` | ≥1 per entity | Immediate | Core | Treat as a per-entity overload signal; shed/deny further commands for that entity until queue depth returns within budget. |
+| `redis.tick.timers_over_budget_total` | >0 sustained | 10m | Extended | Region has too many timers; either slow tick rate and/or reduce timer density via design changes. |
+| `redis.session.payload_oversized_total` | ≥1 per tenant | 10m | Extended | Audit session payload shape; strip non-essential fields and enforce size limits before writing session state. |
 
 Treat the **Core** rows as the minimum alerting surface for any deployment that hosts real players. Extended metrics and alerts (for example per-script latency breakdowns, tenant-level fairness counters, automation-queue depth, blocked-client histograms, and cache eviction trends) build on top of these core signals and are valuable for diagnosis and tuning but not required to enforce the basic safety guarantees of the tick system.
 
@@ -1416,7 +1708,7 @@ Redis stores transient gameplay session state for each connected player, includi
 - Timer and cooldown data
 - Conflict and retry metadata
 
-Session keys use the prefix `session:{tenantId}:{sessionId}` as described in the
+Session keys use the pattern `session:{tenantId}:{sessionId}` (with only `tenantId` inside the hash-tag braces) as described in the
 [Game Session Service README](./microservices/game-session-service/README.md#redis-keys). The `sessionId` is an opaque server-side identifier (for example, a UUID or a fixed-length hash derived from the underlying JWT or account/session tuple) chosen to keep key length bounded and independent of the raw token size.
 
 Session entries expire after a **derived session TTL** as configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication). The Game Session
@@ -1434,6 +1726,16 @@ Once the logical expiry is reached:
 - Any associated volatile coordination state for that session (queued commands, conflict metadata) is treated as
   abandoned and will not be replayed.
 
+##### Clock and NTP Assumptions for Sessions
+
+Logical expiry timestamps and Redis TTLs rely on **reasonably synchronized clocks** on Game Session nodes:
+
+- Application nodes are expected to run with NTP (or equivalent) so wall-clock skew between nodes stays small (for example, well below a second under normal conditions).
+- Logical expiry checks use the Game Session node’s local clock; large clock jumps or sustained skew can cause sessions to appear expired earlier or later than intended. Such behavior is treated as an **infrastructure misconfiguration**, not as a supported edge case of the session protocol.
+- Operators should monitor clock health as part of the general platform SRE posture. In environments where tight clock control cannot be guaranteed, deployments should prefer shorter session windows and treat occasional premature expiry as acceptable, rather than attempting to encode complex cross-node time reconciliation into the session layer.
+
+In practice, the combination of `JWT exp`, the derived `session_expiration_ms`, and Redis TTL provides a clear envelope: sessions are considered resumable only while the JWT remains valid and the session’s logical expiry window has not elapsed. TTL serves as a garbage-collection hint to remove old keys; logical expiry remains the final authority for reconnect decisions on healthy, time-synchronized nodes.
+
 For reconnect flows, **both the presence of the `session:{tenantId}:{sessionId}` key and an unexpired logical expiry timestamp are required for a session to be resumable**. If the key no longer exists, or if the logical expiry has passed, the session is treated as expired and cannot be resumed, even if related database records still exist for audit or game-instance lifecycle.
 
 In practice, the derived `session_expiration_ms` defines the **maximum reconnection window** for gameplay sessions. It is intentionally computed from the JWT lifetime to eliminate subtle mismatches between “JWT still valid” and “server-side session already expired”:
@@ -1441,6 +1743,13 @@ In practice, the derived `session_expiration_ms` defines the **maximum reconnect
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
 Services validate that `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` is non-negative in non-dev profiles and refuse to start if it is not, so the session window cannot be shorter than the JWT lifetime by accident. Operators who intentionally want a shorter reconnection window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a second, independent session TTL knob.
+
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` affects the **derived expiry for new and refreshed sessions only**; existing `session:{tenantId}:{sessionId}` keys keep the logical expiry and Redis TTL they were created with. Tightening these values in a running cluster:
+
+- Immediately shortens the effective reconnection window for new logins and reconnect attempts, because JWT validity is checked first using the new `exp`.
+- May leave some older `session:*` keys in Redis until their original TTLs elapse, even though their JWTs are no longer usable.
+
+This is acceptable from a correctness and security perspective—stale session keys cannot be used once their JWTs are invalid—but operators who want a clean cut-over after a major TTL reduction may run a **session cleanup** job (for example, deleting `session:{tenantId}:*` keys for selected tenants during a low-traffic window) so that all reconnects require a fresh `LOGIN` under the new envelope.
 
 From a capacity perspective, gameplay sessions are treated as **part of the normal coordination footprint**, not as a separate, tightly budgeted workload. At the expected self-hosted scale and reconnection windows, `session:*` keys are assumed to consume a relatively small, bounded share of Coordination Redis memory compared to tick locks, timers, and pending state. The design therefore does **not** introduce explicit per-tenant session quotas or dedicated session Redis topologies by default; general coordination memory thresholds, eviction/OOM alerts, and the ability to lower session TTLs or limit concurrent sessions per tenant are considered sufficient safeguards. If real-world usage ever shows `session:*` keys dominating memory or triggering coordination `OOM` conditions, the preferred remediation is to adjust TTLs or admission-control limits first, and only consider new Redis deployments for sessions if those simple measures prove inadequate.
 

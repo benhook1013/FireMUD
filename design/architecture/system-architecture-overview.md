@@ -21,6 +21,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service
 - **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
+- **Admin and operations tooling communicates with Spring Cloud Gateway over an internal gRPC management API** for route and health management; no gameplay traffic flows over this control-plane path.
 
 > 🔗 See [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md).
 

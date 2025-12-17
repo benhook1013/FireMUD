@@ -119,6 +119,7 @@ For **all deployments**, including local development:
 
 - Coordination and cache/rate-limit roles run on **separate Redis deployments** (for example, two containers/pods on the same host or separate processes), even when serving a single developer or tenant.
 - Docker Compose and Helm charts provide two services by default (for example `redis-coord` and `redis-cache`) so developers and operators never need to share a single Redis instance for both roles.
+- This two-role split is intentionally kept **lightweight**: it mirrors larger clustered deployments while only adding configuration complexity, not additional infrastructure primitives, so hobby and self-hosted operators can follow the same patterns as production with minimal overhead.
 - Any ad-hoc experiments that deliberately collapse roles into a single Redis instance are considered **unsupported** and outside the guarantees in this document; they must not be used for QA, staging, production, or any player-facing game instances.
 
 Operational dashboards track `used_memory`, `maxmemory`, and eviction counters for each deployment. In addition:
@@ -144,6 +145,8 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 - `view:roomLook:{tenantId}:{roomId}` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
 
 Expectations:
+
+- These prefixes live on **Cache/Rate-Limit Redis**, not Coordination Redis. Coordination Redis remains reserved for strict coordination prefixes (`tick:`, `retry:`, `timer:`, `session:`, `tick-executor-lease:`, and related coordination keys); cache-like aggregates must never be written to Coordination Redis.
 
 - Writing a new value for a key overwrites the previous entry. Cache writers do not attempt to merge old and new payloads inside Redis.
 - Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.

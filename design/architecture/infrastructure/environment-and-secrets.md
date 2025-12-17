@@ -24,16 +24,7 @@ This document explains how configuration values and sensitive secrets are suppli
 
 ## Variable Prefixes
 
-Shared libraries support overriding default settings with environment variables using the `FIREMUD_` prefix. For example:
-
-```bash
-FIREMUD_POSTGRES_HOST=postgres
-FIREMUD_POSTGRES_PORT=5432
-FIREMUD_REDIS_HOST=redis
-FIREMUD_REDIS_PORT=6379
-```
-
-Each service merges these variables with its own `application.yml` profile.
+Shared libraries support overriding default settings with environment variables using the `FIREMUD_` prefix (for example `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_PORT`). Each service merges these variables with its own `application.yml` profile.
 
 ### Common Application Settings
 
@@ -66,36 +57,40 @@ Redis stores transient queues and caches. All environments, including local deve
 - **Cache/Rate‑Limit Redis** – gateway rate limiting and best‑effort read‑side
   caches.
 
-Baseline variables (primarily for development and simple single‑node setups):
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `FIREMUD_REDIS_HOST` | Redis host | `redis` |
-| `FIREMUD_REDIS_PORT` | Redis port | `6379` |
-
 Coordination Redis (ticks, locks, timers, sessions):
 
-| Variable | Purpose | Default / Fallback |
-| -------- | ------- | ------------------ |
-| `FIREMUD_REDIS_COORD_HOST` | Coordination Redis host | Defaults to `FIREMUD_REDIS_HOST` when unset |
-| `FIREMUD_REDIS_COORD_PORT` | Coordination Redis port | Defaults to `FIREMUD_REDIS_PORT` when unset |
+| Variable | Purpose |
+| -------- | ------- |
+| `FIREMUD_REDIS_COORD_HOST` | Coordination Redis host |
+| `FIREMUD_REDIS_COORD_PORT` | Coordination Redis port |
 
 Cache/Rate‑Limit Redis (gateway rate limiting, caches):
 
-| Variable | Purpose | Default / Fallback |
-| -------- | ------- | ------------------ |
-| `FIREMUD_REDIS_CACHE_HOST` | Cache/Rate‑Limit Redis host | Defaults to `FIREMUD_REDIS_HOST` when unset |
-| `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis port | Defaults to `FIREMUD_REDIS_PORT` when unset |
+| Variable | Purpose |
+| -------- | ------- |
+| `FIREMUD_REDIS_CACHE_HOST` | Cache/Rate‑Limit Redis host |
+| `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis port |
 
 Precedence and safety rules:
 
-- All Spring profiles (dev and non‑dev) are expected to configure distinct endpoints for coordination and cache/rate-limit traffic:
+- All Spring profiles (dev and non‑dev) **must** configure explicit endpoints for coordination and cache/rate-limit traffic:
   - Coordination clients resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
   - Cache/rate‑limit clients resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
-  - The generic `FIREMUD_REDIS_HOST` / `FIREMUD_REDIS_PORT` pair is retained for backwards compatibility and simple local setups, but should typically point at the same host as `FIREMUD_REDIS_COORD_HOST` while `FIREMUD_REDIS_CACHE_HOST` points at a second instance.
-- Services running with non‑`dev` Spring profiles **fail fast at startup** if:
+- Services **fail fast at startup** if:
   - They require Coordination Redis but lack `FIREMUD_REDIS_COORD_*`, or
   - They require Cache/Rate‑Limit Redis but lack `FIREMUD_REDIS_CACHE_*`.
+
+> **Shared Redis warning (single-node only):**
+> Running **both** Coordination Redis and Cache/Rate‑Limit Redis workloads on a
+> single Redis instance (for example by pointing `FIREMUD_REDIS_COORD_HOST`
+> and `FIREMUD_REDIS_CACHE_HOST` at the same host/port) is recommended **only**
+> for local development and very low-concurrency hobby servers (for example, a
+> handful of concurrent players and modest HTTP/WebSocket traffic). Above that
+> level—roughly once you expect more than a few dozen concurrent players or
+> sustained gateway traffic beyond simple smoke tests—you should configure
+> **distinct deployments** for Coordination Redis and Cache/Rate‑Limit Redis as
+> described in the main Redis architecture doc. This prevents noisy
+> cache/rate-limit traffic from impacting tick/session latency.
 
 Player‑facing environments (production, staging, QA, and any environment used to
 validate performance or correctness) **must** configure Coordination Redis and
@@ -108,9 +103,15 @@ used for shared or player-facing environments.
 
 ### gRPC TLS Certificates
 
-Mutual TLS protects all gRPC calls between services. Certificates are normally
-provisioned by **cert-manager** and mounted from Kubernetes Secrets. A sample
-`Certificate` manifest is provided at `k8s/base/firemud-grpc-certificate.yaml`.
+Mutual TLS protects all internal service-to-service traffic. Certificates are
+normally provisioned by **cert-manager** and mounted from Kubernetes Secrets.
+These certificates secure:
+
+- All gRPC calls between services
+- Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy
+  Service connecting to Spring Cloud Gateway over `wss://`)
+
+A sample `Certificate` manifest is provided at `k8s/base/firemud-grpc-certificate.yaml`.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
@@ -155,7 +156,9 @@ Server-side gameplay sessions use a **derived lifetime** instead of a separately
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
-This value defines the maximum window during which a disconnected gameplay session can be resumed. The Game Session Service uses the derived value both for its in-memory/session bookkeeping and as the TTL for `session:{tenantId}:{sessionId}` keys in Redis (see [Redis Architecture](../system-architecture-redis.md#session-keys-and-gameplay-binding)). After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
+This value defines the maximum window during which a disconnected gameplay session can be resumed. The Game Session Service uses the derived value both for its in-memory/session bookkeeping and as the TTL for `session:{tenantId}:{sessionId}` keys in Redis (hash-tagging on `tenantId` only; see [Redis Architecture](../system-architecture-redis.md#session-keys-and-gameplay-binding)). After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
+
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:{tenantId}:{sessionId}` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:{tenantId}:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`.
 
 ### Service Discovery
 

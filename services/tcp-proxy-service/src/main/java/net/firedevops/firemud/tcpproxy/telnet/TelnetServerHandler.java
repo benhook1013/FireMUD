@@ -30,7 +30,6 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -202,8 +201,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     loginAcknowledged = false;
     cachedLookDelivered = false;
     if (reconnected) {
-      List<String> drained = consumeBuffer();
-      pushBufferedInputAsync(drained);
+      // On gateway reconnect, simply drain the existing buffer over the WebSocket
+      // bridge; no side-channel gRPC replay is used.
+      drainBuffer();
       return;
     }
     drainBuffer();
@@ -334,9 +334,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         clientIp != null ? clientIp : remote,
         gatewayWsUrl);
     if (devIsolated) {
-      logger.info(
-          "Dev-isolated mode enabled; bridging Telnet commands to {} (echo/dev stub)",
-          gatewayWsUrl);
+      logger.info("Dev-isolated mode enabled; using internal Telnet echo handler");
     }
   }
 
@@ -353,9 +351,20 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       logTelnetInput(sanitized);
       touchActivity();
 
-      // continue processing even in dev mode so the bridge forwards commands
       if (devIsolated) {
-        logger.debug("Dev-isolated Telnet input still flows through the gateway bridge");
+        // In dev-isolated mode, keep SESSION envelope semantics but echo
+        // subsequent commands directly back to the Telnet client without
+        // opening a WebSocket to the gateway.
+        if (!sessionContext.isReady()) {
+          if (!captureSessionContext(sanitized)) {
+            logger.warn("Ignoring Telnet input before session envelope: {}", sanitized);
+          }
+          return;
+        }
+        if (context != null) {
+          context.writeAndFlush(sanitized + "\n");
+        }
+        return;
       }
 
       if (!sessionContext.isReady()) {
@@ -449,7 +458,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void ensureGatewayConnected() {
-    if (closing || webSocket != null || reconnecting) {
+    if (devIsolated || closing || webSocket != null || reconnecting) {
       return;
     }
     connectToGateway();
@@ -525,53 +534,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     updateBufferDepthGauge();
     return drained;
-  }
-
-  private void pushBufferedInputAsync(List<String> buffered) {
-    if (devIsolated || !sessionContext.isReady() || buffered.isEmpty()) {
-      return;
-    }
-    CompletableFuture.supplyAsync(
-            () ->
-                eventService.pushBufferedInput(
-                    sessionContext.sessionId(), buffered, sessionContext.tenantId()))
-        .thenAccept(
-            response -> {
-              if (!isOk(response)) {
-                String code =
-                    response != null && response.hasError()
-                        ? response.getError().getCode()
-                        : "UNKNOWN";
-                logger.warn(
-                    "Failed to push buffered input for session {} with code {}",
-                    sessionContext.sessionId(),
-                    code);
-                buffer.addAll(buffered);
-                updateBufferDepthGauge();
-                drainBuffer();
-              }
-            })
-        .exceptionally(
-            error -> {
-              logger.warn(
-                  "Failed to push buffered input for session {}",
-                  sessionContext.sessionId(),
-                  error);
-              buffer.addAll(buffered);
-              updateBufferDepthGauge();
-              drainBuffer();
-              return null;
-            });
-  }
-
-  private boolean isOk(PushBufferedInputResponse response) {
-    if (response == null) {
-      return false;
-    }
-    if (!response.hasError()) {
-      return true;
-    }
-    return OK.equals(response.getError().getCode());
   }
 
   private void updateBufferDepthGauge() {
