@@ -84,4 +84,4 @@ version = "1.21.3"
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 flyway = { id = "org.flywaydb.flyway", version.ref = "flyway" }
-protobuf = { id = "com.google.protobuf", version = "0.9.5" }
+protobuf = { id = "com.google.protobuf", version = "0.9.6" }
