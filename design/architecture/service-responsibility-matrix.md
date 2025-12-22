@@ -18,6 +18,7 @@
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis) | | | | ✔ | | | | | | | |
+| Coordination Redis ownership (ticks, locks, timers, sessions) | | | | ✔ | | | | | | | |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |
 | Tick & coordination health metrics (per region) | | | | ✔ | | | | | | | |
@@ -33,6 +34,7 @@
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |
+| Redis-backed automation tick coordination (`automation:*` keys) | | | | | | | ✔ | | | | |
 | Chat and private messaging | | | | | | | | ✔ | | | |
 | Guilds and group discovery | | | | | | | | ✔ | | | |
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |

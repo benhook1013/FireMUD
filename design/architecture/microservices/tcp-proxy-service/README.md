@@ -52,14 +52,15 @@ of truth and reconcile code/tests accordingly.
 - Handles Telnet negotiation and character encoding quirks.
 - Negotiates the Mud Client Protocol (MCP) when supported. See [Mud Client Protocol (MCP) Support](../../system-architecture-mud-client-protocol.md).
 - Integrates with the [Reconnection Strategy](../../system-architecture-reconnection.md) so backend session state can be resumed when clients reconnect and send `LOGIN` again; Telnet clients always reconnect and reauthenticate after any disconnect.
-- Can optionally terminate Telnet-over-TLS. Forwarding to the gateway uses
-  WebSocket connections and supports mutual TLS.
-  See [Security Architecture](../../system-architecture-security.md).
+- Can optionally terminate Telnet-over-TLS while always supporting raw Telnet
+  on the configured TCP port for classic clients (for example the Windows
+  `telnet` command). Forwarding to the gateway uses WebSocket connections and
+  supports mutual TLS. See [Security Architecture](../../system-architecture-security.md).
 - Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC link to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events.
 - Sanitizes incoming Telnet data and enforces a whitelist of
   **Telnet protocol commands** as described in the
   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
-- Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
+- Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. The proxy always overwrites any incoming `X-Client-IP` header on Telnet traffic so downstream services can treat this value as “set by the TCP Proxy only,” and the Gateway combines it with its own `X-Forwarded-For` handling on the WebSocket side. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
 - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -87,7 +88,12 @@ reconnection logic centralized in the Game Session Service:
 
 Because the TCP Proxy Service sits in the network DMZ, it enforces hard resource
 ceilings even though tenant-aware throttling and rich abuse policies live in
-Spring Cloud Gateway and the Game Session Service.
+Spring Cloud Gateway and the Game Session Service. Limits are configured via the
+environment variables described in the **Environment Variables** section; existing
+constants such as the `MAX_BUFFER_DEPTH` value in `TelnetServerHandler` serve as
+implementation defaults when the corresponding configuration is unset. When code
+and configuration diverge, treat this document and its environment variables as
+the source of truth and update code/tests to match.
 
 - **Connection limits**
   - A global concurrent connection cap (for example `TCP_PROXY_MAX_CONNECTIONS`)
@@ -104,12 +110,21 @@ Spring Cloud Gateway and the Game Session Service.
     sending data to very slow clients, closing the socket once thresholds are
     exceeded.
 - **Input size and shape limits**
-  - Maximum line and envelope length constraints (for example `TCP_PROXY_MAX_LINE_BYTES`)
-    truncate overly long input and, after repeated violations, hard-close the
-    connection with a `tcpproxy.connections.closed{reason="line_too_long"}` event.
-  - Repeatedly malformed `SESSION` envelopes increment a dedicated counter and
-    eventually trigger a hard close (for example `tcpproxy.connections.closed{reason="malformed_envelope_limit"}`),
-    protecting the parser from abuse while still allowing occasional mistakes.
+  - Maximum line and envelope length constraints, configured via
+    `TCP_PROXY_MAX_LINE_BYTES`, truncate overly long input and, after repeated
+    violations, hard-close the connection with a
+    `tcpproxy.connections.closed{reason="line_too_long"}` event. The existing
+    `MAX_BUFFER_DEPTH` constant in `TelnetServerHandler` acts as an additional
+    safety net: once the in-memory buffer ceiling is reached, the connection is
+    closed and `tcpproxy.telnet.discarded` is incremented even if
+    `TCP_PROXY_MAX_LINE_BYTES` is not hit.
+  - Malformed `SESSION` envelopes increment a dedicated counter. When the number
+    of malformed envelopes on a single connection exceeds
+    `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection with a
+    `tcpproxy.connections.closed{reason="malformed_envelope_limit"}` event.
+    Clients that choose to use `SESSION` should treat this as a per-connection
+    budget for mistakes and either send a correct envelope or continue with
+    `LOGIN` only after repeated failures.
 - **Metrics and alerting**
   - These limits are instrumented via Micrometer and exposed at
     `/actuator/prometheus` alongside the existing `tcpproxy.connection.*`
@@ -150,6 +165,36 @@ Spring Cloud Gateway and the Game Session Service.
   - Send a `LOGIN` command over the same connection.
   - Continue with gameplay commands as normal.
   - Game Session evaluates the combination of `SESSION` and `LOGIN` against Redis-backed session state and the authentication rules described in the [Authentication & Authorization](../../system-architecture-authentication.md) and [Reconnection Strategy](../../system-architecture-reconnection.md) documents to decide whether to resume a prior session or start a fresh one.
+
+### Advanced Multi-Connection Scenarios
+
+Advanced Telnet tools may open more than one window or pane for the same
+account or `SESSION` envelope. The proxy forwards traffic for every TCP
+connection independently; visible behaviour is governed by the Game Session
+Service’s “one session per character” rules described in the
+[Reconnection Strategy](../../system-architecture-reconnection.md#resume-vs-reload-scenarios)
+and [Authentication & Authorization](../../system-architecture-authentication.md#👥-multi-client-behavior-and-session-takeover):
+
+- **Two Telnet windows without `SESSION`**
+  - Window A connects and issues `LOGIN`. Gameplay continues normally.
+  - Window B connects and issues `LOGIN` for the same character. Game Session
+    treats this as a takeover: the old session is terminated and the new window
+    becomes authoritative. Window A is disconnected and stops receiving updates.
+  - If Window A reconnects and logs in again, it in turn takes over from
+    Window B. At any moment only one connection actively controls the
+    character; there is no concurrent “split control” even though the proxy
+    forwards traffic from both TCP connections.
+- **Two Telnet windows with the same `{sessionId, tenantId}` envelope**
+  - Both windows connect to the TCP Proxy Service and send
+    `SESSION <sessionId> <tenantId>` followed by `LOGIN`.
+  - The proxy forwards both flows independently; Game Session binds
+    socket-level control to whichever `LOGIN` most recently succeeded for the
+    character backing that session. Earlier connections may be disconnected or
+    treated as superseded by the takeover logic depending on the exact timing.
+  - Clients should design UI/behaviour assuming that only one window at a time
+    has active control of the character and that reconnecting or logging in
+    from another window will move control rather than creating a second
+    simultaneous session.
 
 ### Data Flow
 
@@ -241,8 +286,7 @@ Metrics give observability into each Telnet connection while keeping
 Prometheus label cardinality bounded:
 
 - `tcpproxy.connection.events{type="connect"|"disconnect"}` increments on
-  connection open/close, with only low-cardinality labels (such as `type` and
-  optionally `tenantId` where the tenant set is small and controlled).
+  connection open/close, with only low-cardinality labels (such as `type`).
 - `tcpproxy.connection.duration` (a Micrometer `Timer`) records the wall-clock
   lifetime of sockets so dashboards can highlight long-running connections
   without embedding per-session identifiers in label values.
@@ -256,6 +300,14 @@ Prometheus label values. Operators correlate individual sessions using logs and
 traces, while metrics remain suitable for aggregation and alerting in both
 small hobby deployments and larger clusters.
 
+To avoid label blow-up in multi-tenant clusters, `tenantId` is intentionally
+omitted from all proxy metrics by default. For very small, single-tenant or
+single-admin deployments, operators may temporarily enable per-tenant metrics
+in custom dashboards by adding `tenantId` as an opt-in label on a subset of
+meters and keeping those series in a short-retention or dedicated Prometheus
+instance. Even in that mode, `tenantId` labels should be treated as a
+diagnostic tool rather than a permanent part of the core monitoring surface.
+
 ### Telnet Command Handling
 
 The proxy sanitizes incoming bytes and allows only a safe subset of
@@ -263,6 +315,15 @@ The proxy sanitizes incoming bytes and allows only a safe subset of
 [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
 This avoids implementing the full Telnet specification while still protecting
 against malformed negotiation sequences and other legacy edge cases.
+
+Mud Client Protocol (MCP) 2.1 negotiation and messages are carried over the
+line-based text channel (for example `#$#` control lines) and are not affected
+by the low-level Telnet command whitelist. Unsupported Telnet options outside
+the `ALLOWED_COMMANDS` set are discarded, but MCP control lines and payloads
+are forwarded verbatim to the gateway as sanitized text. MCP-capable clients
+should therefore expect their standard MCP exchanges to arrive intact while not
+relying on arbitrary Telnet option negotiation beyond the documented command
+subset.
 
 Example filtering logic from the Telnet sanitization layer (currently implemented by `TelnetServerHandler`):
 
@@ -354,6 +415,10 @@ Additional variables control the proxy runtime behaviour:
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
 | `TCP_PROXY_TLS_CERT` | Path to the TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the TLS private key | *(empty)* |
+| `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections (`0` or unset = no explicit ceiling) | `0` |
+| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling) | `0` |
+| `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet line/envelope length in bytes before truncation/closure | `4096` |
+| `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close | `5` |
 | `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for mTLS; shared with gRPC configuration | `certs/client.crt` |
 | `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Private key path for mTLS; shared with gRPC configuration | `certs/client.key` |
 | `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying the gateway; shared with gRPC configuration | `certs/ca.crt` |
@@ -363,9 +428,17 @@ These certificate and observability variables are shared with other services; se
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
 for full details.
 
+The proxy may expose both a raw Telnet listener (`TCP_PROXY_PORT`) and a
+TLS-wrapped Telnet endpoint (via `TCP_PROXY_TLS_ENABLED` or a fronting
+TLS-terminating load balancer) at the same time. In production it is valid to
+offer the raw Telnet port directly on the public internet for maximum client
+compatibility (for example stock OS `telnet`), while also exposing a TLS
+endpoint for clients that support encrypted Telnet, without any behavioural
+difference at the Telnet protocol level.
+
 The gRPC server listens on port `6565` by default as configured in `src/main/resources/application.yml`.
 
-### WebSocket mTLS to Spring Cloud Gateway
+### WebSocket mTLS to Spring Cloud Gateway _(Target-state; see Implementation Status)_
 
 In production, the TCP Proxy Service connects to Spring Cloud Gateway over
 `wss://` using mutual TLS. The proxy reuses the same certificate files and
@@ -385,6 +458,17 @@ and Telnet connections may see temporary backoff behaviour while the
 Gateway link is unavailable. See
 [System Architecture: Security](../../system-architecture-security.md) for
 certificate issuance and rotation details.
+
+When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion
+of the URL is used for both SNI and hostname verification. If you point
+`GATEWAY_WS_URL` at an IP address or a hostname that is not present in the
+Gateway certificate’s SANs, the TLS handshake fails with
+`reason="cert_validation"` and no insecure fallback occurs. In cluster-internal
+deployments, prefer the Kubernetes DNS name for the Gateway service (for
+example `wss://spring-cloud-gateway:8080/ws/game`) and issue certificates for
+that name. For external access, use a public hostname such as
+`wss://mud.example.com/ws/game` that matches the Gateway’s certificate rather
+than switching to a bare IP.
 
 ### Metrics & Tracing
 

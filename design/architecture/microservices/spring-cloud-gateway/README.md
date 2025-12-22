@@ -29,6 +29,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
   outlined in [Reconnection Strategy](../../system-architecture-reconnection.md).
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
+- Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Session-Id`) unchanged to backend services, and all tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - External TLS is terminated by the load balancer and traffic to backend services uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
@@ -106,29 +107,28 @@ Spring Cloud Gateway exposes both HTTP and gRPC management interfaces for operat
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
-## Environment Variables
+## Configuration Sources
 
-The gateway reads configuration from environment variables so both Docker Compose
-and Kubernetes deployments behave consistently. It follows
-[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
-The database variables
-([PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials)
-and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection))
-may be present for consistency. PostgreSQL variables are unused, but Redis
-connection variables are required for the `RequestRateLimiter` filter.
-TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). These files are used both for gRPC mTLS and for validating internal TLS clients such as the TCP Proxy Service when it connects over `wss://` to `/ws/game/**`. Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`, allowing route targets to be overridden for service discovery. Certificate hot reload for the gRPC server uses `GrpcServerTlsReloader`.
-JWT secrets are automatically reloaded when `FIREMUD_AUTH_JWT_SECRET_PATH` is provided using the `JwtSecretWatcher` utility.
-The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
+Spring Cloud Gateway reads its configuration from a small set of sources; the full environment variable catalog and patterns live in [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
 
-Important variables include:
+| Source | Purpose | Authority |
+| ------ | ------- | --------- |
+| `application.yml` | Base Spring profile configuration (ports, gRPC settings, default filters such as `RequestRateLimiter` and `Retry`) | Service-local; structure documented here, environment variable mapping in Env & Secrets |
+| `routes-dev.yml` / `routes-prod.yml` | Profile-specific route definitions for HTTP/WebSocket paths and backend URIs | Service-local; referenced by `spring.config.import` in `application.yml` |
+| `FIREMUD_SERVICES_*` | Service discovery overrides for backend targets reached from the gateway | Described in [Service Discovery](../../infrastructure/environment-and-secrets.md#service-discovery) |
+| `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis endpoint used by the gateway’s `RequestRateLimiter` filter | Described in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` | TLS certificate and key paths for gRPC/mTLS and the Telnet WebSocket bridge | Described in [gRPC TLS Certificates](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates) |
+| `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Shared authentication configuration (JWT signing and derived session TTL); not used by Spring Cloud Gateway to validate JWTs | Described in [Authentication Variables](../../infrastructure/environment-and-secrets.md#authentication-variables) |
+| `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for traces | Described in [Observability](../../infrastructure/environment-and-secrets.md#observability) |
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `SERVER_PORT` | HTTP port exposed by the service | `8080` |
+The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are not used by Spring Cloud Gateway to validate or parse JWTs; admin and other meta/control services consume these properties when verifying tokens, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
 
-The gRPC server listens on port `6565` by default as configured in `application.yml`.
-
-The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are not used by Spring Cloud Gateway to validate or parse JWTs. Admin and other meta/control services consume these properties when verifying tokens, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
+When internal WebSocket clients such as the TCP Proxy Service connect over
+`wss://` to `/ws/game/**`, the host they use in `GATEWAY_WS_URL` must match a
+name present in the Gateway certificate’s SANs so standard SNI and hostname
+verification succeeds; using a bare IP or an unrelated hostname causes the TLS
+handshake to fail on the client side (see the TCP Proxy Service design for how
+these failures are surfaced in metrics).
 
 ## Proto Files
 

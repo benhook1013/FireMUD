@@ -256,7 +256,7 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 When issues occur, operators follow the
 [Operational Runbooks](./system-architecture-runbooks.md) to restore services.
 See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for
-database snapshots and Redis persistence.
+database snapshots and Redis persistence. From a player perspective, Redis incidents typically surface as **short-term effects**: recent commands for a region may be lost or delayed after a crash/failover, and some sessions may be dropped and require re-login, but long-term character and world state remain intact because they live in PostgreSQL. PostgreSQL incidents instead manifest as longer outages or rollbacks to the last database snapshot; once recovered, Redis repopulates from the restored database and gameplay continues from that snapshot’s state.
 
 ```plaintext
 Admin → Runbooks → Kubernetes / Docker → Services Restored

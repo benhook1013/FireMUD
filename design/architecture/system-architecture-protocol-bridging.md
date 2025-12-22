@@ -43,13 +43,13 @@ Despite their differences, both protocols are normalized into the same internal 
 - Accepts and parses line-based input from raw TCP clients; Telnet option negotiation is minimal and optional so plain TCP clients with ANSI color codes work without additional configuration.
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
-- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`.
+- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. In production, operators may expose both a raw Telnet port (for example `2323`, suitable for classic command-line clients and direct internet access) and a TLS-wrapped endpoint in parallel, allowing clients to choose between plain and encrypted Telnet based on capability.
 
 ### Bridging to the backend
 
 - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
 - Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client; forwarding uses mutual TLS for this hop.
-- Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce connection limits and rate limiting centrally.
+- Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce connection limits and rate limiting centrally. The TCP Proxy always sets or overwrites this header for Telnet-derived connections, and downstream services must treat `X-Client-IP` as authoritative only when it originates from the TCP Proxy → Gateway path in combination with the Gateway’s `X-Forwarded-For` handling.
 - Proxies I/O between the TCP client and Spring Cloud Gateway.
 
 ### Buffering, reconnection, and observability
@@ -68,7 +68,9 @@ The TCP Proxy Service acts as the bridge and speaks directly to Spring Cloud Gat
 they both traverse the same filters, metrics, and downstream `game-session-service` backend.
 
 Override `GATEWAY_WS_URL` only when the Spring Cloud Gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
-whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point.
+whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point. When using `wss://`, the host portion of
+`GATEWAY_WS_URL` must match a name present in the Gateway certificate’s SANs; pointing it at a bare IP or an unrelated hostname causes TLS validation to fail on the TCP
+Proxy side and increments `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`.
 
 ### TCP Flow Benefits
 

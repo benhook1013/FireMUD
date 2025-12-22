@@ -216,11 +216,7 @@ Coordination Redis also enforces its role via ACL and simple self‑checks:
   checks fail, services refuse to start tick processing rather than silently
   using a misconfigured Redis instance.
 
-Call out this separation in playbooks so that local developers do not treat the
-shared-instance convenience as representative of production behavior: eviction
-policies, `maxmemory`, and TTL behavior in a dev instance are intentionally
-unreliable, they can spill over into the coordination workload, and metrics/alerts
-should only be trusted when the workloads are split as described above.
+Playbooks and environment docs should call out this separation explicitly so that local developers and operators do not accidentally point coordination workloads at cache/rate‑limit Redis (or vice versa). Eviction policies, `maxmemory`, and TTL behavior in Cache/Rate‑Limit Redis are intentionally tuned for best‑effort workloads and must not be relied on for coordination keys; metrics and alerts about coordination health are only trustworthy when Coordination Redis and Cache/Rate‑Limit Redis run as separate roles as described above.
 
 Redis acts as a **coordinated real-time buffer**, not a source of truth, but is still treated as **critical** for game availability and consistency.
 
@@ -550,7 +546,7 @@ To make Redis Cluster slotting rules explicit:
   - `session:{tenantId}:{sessionId}` – gameplay sessions and reconnect context
   - `session:{tenantId}:{tokenHash}` – Account/JWT bindings for internal auth
 - **Other keys (no region hash tag by default):**
-  - `remote:{tenantId}:{entityId}` and similar prefixes may be sharded independently or live on separate Redis roles (for example cache/rate-limit Redis), as described in the cache and infrastructure docs. Cached room views and other read-side aggregates use cache-specific prefixes such as `view:roomLook:{tenantId}:{roomId}` and are stored on Cache/Rate-Limit Redis, not Coordination Redis.
+  - `remote:{tenantId}:{entityId}` and similar prefixes are treated as **coordination keys** and live on Coordination Redis alongside tick, timer, and retry prefixes so cross-region follow-ups share the same AOF, tail-loss, and reset semantics. Cached room views and other read-side aggregates use cache-specific prefixes such as `view:roomLook:{tenantId}:{roomId}` and are stored on Cache/Rate-Limit Redis, not Coordination Redis.
 
 All multi-key Lua scripts that need atomic coordination use only region-scoped keys (sharing the same `{tenantRegionTag}`) or only tenant-scoped session keys; no script mixes region and session hash tags in a single `EVALSHA` call.
 

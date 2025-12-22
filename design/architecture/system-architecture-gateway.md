@@ -50,20 +50,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   - Route-based filtering
   - Consistent handling across all clients
 
-Example WebSocket route config (current default path `/api/session/**`; a `/ws/game/**` alias is available):
-
-```yaml
-spring:
-  cloud:
-    gateway:
-      routes:
-        - id: game-session
-          uri: ws://game-session-service:8080
-          predicates:
-            - Path=/api/session/**,/ws/game/**
-```
-
-The gateway uses the `ws://` scheme so Spring Cloud Gateway upgrades HTTP requests into WebSocket connections automatically. The `ClientIpHeaderFilter` copies or preserves the `X-Client-IP` header during the handshake so backend services (and the TCP Proxy bridge) can rely on it when routing gameplay sessions.
+At a configuration level, Spring Cloud Gateway defines WebSocket routes in `application.yml` (and profile-specific route files) and applies filters (such as rate limiting and retries) before forwarding to backend services. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables.
 
 ### Gameplay WebSocket Route
 
@@ -128,6 +115,20 @@ Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecti
   - The **Game Session Service** applies **fine-grained gameplay limits** (per-session command rates, login attempt throttling, and region-level protections) so in-game abuse is handled close to business logic.
 
 This layered model avoids over-counting Telnet/WebSocket frames while still protecting the platform: the gateway guards connection churn and HTTP floods, the TCP Proxy Service governs raw Telnet behavior, and the Game Session Service enforces gameplay-specific policies.
+
+## Multi-Tenancy at the Gateway
+
+Spring Cloud Gateway does not implement tenant-aware routing or isolation logic itself; it acts as a tenant-agnostic edge that forwards tenant metadata to the services that own multi-tenant behavior:
+
+- Tenant identity (`tenantId`) is derived and enforced by backend services as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md), not by Spring Cloud Gateway.
+- Gameplay flows may include tenant markers such as:
+  - `X-Tenant-Id` and `X-Session-Id` headers injected by the TCP Proxy Service when advanced Telnet clients send a `SESSION` envelope.
+  - Session and tenant context inferred by the Game Session Service from the `LOGIN` flow and Redis session keys.
+- Spring Cloud Gateway preserves these headers and forwards them unchanged to backend services but does not:
+  - Derive `tenantId` from hostnames or URL paths.
+  - Enforce per-tenant routing tables or access control.
+  - Apply per-tenant rate-limit overrides.
+- All tenant isolation, quotas, and policy enforcement (for example, per-tenant session limits or resource quotas) are implemented in domain services such as the Game Session Service and Account Service, following the rules in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 
 ## TLS Termination for Gateway
 

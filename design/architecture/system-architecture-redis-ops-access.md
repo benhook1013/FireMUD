@@ -28,6 +28,26 @@ Redis ACLs enforce a clear split between application and operations clients:
 
 Other Redis roles (for example cache/rate-limit clients) connect to separate deployments or logical databases that do not contain coordination prefixes.
 
+## Configuration and Redis Role Selection
+
+All tools and services refer to Redis deployments via **role-specific configuration**, not hard-coded URLs:
+
+- Coordination clients and ops tools read connection settings from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT` (or an equivalent `FIREMUD_REDIS_COORD_URL`), which identify the **Coordination Redis** deployment.
+- Cache/rate-limit clients and tools read from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` (or `FIREMUD_REDIS_CACHE_URL`), which identify the **Cache/Rate-Limit Redis** deployment.
+
+A small shared configuration module (in `firemud-common` or a dedicated tooling library) exposes **typed configs and helpers** such as:
+
+- `RedisCoordConfig` + `createCoordinationRedisClient(...)`
+- `RedisCacheConfig` + `createCacheRedisClient(...)`
+
+All ops scripts and maintenance tools must:
+
+- Accept an explicit `RedisCoordConfig` when they touch coordination prefixes.
+- Accept an explicit `RedisCacheConfig` when they operate only on cache/rate-limit prefixes.
+- Never construct Redis host/port or URLs by hand.
+
+This makes the target Redis role part of the tool’s type signature and configuration, reducing the chance that coordination tooling accidentally points at Cache Redis (or vice versa).
+
 ## Supported Maintenance Tooling
 
 Operators interact with coordination state through **supported tools**, not raw Redis commands:
@@ -41,7 +61,30 @@ Operators interact with coordination state through **supported tools**, not raw 
     - Node-level operations such as `FLUSHALL`/AOF reset during a coordinated reset (already covered by the Redis Operations doc).
     - Read-only inspection via the ops user.
 
-Direct `redis-cli` writes to coordination prefixes are reserved for **break-glass scenarios** and must follow the incident guidelines in `system-architecture-redis.md` (auditing, post-incident reset, and verification).
+Direct `redis-cli` writes to coordination prefixes are reserved for **break-glass scenarios** and must follow the incident guidelines in `system-architecture-redis.md` (auditing, post-incident reset, and verification). As an additional guardrail:
+
+- Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` for a given `{tenantId, regionId}` (or tenant) must be followed by a **scoped coordination reset** for the affected scope before normal tick processing resumes.
+- Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
+- Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
+  - Executes the minimal required Redis mutation.
+  - Immediately triggers the appropriate scoped coordination reset.
+  - Emits a structured audit event (for example `coordination_break_glass`) recording the affected tenants/regions, scope (region/tenant/cluster), and a free-form reason string.
+- After the scoped reset completes, operators run the standard post-reset health checks (for example, verifying that core Lua scripts load successfully and that sample ticks can schedule and commit for the affected regions) before unpausing ticks. Larger, more formal deployments may additionally link these audit events to external incident tracking systems, but hobby and self-hosted setups can rely on the built-in audit log alone.
+
+### Tooling Maintenance and Versioning
+
+The coordination maintenance client/CLI is treated as a first-class part of the system, not an ad-hoc script:
+
+- It lives in the same repository and modules as:
+  - The shared key builders and Lua Script Registry descriptors (`firemud-common`).
+  - The integration tests that exercise script behavior and key shapes.
+- It is **versioned alongside the main services**; there is no separate, free-floating versioning scheme for tooling.
+- Any change to coordination key formats or Lua script contracts must:
+  - Update the shared descriptors and key-builder helpers.
+  - Update the maintenance CLI code that uses those helpers.
+  - Extend or adjust the shared integration tests so both services and tooling are validated against the same expectations.
+
+This ensures that operators use the same abstractions as application code and reduces the risk that maintenance tools silently drift away from the main coordination design.
 
 ## Static Checks for Ops Scripts
 
@@ -53,6 +96,7 @@ To keep operational scripts aligned with application code:
 - CI fails when:
   - Ops scripts contain raw `EVAL`/`EVALSHA` against coordination deployments.
   - Scripts construct `tick:*`, `timer:*`, `retry:*`, `remote:*`, or `session:*` keys by hand instead of calling shared helpers.
+  - Scripts hard-code Redis host/port or URLs instead of using the shared `RedisCoordConfig` / `RedisCacheConfig` helpers and role-specific environment variables.
 
 Maintenance scripts that genuinely need to work with coordination keys must:
 
@@ -60,3 +104,10 @@ Maintenance scripts that genuinely need to work with coordination keys must:
 - Document their scope (which prefixes/tenants/regions they touch) and the runbook they implement.
 
 This keeps human-driven maintenance and automation under the same discipline as regular application code, reducing the chance that debugging or emergency fixes introduce silent hash-tag or lock/lease violations.
+
+In addition, scripts and runbooks are labelled by **target Redis role**:
+
+- “Coordination ops” scripts may only use the coordination config and helpers; CI fails if they import cache-only helpers or reference cache URLs.
+- Cache/rate-limit tooling may only use the cache config; CI fails if it imports coordination helpers.
+
+This role-aware labelling keeps coordination and cache tooling clearly separated in both code and configuration.

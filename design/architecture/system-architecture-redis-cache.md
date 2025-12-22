@@ -57,6 +57,38 @@ Not every cached aggregate needs its own version column. Apply these heuristics 
 - Prefer **TTL-only** caches for highly volatile but non-critical aggregates; shorter TTLs are easier to tune than inventing new schema.
 - Document each decision so reviewers understand why a cache entry carries version metadata versus relying on TTLs.
 
+### Invalidator-of-Record Matrix
+
+To keep cache behavior predictable across services, each cached aggregate designates a clear **invalidator of record** and relies on one of a small set of patterns:
+
+- **Static / rarely-changing aggregates** (for example, world topology slices, published templates, feature-flag metadata)
+  - **Invalidator of record:** the owning service’s publish/update path.
+  - Preferred strategy: **event-driven or manual invalidation** plus a relatively long TTL.
+    - When topology or config changes, the owning service emits a domain event or calls a small invalidation helper to drop/refresh the corresponding cache keys.
+    - TTLs act as a safety valve, not the primary correctness mechanism.
+- **Dynamic but correctness-critical aggregates** (Class A caches such as inventories, room occupants, or per-entity effective stats that drive gameplay decisions)
+  - **Invalidator of record:** the owning service that persists the authoritative aggregate (for example Entity Management or World Management).
+  - Preferred strategy: **event-driven and/or version-based validation**; TTLs are only a backup.
+    - On writes, the owning service emits change events or updates a version/`lastModified` field.
+    - Callers either:
+      - Listen for events and invalidate affected keys, or
+      - Use version-based reads as described above to refresh or reuse cache entries.
+    - TTLs may still be set on keys, but **TTL alone is never considered sufficient** for correctness; Class A caches must stay correct even if TTLs were very large.
+  - Aggregates that cannot provide events or versions should either:
+    - Treat Redis as a pure performance optimization with per-request in-memory caches, or
+    - Avoid Redis caching for that aggregate.
+- **Dynamic best-effort / analytics / debug aggregates** (Class B caches such as analytics-style views, non-player-facing summaries, debug dashboards)
+  - **Invalidator of record:** TTL configuration (operations).
+  - Preferred strategy: **TTL-only** invalidation.
+    - Occasional staleness is acceptable by design.
+    - TTLs and size limits are tuned so these caches cannot starve Class A caches or coordination workloads.
+
+When introducing a new cache, designs and reviews must explicitly record:
+
+- Which class it belongs to (static, dynamic-critical/Class A, or dynamic-best-effort/Class B).
+- Which invalidator-of-record pattern it uses (events, version-based, TTL-only).
+- Why that choice is appropriate for its correctness and performance needs.
+
 ## Invalidation Strategies
 
 Future cache layers are expected to combine several invalidation mechanisms, tuned per aggregate:
@@ -130,11 +162,53 @@ Operational dashboards track `used_memory`, `maxmemory`, and eviction counters f
 
 These alerts keep you aware of misconfigurations early without hard-coding percentages that don’t make sense at small self-hosted scale.
 
+### Cache Safety Envelopes
+
+Cache Redis is allowed to be noisy and eviction-driven, but it should still respect simple, global **safety envelopes** so operators can tell when it is over-subscribed:
+
+- **Global cache pressure**
+  - Treat sustained high eviction rates and near-`maxmemory` usage on Cache/Rate-Limit Redis as a signal that the cache is overfull, not as normal behavior.
+  - A single, environment-wide threshold (for example, “evictions remain elevated for several minutes while `used_memory` hovers near `maxmemory`”) is enough to mark the cache as **under pressure**; the exact numeric values are tuned per deployment, not per tenant.
+- **Relative noisy-tenant detection (only under pressure)**
+  - Under cache pressure, dashboards should help identify whether one tenant or prefix family is dominating usage:
+    - For example, by comparing approximate per-tenant bytes/keys (using prefix-scoped scans or exporter metrics) and highlighting tenants that account for most of the delta in `used_memory` or evictions.
+  - This is a **relative heuristic**, not a hard quota: it is only meaningful when the cache as a whole is struggling, and it does not try to reserve a fixed percentage of memory per tenant.
+- **Default behavior: observability over automatic throttling**
+  - In the default, minimally configurable setup:
+    - “Cache under pressure” and “noisy tenant” signals result in **metrics and alerts**, not automatic per-tenant throttling.
+    - Operators decide whether to:
+      - Reduce what is cached (for example, demoting some Class B aggregates to in-memory only).
+      - Shorten TTLs or shrink payloads for particularly heavy prefixes.
+      - Increase Cache Redis resources if justified.
+  - More advanced deployments may optionally wire these signals into policy (for example, automatically shortening TTLs or shedding Class B cache writes when pressure/noisy-tenant conditions persist), but such behavior is an explicit opt-in and not part of the default design.
+
+This approach keeps configuration minimal—a single notion of “cache under pressure” plus relative noisy-tenant hints—while giving operators concrete signals to act on when Cache Redis becomes a bottleneck.
+
 Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestRateLimiter`) should be designed to avoid **hot keys** under heavy load:
 
 - Per-client or per-token prefixes are preferred over global counters so that no single key receives a disproportionate share of traffic.
 - Define a canonical pattern such as `ratelimit:{tenantId}:{bucket}:{timeWindow}` (for example, `bucket` may be a hash of the client/token plus an optional slice) and publish helper builders so services reuse the same bucketing logic instead of inventing divergent, hotspot-prone schemes.
 - Support more granular sub-bucketing where heads-on credentials are unavoidable (for example `ratelimit:{tenantId}:{bucket}:{timeWindow}:{shard}`) to spread aggregates across multiple keys within the rate-limit Redis cluster.
+
+#### Rate-Limit Bucket Design
+
+To keep rate limiting robust under high cardinality and load, `bucket` values should follow a simple, predictable scheme:
+
+- **Small/self-hosted deployments**
+  - Per-client or per-token buckets (for example `bucket = clientId` or a normalized token ID) are acceptable when the number of active clients is small and overall throughput is modest.
+  - Even in this mode, services should reuse shared helper builders so bucket shapes stay consistent across codebases.
+- **Higher-cardinality or multi-tenant deployments**
+  - Use a **stable hash** of the client/token into a bounded number of buckets per tenant:
+    - Example: `bucket = H(clientId) mod N`, where `N` is a small fixed number (for example 64 or 256) chosen per deployment, not per tenant.
+    - This caps the number of keys per `{tenantId, timeWindow}` while avoiding single-key hotspots.
+  - Introduce `{shard}` only when profiling shows that individual buckets are still too hot:
+    - For example, split each logical bucket into a small number of shards (`0..S-1`) using `ratelimit:{tenantId}:{bucket}:{timeWindow}:{shard}` where `shard = H(requestId) mod S`.
+    - Keep `S` small and fixed so the total key count remains predictable.
+- **Key count and rotation**
+  - Choose `N` (and optional `S`) so the total number of active `ratelimit:*` keys per tenant across all live `timeWindow` values stays within a comfortable range for the deployment.
+  - Allow old `timeWindow` keys to expire naturally via TTL; do not attempt to retain historical rate-limit keys in Redis for analytics or debugging.
+
+This approach gives small games straightforward per-client buckets by default while providing a clear, hash-based pattern for larger or noisier workloads without introducing many configuration knobs.
 
 ### Key Naming and Overwrite Expectations
 
