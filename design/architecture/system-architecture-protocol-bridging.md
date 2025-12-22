@@ -37,19 +37,23 @@ Despite their differences, both protocols are normalized into the same internal 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
 - The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
+- Normal Telnet clients never need to send a `SESSION` envelope. They connect, issue `LOGIN`, and let the Game Session Service create or bind the session exactly as WebSocket clients do; `SESSION` is an **optional optimization** for advanced tools. For exact envelope and header semantics, see the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section.
 
 ### Protocol handling and security
 
 - Accepts and parses line-based input from raw TCP clients; Telnet option negotiation is minimal and optional so plain TCP clients with ANSI color codes work without additional configuration.
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
-- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. In production, operators may expose both a raw Telnet port (for example `2323`, suitable for classic command-line clients and direct internet access) and a TLS-wrapped endpoint in parallel, allowing clients to choose between plain and encrypted Telnet based on capability. When exposing raw Telnet on the public Internet, remember that credentials and gameplay traffic are transmitted in plaintext; treat that path as intentionally legacy-friendly and consider compensating controls such as careful password guidance, account lockouts, and network-level filtering where appropriate, while still keeping it available for historical clients that cannot speak TLS.
+- Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. In production, operators may expose both a raw Telnet port (for example `2323`, suitable for classic command-line clients and direct internet access) and a TLS-wrapped endpoint in parallel, allowing clients to choose between plain and encrypted Telnet based on capability. When exposing raw Telnet on the public Internet, remember that credentials and gameplay traffic are transmitted in plaintext; treat that path as intentionally legacy-friendly and subject to additional safeguards rather than assuming it provides the same confidentiality guarantees as the HTTPS/WebSocket path. In particular, when `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), plaintext Telnet logins are only permitted for accounts that:
+  - Have TOTP-based two-factor authentication enabled, and
+  - Opt in to **allow plaintext Telnet login** in their account settings (either via the web portal checkbox or the Telnet account setup flow, both of which default this option to off and explain the risk).
+  All plaintext Telnet sessions are also tagged so the Game Session Service can emit a landing-menu warning recommending the TLS Telnet port or web client instead.
 
 ### Bridging to the backend
 
 - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
-- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client; in the **target-state** design this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). See the TCP Proxy Service design for current implementation status.
-- Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce connection limits and rate limiting centrally. The TCP Proxy always sets or overwrites this header for Telnet-derived connections, and downstream services must treat `X-Client-IP` as authoritative only when it originates from the TCP Proxy → Gateway path in combination with the Gateway’s `X-Forwarded-For` handling.
+- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client. In the **target-state** design this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway); see the TCP Proxy Service design’s **Implementation Status** table and WebSocket mTLS section for the current deployed behaviour.
+- Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce connection limits and rate limiting centrally. The TCP Proxy always sets or overwrites this header for Telnet-derived connections on its internal WebSocket hop. Spring Cloud Gateway strips any `X-Client-IP` arriving directly from public clients and combines the proxy-supplied value with the external load balancer’s `X-Forwarded-For` handling. Downstream services treat this combination as authoritative only when the connection is known to have traversed the TCP Proxy → Gateway path.
 - Proxies I/O between the TCP client and Spring Cloud Gateway.
 
 ### Buffering, reconnection, and observability
@@ -70,7 +74,7 @@ they both traverse the same filters, metrics, and downstream `game-session-servi
 Override `GATEWAY_WS_URL` only when the Spring Cloud Gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
 whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point. When using `wss://`, the host portion of
 `GATEWAY_WS_URL` must match a name present in the Gateway certificate’s SANs; pointing it at a bare IP or an unrelated hostname causes TLS validation to fail on the TCP
-Proxy side and increments `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`.
+Proxy side and increments `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`. For mTLS certificate loading and watcher details, see the TCP Proxy Service design’s WebSocket mTLS section.
 
 ### TCP Flow Benefits
 

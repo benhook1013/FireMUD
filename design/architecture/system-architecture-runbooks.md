@@ -88,15 +88,22 @@ For local development, use `./gradlew devUp` to start Docker Compose and
          - If `session:{tenantId}:{sessionId}` keys survive, reconnect flows behave normally.
          - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).
 
-   - **Session schema cleanup (deployment mismatch)**
-     - Symptom: the `session.cas_unsupported_schema_total` metric (or logs mentioning `UNSUPPORTED_SCHEMA_VERSION` from the session CAS script) is non-zero outside of brief rollout windows.
-     - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:{tenantId}:{sessionId}` keys, or session payloads have been corrupted.
-     - Remediation:
-       1. Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis Architecture docs).
-       2. Run the session schema cleanup tool/Job (once implemented) that:
-          - Scans `session:{tenantId}:*` keys for `schemaVersion` values not supported by the current CAS script, and
-          - Deletes those keys or reduces their TTL so they expire quickly.
-       3. Monitor `session.cas_unsupported_schema_total` and reconnect error rates to confirm the issue has cleared. Affected players may need to log in again; no authoritative PostgreSQL data is lost.
+### Redis Session Schema and TTL Cleanup
+
+When session-related metrics indicate schema or TTL problems, use this scoped cleanup procedure instead of ad-hoc `DEL` commands:
+
+1. **Detect the issue**
+   - Watch `session.cas_unsupported_schema_total` and reconnect error rates for non-zero values outside brief rollout windows.
+   - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:{tenantId}:{sessionId}` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
+2. **Align deployments**
+   - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis Architecture docs).
+3. **Run the session cleanup Job**
+   - Use the session schema/TTL cleanup Job described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis.md#session-schema-cleanup-and-large-keyspaces):
+     - Scope the Job to one tenant at a time by prefix (for example `session:{tenantId}:*`).
+     - Configure it to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
+4. **Verify recovery**
+   - Monitor `session.cas_unsupported_schema_total`, reconnect error rates, and Redis key counts for the affected tenant(s) to confirm the issue has cleared.
+   - Affected players may need to log in again; no authoritative PostgreSQL data is lost.
 
 3. **Full Cluster Restore**
    - Recreate the cluster using Terraform modules in `k8s/terraform`. See
@@ -104,6 +111,51 @@ For local development, use `./gradlew devUp` to start Docker Compose and
    - Run `velero restore` to recreate Kubernetes manifests.
 
 See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for backup schedules and retention policies.
+
+### Redis Incident Scenarios
+
+The following Redis-focused incident flows build on the general recovery steps above.
+
+1. **Coordination AOF tail-loss SLO breach**
+   - **Detect**
+     - `tail_loss_ms` or `tail_loss_ticks` regularly exceed the **1–2 second** envelope (or **2×** `tick_interval_ms`) for one or more `{tenantId, regionId}` shards.
+     - Region health shows `DEGRADED` or `COORDINATION_UNTRUSTWORTHY` for those shards.
+   - **Decide**
+     - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
+     - For sustained violations or `COORDINATION_UNTRUSTWORTHY` regions, plan a **region- or tenant-scoped coordination reset**.
+   - **Act**
+     1. Pause tick scheduling for affected `{tenantId, regionId}` scopes.
+     2. Run the corresponding coordination reset Job (region or tenant scope) as described in [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model).
+     3. Verify region health returns to `HEALTHY` and `tail_loss_ms` drops back into the SLO envelope before resuming ticks.
+
+2. **Mis-sharded or mis-keyed tick/coordination keys**
+   - **Detect**
+     - CI or observability flags keys with unexpected hash tags (for example, multiple `{}` segments or missing `{tenantRegionTag}`).
+     - Redis key inspections show coordination prefixes that do not match the documented patterns.
+   - **Decide**
+     - If mis-keyed data is purely coordination state (no unique business data), prefer a **reset** over in-place fixes.
+     - If the mistake involves non-coordination prefixes that cannot be safely discarded, plan a one-off migration tool.
+   - **Act**
+     1. For coordination prefixes: follow the region/tenant/cluster reset flow from [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model) and rely on PostgreSQL/idempotent ticks to rebuild state.
+     2. For non-coordination prefixes: write a small migration Job that:
+        - Iterates the affected prefix (for example `automation_queue:{tenantId}:*`).
+        - Writes corrected keys using shared builders.
+        - Deletes or expires the old keys once consumers have been updated.
+
+3. **Automation queue schema mistakes**
+   - **Detect**
+     - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation_queue:{tenantId}:*` keys.
+     - Metrics show sustained failures processing automation work items.
+   - **Decide**
+     - If automation queues are purely best-effort, consider treating affected items as lost and flushing the prefix.
+     - If work items must be preserved, prefer a migration Job over ad-hoc edits.
+   - **Act**
+     1. Pause automation processing for the affected tenants or globally, depending on blast radius.
+     2. Implement and run a migration Job that:
+        - Reads each automation work item.
+        - Rewrites it into the corrected schema shape under the same or a new key prefix.
+        - Drops or quarantines items that cannot be safely translated.
+     3. Resume automation processing and monitor error rates and queue depths until they stabilize.
 
 ## Asset Store
 

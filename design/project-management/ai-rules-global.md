@@ -86,3 +86,6 @@
   - Maintain the current summary in the PR body and, when a local `pr-summary.md` file exists, keep that file in sync with the implemented changes.
   - When the user explicitly asks to refresh the PR description, prefer using `gh pr edit --body-file pr-summary.md` to apply the local summary to the PR; if no summary file exists, update the PR body directly via `gh` instead.
   - When creating or editing PR bodies, always provide Markdown via a file (for example `--body-file`) or stdin with real newlines; avoid passing a single shell string with literal `\n` escapes so formatting renders correctly on GitHub.
+- Optional Codex skills may be installed in the dev environment to standardize common workflows. If available, invoke them by name in your request (for example `$gh-fix-ci` or `$gh-address-comments`); after installing new skills, restart Codex to pick them up.
+  - `gh-fix-ci`: Inspect failing PR checks, pull GitHub Actions logs, summarize failure context, propose a fix plan, then implement after human approval.
+  - `gh-address-comments`: Fetch PR review threads/comments, summarize and number them, then apply targeted fixes for the selected items.

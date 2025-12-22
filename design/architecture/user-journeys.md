@@ -127,7 +127,7 @@ Account Service → Game Design Service → Entity Management Service
 
 Players connect through the networking layer:
 
-1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details.
+1. **Gateway/Proxy** – Telnet clients connect via the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) while web clients use the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md). Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. Normal Telnet clients never need to send a `SESSION` envelope and instead issue `LOGIN` just like WebSocket clients do; `SESSION` is reserved for advanced attach-to-session tools.
 2. **Session Management** – The [Game Session Service](./microservices/game-session-service/README.md) retrieves world and entity data over gRPC from other services and dispatches actions to the [Game Logic Service](./microservices/game-logic-service/README.md). Session state is stored in Redis as described in [Redis Architecture](./system-architecture-redis.md).
 3. **Authentication** – Credentials are verified by the [Account Service](./microservices/account-service/README.md), which issues a short-lived session token. The [Game Session Service](./microservices/game-session-service/README.md) stores this token in Redis and rebinds the session when players reconnect.
    See [Authentication & Authorization](./system-architecture-authentication.md)

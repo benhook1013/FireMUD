@@ -61,6 +61,24 @@ FireMUD supports the `mcp-cord` package (version 1.0) to multiplex additional ch
 
 These primitives let stateful conversations—such as dedicated chat tabs, map views, or status panels—be tied to specific client windows. Additional packages can be negotiated as needed.
 
+### Interaction with abuse heuristics
+
+MCP control lines (`#$#...`) and their payloads are treated as application‑level text on top of the sanitized Telnet transport. Abuse detection at the TCP Proxy layer operates on Telnet control bytes, envelope handling, connection churn, and similar signals; unknown MCP packages or malformed MCP messages are not treated as abuse by default. Implementations may log or surface MCP parsing issues for diagnostics, but they must not close connections purely because a client sends an unrecognised MCP package.
+
+### Implementation Status and Client Expectations
+
+MCP support is being rolled out incrementally:
+
+- The underlying line-based Telnet transport and control-line parsing (`#$#...`) are implemented in the TCP Proxy Service.
+- The `mcp-negotiate` handshake and the `mcp-cord` package are supported for basic cord creation and message routing.
+- Higher-level FireMUD-specific MCP packages (for example status panels, map feeds, or structured notifications) are introduced gradually and may evolve as the platform matures.
+
+Client authors should treat MCP integration as **backwards-compatible but evolving**:
+
+- Always fall back gracefully to plain Telnet behaviour if MCP negotiation fails or a package is not advertised by the server.
+- Do not assume that every documented package is available in all environments; rely on the negotiated package list rather than hard-coding expectations.
+- Avoid making gameplay-critical flows depend solely on MCP; the plain text protocol remains the canonical channel for commands and responses, and MCP is used to augment the experience with structured data.
+
 ## Example Workflow
 
 1. Client connects and negotiates MCP support with the TCP Proxy Service.

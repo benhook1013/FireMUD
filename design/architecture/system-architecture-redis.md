@@ -61,6 +61,7 @@ Before making any change that touches Redis (keys, roles, scripts, or tooling), 
 - **Reset and runbook implications**
   - Clarify whether new prefixes are reset-tolerant, reset-sensitive, or reset-forbidden.
   - Update the relevant runbooks (for example, coordination reset or cache maintenance) if the change affects how operators remediate issues.
+  - Ensure the central key catalogs and reset matrix reflect the new prefix and its policy; designs must not introduce prefixes that lack catalog entries.
 
 ### Redis Design & Review Checklist
 
@@ -110,6 +111,7 @@ This checklist captures the core coordination rules that design and code reviews
 - **Key construction:** All tick/coordination keys are built via shared key helpers in the common library and must include a single `{tenantRegionTag}` hash tag for per-region keys. Ad-hoc string concatenation of tick/coordination keys is not allowed. See [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
 - **Script safety:** Every mutating Lua script that touches coordination keys **must** validate lease tokens, lock tokens (when applicable), and `tickId`/other monotonic guards before writing, and must be idempotent when re-run with the same `KEYS`/`ARGV`. See [Atomicity and Concurrency Control](#atomicity-and-concurrency-control) and [FireMUD Redis Lua Patterns](./system-architecture-redis-lua-patterns.md).
 - **Multi-key access:** Multi-key operations on coordination prefixes (tick queues, `pending`, timers, retry sets, locks, region leases) are only permitted inside registered Lua scripts that follow the shard-local key rules and are described in the Lua Script Registry. Direct multi-key Redis commands against these prefixes from application code or maintenance tools are not allowed. Multi-key commands—including `MGET`, `DEL key1 key2`, or `MULTI/EXEC` blocks—must never include keys from more than one `{tenantRegionTag}`; cross-region workflows are implemented as per-region calls or higher-level sagas, not as cross-region Redis transactions. See [Atomicity and Concurrency Control](#atomicity-and-concurrency-control) and [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
+ - **Multi-key access:** Multi-key operations on coordination prefixes (tick queues, `pending`, timers, retry sets, locks, region leases) are only permitted inside registered Lua scripts that follow the shard-local key rules and are described in the Lua Script Registry. Direct multi-key Redis commands against these prefixes from application code or maintenance tools are not allowed. Multi-key commands—including `MGET`, `DEL key1 key2`, or `MULTI/EXEC` blocks—must never include keys from more than one `{tenantRegionTag}`; cross-region workflows are implemented as per-region calls or higher-level sagas, not as cross-region Redis transactions. See [Atomicity and Concurrency Control](#atomicity-and-concurrency-control) and [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
 
 When in doubt, treat these invariants as the **default contract** and extend behavior by updating the shared helpers and Lua registry rather than introducing new one-off patterns.
 
@@ -191,6 +193,23 @@ These profiles are reference points, not hard requirements; operators may choose
 
 ---
 
+### Sizing and Multi-Tenant Placement Guidance
+
+While exact CPU/memory sizing depends on workload and hosting platform, Redis deployments should follow a few simple rules of thumb:
+
+- **Coordination Redis**
+  - For small/self-hosted deployments, size coordination nodes so that:
+    - Peak memory usage for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`, and related keys) stays well below available RAM (for example, under **50–60%** of node memory) at expected player counts, leaving headroom for AOF buffers and failover.
+    - Single-region tick workloads do not require more than a small number of masters; scale out by **adding regions and tenants**, not by co-locating unrelated coordination workloads on the same node.
+  - For multi-tenant setups, prefer **logical isolation by cluster** when a tenant’s expected concurrency or world size is significantly higher than others; splitting “heavy” tenants into their own Coordination Redis cluster reduces noisy-neighbor effects.
+- **Cache/Rate-Limit Redis**
+  - Memory sizing is driven primarily by cache and `ratelimit:*` key counts. Use the cache and rate-limit budgets in [Redis Cache & Rate Limiting](./system-architecture-redis-cache.md) as envelopes and keep total cache memory under a conservative fraction of node RAM (for example, **≤70%**).
+  - When a single tenant’s caches or rate-limit keys routinely approach these envelopes, treat it as a signal to either:
+    - Reduce cached aggregates or TTLs for that tenant, or
+    - Move that tenant’s cache/rate-limit workload to a separate Cache/Rate-Limit Redis deployment.
+
+In all profiles, Coordination Redis remains the bottleneck to watch: if adding tenants or worlds would require coordination memory, CPU, or tail-loss SLOs to exceed these guidelines, plan to **add another coordination cluster** and repartition tenants/regions before saturating the existing one.
+
 Redis is always treated as **non-authoritative for game data**: all canonical game data (accounts, entities, items, rooms, game instances) lives in **PostgreSQL**, owned by domain-specific services. Redis provides **volatile coordination state** — ticks, locks, timers, sessions, queues — that participates in gameplay availability and recovery and is treated as a **long-lived coordination log** in all persistent environments (local development, staging, and production-equivalent clusters):
 
 - Coordination Redis uses durable storage (for example, Kubernetes `PersistentVolumeClaim`s) and AOF is preserved across normal rollouts and node restarts.
@@ -228,19 +247,19 @@ FireMUD distinguishes between two **logical roles** for Redis:
   Spring Cloud Gateway) connect using `FIREMUD_REDIS_CACHE_HOST` /
   `FIREMUD_REDIS_CACHE_PORT`.
 
-In **supported FireMUD deployments** (including hobby/self‑hosted setups with real players), these roles map to at least **two Redis deployments**:
+In **all supported FireMUD deployments**, including local development, hobby/self‑hosted setups, and player‑facing environments, these roles map to **two distinct Redis deployments**:
 
 - A Coordination Redis deployment dedicated to tick/session/lock/timer workloads.
 - A Cache/Rate‑Limit Redis deployment dedicated to read‑side caches and token buckets.
 
-These deployments may share the same host or Kubernetes node, but they run as **separate processes or containers** (for example `redis-coord` and `redis-cache` in Docker Compose and Helm). This keeps configuration aligned with larger clustered environments while keeping the infrastructure footprint light.
+These deployments may share the same host or Kubernetes node, but they must run as **separate processes or containers** (for example `redis-coord` and `redis-cache` in Docker Compose and Helm). A “single Redis for all roles” topology is treated as non‑compliant with the architecture, even in development, and must not be used for environments that run automated tests, QA, staging, or production workloads.
 
-Environment variables make the split **config‑driven and explicit**:
+Environment variables make the split **config‑driven and explicit** (see also [Environment & Secrets](./infrastructure/environment-and-secrets.md#redis-connection)):
 
 - Services that participate in ticks, locks, timers, sessions, or automation queues resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
 - Services that perform only rate limiting or cache-style reads resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 
-Production‑quality and small self‑hosted deployments are strongly encouraged to **avoid mixing heavy caches with coordination workloads** on the same Redis process, because misconfiguration (for example, eviction policies or memory limits) can silently impact coordination keys and gameplay availability. The only supported exception is short‑lived, non‑player‑facing experiments (for example, ad‑hoc local tests) where both `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` may temporarily point at the same instance; those runs are treated as outside coordination SLOs and must not be used for QA, staging, or production.
+All environments are expected to **avoid mixing heavy caches with coordination workloads** on the same Redis process, because misconfiguration (for example, eviction policies or memory limits) can silently impact coordination keys and gameplay availability. Coordination and Cache/Rate‑Limit roles are always configured as separate Redis deployments; ad‑hoc “single Redis for everything” experiments fall outside the supported architecture and must not be used for any shared or player‑facing environment.
 
 Coordination Redis also enforces its role via ACL and simple self‑checks:
 
@@ -407,7 +426,7 @@ To keep effective tail-loss within the **one to two second** SLO envelope for Co
 - Replication settings (`repl-timeout`, `repl-backlog-size`, and optional `min-replicas-to-write` / `min-replicas-max-lag`) should be tuned so typical replication lag stays well below one second under normal load.
 - Application metrics should alert when `tail_loss_ms` regularly exceeds **2000 ms** or **2×** the configured `tick_interval_ms` for a region over a short window, and when replication lag exceeds the same envelope. Those alerts gate investigations into disk, network, or configuration issues before they erode gameplay guarantees.
 
-Exact numeric thresholds and environment-specific variations live in the Redis operations and deployment docs, but new deployments are expected to justify any material deviation from these defaults.
+Exact numeric thresholds and environment-specific variations live in the Redis operations and deployment docs, but new deployments are expected to justify any material deviation from these defaults. In particular, choosing a weaker fsync policy than `everysec` (for example `no`) or disabling AOF entirely is only acceptable for **ephemeral dev/test stacks** that explicitly opt out of the 1–2 second tail-loss SLO described above.
 
 ---
 
@@ -451,6 +470,23 @@ In all cases, **PostgreSQL is the sole authority for domain history** (entities,
   3. Resume ticks so Coordination Redis is rebuilt from PostgreSQL and new commands, relying on idempotent tick logic and `tail_loss_ms` / region health metrics to bound and surface any lost recent coordination state.
 
 All reset tooling routes through the same key builders and Lua descriptors used by application code and is classified by **reset tolerance** in the Redis operations docs (reset-tolerant, reset-sensitive, reset-forbidden). Operators must not perform ad-hoc manual edits to `tick:*`, `session:*`, `timer:*`, `retry:*`, or `remote:*` prefixes; any such needs should be implemented as changes to the reset tooling itself.
+
+### Reset Policy Matrix (Prefix Summary)
+
+The table below summarizes reset expectations for the main Redis prefixes. Detailed behavior and any exceptions are described in the per-prefix sections and service design docs.
+
+| Prefix / Family | Role | Reset Policy (Coordination Reset) | Notes |
+| --- | --- | --- | --- |
+| `tick:{tenantRegionTag}:pending` and `tick:{tenantRegionTag}:queue:*` | Coordination | **Reset-tolerant** | Dropped and rebuilt from PostgreSQL ticks and new commands; idempotency guarantees prevent double-apply. |
+| `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Timers/retries are re-enqueued or skipped within the tail-loss envelope; acceptable to discard during region/tenant/cluster resets. |
+| `tick-executor-lease:{tenantRegionTag}` and tick lock keys (`tick:{tenantRegionTag}:lock:*`) | Coordination | **Reset-tolerant** | Leases and locks are transient; executors reacquire leases and lock state after reset. |
+| `session:{tenantId}:{sessionId}` | Coordination | **Reset-sensitive** | Non-authoritative but player-visible. Region/tenant resets may discard active sessions; cluster-wide resets require clear operator communication and may force players to log in again. |
+| `remote:{tenantRegionTag}:*` / other coordination queues | Coordination | **Reset-tolerant** | Treated like other coordination queues; effects are guarded by idempotency in PostgreSQL. |
+| `ratelimit:{tenantId}:*` | Cache/Rate-Limit | **Reset-tolerant** | Token buckets are best-effort; resets clear buckets and counters but do not affect authoritative state. |
+| `inventory:{tenantId}:*`, `worldDynamic:{tenantId}:*`, `view:roomLook:{tenantId}:*` and similar cache prefixes | Cache | **Reset-tolerant** | Cached views are regenerated from PostgreSQL; resets may temporarily increase load but do not lose authoritative data. |
+| Automation/cache prefixes such as `automation_queue:{tenantId}:*`, `script_quota:{tenantId}:*` | Cache / Coordination (per design) | **Reset-sensitive** | Some prefixes may be safe to drop; others may require targeted migration tools. The owning service’s design doc must explicitly classify each prefix. |
+
+When introducing a new prefix, service designs must extend this matrix (or the detailed key catalog) with a reset policy and ensure that reset tooling and runbooks can enforce it.
 
 ### Reset vs Manual Repair – Decision Guide
 
@@ -922,6 +958,9 @@ To keep hash tags unambiguous and compatible with Redis Cluster’s parsing rule
 - All services that construct keys or shard assignments must:
   - Use shared helper functions from the common library to obtain normalized IDs and hash tags.
   - Treat changes to normalization behavior (for example, different case folding or slug rules) as **schema changes** that require a migration plan, not as local implementation details.
+- CI includes simple static checks that:
+  - Assert each registered coordination key pattern contains **exactly one** `{tenantRegionTag}` hash tag.
+  - Fail builds when ad-hoc literals with multiple `{}` pairs or missing hash tags are introduced in coordination contexts.
 
 Under a given normalization version, the normalized `tenantId`, `regionId`, and the combined `tenantRegionTag` are **normalized identifiers**, not arbitrary external IDs. They must:
 
@@ -938,6 +977,22 @@ Changing how identifiers are normalized or how hash tags are formed (for example
 
 - Any such change must:
   - Be implemented in the shared normalization helpers and documented with a new version constant (for example, `NORMALIZATION_V2`).
+  - Follow a small, explicit migration runbook so tenants and regions do not silently move between slots without coordination.
+
+A typical migration proceeds in three high-level phases:
+
+1. **Prepare**
+   - Add the new normalization functions and a `NORMALIZATION_V2` constant to the shared library; keep all existing key builders on `NORMALIZATION_V1`.
+   - Extend metrics and dashboards to surface which normalization version is in use for a given `{tenantId, regionId}` (for example, via labels on tick-region health metrics).
+2. **Cut-over**
+   - For reset-tolerant prefixes (most coordination keys), perform a **coordinated reset** per tenant/region using the reset tooling, then roll out code that flips builders to `NORMALIZATION_V2`. Regions rebuild their coordination state from PostgreSQL using the new normalized identifiers.
+   - For reset-sensitive prefixes (for example, automation queues or selected cache prefixes), write a one-off migration tool that:
+     - Reads keys in the old shape.
+     - Writes them into the new shape using `NORMALIZATION_V2` identifiers.
+     - Deletes or expires the old keys once consumers have been updated.
+3. **Clean up**
+   - Remove support for `NORMALIZATION_V1` from builders and descriptors after all deployments and migrations are complete.
+   - Update the reset matrix and key catalogs so only the new normalization version appears in examples and tooling.
   - Be accompanied by a migration plan that accounts for:
     - Existing Redis keys that still use the old normalization.
     - Any coupling between hash tags and region placement in Redis Cluster.
@@ -1923,7 +1978,7 @@ In practice, the derived `session_expiration_ms` defines the **maximum reconnect
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
-Services validate that `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` is non-negative in non-dev profiles and refuse to start if it is not, so the session window cannot be shorter than the JWT lifetime by accident. Operators who intentionally want a shorter reconnection window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a second, independent session TTL knob.
+Services validate that `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` is non-negative in non-dev profiles and refuse to start if it is not, so the session window cannot be shorter than the JWT lifetime by accident. Operators who intentionally want a shorter reconnection window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a second, independent session TTL knob; exposing an additional “session TTL” control is deliberately considered out of scope for this architecture.
 
 Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` affects the **derived expiry for new and refreshed sessions only**; existing `session:{tenantId}:{sessionId}` keys keep the logical expiry and Redis TTL they were created with. Tightening these values in a running cluster:
 

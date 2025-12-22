@@ -15,9 +15,9 @@
 - [x] Provide a lightweight `/ws/game/**` proxy stub (`services/tcp-proxy-service/src/test/.../stub/GatewayStubApplication.java`) for tcp-proxy cross-service tests so developers can exercise the gateway hop without starting the full production app.
 - [ ] Automatically re-establish WebSocket tunnels on restart
 - [ ] Trace WebSocket requests and responses for observability
-- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Wire TLS certificate watchers to reload credentials without downtime
 - [ ] Relay event-driven game state updates to connected clients
-- [ ] Use `firemud.auth` properties for token parsing
+- [ ] Confirm downstream admin/meta services use `firemud.auth` properties for token parsing; Spring Cloud Gateway must remain a dumb proxy that only enforces the presence of an Authorization header on protected routes
 - [ ] Support horizontal scaling across gateway instances
 
 ## Dynamic Route Management
@@ -26,8 +26,8 @@
 - [x] Create `GatewayController` endpoints for dynamic route management
 - [x] Allow creation of custom gateway routes via API
 - [x] Add gRPC `GatewayManagementService` for remote route configuration
-- [ ] Allow route target overrides via FIREMUD_SERVICES_* env vars
-- [ ] Persist dynamic routes in the route_config table
+- [ ] Allow route target overrides via `FIREMUD_SERVICES_*` env vars in line with `ServiceEndpointsProperties`
+- [ ] Persist dynamic routes in the `route_config` table and clearly document how this persistent state composes with the baseline `routes-*.yml` files
 
 ## Reusable Microservice Checklist
 
@@ -100,13 +100,11 @@ participate in CI.
 
 ## Redis Integration *(if used)*
 
-- [x] *(N/A - no Redis usage)* Use Redis for transient gameplay state only
-- [x] *(N/A - no Redis usage)* Access Redis through helpers in `firemud-common`
-- [x] *(N/A - no Redis usage)* Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [x] *(N/A - no Redis usage)* Validate shard-local key usage and avoid per-service caching
-- [x] *(N/A - no Redis usage)* Emit metrics for Redis connectivity and commands
-- [x] *(N/A - no Redis usage)* *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [x] *(N/A - no Redis usage)* Prefix all keys with `tenantId` to isolate game data
+- [x] *(Cache/Rate-Limit Redis only)* Use Redis for gateway-local rate limiting and caches only; gameplay coordination remains in the Game Session Service
+- [x] *(Cache/Rate-Limit Redis only)* Access Redis through Spring Cloud Gateway’s `RequestRateLimiter` and any shared helpers in `firemud-common`
+- [x] *(Cache/Rate-Limit Redis only)* Follow the `ratelimit:{tenantId}:{bucket}:{timeWindow}` key conventions described in the Redis Cache design docs
+- [x] *(Cache/Rate-Limit Redis only)* Emit metrics for Redis connectivity and rate-limit operations
+- [x] *(N/A - no Coordination Redis usage)* Do not use Coordination Redis prefixes such as `tick:*`, `timer:*`, or `session:*`; gameplay coordination remains the responsibility of the Game Session Service
 
 ---
 

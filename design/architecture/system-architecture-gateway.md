@@ -2,12 +2,6 @@
 
 This document describes the role and configuration of **Spring Cloud Gateway** in the FireMUD platform, including routing, filtering, WebSocket support, and how it integrates with both modern and legacy clients.
 
-## Implementation Status
-
-- No further work is pending for the core behaviors described in this document; it reflects the current target and implemented state of the Spring Cloud Gateway deployment. Future changes should update this section if any major flow becomes partially implemented again.
-
----
-
 ## Gateway Pattern
 
 **Spring Cloud Gateway** serves as the **single entry point** into the FireMUD system for all **external client traffic**:
@@ -19,9 +13,9 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
 - Auto‑scaling policies handle high concurrency
-- Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; the Gateway
-  itself does not hold session state between reconnects
-- Gateway restarts automatically re-establish WebSocket connections to backend services. See [Reconnection Strategy](./system-architecture-reconnection.md).
+  - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; Spring Cloud Gateway
+    itself does not hold session state between reconnects
+  - Gateway restarts are *transparent* for gameplay sessions: clients reconnect over WebSocket, and the Game Session Service restores gameplay state using Redis as described in [Reconnection Strategy](./system-architecture-reconnection.md).
 - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
 
 > **Important:**
@@ -109,7 +103,7 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecting the platform from abusive traffic:
 
 - **Keying strategy**
-  - Gateway rate limiting is primarily **per-client IP** with optional route-level differentiation. The default `RequestRateLimiter` configuration uses the Cache/Rate‑Limit Redis deployment and derives keys from the client IP (as seen by the gateway after load balancer and TCP Proxy headers) and route ID, keeping key cardinality modest.
+  - Gateway rate limiting is primarily **per-client IP** with optional route-level differentiation. The default `RequestRateLimiter` configuration uses the Cache/Rate‑Limit Redis deployment and derives keys from the client IP (as seen by the gateway after load balancer and TCP Proxy headers) and route ID, keeping key cardinality modest while still following the canonical `ratelimit:{tenantId}:{bucket}:{timeWindow}` key pattern from [Redis Cache & Rate Limiting](./system-architecture-redis-cache.md#rate-limit-bucket-design). For the gateway itself, `tenantId` is a synthetic, edge-scope identifier (for example `gateway-edge`), and `bucket` incorporates the client IP and route identifier via a stable hash.
   - Game Session Service enforces **per-session and per-command** limits (for example, commands per tick region) using Redis coordination keys. See [Reconnection Strategy](./system-architecture-reconnection.md) and [Redis Architecture](./system-architecture-redis.md) for session/tick-level controls.
 - **WebSocket vs HTTP semantics**
   - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet/WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
@@ -170,7 +164,20 @@ This approach minimizes latency and matches the protocol table in the
 | Prod | `http://service.namespace.svc.cluster.local:8080` | Kubernetes DNS |
 
 Spring profiles defined in `application.yml` and selected via
-`SPRING_PROFILES_ACTIVE` configure routing targets based on environment.
+`SPRING_PROFILES_ACTIVE` configure routing targets based on environment. Baseline routes are defined in `routes-dev.yml` and `routes-prod.yml`, and any `FIREMUD_SERVICES_*` environment variable overrides or dynamic route changes apply *on top* of these files rather than replacing them as the canonical source of truth.
+
+---
+
+## Gateway Network Surfaces
+
+The following table summarizes the main network surfaces exposed or used by Spring Cloud Gateway. Detailed TLS and authentication requirements are documented in [Security Architecture](./system-architecture-security.md) and the Spring Cloud Gateway service design.
+
+| Surface | Direction | Protocol(s) | Typical Port(s) | Auth / TLS Expectations |
+| --- | --- | --- | --- | --- |
+| Public player/admin ingress → Spring Cloud Gateway | Inbound | `HTTP(S)`, `WS(S)` | Load balancer ports (for example, `80`/`443`) | TLS terminates at the Internet-facing load balancer; gateway receives `http://` / `ws://` as described in [TLS Termination for Gateway](./system-architecture-security.md#tls-termination-for-gateway). |
+| TCP Proxy Service → Spring Cloud Gateway gameplay route | Inbound | `WS(S)` | Load balancer / gateway WebSocket port | Mutual TLS using `FIREMUD_GRPC_*` certificate paths; the host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
+| Spring Cloud Gateway → backend microservices | Outbound | gRPC over `HTTP/2` | `6565` or service-specific gRPC ports | Mutual TLS with certificates issued by cert-manager; JWT validation and authorization handled entirely by backend services. |
+| Spring Cloud Gateway management plane (REST/gRPC) | Inbound (internal only) | `HTTP(S)`, gRPC | `8080` (REST), `6565` (gRPC) | Exposed only on internal surfaces (`ClusterIP` / private ingress); protected by mTLS and JWT per [Management Plane Security](./system-architecture-security.md#admin-interface-access-model). |
 
 ---
 

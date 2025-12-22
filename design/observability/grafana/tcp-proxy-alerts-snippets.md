@@ -81,4 +81,3 @@ groups:
 ```
 
 These expressions assume that Micrometer has exported the TCP Proxy meters using the default naming conventions (e.g., `tcpproxy.connections.active` → `tcpproxy_connections_active`). Adjust names if your Prometheus setup uses different naming rules or additional labels.
-

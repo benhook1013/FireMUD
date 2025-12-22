@@ -8,7 +8,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
-- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway. Mutual TLS secures this link
+- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway. In the **target-state** design this link uses mutual TLS; see the TCP Proxy Service design’s **Implementation Status** section for the current behaviour and rollout notes.
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service
 - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
    > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.

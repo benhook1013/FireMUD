@@ -48,7 +48,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   - Automation scripts are registered as **single-key** Lua scripts that operate only on `automation:tick:*` and `automation_queue:*` keys; they never mix `automation:*` and `tick:*` prefixes in a single script invocation to avoid `CROSSSLOT` issues in Redis Cluster.
 - **Cache/Rate-Limit Redis usage**
   - Stores script quota counters and similar best-effort aggregates in **Cache/Rate-Limit Redis** using prefixes such as `script_quota:{tenantId}:{scriptId}` and `automation_queue:{tenantId}:*`, following the cache key naming and isolation rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state. Quota and queue-oriented prefixes are treated as **best-effort TTL-only caches** unless explicitly documented as strongly validated caches with versioned payloads and stricter invalidation semantics.
+  - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state. Quota and queue-oriented prefixes are treated as **best-effort TTL-only caches** unless explicitly documented as strongly validated caches with versioned payloads and stricter invalidation semantics.
 
 Ownership and durability expectations for Automation & Scripting–related prefixes:
 
@@ -61,7 +61,8 @@ Ownership and durability expectations for Automation & Scripting–related prefi
 | `script_quota:{tenantId}:{scriptId}` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
 
 Any new Automation & Scripting–specific prefixes must be added to this table and to the central Redis key catalogs, with a clear statement of which Redis role they use and whether they are reset-tolerant, reset-sensitive, or reset-forbidden.
-   - Quota and queue-related caches are treated as **best-effort TTL-only caches** unless this README states otherwise; any future strongly validated caches must document their version fields and invalidation strategy explicitly, in line with the Redis cache design.
+
+- Quota and queue-related caches are treated as **best-effort TTL-only caches** unless this README states otherwise; any future strongly validated caches must document their version fields and invalidation strategy explicitly, in line with the Redis cache design.
 
 #### Redis Cluster Slotting Rules for Automation
 

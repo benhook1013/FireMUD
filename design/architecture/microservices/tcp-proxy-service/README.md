@@ -40,7 +40,7 @@ of truth and reconcile code/tests accordingly.
   on the configured TCP port for classic clients (for example the Windows
   `telnet` command). Forwarding to the gateway uses WebSocket connections and
   supports mutual TLS. See [Security Architecture](../../system-architecture-security.md).
-- Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC link to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events. This gRPC surface is **internal-only** and is secured using the same `FIREMUD_GRPC_*` certificate paths as other services.
+- Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC link to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events. This gRPC surface is **internal-only** and is secured using the same `FIREMUD_GRPC_*` certificate paths as other services. Telnet‑side TLS (if enabled) is configured via `TCP_PROXY_TLS_*` and is independent from the Proxy → Gateway WebSocket mTLS settings, even if they share certificate files.
 - Sanitizes incoming Telnet data and enforces a whitelist of
   **Telnet protocol commands** as described in the
   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
@@ -215,7 +215,9 @@ Proxy never replays Telnet input after a disconnect; connection-local buffers
 are cleared as soon as the TCP session closes. The `NotifyDisconnect` event is
 therefore a **best-effort, at-least-once** lifecycle signal keyed by
 `{sessionId, tenantId}` rather than a request to re-run gameplay commands. Game
-Session must treat `NotifyDisconnect` as strictly advisory and idempotent:
+Session must treat `NotifyDisconnect` as strictly advisory and idempotent and must
+always be able to detect disconnects without relying on this stream as a single
+source of truth:
 
 - If a `NotifyDisconnect` arrives after a new session has already been
   established for the same `{sessionId, tenantId}`, the newer session remains
@@ -273,11 +275,13 @@ and also drive the event and metric generation below.
 - **Malformed `SESSION` lines** – if either `sessionId` or `tenantId` is missing
   or cannot be parsed, the line is logged and ignored; no error is sent back to
   the client. Clients that choose to use `SESSION` must resend a correct envelope
-  or proceed with `LOGIN` only.
+  or proceed with `LOGIN` only. Each malformed envelope also increments a per‑connection
+  counter; once the number of malformed envelopes exceeds `TCP_PROXY_MAX_MALFORMED_ENVELOPES`,
+  the proxy closes the connection as abusive and emits the corresponding metrics.
 - **Diagnostics mode (future enhancement)** – a debug/diagnostics mode may surface
   explicit warnings or errors for malformed or repeated `SESSION` envelopes to
   help advanced Telnet clients detect configuration issues. Until that mode ships,
-  the behavior above (one-shot binding, silent ignores) is considered canonical.
+  the behavior above (one-shot binding, silent ignores up to the configured malformed‑envelope budget) is considered canonical.
 
 #### Security considerations for `{sessionId, tenantId}`
 
@@ -347,6 +351,26 @@ private static final Set<Byte> ALLOWED_COMMANDS =
 ```
 
 Commands outside this list are discarded and only sanitized printable characters are forwarded to the gateway.
+
+Supported Telnet commands/options are intentionally minimal but cover the needs of common MUD clients:
+
+| Command / Option | Byte | Purpose |
+| --- | --- | --- |
+| `SE` (End of subnegotiation parameters) | `240` | Terminates subnegotiation blocks. |
+| `NOP` (No operation) | `241` | Ignored; kept for compatibility. |
+| `GA` (Go ahead) | `249` | May be sent by some legacy clients; ignored by the server. |
+| `WILL` | `251` | Negotiation: client proposes enabling an option. |
+| `WONT` | `252` | Negotiation: client refuses to enable an option. |
+| `DO` | `253` | Negotiation: client requests that the server enable an option. |
+| `DONT` | `254` | Negotiation: client requests that the server disable an option. |
+
+Options outside this subset (for example NAWS, terminal type, or arbitrary experimental options) are silently discarded by the sanitization layer. This keeps the implementation small and hardened while still allowing widely used MUD clients to connect. MCP control lines (`#$#...`) and their payloads are treated as **text** on top of this Telnet layer and are not affected by the low-level command whitelist.
+
+#### Compatibility Notes
+
+- Classic MUD clients that rely only on standard text I/O and basic Telnet negotiation (for example GMud, TinTin++, and similar tools) are expected to work without special configuration.
+- Clients that depend on advanced Telnet options (for example dynamic window sizing or terminal-type negotiation) should treat those features as best-effort: unsupported options are ignored rather than causing the connection to fail.
+- MCP-aware clients should assume that MCP negotiation and messages are the primary extensibility mechanism. Telnet options remain deliberately constrained to reduce the attack surface at the DMZ edge.
 
 ## Dependencies
 
@@ -429,25 +453,39 @@ When pointing at a real gateway in non-dev-isolated mode, override `GATEWAY_WS_U
 The proxy uses minimal configuration. It still follows the scheme in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
 so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be present
-but are ignored.
-TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
+but are ignored. TLS certificates are supplied via
+[`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
 
-Additional variables control the proxy runtime behaviour:
+Additional variables control the proxy runtime behaviour. TLS‑related settings are grouped by surface:
+
+- **Telnet listener TLS (client ↔ proxy)**:
+  - `TCP_PROXY_TLS_ENABLED` – enable Telnet‑over‑TLS termination.
+  - `TCP_PROXY_TLS_CERT` – path to the Telnet listener TLS certificate.
+  - `TCP_PROXY_TLS_KEY` – path to the Telnet listener TLS private key.
+- **Proxy → Gateway WebSocket mTLS (proxy ↔ Spring Cloud Gateway)**:
+  - `GATEWAY_WS_URL` – WebSocket URL for forwarding to the gateway (for example `ws://spring-cloud-gateway:8080/ws/game` or `wss://...`).
+  - `FIREMUD_GRPC_CERT_CHAIN_PATH` – client certificate chain path used by the WebSocket client in target‑state mTLS configurations.
+  - `FIREMUD_GRPC_PRIVATE_KEY_PATH` – client private key path used by the WebSocket client in target‑state mTLS configurations.
+  - `FIREMUD_GRPC_CA_CERT_PATH` – CA bundle path for verifying the gateway certificate.
+- **Internal gRPC server mTLS (other services ↔ proxy gRPC)**:
+  - The same `FIREMUD_GRPC_*` variables are reused by the proxy’s gRPC server for mutual TLS on `TcpProxyService` RPCs.
+
+The full variable list is:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws/game` |
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
-| `TCP_PROXY_TLS_CERT` | Path to the TLS certificate | *(empty)* |
-| `TCP_PROXY_TLS_KEY` | Path to the TLS private key | *(empty)* |
+| `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
+| `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections (`0` or unset = no explicit ceiling) | `0` |
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling) | `0` |
 | `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet line/envelope length in bytes before truncation/closure | `4096` |
-| `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close | `5` |
-| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for mTLS; shared with gRPC configuration | `certs/client.crt` |
-| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Private key path for mTLS; shared with gRPC configuration | `certs/client.key` |
-| `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying the gateway; shared with gRPC configuration | `certs/ca.crt` |
+| `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for mTLS; shared between the proxy’s gRPC server and its target-state WebSocket client | `certs/client.crt` |
+| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Private key path for mTLS; shared between the proxy’s gRPC server and its target-state WebSocket client | `certs/client.key` |
+| `FIREMUD_GRPC_CA_CERT_PATH` | CA bundle path for verifying the gateway and gRPC peers | `certs/ca.crt` |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for tracing; shared across services | `http://otel-collector:4317` |
 
 These certificate and observability variables are shared with other services; see
@@ -456,19 +494,29 @@ for full details.
 
 The proxy may expose both a raw Telnet listener (`TCP_PROXY_PORT`) and a
 TLS-wrapped Telnet endpoint (via `TCP_PROXY_TLS_ENABLED` or a fronting
-TLS-terminating load balancer) at the same time. In production it is valid to
-offer the raw Telnet port directly on the public internet for maximum client
-compatibility (for example stock OS `telnet`), while also exposing a TLS
-endpoint for clients that support encrypted Telnet, without any behavioural
-difference at the Telnet protocol level.
+TLS-terminating load balancer) at the same time. In production, exposing the
+raw Telnet port directly on the public internet is treated as a **legacy,
+plaintext channel**: credentials and gameplay traffic may be observed in
+transit, so additional safeguards apply. When
+`FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins
+over this plaintext Telnet port are only permitted for accounts that both:
+
+- Have TOTP-based two-factor authentication enabled, and
+- Opt in to **allow plaintext Telnet login** in their account settings (the
+  checkbox/option defaults to off and explains the risk).
+
+Plaintext Telnet connections are also tagged so the Game Session Service can
+emit a landing-menu security warning recommending the TLS Telnet port or web
+client instead. TLS Telnet endpoints and the web client are not subject to this
+additional restriction.
 
 The gRPC server listens on port `6565` by default as configured in `src/main/resources/application.yml`.
 
-### WebSocket mTLS to Spring Cloud Gateway _(Target-state; see Implementation Status)_
+### WebSocket mTLS to Spring Cloud Gateway *(Target-state; see Implementation Status)*
 
-In production, the TCP Proxy Service connects to Spring Cloud Gateway over
-`wss://` using mutual TLS. The proxy reuses the same certificate files and
-watchers as gRPC:
+In the target-state production configuration, the TCP Proxy Service connects to Spring Cloud Gateway over
+`wss://` using mutual TLS. The proxy intentionally reuses the same certificate
+files and watchers as gRPC in the current design:
 
 - Client certificate and key are loaded from
   `FIREMUD_GRPC_CERT_CHAIN_PATH` and `FIREMUD_GRPC_PRIVATE_KEY_PATH`.
@@ -495,6 +543,8 @@ example `wss://spring-cloud-gateway:8080/ws/game`) and issue certificates for
 that name. For external access, use a public hostname such as
 `wss://mud.example.com/ws/game` that matches the Gateway’s certificate rather
 than switching to a bare IP.
+
+> **Current default:** Until the mTLS task in `design/project-management/task-list-tcp-proxy-service.md` is completed, clusters may run with `ws://` or `wss://` without client certificates for the Proxy → Gateway hop. Treat the configuration in this section as the target-state reference and reconcile live environment settings against it during rollout.
 
 ### Metrics & Tracing
 

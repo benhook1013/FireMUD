@@ -98,7 +98,10 @@ Local Docker Compose environments may use plain `http://` / `ws://` for simplici
 
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ. It forwards **all gameplay traffic** to the backend exclusively via WebSocket through Spring Cloud Gateway and uses a narrow, mTLS-protected gRPC link to the **Game Session Service** only to emit `NotifyDisconnect` lifecycle events (no gameplay payloads). These gRPC endpoints are internal-only and are never published through the gateway.
 - The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences, using a dedicated Telnet pipeline in the TCP Proxy Service (currently implemented by `TelnetServerHandler`).
-- Client IP headers on Telnet-derived traffic follow the trust model described in [Protocol Bridging](./system-architecture-protocol-bridging.md#bridging-to-the-backend): the proxy always overwrites `X-Client-IP` with the TCP peer address, Spring Cloud Gateway merges this with `X-Forwarded-For`, and downstream services treat this combination as authoritative when applying rate limiting and abuse controls.
+- Telnet-derived flows are tagged with a **connection security** attribute at the TCP Proxy (“plaintext Telnet” vs “TLS Telnet”). This attribute is propagated via Spring Cloud Gateway to the Game Session Service, which uses it to:
+  - Include a **landing menu security warning** in the pre-login menu for plaintext Telnet sessions, advising players to prefer the TLS Telnet port or the web client.
+  - Include the transport context in `/auth/login` calls to the Account Service so deployment-wide rules such as `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags can be enforced consistently.
+- Client IP headers on Telnet-derived traffic follow the trust model described in [Protocol Bridging](./system-architecture-protocol-bridging.md#bridging-to-the-backend): the proxy always overwrites `X-Client-IP` with the TCP peer address on its internal WebSocket hop, and Spring Cloud Gateway strips any `X-Client-IP` received from **public** clients before forwarding to gameplay services. Downstream services treat the combination of the proxy-supplied `X-Client-IP` and the load balancer’s `X-Forwarded-For` chain as authoritative when applying rate limiting and abuse controls.
 
 ---
 
@@ -121,10 +124,10 @@ Local Docker Compose environments may use plain `http://` / `ws://` for simplici
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
 | Brute-Force Defense | Spring Cloud Gateway enforces Redis-backed request rate limiting for HTTP/WebSocket/Telnet-bridged traffic; Game Session Service enforces per-IP connection and command rate limits |
 | Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
-| Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service |
+| Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service. Plaintext Telnet logins are further constrained by `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags. |
 | Admin Role Access | JWT-only; no special network-level restrictions |
 | Zero Trust | Enforced via mTLS and JWT-based validation |
-| 2FA | Available for admin and moderator accounts via TOTP codes |
+| 2FA | Available for admin and moderator accounts via TOTP codes and, when `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled, required for any account that logs in over plaintext Telnet |
 
 ---
 

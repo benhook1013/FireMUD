@@ -8,7 +8,7 @@
 - [x] Define Telnet bridge gRPC APIs for TCP Proxy Service
 - [x] Implement Telnet networking and WebSocket bridging
 - [x] Support TLS termination for secure Telnet clients
-- [ ] Wire mutual TLS for Proxy → Gateway WebSocket traffic (update the TCP Proxy Service WebSocket client to use `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` so it matches the target-state design described in `design/architecture/microservices/tcp-proxy-service/README.md` and `design/architecture/system-architecture-overview.md`)
+- [ ] Wire mutual TLS for Proxy → Gateway WebSocket traffic (update the TCP Proxy Service WebSocket client to use `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` so it matches the target-state design described in `design/architecture/microservices/tcp-proxy-service/README.md` and `design/architecture/system-architecture-overview.md`. This task is complete when the Proxy → Gateway hop uses `wss://` with client certificates in all target environments, TLS failures are surfaced via `tcpproxy.gateway.handshake.failures{reason=...}`, and the architecture docs no longer need “target-state” qualifiers for this link.)
 - [ ] Handle Telnet option negotiation and character encoding quirks
 - [ ] Negotiate the Mud Client Protocol (MCP) when supported
 - [ ] Add a developer-local WebSocket echo target and console logging path so Telnet/MUD clients can validate stubbed traffic without a full gateway stack

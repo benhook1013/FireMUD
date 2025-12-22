@@ -240,7 +240,31 @@ Unit tests for this script would:
   - The lock key’s value is unchanged.
   - The TTL has not been extended unexpectedly (unless explicitly designed to refresh).
   - The return value is `"ALREADY_HELD"`.
-- Simulate a conflicting holder by setting a different token in `KEYS[1]` and assert that the script returns `"LOCK_HELD_BY_OTHER"` and does not overwrite the existing token.
+-- Simulate a conflicting holder by setting a different token in `KEYS[1]` and assert that the script returns `"LOCK_HELD_BY_OTHER"` and does not overwrite the existing token.
+
+## Lua Script Registry and CI Expectations
+
+All coordination-related Lua scripts live in a **Lua Script Registry** in the shared library. For each script, the registry records:
+
+- Script identifier and file path.
+- Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).
+- Script category (for example, tick lock, timer queue, session CAS) and reset-tolerance assumptions.
+
+CI enforces the following invariants for registered scripts:
+
+- Every Lua file under the coordination scripting path has a corresponding registry entry; unregistered scripts fail CI.
+- Scripts pass determinism checks (no disallowed commands such as `TIME` and no RNG usage) and are covered by idempotency tests similar to the patterns in this document.
+- Registry metadata is validated against tests so that `KEYS`/`ARGV` expectations stay in sync with callers.
+
+## Call-Side Time and Randomness Contract
+
+Determinism requirements forbid time and randomness inside Lua itself. Callers must:
+
+- Generate any required timestamps or random tokens in application code and pass them via `ARGV`.
+- Treat those values as **stable inputs**: AOF replay reuses the same `ARGV` so repeated executions see identical arguments.
+- Avoid embedding current time or random suffixes in Redis key names from inside Lua; any such keys must be constructed by callers and passed in through `KEYS`.
+
+CI and code review treat violations of this contract (for example, new scripts that invoke `TIME` or synthesize random IDs) as blocking issues.
 
 ## Related Documentation
 

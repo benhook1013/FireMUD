@@ -163,6 +163,7 @@ Additional variables configure outbound email delivery:
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
+| `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | Controls whether plaintext Telnet logins are restricted to 2FA-enabled, explicitly opted-in accounts (see Environment & Secrets – Authentication) | `true` |
 
 ## Proto Files
 
@@ -223,6 +224,18 @@ See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#auth
 
 Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
 
+When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over **plaintext Telnet** are additionally constrained:
+
+- Only accounts that have a `two_factor_secret` configured and
+- Have explicitly opted in to **allow plaintext Telnet login** in their account settings
+
+may authenticate via the raw TCP Telnet port. The account model includes a boolean flag (for example `allowPlaintextTelnetLogin`) that is exposed both:
+
+- As a checkbox in the web portal account settings (default: unchecked, with a clear explanation of the risks of plaintext Telnet), and
+- As an option in the Telnet account setup flow (default: off, with matching wording).
+
+Accounts that do not meet these conditions must use the TLS Telnet port or the web client instead; the `/auth/login` response returns a dedicated error code so the Game Session Service can present a clear message to the player.
+
 ### Login error codes
 
 Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:
@@ -230,6 +243,8 @@ Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return s
 - `AUTH_INVALID_CREDENTIALS` - wrong username or password
 - `AUTH_OTP_REQUIRED` - invalid or missing OTP for a two-factor-protected account
 - `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
+- `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP` - account attempted to log in over plaintext Telnet but does not yet have two-factor authentication enabled while `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is true
+- `AUTH_PLAINTEXT_TCP_NOT_PERMITTED` - account attempted to log in over plaintext Telnet without having opted in to allow this transport (for example `allowPlaintextTelnetLogin=false`)
 - `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
 
 The Game Session Service translates these codes into the text-protocol `ERROR <CODE>` responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.

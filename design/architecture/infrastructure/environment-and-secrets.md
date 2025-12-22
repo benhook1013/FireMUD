@@ -141,6 +141,7 @@ is described in [System Architecture: Security](../system-architecture-security.
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
+| `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | When `true`, logins over **plaintext Telnet** (raw TCP via the TCP Proxy) are allowed only for accounts that have 2FA enabled and explicitly opt in to plaintext Telnet login; other accounts must use TLS or the web client | `true` |
 
 Server-side gameplay sessions use a **derived lifetime** instead of a separately tuned TTL knob:
 
@@ -148,7 +149,11 @@ Server-side gameplay sessions use a **derived lifetime** instead of a separately
 
 This value defines the maximum window during which a disconnected gameplay session can be resumed. The Game Session Service uses the derived value both for its in-memory/session bookkeeping and as the TTL for `session:{tenantId}:{sessionId}` keys in Redis (hash-tagging on `tenantId` only; see [Redis Architecture](../system-architecture-redis.md#session-keys-and-gameplay-binding)). After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
 
-Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:{tenantId}:{sessionId}` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:{tenantId}:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`.
+FireMUD deliberately avoids introducing a second, independent “session TTL” configuration knob. The JWT lifetime (plus the safety margin) is the single control surface for the reconnection window; additional per-session TTL tuning is considered out of scope for this hobby/self-hosted deployment model.
+
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:{tenantId}:{sessionId}` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:{tenantId}:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`. For player-facing environments, prefer using the scoped session cleanup Job described in [Operational Runbooks](../system-architecture-runbooks.md#redis-session-schema-and-ttl-cleanup) over ad-hoc `DEL` usage so cleanup remains repeatable and observable.
+
+For **local development and hobby setups**, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any environment that hosts real players (staging, QA, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client.
 
 ### Service Discovery
 

@@ -255,6 +255,19 @@ Expectations:
 - Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.
 - Future implementations should prefer single atomic commands or scripts (set value and TTL together, optionally with version) over multi-step delete plus set sequences unless there is a very specific, documented reason (such as maintaining backward-compatible behavior during a migration).
 
+### Cache Invalidation Policy Table
+
+To keep cache usage reviewable and consistent across services, common aggregate types follow standard invalidation policies:
+
+| Prefix / Aggregate | Example Key | Policy | Notes |
+| --- | --- | --- | --- |
+| Inventory/container views | `inventory:{tenantId}:{containerId}` | **Versioned** | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL; writes bump the version, and cache entries are discarded when versions mismatch. |
+| Dynamic world aggregates | `worldDynamic:{tenantId}:{aggregateId}` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
+| Room LOOK views | `view:roomLook:{tenantId}:{roomId}` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
+| Short-lived chat buffers | `chat:say:{tenantId}:{playerId}`, `chat:guild:{tenantId}:{guildId}`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
+
+Service design docs may introduce additional cache aggregates, but each new prefix must declare whether it is **versioned** or **TTL-only** and explain why that choice is appropriate.
+
 ### Cache Size and Complexity Budgets
 
 To keep Cache/Rate-Limit Redis predictable and avoid unbounded growth, cache prefixes adhere to **size and complexity budgets** similar in spirit to the coordination budgets in `system-architecture-redis.md`:
@@ -269,6 +282,16 @@ To keep Cache/Rate-Limit Redis predictable and avoid unbounded growth, cache pre
 
 - **TTL and retention expectations**
   - TTLs are chosen so that caches do not accumulate long-lived data; prefixes that require longer retention for correctness should be reconsidered as candidates for Coordination Redis or PostgreSQL instead.
+
+- **Rate-limit key and bucket budgets**
+  - Cache/Rate-Limit Redis tracks rate limiting keys under the `ratelimit:{tenantId}:{bucket}:{timeWindow}` (and optional `:{shard}`) prefixes described above. Deployments should choose `N` (buckets per tenant) and any `S` (shards per bucket) so that:
+    - The total number of active `ratelimit:*` keys per tenant across all live `timeWindow` values remains within a modest, documented envelope (for example, on the order of **a few thousand** keys for small/self-hosted deployments).
+    - No single `{tenantId, bucket}` tuple becomes a pathological hot key under expected load; when profiling reveals such hotspots, operators either increase `N` or introduce a small `S` to fan out writes.
+  - Spring Cloud Gateway’s `RequestRateLimiter` maps its per-client IP and route buckets into this scheme by:
+    - Using a synthetic tenant identifier for edge traffic (for example `gateway-edge`) so all rate-limit keys still carry a `tenantId` prefix.
+    - Deriving `bucket` from a stable hash of the client IP and route identifier, and using a small, fixed `N` to bound the total bucket count per `timeWindow`.
+  - Observability for rate limiting should include simple counters and gauges (for example, total active `ratelimit:*` keys per tenant, distribution of hits per bucket) so operators can detect when the configured `N`/`S` values are no longer appropriate for the workload.
+  - Runtime self-checks and ACLs reinforce role separation: Cache/Rate-Limit Redis deployments use cache-specific users (for example `cache_app`) that are denied access to coordination prefixes, while Coordination Redis ACLs deny access to cache prefixes such as `ratelimit:*` and `view:roomLook:*`. Misrouted cache traffic therefore surfaces as explicit authorization errors instead of silently mutating coordination keys.
 
 New cache prefixes must document their budgets in the owning service’s design doc and, where applicable, in the central Cache/Rate-Limit Key Catalog so reviews can validate that Redis is being used as a cache rather than a secondary datastore.
 

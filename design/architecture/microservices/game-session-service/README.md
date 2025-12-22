@@ -37,7 +37,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Player session state for reconnect recovery lives in Redis using keys of the form
   `session:{tenantId}:{sessionId}` (only `tenantId` appears inside the hash tag braces) and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `{tenantId, regionId}` lifecycles rather than individual player sessions.
-  - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `{sessionId, tenantId}` rather than a guaranteed source of truth.
+  - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `{tenantId, sessionId, disconnectSequence}` rather than a guaranteed source of truth. Game Session persists the latest processed `disconnectSequence` per `{tenantId, sessionId}` and ignores older or duplicate events so retry behaviour at the proxy can remain simple while consumption stays idempotent.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../../system-architecture-transactions.md).
@@ -94,6 +94,19 @@ Service code must construct these keys via the shared key builders in `firemud-c
 - **Instance Initialization** — starts new games from published templates.
 - **Reconnection Handling** — resumes gameplay via Redis-backed session state as described in [Reconnection Strategy](../../system-architecture-reconnection.md).
 - **State Queries** — exposes gRPC methods to retrieve current game or player state for the web UI.
+
+For Telnet clients connected over **plaintext** TCP, the service also includes a
+landing-menu security warning when the main FireMUD landing menu is rendered
+before login. This warning is triggered whenever the connection metadata (propagated
+from the TCP Proxy and Spring Cloud Gateway) indicates `transportSecurity=PLAINTEXT_TELNET`
+and is suppressed for TLS Telnet and web clients. The exact text may evolve,
+but a typical banner is:
+
+> `WARNING: You are connected over **plaintext Telnet**. Your credentials and gameplay traffic may be visible on the network. For better security, please use the TLS Telnet port advertised by the server or the FireMUD web client instead.`
+
+The warning appears alongside the landing menu on plaintext Telnet connections,
+immediately before or as part of the pre-login output, so it is visible without
+affecting normal gameplay flow.
 
 ### Data Model
 
@@ -518,12 +531,19 @@ details.
 
 Massive games may outgrow a single Kubernetes cluster. To support global player
 bases, sessions can be sharded across regions using consistent hashing on the
-`tenantId`. Each shard runs an independent Redis and database pair. When a
-player travels to a region hosted elsewhere, the session state is serialized to
-a compact protobuf and transferred via gRPC to the target cluster. The source
-cluster marks the session as handed off and clients reconnect using the new
-endpoint. This strategy minimizes latency while keeping per-region failure
-domains isolated.
+`tenantId`. Each shard runs an independent **Coordination Redis cluster**, an
+independent **Cache/Rate-Limit Redis deployment**, and its own database pair.
+Coordination and cache roles remain separated inside each shard exactly as
+described in [Redis Architecture](../../system-architecture-redis.md); shards
+do not reuse a single Redis instance for both roles even when they are hosted
+on the same nodes.
+
+When a player travels to a region hosted elsewhere, the session state is
+serialized to a compact protobuf and transferred via gRPC to the target
+cluster. The source cluster marks the session as handed off and clients
+reconnect using the new endpoint. This strategy minimizes latency while
+keeping per-region failure domains isolated and ensures that Redis coordination
+and cache workloads scale with the shard topology.
 
 ### Gameplay Analytics
 

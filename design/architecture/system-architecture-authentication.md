@@ -12,6 +12,8 @@ Authentication is performed via plaintext `LOGIN` commands. Clients are stateles
 
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards this OTP when a player logs in.
 
+When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over **plaintext Telnet** are further constrained: only accounts that both (a) have two-factor authentication enabled and (b) explicitly opt in to “allow plaintext Telnet login” may authenticate via the raw TCP port. All other accounts must use the TLS Telnet port or the web client and receive a clear error if they attempt to log in over plaintext Telnet.
+
 Issued JWTs are stored in Redis using keys `session:{tenantId}:{tokenHash}` (hash-tagging on `tenantId` only) where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
@@ -35,8 +37,8 @@ Telnet-specific behaviors (such as the optional `SESSION` envelope used by advan
 #### Plain-text `LOGIN`/`LOGON` command mapping
 
 1. The Telnet/WebSocket client emits `LOGIN <username> <password> [otp]` (or the `LOGON` alias).
-2. The Game Session Service parses the line, normalizes casing, and issues a synchronous call to the Account Service `/auth/login` REST endpoint or the `Authenticate` gRPC method with a payload containing `username`, `password`, and the optional `otp`.
-3. The Account Service validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded.
+2. The Game Session Service parses the line, normalizes casing, and issues a synchronous call to the Account Service `/auth/login` REST endpoint or the `Authenticate` gRPC method with a payload containing `username`, `password`, the optional `otp`, and connection metadata indicating the **transport security** (for example `transportSecurity=PLAINTEXT_TELNET` vs `transportSecurity=TLS_TELNET` / `WEB_TLS`). This metadata is derived from the TCP Proxy and Gateway handshake so the Account Service can enforce deployment-wide and per-account policies for plaintext Telnet logins.
+3. The Account Service validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `AUTH_PLAINTEXT_TCP_NOT_PERMITTED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, `ERROR 2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `ERROR PLAINTEXT_TCP_NOT_PERMITTED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded.
 4. Success responses cause the Game Session Service to store the JWT and claims in Redis, bind the socket to the authenticated session, and emit `OK LOGIN Logged in as <username>` on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
 
 Gameplay commands such as `LOOK` and `SAY` are gated by this authentication handshake. Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, except in explicitly documented development/test bypass modes that grant temporary access. Once the login-and-session vertical slice ships, these commands are no longer processed for anonymous sessions, keeping the gameplay queue free of unauthenticated traffic.
@@ -155,7 +157,7 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 | Role Enforcement | Meta/control services only; gameplay services trust Game Session Service |
 | Role Updates | Refreshed in-session; no client interaction needed |
 | Multi-Client Behavior | One session per character; new login replaces old session |
-| Two-Factor Auth | Optional TOTP for admin and moderator accounts via `/auth/login` |
+| Two-Factor Auth | Optional TOTP for admin and moderator accounts via `/auth/login`; required for plaintext Telnet logins when `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled |
 
 ---
 
