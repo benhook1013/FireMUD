@@ -68,6 +68,26 @@ Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will
 
 Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
 
+### Telnet Proxy Limits in Local Dev
+
+The TCP Proxy Service enforces connection and envelope limits even in development. When running it locally (for example `./gradlew :tcp-proxy-service:bootRun`), you can override the defaults via environment variables:
+
+- `TCP_PROXY_MAX_CONNECTIONS` – global cap on concurrent Telnet connections (`0` = no explicit ceiling).
+- `TCP_PROXY_MAX_CONNECTIONS_PER_IP` – cap on concurrent Telnet connections from a single client IP (`0` = no explicit ceiling).
+- `TCP_PROXY_MAX_LINE_BYTES` – maximum Telnet line length before the frame is truncated/closed.
+- `TCP_PROXY_MAX_MALFORMED_ENVELOPES` – number of malformed `SESSION` envelopes allowed per connection before it is closed.
+
+For local iteration, it is safe to keep these values low and increase them temporarily in your shell, for example:
+
+```bash
+TCP_PROXY_MAX_CONNECTIONS=50 \
+TCP_PROXY_MAX_CONNECTIONS_PER_IP=10 \
+TCP_PROXY_MAX_MALFORMED_ENVELOPES=10 \
+./gradlew :tcp-proxy-service:bootRun
+```
+
+Do not commit environment-specific defaults for these variables to version control; treat them as deployment-time configuration managed by your shell, Docker Compose, or Kubernetes manifests.
+
 ## GitHub CLI Integration for PRs
 
 Install and authenticate the GitHub CLI so you can manage pull requests locally and allow AI tooling to operate on PR metadata when requested:

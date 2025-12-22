@@ -92,6 +92,25 @@ Some maintenance or dev-tools scripts may operate on coordination prefixes outsi
 
 Scripts that do not clearly fit one of these categories should be refactored until their validation story is explicit. Region-lease scripts are the default for tick/coordination flows; session-only scripts and maintenance scripts are narrow exceptions with tighter scope and clearly defined behavior.
 
+### Automation Scripts and Cluster Slotting
+
+Automation-related Lua scripts follow stricter cluster slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
+
+- Scripts that operate on `automation:tick:{tenantId}:{scriptId}:*` keys are registered as **single-key** scripts:
+  - They may include multiple `automation:tick:{tenantId}:{scriptId}:*` keys for the **same** `{tenantId, scriptId}` in `KEYS`, but they must not mix different `{tenantId, scriptId}` pairs.
+  - They must not include any `tick:{tenantId}:{regionId}:*` keys in the same invocation.
+- Scripts that operate on `automation_queue:{tenantId}:*` keys:
+  - Use only `automation_queue:{tenantId}:*` keys for a single tenant in `KEYS`.
+  - Must not include `automation:tick:*` or `tick:*` keys in the same invocation.
+- Cross-boundary rules:
+  - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
+  - Automation work is staged under `automation_queue:*` and `automation:tick:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
+
+CI must reject automation Lua scripts that:
+
+- Reference both `automation:*` and `tick:*` keys in their registry descriptors, or
+- Construct `tick:*` keys by hand instead of using shared key builders.
+
 ### Script Complexity and Runtime Limits
 
 To prevent Redis from stalling, tick-related scripts are bounded in keys touched and execution time:

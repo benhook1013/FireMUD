@@ -145,6 +145,46 @@ See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for b
 3. Use `helm upgrade --install` with the new image tag to deploy only the affected service.
 4. Monitor metrics and logs to ensure the issue is resolved; if instability persists, run `helm rollback <release> <revision>` to revert.
 
+## Telnet Path Degraded or Failing
+
+When Telnet clients report intermittent disconnects, missing output, or complete inability to log in while WebSocket clients behave normally, treat it as a **Telnet path** incident and follow this checklist:
+
+1. **Confirm scope and symptoms**
+   - Verify whether the issue is limited to Telnet clients (TCP Proxy path) or affects WebSocket clients as well.
+   - Check user reports and logs for phrases like “Telnet,” “mudlet,” or “tin tin” to confirm it is a legacy-client issue.
+2. **Check TCP Proxy metrics**
+   - Open the **TCP Proxy** Grafana dashboard and inspect:
+     - `tcpproxy.connections.active` / `tcpproxy.connections.total` for unusual spikes or drops.
+     - `tcpproxy.connections.limit.exceeded` for sustained non-zero values, which indicate global or per-IP caps are rejecting new connections.
+     - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, or repeated malformed `SESSION` envelopes.
+     - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated reconnection attempts to Spring Cloud Gateway.
+     - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
+3. **Compare Telnet vs WebSocket flows**
+   - Pick a specific `{sessionId, tenantId}` (or user) and:
+     - Use Logging & Admin Service / Kibana to find the Telnet-side logs (from the TCP Proxy) and confirm that `LOGIN`/`LOOK` commands are received, with credentials redacted.
+     - Find the corresponding WebSocket session in Spring Cloud Gateway logs and the downstream Game Session logs to verify whether the commands reach the backend and whether responses are emitted.
+   - If WebSocket flows succeed while Telnet flows stall or drop, the problem is likely in the TCP Proxy, Gateway WebSocket route, or mTLS between them.
+4. **Evaluate connection caps vs abusive clients**
+   - If `tcpproxy.connections.limit.exceeded` is elevated and many IPs are affected:
+     - Consider temporarily raising `TCP_PROXY_MAX_CONNECTIONS` and/or `TCP_PROXY_MAX_CONNECTIONS_PER_IP` for the affected environment and redeploying the proxy.
+     - Watch the same metrics after the change to confirm the limits are no longer frequently hit.
+   - If the metric is dominated by a small number of IPs:
+     - Treat those IPs as abusive or misconfigured clients; prefer blocking or throttling them via firewall rules, ingress rules, or specific rate-limiter policies rather than raising global limits.
+5. **Check WebSocket bridge and TLS configuration**
+   - If `tcpproxy.websocket.reconnects` and `tcpproxy.gateway.handshake.failures{reason="cert_validation"}` increase:
+     - Confirm `GATEWAY_WS_URL` points to a hostname that matches the Gateway certificate SANs.
+     - Verify `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` are valid and mounted in the proxy deployment.
+     - If needed, roll back recent TLS or gateway changes and reapply them with correct hostnames and certificate bundles.
+6. **Run Telnet smoke tests**
+   - Use the Telnet smoke script described in the TCP Proxy README (or the `dev-echo-loop.sh` flow) to:
+     - Connect to the proxy with `telnet` or a test client.
+     - Send `SESSION` + `LOGIN` + `LOOK` and confirm that responses match the WebSocket path for the same account.
+     - Capture the raw transcript and include it in incident notes.
+7. **Escalation and mitigation**
+   - If Telnet is degraded but WebSocket is healthy and the root cause is not immediately fixable:
+     - Communicate to players that Telnet may be unreliable and recommend the Web client as a temporary workaround.
+     - Track the incident and any config changes in the Logging & Admin Service / runbook history so future investigations can correlate behavioral changes with deployment events.
+
 ---
 
 These runbooks provide a starting point for operators. Update them as new tooling or workflows evolve.

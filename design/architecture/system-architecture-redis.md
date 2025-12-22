@@ -39,6 +39,29 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
   - [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)
   - The key format cheat sheet in [Key Format Examples](#key-format-examples)
 
+### Redis Change Checklist
+
+Before making any change that touches Redis (keys, roles, scripts, or tooling), designers and reviewers should walk through this checklist:
+
+- **Prefix and role**
+  - Confirm the prefix exists in either:
+    - The **coordination key** sections of this document, or
+    - The **Cache/Rate-Limit Redis Key Catalog** for non-coordination prefixes.
+  - Confirm which Redis role the change targets (Coordination Redis vs Cache/Rate-Limit Redis) and that configuration and clients use the correct role-specific endpoints.
+- **Hash tags and slotting**
+  - Verify hash-tag and cluster slotting rules:
+    - Coordination scripts must stay shard-local (for example, only one `{tenantRegionTag}` per invocation or only tenant-scoped session keys).
+    - Automation scripts must follow the `automation:*` cluster slotting rules and never mix `automation:*` and `tick:*` in one Lua call.
+- **Lua behavior (if applicable)**
+  - Ensure Lua scripts remain deterministic and idempotent, using only `KEYS`, `ARGV`, and current Redis state.
+  - Update the Lua Compatibility Registry and tests for any behavior change, and decide whether the change is `compatible` or `breaking_requires_reset`.
+- **Metrics, SLOs, and alerts**
+  - Identify which metrics and dashboards must reflect the change (Coordination vs Cache/Rate-Limit).
+  - Update or confirm alerts against the **Redis SLO & Alert Checklist** so new hot paths, prefixes, or workloads are covered.
+- **Reset and runbook implications**
+  - Clarify whether new prefixes are reset-tolerant, reset-sensitive, or reset-forbidden.
+  - Update the relevant runbooks (for example, coordination reset or cache maintenance) if the change affects how operators remediate issues.
+
 ---
 
 ## Redis Usage by Service
@@ -47,10 +70,10 @@ The following table summarizes how each core service uses Redis. The detailed be
 
 | Service | Redis Usage |
 | --- | --- |
-| **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis-backed session state used for reconnection. All tick/coordination keys and Lua scripts are owned here. |
-| **Automation & Scripting Service** | Reads tick heartbeats via gRPC, uses Redis for script scheduling queues and per-tenant/per-entity automation keys as described in the tick and automation docs; it does **not** own tick queues or locks directly. |
-| **Spring Cloud Gateway** | Uses **Cache/Rate-Limit Redis** for token-bucket rate limiting and best-effort caches only; it never touches tick/coordination prefixes. |
-| **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not access Coordination Redis directly at runtime. They rely on Game Session, PostgreSQL, and gRPC contracts for gameplay state. Some may use Cache Redis in the future for read-side caches following the cache design doc. |
+| **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis-backed session state used for reconnection. All tick/coordination key prefixes and their Lua scripts are registered and owned here. |
+| **Automation & Scripting Service** | Participates in coordination via **registered Lua helpers** and automation-specific prefixes (`automation_queue:*`, `automation:tick:{tenantId}:{scriptId}:...`) but does **not** own tick queues or locks directly. It reads tick heartbeats via gRPC and uses **Cache/Rate-Limit Redis** for script quotas and best-effort internal queues where documented. |
+| **Spring Cloud Gateway** | Uses **Cache/Rate-Limit Redis** for token-bucket rate limiting and best-effort caches only; it never touches tick/coordination prefixes directly and always connects via the cache profile configured in `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
+| **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:{entityId}` for tick locks). Where they cache read-heavy aggregates, they use **Cache/Rate-Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |
 
 These boundaries are part of the **Redis Coordination Invariants** below and are enforced via shared key helpers, Lua registry descriptors, and CI tooling.
 
@@ -58,7 +81,7 @@ These boundaries are part of the **Redis Coordination Invariants** below and are
 
 This checklist captures the core coordination rules that design and code reviews must uphold. The sections linked in each bullet provide deeper context.
 
-- **Ownership:** The **Game Session Service** is the only service that owns tick and coordination prefixes (`tick:*`, `timer:*`, `retry:*`, region leases, entity locks, and related Lua scripts). Other services interact with ticks via gRPC APIs and higher-level contracts, not by touching these keys directly. See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Game Session Service](./microservices/game-session-service/README.md).
+- **Ownership vs participation:** The **Game Session Service** is the only service that **owns and registers** tick and coordination prefixes (`tick:*`, `timer:*`, `retry:*`, region leases, entity locks, and related Lua scripts). Other services may participate in Coordination Redis by invoking those registered scripts and key builders (for example, acquiring tick locks via shared helpers), but they do not introduce new coordination prefixes or bypass the registry. See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Game Session Service](./microservices/game-session-service/README.md).
 - **Key construction:** All tick/coordination keys are built via shared key helpers in the common library and must include a single `{tenantRegionTag}` hash tag for per-region keys. Ad-hoc string concatenation of tick/coordination keys is not allowed. See [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
 - **Script safety:** Every mutating Lua script that touches coordination keys **must** validate lease tokens, lock tokens (when applicable), and `tickId`/other monotonic guards before writing, and must be idempotent when re-run with the same `KEYS`/`ARGV`. See [Atomicity and Concurrency Control](#atomicity-and-concurrency-control) and [FireMUD Redis Lua Patterns](./system-architecture-redis-lua-patterns.md).
 - **Multi-key access:** Multi-key operations on coordination prefixes (tick queues, `pending`, timers, retry sets, locks, region leases) are only permitted inside registered Lua scripts that follow the shard-local key rules and are described in the Lua Script Registry. Direct multi-key Redis commands against these prefixes from application code or maintenance tools are not allowed. Multi-key commands—including `MGET`, `DEL key1 key2`, or `MULTI/EXEC` blocks—must never include keys from more than one `{tenantRegionTag}`; cross-region workflows are implemented as per-region calls or higher-level sagas, not as cross-region Redis transactions. See [Atomicity and Concurrency Control](#atomicity-and-concurrency-control) and [Key Naming and Shard Discipline](#key-naming-and-shard-discipline).
@@ -74,8 +97,8 @@ FireMUD supports a small set of reference deployment profiles for **Coordination
 Intended for local development and short-lived preview stacks.
 
 - **Topology**
-  - Single Redis instance, typically running in Docker Compose.
-  - Coordination and cache/rate-limit workloads **may share** the same process for convenience.
+  - At least **two Redis deployments** (Coordination Redis and Cache/Rate-Limit Redis), typically running as separate containers in Docker Compose on a single developer machine.
+  - Coordination and cache/rate-limit workloads never share a single Redis process; even in dev, they run as distinct services so reset tooling and observability behave like larger environments.
 - **AOF settings and expectations**
   - `appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`.
   - AOF files are preserved across restarts during a given dev session but may be discarded freely (for example, via the dev reset tooling).
@@ -83,10 +106,7 @@ Intended for local development and short-lived preview stacks.
 - **Snapshot / RDB settings**
   - Use Redis defaults or disable RDB snapshots entirely if local disk is constrained; dev correctness relies on AOF replay and tick idempotency, not on RDB snapshots.
 - **Reset & recovery path**
-  - Use the local dev reset helpers (for example `./gradlew devDown && ./gradlew devUp` or the `dev-tools` scripts) to wipe and recreate the single-node instance. Manual `rm` of Docker volumes is acceptable in this profile because no player-facing guarantees apply.
-- **Cache/Rate-Limit Redis**
-  - Allowed to share the same host/port as Coordination Redis in this profile.
-  - Accept that rate-limiter traffic can affect tick latency; this is fine for low-concurrency development and smoke tests.
+  - Use the local dev reset helpers (for example `./gradlew devDown && ./gradlew devUp` or the `dev-tools` scripts) to wipe and recreate the **Coordination Redis** container/volume only. Manual `rm` of the coordination data volume is acceptable in this profile because no player-facing guarantees apply; the Cache/Rate-Limit Redis deployment remains separate and is not reset by coordination runbooks.
 - **Mandatory metrics and dashboards**
   - Basic Redis health: uptime, used memory, command latency.
   - AOF size and restart time (primarily to spot obvious misconfigurations).
@@ -549,6 +569,30 @@ To make Redis Cluster slotting rules explicit:
   - `remote:{tenantId}:{entityId}` and similar prefixes are treated as **coordination keys** and live on Coordination Redis alongside tick, timer, and retry prefixes so cross-region follow-ups share the same AOF, tail-loss, and reset semantics. Cached room views and other read-side aggregates use cache-specific prefixes such as `view:roomLook:{tenantId}:{roomId}` and are stored on Cache/Rate-Limit Redis, not Coordination Redis.
 
 All multi-key Lua scripts that need atomic coordination use only region-scoped keys (sharing the same `{tenantRegionTag}`) or only tenant-scoped session keys; no script mixes region and session hash tags in a single `EVALSHA` call.
+
+### Cache/Rate-Limit Redis Key Catalog
+
+Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination log and may be evicted under pressure. Designs and CI treat this table as the authoritative catalog for non-coordination Redis keys; new cache/rate-limit prefixes must be added here and labeled with their role.
+
+| Prefix | Role | Owner / Semantics |
+| --- | --- | --- |
+| `inventory:{tenantId}:{containerId}` | Cache | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. |
+| `characterCache:{tenantId}:{characterId}` | Cache | Entity Management – cached character graphs for hot reads. |
+| `worldDynamic:{tenantId}:{aggregateId}` | Cache | World Management – cached dynamic world aggregates (for example, room dynamic state). |
+| `room:{tenantId}:{roomId}` | Cache | World Management – cached room snapshots/topology slices for LOOK and navigation. |
+| `view:roomLook:{tenantId}:{roomId}` | Cache | Game Session / Game Logic – cached rendered or pre-assembled room views for LOOK and similar commands. |
+| `ratelimit:{tenantId}:{bucket}:{timeWindow}` (and optional `:{shard}`) | Cache / Rate-Limit | Spring Cloud Gateway – rate-limit buckets and optional sharded buckets as described in the Redis cache & rate-limiting doc. |
+| `automation_queue:{tenantId}:*` | Cache | Automation & Scripting – queued automation work items awaiting staging into automation ticks. |
+| `script_quota:{tenantId}:{scriptId}` | Cache | Automation & Scripting – per-script quota counters and fairness budgets. |
+| `chat:say:{tenantId}:{playerId}` | Cache | Social & Groups – short-lived chat history for “say” messages. |
+| `chat:tell:{tenantId}:{conversationId}` | Cache | Social & Groups – short-lived direct-message history per conversation. |
+| `chat:guild:{tenantId}:{guildId}` | Cache | Social & Groups – short-lived guild chat history. |
+| `chat:account:{tenantId}:{accountId}` | Cache | Social & Groups – short-lived account-to-account message history. |
+
+CI and code review checks are expected to:
+
+- Fail when new Redis prefixes are introduced in cache/rate-limit contexts without being added to this catalog.
+- Ensure that cache/rate-limit tooling and scripts explicitly bind to the Cache/Rate-Limit Redis role, not Coordination Redis, when using these prefixes.
 
 #### Size and Complexity Budgets
 
@@ -1585,6 +1629,44 @@ FireMUD actively monitors Redis performance and tick health:
   [Developer Setup](../../DEVELOPER_SETUP.md#redis-debugging)
 
 > 🔗 Redis observability feeds into the common stack described in [Logging & Monitoring](./system-architecture-logging-monitoring.md)
+
+### Redis SLO & Alert Checklist
+
+These are the **minimum** metrics and alerts expected per Redis role before hosting real players. Detailed thresholds live in this document and in the logging/monitoring guide; this section summarizes the essentials.
+
+- **Coordination Redis (ticks, locks, timers, sessions)**
+  - Latency:
+    - Track p95/p99 latency for tick-related Lua scripts and commands (for example, `tick:*`, `timer:*`, `retry:*`, `session:*`), with alerts when:
+      - p99 exceeds a low double‑digit ms budget for several minutes, or
+      - p99 approaches or exceeds configured tick/lock TTL headroom ratios.
+  - AOF size and restart time:
+    - Monitor AOF size per node and restart duration during maintenance.
+    - Alert when AOF exceeds the soft size budget for the profile or when restart times regularly exceed the documented target window.
+  - Coordination key health:
+    - Pending tick entries and stuck `pending` keys per `{tenantId, regionId}`.
+    - Timer and retry queue cardinality; alerts when they exceed the documented safety envelopes or grow monotonically.
+    - Lock contention and over‑TTL ticks (for example, `redis.tick.lock_acquire_failed`, `tick.over_ttl_total`).
+  - Region and cluster health:
+    - Region health state (`HEALTHY`, `DEGRADED`, `COORDINATION_UNTRUSTWORTHY` / `HALTED`) surfaced via metrics and dashboards.
+    - Replication lag, blocked clients, and script load failures with clear alerts when:
+      - Lag crosses the red line relative to `tick_interval_ms`, or
+      - Script availability or `redis.up` gauges indicate loss of coordination for a shard.
+
+- **Cache/Rate‑Limit Redis**
+  - Memory and eviction:
+    - Track `used_memory` vs `maxmemory` and eviction counters.
+    - Alert when sustained evictions occur while `used_memory` hovers near `maxmemory` (“cache under pressure”) and when a single prefix/tenant dominates usage.
+  - Keyspace and hit rate:
+    - Keyspace size and `keyspace_hits` / `keyspace_misses` for cache prefixes.
+    - Optional alerts when hit rates drop sharply in combination with elevated evictions or latency.
+  - Rate‑limit buckets:
+    - Cardinality and memory usage for `ratelimit:{tenantId}:{bucket}:{timeWindow}[:{shard}]` keys.
+    - Alerts when:
+      - Per‑tenant bucket counts or memory usage exceed expected envelopes, or
+      - Rate‑limit checks begin failing due to Redis errors or timeouts.
+  - Latency and connectivity:
+    - Basic Redis latency and `redis.up` gauges for the cache deployment.
+    - Alerts when cache latency or errors threaten to impact gateway behavior even though Coordination Redis remains healthy.
 
 ### Metrics Cardinality and Aggregation
 

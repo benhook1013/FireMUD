@@ -28,6 +28,8 @@ All clients — whether connecting via Telnet or WebSocket — authenticate usin
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
+Telnet-specific behaviors (such as the optional `SESSION` envelope used by advanced clients) reuse this same canonical login flow. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
+
 ### Mapping to the Account Service
 
 #### Plain-text `LOGIN`/`LOGON` command mapping

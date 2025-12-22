@@ -38,7 +38,8 @@ class TelnetPipelineIntegrationTest {
             TelnetServerHandler::createWebSocket,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
-            lookCacheService);
+            lookCacheService,
+            0);
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
@@ -81,7 +82,8 @@ class TelnetPipelineIntegrationTest {
             TelnetServerHandler::createWebSocket,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
-            lookCacheService);
+            lookCacheService,
+            0);
 
     WebSocket ws = Mockito.mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);

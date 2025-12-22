@@ -32,7 +32,7 @@ The invariants and contracts in `system-architecture-redis.md` remain authoritat
    - Restart time is routinely above 60 seconds for Coordination Redis nodes, or
    - Daily AOF growth is consistently above ~500 MiB/day per node without a clear explanation (for example, a deliberate large-scale test).
 2. Schedule a maintenance window.
-3. Stop game services for affected tenants/regions (or globally for a single-node deployment).
+3. Stop game services for affected tenants/regions (or globally for a small/self-hosted deployment).
 4. Reset Coordination Redis:
    - Stop Redis.
    - Delete or recreate the volume that holds the AOF.
@@ -83,9 +83,10 @@ The steps mirror the “AOF too large” runbook but are driven by operator inte
 
 1. **Plan scope**
    - Decide whether the reset applies:
-     - To a whole Coordination Redis deployment (single-node dev, small clusters), or
+     - To a whole Coordination Redis deployment (dev, small clusters), or
      - To one logical deployment / tenant subset in larger setups (for example, a specific Coordination Redis instance per environment or shard).
    - Confirm that all affected workloads are classified as **reset-tolerant** in the main Redis architecture doc; do not use this runbook for prefixes marked reset-sensitive or reset-forbidden.
+   - Verify that **Coordination Redis and Cache/Rate-Limit Redis are distinct deployments**. Coordination reset tooling and jobs must refuse to run if `FIREMUD_REDIS_COORD_HOST:PORT == FIREMUD_REDIS_CACHE_HOST:PORT`, since a reset in that topology would also discard cache/rate-limit state and violate the role separation guarantees.
 2. **Quiesce gameplay**
    - Pause ticks and stop accepting new gameplay commands for the affected scope using the Game Session admin/control APIs (or by shutting down dependent services for small/self-hosted installs).
    - Wait for in-flight requests to drain; regions should stop advancing and no new `pending` entries should be created.
@@ -129,6 +130,16 @@ Today, Coordination Redis is intentionally used only for reset-tolerant workload
 - Stronger durable stores (for example PostgreSQL or Kafka) as the primary record of long-lived streams, with Redis limited to cache/index roles that remain reset-tolerant.
 
 Reset tooling and runbooks in this document apply **only** to reset-tolerant workloads unless explicitly noted.
+
+## Session TTL & Reset Operator Flows
+
+Session lifetimes and coordination resets interact in predictable ways. The table below captures recommended operator flows for common scenarios; refer to [Environment & Secrets – Authentication Variables](./infrastructure/environment-and-secrets.md#authentication) and [Redis Architecture – Session Keys and Gameplay Binding](./system-architecture-redis.md#session-keys-and-gameplay-binding) for full details.
+
+| Scenario | Steps | Redis impact | Player behavior | Optional cleanup |
+| --- | --- | --- | --- | --- |
+| Decrease JWT/session TTL without reset | Lower `FIREMUD_AUTH_JWT_EXPIRATION_MS` and/or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, roll out services. | New `session:{tenantId}:{sessionId}` and `session:{tenantId}:{tokenHash}` keys get shorter TTLs; existing keys keep their original TTL until they expire naturally. | Existing sessions continue until their original TTLs; new logins and reconnects enforce the tighter lifetime immediately. | Not required. Operators may optionally run per‑tenant session cleanup (delete `session:{tenantId}:*`) to accelerate convergence if memory is tight. |
+| Decrease JWT/session TTL and intentionally force reconnect | Same as above, then proactively delete session keys for selected tenants/regions (for example, `session:{tenantId}:*`) during a maintenance window. | Coordination Redis drops affected session keys immediately; memory for those sessions is reclaimed at once. | All affected players must log in again; reconnect attempts for deleted sessions behave like expired sessions. | Recommended when making a large TTL reduction and wanting a clean cut-over or when reclaiming session memory quickly. |
+| Coordination reset with many active sessions | Follow the **Explicit Coordination Reset** runbook for the targeted scope; all coordination prefixes, including `session:*`, are dropped for the affected deployment/regions. | Coordination Redis restarts with an empty keyspace for coordination prefixes (locks, timers, queues, `session:*`, etc.). | All gameplay sessions are effectively terminated; players must log in again and sessions are recreated under the new coordination state. | No separate session cleanup is needed; the reset itself drops `session:*` keys. Operators should communicate expected reconnect behavior to players and monitor memory/latency as sessions rebuild. |
 
 ## Lua Compatibility Registry & Script Upgrades
 

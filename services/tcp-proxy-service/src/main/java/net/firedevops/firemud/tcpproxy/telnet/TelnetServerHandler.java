@@ -80,6 +80,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final LookCacheService lookCacheService;
   private volatile boolean loginAcknowledged;
   private volatile boolean cachedLookDelivered;
+  private final int maxMalformedSessionEnvelopes;
+  private int malformedSessionEnvelopes;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -104,7 +106,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         TelnetServerHandler::createWebSocket,
         eventService,
         bufferDepth,
-        null);
+        null,
+        0);
   }
 
   TelnetServerHandler(
@@ -131,7 +134,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         webSocketConnector,
         eventService,
         bufferDepth,
-        null);
+        null,
+        0);
   }
 
   TelnetServerHandler(
@@ -146,7 +150,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       WebSocketConnector webSocketConnector,
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth,
-      LookCacheService lookCacheService) {
+      LookCacheService lookCacheService,
+      int maxMalformedSessionEnvelopes) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.devIsolated = devIsolated;
     this.onConnect = onConnect;
@@ -166,6 +171,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.reconnectCounter.increment(0.0);
     updateBufferDepthGauge();
     this.lookCacheService = lookCacheService;
+    this.maxMalformedSessionEnvelopes = maxMalformedSessionEnvelopes;
   }
 
   @FunctionalInterface
@@ -434,8 +440,23 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     boolean captured = sessionContext.captureFromEnvelope(sanitized);
     if (captured) {
       notifyConnectIfReady();
+      return true;
     }
-    return captured;
+    if (maxMalformedSessionEnvelopes > 0 && looksLikeSessionEnvelope(sanitized)) {
+      malformedSessionEnvelopes++;
+      if (malformedSessionEnvelopes >= maxMalformedSessionEnvelopes && !closing) {
+        logger.warn(
+            "Closing Telnet session after {} malformed SESSION envelopes (limit={})",
+            malformedSessionEnvelopes,
+            maxMalformedSessionEnvelopes);
+        discardedCommandCounter.increment();
+        if (context != null) {
+          closing = true;
+          context.close();
+        }
+      }
+    }
+    return false;
   }
 
   private void cancelIdleCheck() {
@@ -873,5 +894,16 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     responseBuf.writeByte(response);
     responseBuf.writeByte(option);
     ctx.writeAndFlush(responseBuf);
+  }
+
+  private boolean looksLikeSessionEnvelope(String sanitized) {
+    if (sanitized == null) {
+      return false;
+    }
+    String trimmed = sanitized.trim();
+    if (trimmed.isEmpty()) {
+      return false;
+    }
+    return trimmed.toUpperCase(Locale.ROOT).startsWith("SESSION ");
   }
 }

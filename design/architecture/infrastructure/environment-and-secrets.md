@@ -73,33 +73,23 @@ Cache/Rate‑Limit Redis (gateway rate limiting, caches):
 
 Precedence and safety rules:
 
-- All Spring profiles (dev and non‑dev) **must** configure explicit endpoints for coordination and cache/rate-limit traffic:
+- All Spring profiles (dev and non‑dev) **must** configure explicit, **distinct** endpoints for coordination and cache/rate-limit traffic:
   - Coordination clients resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
   - Cache/rate‑limit clients resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - Services **fail fast at startup** if:
   - They require Coordination Redis but lack `FIREMUD_REDIS_COORD_*`, or
   - They require Cache/Rate‑Limit Redis but lack `FIREMUD_REDIS_CACHE_*`.
-
-> **Shared Redis warning (single-node only):**
-> Running **both** Coordination Redis and Cache/Rate‑Limit Redis workloads on a
-> single Redis instance (for example by pointing `FIREMUD_REDIS_COORD_HOST`
-> and `FIREMUD_REDIS_CACHE_HOST` at the same host/port) is recommended **only**
-> for local development and very low-concurrency hobby servers (for example, a
-> handful of concurrent players and modest HTTP/WebSocket traffic). Above that
-> level—roughly once you expect more than a few dozen concurrent players or
-> sustained gateway traffic beyond simple smoke tests—you should configure
-> **distinct deployments** for Coordination Redis and Cache/Rate‑Limit Redis as
-> described in the main Redis architecture doc. This prevents noisy
-> cache/rate-limit traffic from impacting tick/session latency.
+- It is **not supported** to point `FIREMUD_REDIS_COORD_HOST:PORT` and `FIREMUD_REDIS_CACHE_HOST:PORT` at the same Redis instance in any environment, including local development. Coordination and cache/rate‑limit roles must always run on separate Redis deployments (for example, two containers on the same developer machine).
 
 Player‑facing environments (production, staging, QA, and any environment used to
 validate performance or correctness) **must** configure Coordination Redis and
 Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the
-same host/port for both in those environments is considered non‑compliant with
-the Redis architecture because it reintroduces eviction and latency coupling
-between coordination keys and cache/rate‑limit traffic. Any ad-hoc “single Redis
-for all roles” topology is treated as an unsupported experiment and must not be
-used for shared or player-facing environments.
+same host/port for both is considered non‑compliant with the Redis architecture
+because it reintroduces eviction and latency coupling between coordination keys
+and cache/rate‑limit traffic. Any ad-hoc “single Redis for all roles” topology
+is treated as an unsupported experiment and must not be used for shared or
+player-facing environments or for any cluster that runs coordination reset
+tooling.
 
 ### gRPC TLS Certificates
 

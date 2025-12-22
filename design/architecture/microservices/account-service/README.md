@@ -19,7 +19,7 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 - Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
 - The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
-- Session information is stored in Redis as transient data for quick reconnections.
+// Session information is stored in Redis as transient data for quick reconnections.
 - Creation events are logged to the Logging & Admin Service via a saga step.
 - Ban and recovery events are logged to the Logging & Admin Service for auditability.
 - Account-to-character relationships allow players to own characters across multiple games.
@@ -40,6 +40,17 @@ Public login APIs exist for administrators and account portals, but gameplay cli
   orchestrated using the Saga pattern outlined in
   [Transaction Strategies](../../system-architecture-transactions.md).
 - Leverages the [Shared Libraries](../../system-architecture-shared-libraries.md) for common DTOs, logging interceptors, and Micrometer metrics.
+
+### Redis Role and Prefixes
+
+- **Coordination Redis**
+  - The Account Service does **not** participate in tick or gameplay coordination and never touches `tick:*`, `timer:*`, `retry:*`, or other tick-related prefixes on Coordination Redis; those responsibilities remain with the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
+  - It does, however, use the tenant-scoped auth/session keys documented under “Tenant-scoped session/auth keys” in [Redis Architecture – Key Slotting Cheat Sheet](../../system-architecture-redis.md#key-slotting-cheat-sheet):
+    - `session:{tenantId}:{tokenHash}` – Account/JWT bindings for internal auth (hash-tagging on `{tenantId}` only).
+  - These keys live on Coordination Redis so that auth/session bindings share the same AOF, reset, and hash-tag semantics as gameplay sessions, and they are treated as short-lived, reset-tolerant state.
+- **Cache/Rate-Limit Redis**
+  - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
+  - When introducing new Redis usage here, follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so auth/session keys, roles, and observability remain consistent with the global design.
 
 ## Key Features
 

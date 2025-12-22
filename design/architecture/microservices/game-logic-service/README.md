@@ -38,6 +38,15 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
 
+### Redis Role and Prefixes
+
+- **Coordination Redis**
+  - This service does **not** access Coordination Redis directly. It never issues commands against `tick:*`, `timer:*`, `retry:*`, `session:*`, or other coordination prefixes; all tick scheduling, locking, and staging live in the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md).
+  - Tick context is provided by Game Session via gRPC (for example, `tickId`, region metadata, and effect-guard identifiers) rather than by reading Redis state.
+- **Cache/Rate-Limit Redis**
+  - The Game Logic Service does not maintain its own Redis-backed caches today; any future read-side caches for rules or computed aggregates must use **Cache/Rate-Limit Redis** and the key naming/TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), never Coordination Redis.
+  - Any future Redis usage in this service should adhere to the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist), including prefix registration, role selection, and slotting rules.
+
 ## Key Features
 
 - Command parsing and alias system.

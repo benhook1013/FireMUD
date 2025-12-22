@@ -33,6 +33,10 @@ class TelnetServerTest {
             "",
             "",
             false,
+            0,
+            0,
+            4096,
+            5,
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
             Mockito.mock(TcpProxyEventService.class),
             Mockito.mock(LookCacheService.class));
@@ -59,6 +63,10 @@ class TelnetServerTest {
                     cert,
                     key,
                     false,
+                    0,
+                    0,
+                    4096,
+                    5,
                     registry,
                     Mockito.mock(TcpProxyEventService.class),
                     Mockito.mock(LookCacheService.class)));

@@ -97,6 +97,8 @@ To keep operational scripts aligned with application code:
   - Ops scripts contain raw `EVAL`/`EVALSHA` against coordination deployments.
   - Scripts construct `tick:*`, `timer:*`, `retry:*`, `remote:*`, or `session:*` keys by hand instead of calling shared helpers.
   - Scripts hard-code Redis host/port or URLs instead of using the shared `RedisCoordConfig` / `RedisCacheConfig` helpers and role-specific environment variables.
+  - Cache/rate-limit scripts introduce Redis prefixes that are not listed in the **Cache/Rate-Limit Redis Key Catalog** in `system-architecture-redis.md`, or misuse those prefixes against the wrong Redis role.
+  - Automation-related Lua or tooling scripts reference both `automation:*` and `tick:*` prefixes in a single operation, violating the automation cluster slotting rules in `system-architecture-redis-lua-patterns.md` and the Automation & Scripting service design.
 
 Maintenance scripts that genuinely need to work with coordination keys must:
 

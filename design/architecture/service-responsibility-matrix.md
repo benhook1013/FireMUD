@@ -14,7 +14,7 @@
 | Email and system notifications | | | ✔ | | | | | | | | |
 | Payment, subscriptions, and bans | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
-| WebSocket connection/session lifecycle | | | | ✔ | | | | | | | |
+| WebSocket connection/session lifecycle | | | | ✔ | | | | | | | ✔ |
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis) | | | | ✔ | | | | | | | |
@@ -35,6 +35,8 @@
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |
 | Redis-backed automation tick coordination (`automation:*` keys) | | | | | | | ✔ | | | | |
+| Coordination Redis participation via shared helpers (locks, automation tick prefixes) | | | | ✔ | ✔ | | ✔ | | | | |
+| Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | | | | ✔ | | ✔ | ✔ | | | ✔ |
 | Chat and private messaging | | | | | | | | ✔ | | | |
 | Guilds and group discovery | | | | | | | | ✔ | | | |
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |

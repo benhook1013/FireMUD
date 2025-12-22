@@ -48,16 +48,16 @@ Despite their differences, both protocols are normalized into the same internal 
 ### Bridging to the backend
 
 - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
-- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client; forwarding uses mutual TLS for this hop.
+- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client; in the **target-state** design this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). See the TCP Proxy Service design for current implementation status.
 - Forwards the client IP via `X-Client-IP` so the Game Session Service can enforce connection limits and rate limiting centrally. The TCP Proxy always sets or overwrites this header for Telnet-derived connections, and downstream services must treat `X-Client-IP` as authoritative only when it originates from the TCP Proxy → Gateway path in combination with the Gateway’s `X-Forwarded-For` handling.
 - Proxies I/O between the TCP client and Spring Cloud Gateway.
 
 ### Buffering, reconnection, and observability
 
-- Buffers active input while the client remains connected and discards it if the TCP connection drops.
+- Buffers active input while the client remains connected and discards it if the TCP connection drops; the proxy never replays Telnet commands after a disconnect.
 - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and session recovery are handled as described in [Reconnection Strategy](./system-architecture-reconnection.md).
-- Disconnect handling is **layered**: the proxy cleans up Telnet sessions, Spring Cloud Gateway automatically recreates WebSocket backends, and the Game Session Service reloads state from Redis.
-- The proxy defines a `NotifyDisconnect` gRPC event so the Game Session Service can recover Telnet sessions when Telnet clients drop.
+- Disconnect handling is **layered**: the proxy cleans up Telnet sessions, Spring Cloud Gateway automatically recreates WebSocket backends, and the Game Session Service reloads state from Redis-backed session and command queues.
+- The proxy defines a `NotifyDisconnect` gRPC event so the Game Session Service can recover Telnet sessions when Telnet clients drop. This event stream is best-effort and **at-least-once**; Game Session must consume events idempotently keyed by `{sessionId, tenantId}` and may treat missing events as normal disconnects detected at other layers.
 - Metrics are exported at `/actuator/prometheus` and tracing data is sent to the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 
 ### WebSocket Bridge Configuration

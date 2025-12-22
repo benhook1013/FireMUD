@@ -66,6 +66,19 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - `mail_message` table stores asynchronous player mail.
 - `faction` and `faction_standing` tables are defined in the [Automation & Scripting Service](../automation-scripting-service/README.md) to track player reputation. Integration with this service for NPC behaviour is available.
 
+### Redis Role and Prefixes
+
+- **Coordination Redis**
+  - Social & Groups does **not** own or modify Coordination Redis prefixes. It does not touch `tick:*`, `timer:*`, `retry:*`, `session:*`, or automation coordination keys; gameplay coordination and automation ticks remain the responsibility of the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
+- **Cache/Rate-Limit Redis**
+  - Uses **Cache/Rate-Limit Redis** for chat history buffers and similar transient social aggregates under prefixes such as:
+    - `chat:say:{tenantId}:{playerId}`
+    - `chat:tell:{tenantId}:{conversationId}`
+    - `chat:guild:{tenantId}:{guildId}`
+    - `chat:account:{tenantId}:{accountId}`
+  - These lists mirror persisted history in PostgreSQL for quick retrieval and are subject to TTL and max-message limits configured via `FIREMUD_CHAT_*` variables, following the cache key and TTL guidance in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - New chat/cache prefixes or changes to Redis usage should be validated against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so they remain aligned with the global key catalog and SLOs.
+
 ### Chat Pipeline
 
 - Messages are cached in Redis lists and delivered to WebSocket channels

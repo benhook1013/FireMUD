@@ -7,8 +7,23 @@ option java_multiple_files = true;
 
 import "shared/v1/errors.proto";
 
+// TcpProxyService exposes internal-only gRPC endpoints for health checks and
+// Telnet lifecycle events. These RPCs are not exposed through Spring Cloud
+// Gateway and are intended for use by other backend services and tooling.
 service TcpProxyService {
+  // Simple connectivity check used by operators and tests.
   rpc Ping(PingRequest) returns (PingResponse);
+
+  // Emits a best-effort, at-least-once lifecycle event whenever a Telnet
+  // connection associated with a gameplay session closes.
+  //
+  // Semantics:
+  // - Events may be delivered more than once; the Game Session Service must
+  //   treat them as idempotent, keyed by {session_id, tenant_id}.
+  // - The proxy does not buffer or replay gameplay commands; it only signals
+  //   disconnects. Command queues remain owned by Game Session and Redis.
+  // - Transport-level failures surface as standard gRPC statuses; logical
+  //   failures are reported via the ErrorDetail in NotifyDisconnectResponse.
   rpc NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse);
 }
 
@@ -18,11 +33,17 @@ message PingResponse {
   string message = 1;
 }
 
+// Identifies the gameplay session whose Telnet connection just closed.
+// session_id corresponds to the Game Session Service's session identifier,
+// not the raw TCP socket, and tenant_id scopes the event for multi-tenant
+// routing and idempotency.
 message NotifyDisconnectRequest {
   string session_id = 1;
   string tenant_id = 2;
 }
 
+// Error is empty on success. When populated, it contains a logical failure
+// (for example, unknown session) while the transport status remains OK.
 message NotifyDisconnectResponse {
   shared.v1.ErrorDetail error = 1;
 }

@@ -8,7 +8,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 - **Session takeover and resume** – Game Session now detects existing `accountId`/`playerId` links, emits `gamesession.session.takeover` and `gamesession.session.resume` counters, and rebinds Redis tick/command queues when the same character logs back in after a disconnect or another client takes over.
 - **Telnet/WebSocket parity** – The TCP Proxy → Gateway → Game Session path now shares the same login/resume flow so Telnet SESSION envelopes and WebSocket clients follow identical reconnection behavior.
-- **Remaining work** – Cross-region handoff, buffered-input replay after long outages, and admin-driven forced session transfers remain planned future steps.
+- **Remaining work** – Cross-region handoff, **Redis-backed command queue replay** after long outages (not proxy-side buffering), and admin-driven forced session transfers remain planned future steps.
 
 ## Reconnection Layers
 
@@ -32,8 +32,8 @@ TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
-- No gameplay state is preserved across reconnects — Game Session Service handles recovery
-- Provides a `NotifyDisconnect` gRPC hook for session recovery integration
+- No gameplay state is preserved across reconnects — Game Session Service handles recovery from Redis-backed session and command queues
+- Provides a `NotifyDisconnect` gRPC hook for session recovery integration; events are delivered on a best-effort, at-least-once basis and must be treated as idempotent by the Game Session Service.
 - Runtime options such as the listening port and Spring Cloud Gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables)).
 
 ### Spring Cloud Gateway (Web Clients)

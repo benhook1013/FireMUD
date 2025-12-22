@@ -304,6 +304,58 @@ jobs:
               });
             }
 
+  smoke-core:
+    name: Core Smoke Tests
+    needs: [build-and-test]
+    runs-on: ubuntu-latest
+    # TODO: once the Telnet → Gateway → Game Session slice is stable in CI,
+    # remove continue-on-error so smoke failures block the workflow.
+    continue-on-error: true
+    timeout-minutes: 25
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: false
+
+      - name: 🚀 Start Dev Stack (devUp)
+        run: ./gradlew devUp
+
+      - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
+        run: |
+          cd services/tcp-proxy-service
+          for attempt in 1 2 3; do
+            echo "Attempt ${attempt}: running Telnet LOGIN + LOOK smoke test..."
+            if ./telnet-login-look-smoke.sh; then
+              echo "Telnet smoke test succeeded on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Telnet smoke test attempt ${attempt} failed; waiting before retry..."
+            sleep 10
+          done
+          echo "Telnet LOGIN + LOOK smoke test failed after 3 attempts."
+          exit 1
+
+      - name: 📜 Dump Docker Compose Logs on Failure
+        if: failure()
+        run: |
+          if [ -f docker/docker-compose.yml ]; then
+            docker compose -f docker/docker-compose.yml logs || true
+          fi
+
+      - name: 🧹 Stop Dev Stack (devDown)
+        if: always()
+        run: ./gradlew devDown
+
   trivy-scan:
     name: Trivy Security Scan
     runs-on: ubuntu-latest

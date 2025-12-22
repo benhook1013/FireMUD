@@ -21,7 +21,7 @@ This directory contains detailed design documents for each core microservice in 
 | [World Management Service](./world-management-service/) | Handles world maps, regions, pathfinding data, and procedural generation. |
 | [Service Template](./service-template.md) | Template for creating new microservice docs. |
 
-All services share the same cluster and databases. Each table stores a `tenantId` and Redis keys use a matching prefix so data stays isolated between games. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details.
+All services share the same cluster and databases. Each table stores a `tenantId` and Redis keys use a matching prefix so data stays isolated between games. See [Multi-Tenancy](../system-architecture-multi-tenancy.md) for details. Service-specific Redis behavior (Coordination vs Cache/Rate-Limit roles and key prefixes) is documented in each service README under its **Redis Role and Prefixes** section.
 
 ---
 

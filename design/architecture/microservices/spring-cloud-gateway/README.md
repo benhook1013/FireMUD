@@ -121,6 +121,15 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
 | `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Shared authentication configuration (JWT signing and derived session TTL); not used by Spring Cloud Gateway to validate JWTs | Described in [Authentication Variables](../../infrastructure/environment-and-secrets.md#authentication-variables) |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for traces | Described in [Observability](../../infrastructure/environment-and-secrets.md#observability) |
 
+### Redis Role and Prefixes
+
+- **Coordination Redis**
+  - Spring Cloud Gateway does not access Coordination Redis. It never issues commands against `tick:*`, `timer:*`, `retry:*`, `session:*`, or other coordination prefixes; gameplay coordination remains the responsibility of the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md).
+- **Cache/Rate-Limit Redis**
+  - Uses **Cache/Rate-Limit Redis** exclusively for rate limiting and any future gateway-local caches, connecting via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` as documented in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) and [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Rate-limit buckets and related keys follow the `ratelimit:{tenantId}:{bucket}:{timeWindow}` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design); gateway code should not invent ad-hoc `ratelimit:*` shapes.
+  - Changes to rate-limiting strategy or cache usage in the gateway should be reviewed using the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role separation, and monitoring coverage.
+
 The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are not used by Spring Cloud Gateway to validate or parse JWTs; admin and other meta/control services consume these properties when verifying tokens, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
 
 When internal WebSocket clients such as the TCP Proxy Service connect over

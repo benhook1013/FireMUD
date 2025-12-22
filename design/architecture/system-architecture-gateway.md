@@ -50,12 +50,12 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   - Route-based filtering
   - Consistent handling across all clients
 
-At a configuration level, Spring Cloud Gateway defines WebSocket routes in `application.yml` (and profile-specific route files) and applies filters (such as rate limiting and retries) before forwarding to backend services. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables.
+At a configuration level, Spring Cloud Gateway defines WebSocket routes in `application.yml` (and profile-specific route files) and applies filters (such as rate limiting and retries) before forwarding to backend services. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for the authoritative description of route configuration, service discovery overrides, and gateway-related environment variables. For gameplay login and session semantics, this document defers to the canonical flow in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow); this doc focuses on transport-level responsibilities only.
 
 ### Gameplay WebSocket Route
 
 - **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service. The `/api/session/**` predicate remains a legacy alias and is kept only for backward compatibility.
-- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value is set to `wss://…/ws/game` so the proxy–gateway hop is always encrypted.
+- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value is set to `wss://…/ws/game` so the proxy–gateway hop is always encrypted, matching the target-state defined in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway).
 - **Required headers** – Spring Cloud Gateway preserves or sets:
   - `X-Client-IP` with the originating client address (Telnet clients via the TCP Proxy Service; web clients via the external load balancer).
   - `X-Session-Id` and `X-Tenant-Id` when provided by advanced Telnet clients via the `SESSION` envelope, so the Game Session Service can correlate gameplay with Redis session state.
@@ -84,12 +84,12 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 - JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 
-> **Redis topology guidance:** Sharing a single Redis instance for both
-> Coordination Redis and Cache/Rate‑Limit Redis is acceptable only for local
-> development and very small hobby deployments. For any player-facing
-> environment where you expect more than a handful of concurrent players or
-> sustained HTTP/WebSocket traffic, configure the Gateway to use a **separate
-> Cache/Rate‑Limit Redis deployment** so rate limiting and cache activity cannot
+> **Redis topology guidance:** Coordination Redis and Cache/Rate‑Limit Redis are
+> always deployed as **separate Redis instances** (for example, two containers
+> on a single dev machine or distinct pods/clusters in Kubernetes). Sharing a
+> single Redis instance for both roles is considered an unsupported experiment.
+> For any player-facing environment, configure the Gateway to use the dedicated
+> **Cache/Rate‑Limit Redis deployment** so rate limiting and cache activity cannot
 > interfere with tick/session coordination. See
 > [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#redis-connection)
 > and [Redis Architecture](./system-architecture-redis.md#redis-profiles) for

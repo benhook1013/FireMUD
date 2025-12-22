@@ -74,6 +74,10 @@ class TlsMisconfigurationIntegrationTest {
           certPath,
           keyPath,
           advertiseMcp,
+          0,
+          0,
+          4096,
+          5,
           meterRegistry,
           tcpProxyEventService,
           lookCacheService);

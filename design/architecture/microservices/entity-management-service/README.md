@@ -36,6 +36,16 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
 
+### Redis Role and Prefixes
+
+- **Coordination Redis participation**
+  - Acquires tick locks via shared helpers using keys of the form `tick:{tenantId}:{regionId}:lock:{entityId}` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
+  - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
+- **Cache/Rate-Limit Redis usage**
+  - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `characterCache:{tenantId}:{characterId}`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Cache entries are best-effort performance helpers; PostgreSQL remains the authoritative store for entity state and inventories.
+  - Any change to Redis usage in this service should be reviewed against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role selection, slotting, and observability updates.
+
 ## Key Features
 
 - Character and NPC management.

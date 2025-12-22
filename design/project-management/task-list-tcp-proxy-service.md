@@ -26,6 +26,7 @@
 
 - [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
 - [ ] Add advanced Telnet abuse detection heuristics and command filtering
+- [ ] Extend MCP and abuse observability metrics once Mud Client Protocol (MCP) support lands: add counters for dropped MCP control lines vs Telnet negotiation commands, per-reason breakdowns for discarded Telnet traffic (for example `reason="unsupported_option"`, `reason="malformed_envelope"`, `reason="buffer_overflow"`), and update the logging/monitoring docs so operators can distinguish legacy client quirks from truly abusive patterns.
 
 ## Scalability
 
@@ -34,15 +35,16 @@
 ## Reusable Microservice Checklist
 
 These tasks apply to every FireMUD service unless noted otherwise. Gateway and
-TCP Proxy skip the gRPC and database items but still expose health checks and
-participate in CI.
+TCP Proxy skip the **database** items but still expose health checks and
+internal gRPC endpoints; the proxy acts as an events-only gRPC server and does
+not initiate outbound gameplay gRPC calls to other services.
 
 ---
 
 ## Project Setup & CI
 
 - [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
-- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
+- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(already implemented for Gateway and TCP Proxy)*
 - [x] Provide a `Dockerfile` and Gradle task to build the image
 - [x] Create `README.md` with local setup instructions and design links
 - [ ] Ship dev-friendly gRPC TLS defaults (sample certs or plaintext toggle) so the proxy starts locally without provisioning certificates
@@ -77,10 +79,10 @@ participate in CI.
 ## Inter-Service Communication
 
 - [x] Use `firemud-common` protobuf types for shared messages
-- [x] *(N/A - events only)* Map errors to `ErrorDetail` with appropriate gRPC status codes
+- [x] *(events-only gRPC)* Map errors to `ErrorDetail` with appropriate gRPC status codes
 - [x] *(N/A - no service discovery)* Register with service discovery via helpers in `firemud-common`
-- [x] *(N/A - no direct gRPC)* Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [x] *(N/A - no direct gRPC)* Internal traffic communicates directly over gRPC (Gateway not involved)
+- [x] *(server-only; no outbound gRPC client calls)* Ensure any gRPC endpoints use mTLS certificates issued by cert-manager
+- [x] *(server-only; no outbound gRPC client calls)* Internal gRPC traffic terminates directly on this service (Gateway not involved)
 
 ---
 

@@ -37,7 +37,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Player session state for reconnect recovery lives in Redis using keys of the form
   `session:{tenantId}:{sessionId}` (only `tenantId` appears inside the hash tag braces) and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `{tenantId, regionId}` lifecycles rather than individual player sessions.
-  - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy.
+  - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `{sessionId, tenantId}` rather than a guaranteed source of truth.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../../system-architecture-transactions.md).
@@ -47,6 +47,23 @@ Orchestrates live game sessions, including tick execution, player input validati
   [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling). Game Session relies on these signals when binding gameplay sessions but does not implement its own credential or abuse detection logic.
 - Session objects are created as soon as a client connects. They remain unauthenticated until the Account Service verifies credentials and issues a token.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+
+### Redis Role and Prefixes
+
+- **Coordination Redis ownership**
+  - Owns **Coordination Redis** and all tick/coordination prefixes and Lua scripts registered in the shared script registry, including:
+    - `tick:{tenantRegionTag}:queue:{entityId}`
+    - `tick:{tenantRegionTag}:pending`
+    - `tick:{tenantRegionTag}:lock:{entityId}`
+    - `timer:{tenantRegionTag}`
+    - `retry:{tenantRegionTag}`
+    - `tick-executor-lease:{tenantRegionTag}`
+    - `remote:{tenantId}:{entityId}` and other coordination keys listed in [Redis Architecture – Key Format Examples](../../system-architecture-redis.md#key-format-examples).
+  - All multi-key coordination operations (ticks, timers, retries, locks, region leadership, and tick recovery flows) use registered Lua scripts that follow the determinism and idempotency rules in [FireMUD Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
+- **Cache/Rate-Limit Redis usage**
+  - Does not use Cache/Rate-Limit Redis for gameplay-critical coordination; session state, tick queues, locks, timers, and retry metadata always live on Coordination Redis so they share the same AOF and reset semantics described in [Redis Architecture – Redis Availability, Consistency, and Safety Guarantees](../../system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees).
+  - Any future Game Session–local caches must use **Cache/Rate-Limit Redis** and the key naming/TTL rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), and must not overlap with coordination prefixes.
+  - Changes to Redis usage in this service must follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so prefixes, roles, slotting, and SLOs stay consistent.
 
 ## Key Features
 

@@ -1,7 +1,12 @@
 # FireMUD System Architecture: Redis Cache & Rate Limiting
 
-Redis is already used for transient coordination (ticks, sessions, locks). This document describes how it will **eventually** back selected read-side caches and rate limiting as a performance optimization. It focuses on design principles, not an implemented feature set.
+Redis is already used for transient coordination (ticks, sessions, locks). This document describes how **Cache/Rate-Limit Redis** backs selected read-side caches and rate limiting as a performance optimization. It focuses on design principles and cross-service patterns; per-service design docs describe target behavior as if fully implemented.
 
+> ℹ️ **Implementation status**
+>
+> - Spring Cloud Gateway’s rate limiting is wired to Cache/Rate-Limit Redis today using the patterns in this document.
+> - Other services reference these cache and aggregate patterns (for example, Entity Management character caches and World Management room caches) as target-state behavior; concrete cache adoption may evolve over time while continuing to follow these rules.
+>
 > 🔗 Tick locks, session coordination, and Lua-based execution are covered in
 > [System Architecture: Redis](./system-architecture-redis.md). This document
 > focuses on cache/rate-limit usage and separation from Coordination Redis.
@@ -21,7 +26,7 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
 
 ## Candidate Cacheable Object Types
 
-This list is planning-only; it documents candidate categories rather than a final decision. Concrete cache choices will be revisited once profiling data and cross-service load metrics are available.
+This section catalogs the primary categories of objects that services cache in (or plan to cache in) Cache/Rate-Limit Redis. Concrete adoption per service is driven by profiling data and cross-service load metrics, but key shapes and invalidation strategies follow this design.
 
 - Static or rarely changing data:
   - World topology slices (room adjacency, precomputed path segments, region metadata that rarely changes).

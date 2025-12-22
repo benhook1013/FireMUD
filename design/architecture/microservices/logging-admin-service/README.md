@@ -39,7 +39,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 ## Key Features
 
 - Central log search for entries collected via Fluent Bit sidecars.
-- [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels.
+- [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`.
 - Tools for banning or restricting accounts.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../../system-architecture-transactions.md).
@@ -124,7 +124,11 @@ details on shared infrastructure components.
 The service uses the configuration approach from
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
 It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
-Redis variables are not required.
+
+### Redis Role and Prefixes
+
+- The Logging & Admin Service does **not** connect to Redis at runtime. It consumes Redis-derived metrics and coordination health information via Game Session’s APIs and exporters, but it never issues commands against Coordination Redis or Cache/Rate-Limit Redis directly; all remediation actions are driven through the documented runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) and Game Session control APIs.
+
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 

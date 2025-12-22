@@ -4,6 +4,7 @@
 
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
 The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
+This service also exposes an **internal-only gRPC API** (for `Ping` and `NotifyDisconnect`) used by other services and tooling; it is never published through Spring Cloud Gateway.
 
 ## Implementation Status
 
@@ -31,9 +32,13 @@ of truth and reconcile code/tests accordingly.
   treating this document as fully representative of production behaviour.
 - **Connection limits and abuse protection** – Connection caps, idle timeouts,
   and input size limits are documented here as the desired safeguards for the
-  DMZ boundary. When adding or modifying limits in code, keep metric names and
-  behaviours consistent with the “Connection Limits and Abuse Protection”
-  section and update this status note if significant deviations are required.
+  DMZ boundary. The implementation enforces `TCP_PROXY_MAX_CONNECTIONS`,
+  `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, `TCP_PROXY_MAX_LINE_BYTES`, and
+  `TCP_PROXY_MAX_MALFORMED_ENVELOPES` and emits metrics such as
+  `tcpproxy.connections.limit.exceeded` when caps are hit. When adding or
+  modifying limits in code, keep metric names and behaviours consistent with
+  this section and update this status note if significant deviations are
+  required.
 
 ### Responsibilities
 
@@ -56,13 +61,17 @@ of truth and reconcile code/tests accordingly.
   on the configured TCP port for classic clients (for example the Windows
   `telnet` command). Forwarding to the gateway uses WebSocket connections and
   supports mutual TLS. See [Security Architecture](../../system-architecture-security.md).
-- Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC link to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events.
+- Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC link to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events. This gRPC surface is **internal-only** and is secured using the same `FIREMUD_GRPC_*` certificate paths as other services.
 - Sanitizes incoming Telnet data and enforces a whitelist of
   **Telnet protocol commands** as described in the
   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
 - Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. The proxy always overwrites any incoming `X-Client-IP` header on Telnet traffic so downstream services can treat this value as “set by the TCP Proxy only,” and the Gateway combines it with its own `X-Forwarded-For` handling on the WebSocket side. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
 - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+
+### Redis Role and Prefixes
+
+- The TCP Proxy Service does **not** access Redis directly. It treats all Redis-backed session and coordination state as an implementation detail of the Game Session Service and only participates via WebSocket forwarding to Spring Cloud Gateway and the internal `NotifyDisconnect` gRPC surface.
 
 ### Reconnection Behaviour at the Proxy Layer
 
@@ -218,11 +227,17 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 The proxy does not expose a public client API. Instead it emits a gRPC event
 for internal coordination:
 
-- **NotifyDisconnect** – informs the Game Session Service when a Telnet client
+– **NotifyDisconnect** – informs the Game Session Service when a Telnet client
     drops so the session may be suspended.
 
 These events let the Game Session Service resume suspended sessions and deliver
-buffered commands. Their definitions live in
+any **Redis-backed queued commands** owned by the Game Session Service. The TCP
+Proxy never replays Telnet input after a disconnect; connection-local buffers
+are cleared as soon as the TCP session closes. The `NotifyDisconnect` event is
+therefore a **best-effort, at-least-once** lifecycle signal keyed by
+`{sessionId, tenantId}` rather than a request to re-run gameplay commands.
+
+Their definitions live in
 [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Session Envelope & Event Metrics
@@ -260,11 +275,15 @@ and also drive the event and metric generation below.
   parsed, the connection is bound to that `{sessionId, tenantId}` pair for its
   lifetime and those identifiers are propagated via headers and metrics. Subsequent
   lines beginning with `SESSION` are treated as normal text and do not rebind
-  the connection.
+  the connection under normal operation.
 - **Malformed `SESSION` lines** – if either `sessionId` or `tenantId` is missing
   or cannot be parsed, the line is logged and ignored; no error is sent back to
   the client. Clients that choose to use `SESSION` must resend a correct envelope
   or proceed with `LOGIN` only.
+- **Diagnostics mode (future enhancement)** – a debug/diagnostics mode may surface
+  explicit warnings or errors for malformed or repeated `SESSION` envelopes to
+  help advanced Telnet clients detect configuration issues. Until that mode ships,
+  the behavior above (one-shot binding, silent ignores) is considered canonical.
 
 #### Security considerations for `{sessionId, tenantId}`
 
@@ -475,6 +494,34 @@ than switching to a bare IP.
 Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The
 service exports OpenTelemetry spans to the collector defined by
 `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)) so traces appear in Jaeger.
+
+### Tuning TCP Proxy for Different Environments
+
+The connection and envelope limits exposed via `TCP_PROXY_MAX_CONNECTIONS`,
+`TCP_PROXY_MAX_CONNECTIONS_PER_IP`, and `TCP_PROXY_MAX_MALFORMED_ENVELOPES`
+are intended to be tuned per environment:
+
+- **Dev / Hobby setups**
+  - `TCP_PROXY_MAX_CONNECTIONS=50` – small cap to catch runaway local clients.
+  - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=10` – enough for multiple terminals per developer.
+  - `TCP_PROXY_MAX_MALFORMED_ENVELOPES=10` – generous tolerance while iterating on tools or tests.
+- **Small production deployments**
+  - `TCP_PROXY_MAX_CONNECTIONS` sized to expected concurrent players plus a safety margin (for example `500`–`1000` depending on cluster size).
+  - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=3`–`5` – allows multiple windows per player while limiting abuse from a single IP.
+  - `TCP_PROXY_MAX_MALFORMED_ENVELOPES=5` – closes connections that repeatedly send bad `SESSION` lines.
+- **Heavier deployments**
+  - Scale the proxy horizontally and keep per-pod limits moderate (for example `TCP_PROXY_MAX_CONNECTIONS=2000` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP=5`), rather than pushing a single instance to extreme totals.
+  - Treat sustained increases in `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded` as signals to either:
+    - Add capacity (more pods) and/or
+    - Block or throttle specific abusive IP ranges at the network or gateway layer.
+
+After changing any of these values, monitor at least:
+
+- `tcpproxy.connections.active`, `tcpproxy.connections.total`
+- `tcpproxy.connections.limit.exceeded`
+- `tcpproxy.telnet.discarded`
+
+for several release cycles to ensure that the new limits are effective without causing unexpected rejections for legitimate players.
 
 ## Proto Files
 

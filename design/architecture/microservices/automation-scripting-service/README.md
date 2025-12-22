@@ -41,6 +41,27 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   prefix; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
+### Redis Role and Prefixes
+
+- **Coordination Redis participation**
+  - Uses automation-specific coordination prefixes owned by the Game Session Service’s Lua registry, such as `automation:tick:{tenantId}:{scriptId}:lock`, `automation:tick:{tenantId}:{scriptId}:queue`, and `automation:tick:{tenantId}:{scriptId}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
+  - Automation scripts are registered as **single-key** Lua scripts that operate only on `automation:tick:*` and `automation_queue:*` keys; they never mix `automation:*` and `tick:*` prefixes in a single script invocation to avoid `CROSSSLOT` issues in Redis Cluster.
+- **Cache/Rate-Limit Redis usage**
+  - Stores script quota counters and similar best-effort aggregates in **Cache/Rate-Limit Redis** using prefixes such as `script_quota:{tenantId}:{scriptId}` and `automation_queue:{tenantId}:*`, following the cache key naming and isolation rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state.
+
+#### Redis Cluster Slotting Rules for Automation
+
+- Automation Lua scripts must never perform multi-key operations that span both `automation:*` and `tick:*` keys in a single invocation:
+  - **Allowed examples**
+    - A script that touches only `automation:tick:{tenantId}:{scriptId}:queue` and `automation:tick:{tenantId}:{scriptId}:pending` for a single `{tenantId, scriptId}`.
+    - A script that touches only `automation_queue:{tenantId}:*` keys for a single tenant.
+  - **Disallowed examples**
+    - A script that reads or writes both `automation:tick:{tenantId}:{scriptId}:*` and `tick:{tenantId}:{regionId}:*` keys in one `EVALSHA` call.
+    - A script that mixes `automation:tick:{tenantId}:{scriptId}:*` with `automation:tick:{otherTenantId}:{otherScriptId}:*` keys.
+- Automation work is staged under `automation:tick:*` and `automation_queue:*` and then handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes. This keeps automation scripts shard-local and avoids `CROSSSLOT` errors in Redis Cluster.
+  - Any change to automation Redis usage or Lua scripts must follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) and the automation slotting rules above.
+
 ## Key Features
 
 - Scriptable quests and event triggers
@@ -127,7 +148,7 @@ values fall below configurable thresholds the NPC may become `FLEEING` or
   - Game Session Service sends events that trigger scripts.
   - Game Logic Service for rule evaluation.
   - World Management Service receives world-state updates from scripts.
-- **External:** PostgreSQL for script storage and Redis for queuing automation tasks.
+  - **External:** PostgreSQL for script storage and Redis for queuing automation tasks and enforcing quotas (using the Coordination and Cache/Rate-Limit roles above).
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),

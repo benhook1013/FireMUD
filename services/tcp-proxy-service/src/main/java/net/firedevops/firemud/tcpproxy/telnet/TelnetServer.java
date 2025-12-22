@@ -6,7 +6,9 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
@@ -19,6 +21,8 @@ import io.netty.handler.ssl.SslContextBuilder;
 import java.io.File;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.cache.LookCacheService;
@@ -41,6 +45,10 @@ public final class TelnetServer {
   private final String certPath;
   private final String keyPath;
   private final boolean advertiseMcp;
+  private final int maxConnections;
+  private final int maxConnectionsPerIp;
+  private final int maxLineBytes;
+  private final int maxMalformedSessionEnvelopes;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
       new java.util.concurrent.atomic.AtomicInteger();
   private final java.util.concurrent.atomic.AtomicInteger bufferDepth =
@@ -48,8 +56,11 @@ public final class TelnetServer {
   private final Counter connectionCounter;
   private final Counter discardedCommandCounter;
   private final Counter tlsMisconfigCounter;
+  private final Counter connectionLimitExceededCounter;
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
+  private final Map<String, java.util.concurrent.atomic.AtomicInteger> connectionsByIp =
+      new ConcurrentHashMap<>();
   private volatile int boundPort;
   private final LookCacheService lookCacheService;
 
@@ -67,6 +78,10 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
       @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
+      @Value("${TCP_PROXY_MAX_CONNECTIONS:0}") int maxConnections,
+      @Value("${TCP_PROXY_MAX_CONNECTIONS_PER_IP:0}") int maxConnectionsPerIp,
+      @Value("${TCP_PROXY_MAX_LINE_BYTES:4096}") int maxLineBytes,
+      @Value("${TCP_PROXY_MAX_MALFORMED_ENVELOPES:5}") int maxMalformedSessionEnvelopes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
       LookCacheService lookCacheService) {
@@ -78,10 +93,16 @@ public final class TelnetServer {
     this.certPath = certPath;
     this.keyPath = keyPath;
     this.advertiseMcp = advertiseMcp;
+    this.maxConnections = maxConnections;
+    this.maxConnectionsPerIp = maxConnectionsPerIp;
+    this.maxLineBytes = maxLineBytes;
+    this.maxMalformedSessionEnvelopes = maxMalformedSessionEnvelopes;
     this.meterRegistry = meterRegistry;
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
     this.tlsMisconfigCounter = meterRegistry.counter("tcpproxy.tls.misconfig");
+    this.connectionLimitExceededCounter =
+        meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     this.eventService = eventService;
     this.lookCacheService = lookCacheService;
     Gauge.builder(
@@ -143,20 +164,38 @@ public final class TelnetServer {
               new ChannelInitializer<SocketChannel>() {
                 @Override
                 protected void initChannel(SocketChannel ch) {
+                  InetSocketAddress remoteAddress = ch.remoteAddress();
+                  String clientIp = extractIp(remoteAddress);
+                  if (!tryAcquireSlot(clientIp)) {
+                    logger.warn(
+                        "Rejecting Telnet connection from {} due to connection limits",
+                        clientIp != null ? clientIp : remoteAddress);
+                    ch.close();
+                    return;
+                  }
                   var pipeline = ch.pipeline();
                   if (tlsEnabled && sslContext != null) {
                     pipeline.addLast(sslContext.newHandler(ch.alloc()));
                   }
                   pipeline
-                      .addLast(new LineBasedFrameDecoder(1024, false, true))
+                      .addLast(
+                          new ChannelInboundHandlerAdapter() {
+                            @Override
+                            public void channelInactive(ChannelHandlerContext ctx)
+                                throws Exception {
+                              releaseSlot(clientIp);
+                              super.channelInactive(ctx);
+                            }
+                          })
+                      .addLast(new LineBasedFrameDecoder(maxLineBytes, false, true))
                       .addLast(new StringDecoder(StandardCharsets.ISO_8859_1))
                       .addLast(new StringEncoder(StandardCharsets.ISO_8859_1))
                       .addLast(
                           new TelnetServerHandler(
                               gatewayWsUrl,
                               devIsolated,
-                              activeConnections::incrementAndGet,
-                              activeConnections::decrementAndGet,
+                              () -> {},
+                              () -> {},
                               connectionCounter,
                               discardedCommandCounter,
                               advertiseMcp,
@@ -164,7 +203,8 @@ public final class TelnetServer {
                               TelnetServerHandler::createWebSocket,
                               eventService,
                               bufferDepth,
-                              lookCacheService));
+                              lookCacheService,
+                              maxMalformedSessionEnvelopes));
                 }
               });
       serverChannel = b.bind(port).sync().channel();
@@ -215,5 +255,56 @@ public final class TelnetServer {
   /** Total connection count for metrics testing. */
   double getTotalConnections() {
     return connectionCounter.count();
+  }
+
+  private boolean tryAcquireSlot(String clientIp) {
+    String ipKey =
+        clientIp == null || clientIp.isBlank() ? "unknown" : clientIp.trim().toLowerCase();
+    int total = activeConnections.incrementAndGet();
+    if (maxConnections > 0 && total > maxConnections) {
+      activeConnections.decrementAndGet();
+      connectionLimitExceededCounter.increment();
+      return false;
+    }
+    if (maxConnectionsPerIp > 0) {
+      java.util.concurrent.atomic.AtomicInteger perIpCount =
+          connectionsByIp.computeIfAbsent(ipKey, key -> new java.util.concurrent.atomic.AtomicInteger());
+      int ipTotal = perIpCount.incrementAndGet();
+      if (ipTotal > maxConnectionsPerIp) {
+        perIpCount.decrementAndGet();
+        if (perIpCount.get() <= 0) {
+          connectionsByIp.remove(ipKey, perIpCount);
+        }
+        activeConnections.decrementAndGet();
+        connectionLimitExceededCounter.increment();
+        return false;
+      }
+    }
+    connectionCounter.increment();
+    return true;
+  }
+
+  private void releaseSlot(String clientIp) {
+    String ipKey =
+        clientIp == null || clientIp.isBlank() ? "unknown" : clientIp.trim().toLowerCase();
+    activeConnections.decrementAndGet();
+    java.util.concurrent.atomic.AtomicInteger perIpCount = connectionsByIp.get(ipKey);
+    if (perIpCount != null) {
+      int remaining = perIpCount.decrementAndGet();
+      if (remaining <= 0) {
+        connectionsByIp.remove(ipKey, perIpCount);
+      }
+    }
+  }
+
+  private String extractIp(InetSocketAddress remote) {
+    if (remote == null) {
+      return null;
+    }
+    var inetAddress = remote.getAddress();
+    if (inetAddress != null) {
+      return inetAddress.getHostAddress();
+    }
+    return null;
   }
 }
