@@ -62,6 +62,31 @@ Before making any change that touches Redis (keys, roles, scripts, or tooling), 
   - Clarify whether new prefixes are reset-tolerant, reset-sensitive, or reset-forbidden.
   - Update the relevant runbooks (for example, coordination reset or cache maintenance) if the change affects how operators remediate issues.
 
+### Redis Design & Review Checklist
+
+When reviewing new designs, service READMEs, or task lists that touch Redis (even before code exists), keep this short checklist in mind:
+
+- **Role separation**
+  - Does the design clearly state whether it uses **Coordination Redis** or **Cache/Rate-Limit Redis**, and avoid mixing the two for a given prefix?
+  - For Coordination Redis usage, is the Game Session Service the owner of any new coordination prefixes, or is a different service inappropriately trying to own tick/session keys?
+- **Key naming and hash tags**
+  - Are key prefixes and shapes consistent with the patterns in this document (including `{tenantRegionTag}` for region-scoped keys and `tenantId` prefixes everywhere)?
+  - For clustered deployments, do all keys touched in a single script or operation share the same hash tag so `CROSSSLOT` issues are avoided by design?
+- **Cache vs coordination semantics**
+  - For Cache/Rate-Limit Redis usage, has the design classified each aggregate as a **strongly validated cache** (version-based) or a **best-effort TTL-only cache**, and explained why that choice is appropriate?
+  - For Coordination Redis usage, is Redis clearly treated as **non-authoritative**, with PostgreSQL (or another store) providing the source of truth and replay/idempotency guarding correctness?
+- **Lua and script behavior (if applicable)**
+  - Are any new or changed behaviors expressed via registered Lua scripts and the Lua Script Registry rather than ad-hoc multi-key commands?
+  - Does the design call out required invariants (lease token, lock tokens, `tickId`, `schemaVersion` handling) and reference the Lua patterns doc for idempotency and determinism?
+- **Reset and durability story**
+  - For each new prefix, does the design state whether it is **reset-tolerant**, **reset-sensitive**, or **reset-forbidden**, and what a coordination or cache reset means for that data?
+  - Are the relevant runbooks (coordination reset, cache maintenance, migrations) identified or earmarked for updates?
+- **Observability and SLOs**
+  - Has the design identified which metrics, dashboards, and alerts must be updated (coordination vs cache) so new prefixes or scripts are visible under load and failure?
+  - For rate limiting, are bucket shapes and keys aligned with the rate-limit design to avoid hot keys and unbounded key growth?
+
+Design reviews should walk this list **before** implementation; if any bullet cannot be answered clearly from the design doc, the design is not ready for code.
+
 ---
 
 ## Redis Usage by Service
@@ -273,6 +298,19 @@ These behaviors are treated as acceptable trade-offs for a high-performance tick
 - Truly non-loss-tolerant flows (for example, payments or cross-service sagas) avoid Redis-based tick coordination and instead use the stronger guarantees described in [Transaction Strategies](./system-architecture-transactions.md).
 - Metrics and alerts make any **skipped or replayed ticks** visible so operators can quantify impact and decide on tenant-specific remediation when needed.
 
+### Flows That Must Not Rely on Redis
+
+Some workflows are **never allowed** to depend on Redis coordination for their core correctness guarantees. They may still *observe* Redis-derived state (for example, for read-side convenience), but their authoritative state changes and invariants must be enforced elsewhere (typically in PostgreSQL and Saga workflows).
+
+Examples of flows that must not rely on Redis for correctness include:
+
+- **Payments and billing flows** – Stripe charges, refunds, and ledger updates must follow the transaction and Saga patterns in [Transaction Strategies](./system-architecture-transactions.md) and treat Redis as, at most, a cache or non-authoritative queue.
+- **Account lifecycle and security events** – account creation, password changes, multi-factor enrollment, and lockout/unlock events rely on the Account Service’s durable storage and explicit invariants, not Redis keys, for correctness.
+- **Cross-service sagas and long-running workflows** – cross-service orchestration (for example, game startup and shutdown) uses Saga infrastructure and database-backed state machines; Redis participation, if any, is limited to transient hints or coordination, not authoritative state.
+- **Compliance/audit trails and moderation records** – chat logs, moderation actions, and audit trails must be fully represented in PostgreSQL or other durable stores; Redis can provide short-lived caches but cannot be the only record of such events.
+
+Service-level design docs that describe these flows should **link back to this section** and to [Transaction Strategies](./system-architecture-transactions.md) when explaining why Redis is treated as non-authoritative for them, rather than rephrasing the constraints independently.
+
 ### Trust Model & Split-Brain Assumptions
 
 The “at most one active tick executor per region” invariant depends on Redis behaving as a single authoritative coordination cluster per `{tenantId, regionId}` hash tag. In the event of Redis split-brain or dual primaries, two executors could independently observe a valid lease token and mutate their local keyspaces even though their histories diverge, violating the guarantees the tick system depends on.
@@ -299,12 +337,23 @@ Operational runbooks and Helm charts document the exact `requirepass`/ACL/TLS co
 
 ### Cluster Deployment
 
-FireMUD runs Redis in a **clustered, replicated configuration**:
+FireMUD runs Redis in a **clustered, replicated configuration**, with supported deployment modes chosen to preserve the single-writer assumptions described above:
 
-- Multiple **shards and replicas** for tick region and session partitioning
-- Partitioning aligns with tick region boundaries (typically per-room or per-segment)
-- Kubernetes-native failover
-- **Failover behavior is tested under live tick loads**
+- **Standalone + Sentinel** – a single primary with one or more replicas managed by Sentinel. Sentinel or the hosting platform handles promotion when the primary fails. This mode is appropriate for small/self-hosted deployments that do not require full Redis Cluster sharding.
+- **Redis Cluster** – a sharded, replicated cluster where tick regions and other coordination prefixes are placed so that each `{tenantRegionTag}` maps cleanly onto a single hash slot. This is the default model for multi-tenant or higher-scale deployments.
+- **Managed Redis offerings** (for example cloud-hosted Redis services) – treated as equivalent to either standalone or cluster modes above, provided they expose:
+  - Clear semantics for replication, failover, and AOF/RDB configuration.
+  - A way to configure hash slots or equivalent sharding to honor `{tenantRegionTag}` and cache key patterns.
+  - The ability to enforce ACLs consistent with the ops access model described in this and related docs.
+
+Other deployment patterns (for example ad-hoc multi-primary configurations or loosely coordinated failover scripts that allow concurrent writers) are **not supported** for Coordination Redis and must not be used in environments that are expected to uphold tick and session invariants.
+
+Across these supported modes:
+
+- Multiple **shards and replicas** are used for tick region and session partitioning.
+- Partitioning aligns with tick region boundaries (typically per-room or per-segment).
+- Kubernetes-native failover (or the equivalent platform’s failover mechanisms) drive promotions.
+- **Failover behavior is tested under live tick loads** in staging before new configurations are rolled into production.
 - Tick coordination state (locks, `pending`, timers, retry metadata) is **generally preserved across routine failover** thanks to AOF and Lua-based commit/staging policies, but this is **best-effort rather than absolute**:
   - Lock keys use TTLs; they survive only while their TTL has not expired and the relevant updates have been durably written to AOF.
   - Retry and `pending` keys do not rely on TTLs and are expected to survive typical failovers, subject to whatever AOF tail-loss window the deployment’s Redis configuration produces.
@@ -402,6 +451,24 @@ In all cases, **PostgreSQL is the sole authority for domain history** (entities,
   3. Resume ticks so Coordination Redis is rebuilt from PostgreSQL and new commands, relying on idempotent tick logic and `tail_loss_ms` / region health metrics to bound and surface any lost recent coordination state.
 
 All reset tooling routes through the same key builders and Lua descriptors used by application code and is classified by **reset tolerance** in the Redis operations docs (reset-tolerant, reset-sensitive, reset-forbidden). Operators must not perform ad-hoc manual edits to `tick:*`, `session:*`, `timer:*`, `retry:*`, or `remote:*` prefixes; any such needs should be implemented as changes to the reset tooling itself.
+
+### Reset vs Manual Repair – Decision Guide
+
+When Redis and PostgreSQL disagree, or when key shapes are suspected to be incorrect, operators must decide between a coordinated reset and targeted repair:
+
+- **Choose a reset** (region/tenant/cluster scope as appropriate) when:
+  - The problem affects **coordination prefixes** (`tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, `tick-executor-lease:*`) and can be safely reconstructed from PostgreSQL and new activity.
+  - Mis-keyed or mis-sharded coordination keys are present and there is no compelling reason to preserve their contents.
+  - AOF corruption, split-brain, or unknown manual edits have made the coordination history untrustworthy.
+- **Consider targeted repair tooling** only when:
+  - The keys in question are **non-coordination prefixes** whose contents cannot be recreated from PostgreSQL or other durable sources without losing important state.
+  - A small, well-defined subset of keys needs to be inspected or migrated and the desired mutations can be expressed via the shared key builders and descriptors.
+  - The repair can be implemented as a one-shot, reviewed tool that follows the same invariants as normal application code.
+- **Avoid ad-hoc, manual fixes**:
+  - Direct `redis-cli` writes or generic key-move scripts against coordination prefixes are not supported as long-term fixes; any such intervention must be followed by a scoped coordination reset before ticks resume.
+  - “Surgery” on AOF files is never permitted; when in doubt, discard untrusted AOF state and rebuild from PostgreSQL using the reset paths above.
+
+This decision guide is intentionally conservative: for coordination keys, the default answer is “reset and rebuild” rather than “patch in place.” More advanced deployments may layer additional, prefix-specific repair tools on top of this baseline, but they must still respect the reset-tolerance classifications and invariants defined here and in the Redis Operations docs.
 
 ### Cluster-Wide Anomalies
 
@@ -515,6 +582,31 @@ These conventions provide **logical tenant isolation** at the keyspace level. Ev
 - Every coordination and cache key is namespaced by `tenantId`, and many by both `tenantId` and `regionId`.
 - Operational tooling, dashboards, and runbooks use these prefixes when inspecting or modifying Redis state so actions are scoped to the intended tenant and region.
 - Services never expose raw Redis keys or provide “arbitrary command” capabilities to end users or external systems; all access goes through well-defined APIs that interpret and manipulate keys on behalf of tenants.
+
+### `{tenantRegionTag}` and Hash-Tag Usage
+
+Tick-region coordination keys rely on a **canonical hash tag** placeholder: `{tenantRegionTag}`. This hash tag is a stable, opaque token derived from `{tenantId, regionId}` and used *only* to ensure that all region-scoped keys for a given region land in the same Redis Cluster slot.
+
+Key properties:
+
+- The exact format of `tenantRegionTag` (for example, `"tenant-123:region-456"` vs `"t123-r456"`) is an implementation detail of the shared key helpers in the common library; callers treat it as an opaque string.
+- All tick-region coordination keys include **exactly one** `{tenantRegionTag}` hash tag and must not include any other hash tags.
+- Multi-key Lua scripts that operate on region-scoped keys must only receive keys that share the same `{tenantRegionTag}` hash tag; CI and shared helpers enforce this constraint.
+
+Worked examples (illustrative; actual `tenantRegionTag` is supplied by helpers):
+
+- `tick:{tenantRegionTag}:lock:{entityId}`
+  - Example: `tick:{tenant-123:region-42}:lock:entity-987`
+- `tick:{tenantRegionTag}:pending`
+  - Example: `tick:{tenant-123:region-42}:pending`
+- `timer:{tenantRegionTag}`
+  - Example: `timer:{tenant-123:region-42}`
+
+Service docs and code should **not** hand-build these keys. Instead they call shared builders such as `TickKeyBuilder.tickLockKey(tenantId, regionId, entityId)` and `TickKeyBuilder.pendingKey(tenantId, regionId)`, which:
+
+- Construct the canonical `tenantRegionTag` from `{tenantId, regionId}`.
+- Embed it in the key pattern with the correct `{}` placement.
+- Guarantee hash-tag consistency across all region-scoped keys.
 
 ### Conditional Tenant Fairness
 
@@ -630,6 +722,17 @@ New code is expected to honor both: never exceed the hard caps, and stay within 
     - Implementations treat oversize sessions as an error in the caller; they may drop optional fields, reject binding, or force a fresh `LOGIN` rather than writing very large values.
 
 These budgets complement the AOF size and restart targets in the Redis Operations doc. In environments where profiling shows different realistic envelopes, operators may tune the concrete numeric thresholds, but the contract remains the same: coordination keys stay small and bounded, and exceeding a budget results in **explicit logs + metrics + controlled failure modes**, not silent degradation or unbounded growth.
+
+To keep these guarantees enforceable, some data shapes are **explicitly forbidden** in Coordination Redis:
+
+- Unbounded lists, sets, or sorted sets that grow without hard caps (for example, log-style append-only structures or global “all events” feeds).
+- Large, opaque blobs that attempt to mirror substantial portions of relational state (for example, full character histories or entire zone snapshots) instead of small coordination summaries.
+- General-purpose caches, analytics aggregates, or debug dumps that do not participate directly in tick/session coordination.
+
+Such workloads must either:
+
+- Move to **Cache/Rate-Limit Redis** and declare appropriate size/TTL budgets, or
+- Remain in PostgreSQL or other durable stores behind dedicated APIs.
 
 ### Key Shape Mistakes and Migration Strategy
 

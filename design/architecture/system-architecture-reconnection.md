@@ -33,7 +33,7 @@ TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 - Accepts raw TCP input and assembles it into commands
 - Buffers input **during connection**, but **clears on disconnect**
 - No gameplay state is preserved across reconnects — Game Session Service handles recovery from Redis-backed session and command queues
-- Provides a `NotifyDisconnect` gRPC hook for session recovery integration; events are delivered on a best-effort, at-least-once basis and must be treated as idempotent by the Game Session Service.
+- Provides a `NotifyDisconnect` gRPC hook for session recovery integration; events are delivered on a best-effort, at-least-once basis and must be treated as idempotent by the Game Session Service. In particular, Game Session must tolerate late or duplicate events (for example events that arrive after a new login has already rebound the session) and treat them as advisory hints only, never as the sole source of truth for whether a session is still active.
 - Runtime options such as the listening port and Spring Cloud Gateway WebSocket URL are configured via `TCP_PROXY_PORT` and `GATEWAY_WS_URL` (see the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables)).
 
 ### Spring Cloud Gateway (Web Clients)

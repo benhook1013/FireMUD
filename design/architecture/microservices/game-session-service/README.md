@@ -63,7 +63,25 @@ Orchestrates live game sessions, including tick execution, player input validati
 - **Cache/Rate-Limit Redis usage**
   - Does not use Cache/Rate-Limit Redis for gameplay-critical coordination; session state, tick queues, locks, timers, and retry metadata always live on Coordination Redis so they share the same AOF and reset semantics described in [Redis Architecture – Redis Availability, Consistency, and Safety Guarantees](../../system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees).
   - Any future Game Session–local caches must use **Cache/Rate-Limit Redis** and the key naming/TTL rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), and must not overlap with coordination prefixes.
+  - When such caches are introduced, this README must declare, for each cached aggregate, whether it is a **strongly validated cache** (version-based) or a **best-effort TTL-only cache**, and which events or signals act as the invalidator of record, following the cache classes described in the Redis cache design.
   - Changes to Redis usage in this service must follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so prefixes, roles, slotting, and SLOs stay consistent.
+
+#### Key Prefix Summary
+
+Game Session uses the following Redis key prefixes; the **authoritative catalog** of coordination and cache prefixes lives in [Redis Architecture – Key Format Examples](../../system-architecture-redis.md#key-format-examples) and the Cache/Rate-Limit Redis Key Catalog:
+
+| Key prefix | Role | Notes |
+| --- | --- | --- |
+| `session:{tenantId}:{sessionId}` | Coordination | Session state and reconnect metadata for gameplay sessions (tenant-scoped hash tag). |
+| `tick:{tenantRegionTag}:queue:{entityId}` | Coordination | Per-entity command queues within a tick region. |
+| `tick:{tenantRegionTag}:pending` | Coordination | Single in-flight tick payload per region. |
+| `tick:{tenantRegionTag}:lock:{entityId}` | Coordination | Entity locks during tick execution. |
+| `timer:{tenantRegionTag}` | Coordination | Per-region timer ZSET. |
+| `retry:{tenantRegionTag}` | Coordination | Retry queue for failed actions. |
+| `tick-executor-lease:{tenantRegionTag}` | Coordination | Region leadership lease key. |
+| `remote:{tenantId}:{entityId}` | Coordination | Cross-region follow-up queue for entity-scoped work. |
+
+Service code must construct these keys via the shared key builders in `firemud-common` rather than manual string concatenation so `{tenantRegionTag}` and hash-tag discipline remain consistent with the central Redis architecture.
 
 ## Key Features
 

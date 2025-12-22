@@ -25,6 +25,29 @@ The invariants and contracts in `system-architecture-redis.md` remain authoritat
 - Typical restart time (AOF or RDB+AOF replay): **30–60 seconds** during planned maintenance for Coordination Redis nodes.
 - Effective daily AOF growth for coordination workloads should normally stay below **~250–500 MiB/day** per node in steady state; sustained growth beyond that envelope warrants investigation.
 
+These targets are enforced via a small set of metrics and dashboards:
+
+- Metrics:
+  - `redis_aof_current_size_bytes` (or equivalent from `INFO persistence`) per Coordination Redis node.
+  - `redis_aof_rewrite_in_progress` and `redis_aof_rewrite_time_sec` to monitor rewrite behavior.
+  - `redis_coordinator_restart_duration_seconds` (custom) emitted by coordination maintenance jobs during controlled restarts.
+  - `redis_coordination_aof_growth_bytes_total` (custom) derived from periodic samples of AOF size to approximate daily growth.
+- Dashboards:
+  - An **AOF health panel** that plots AOF size per node, restart duration (where measured), and daily growth estimates against the soft limits above.
+  - A **coordination capacity panel** that correlates AOF size with coordination key counts and per-region footprints so operators can see which regions or tenants are contributing to growth.
+
+Operators should wire alerts directly to these metrics (for example, warn when AOF size crosses the soft limit, or when restart duration and growth remain above targets for several days) rather than relying on ad-hoc `INFO` calls.
+
+Recommended AOF configuration profiles tie these targets back to concrete Redis settings:
+
+| Profile | Use Case | Persistence Settings (example) | Notes |
+| --- | --- | --- | --- |
+| `dev_local` | Single-developer, non-player-facing experiments | `appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`, small `maxmemory` tuned for laptop resources | Tail-loss and restart time are less critical; AOF is primarily for debugging. Coordination SLOs do not apply. |
+| `hobby_self_hosted` | Small/self-hosted games with real players | `appendonly yes`, `appendfsync everysec` (or `no` with careful risk acceptance), `aof-use-rdb-preamble yes`, `maxmemory` sized to keep AOF replay within the 30–60s target and coordination keys well under memory caps | This profile is expected to honor the AOF size and restart budgets in this section. Tail-loss envelopes in the main Redis doc assume configurations in this tier or better. |
+| `production_clustered` | Multi-tenant or higher-scale deployments | `appendonly yes`, `appendfsync everysec` (or platform-recommended fsync policy), `aof-use-rdb-preamble yes`, coordinated `maxmemory` and shard sizing so per-node AOF size and restart times stay within agreed budgets | Platform SLOs for coordination availability and replay are evaluated against this profile; deviation (for example, disabling AOF) must be treated as an explicit architectural change. |
+
+Concrete values may be tuned per environment, but deployments should always document which profile they approximate and ensure that observability dashboards validate AOF size and restart behavior against the chosen profile’s expectations.
+
 ### Runbook: AOF too large or restarts too slow
 
 1. Confirm via metrics or `INFO`:
@@ -147,7 +170,7 @@ Session lifetimes and coordination resets interact in predictable ways. The tabl
 
 ### Inputs
 
-The **Lua Compatibility Registry** (in `firemud-common`) declares, per script:
+The **Lua Compatibility Registry** lives in the shared `firemud-common` module alongside key builders and Lua descriptors. It is owned by the **platform/coordination maintainers** (not individual services) and declares, per script:
 
 - `schemaVersionsSupported`.
 - `KEYS`/`ARGV` contract.
@@ -258,6 +281,21 @@ Smaller self-hosted deployments may prefer a single primary (with an optional re
 **Goal:** Remediate mis-keyed or mis-sharded coordination keys without complex in-place surgery.
 
 **Coordination keys** (`tick:*`, `timer:*`, `retry:*`, `remote:*`, leases, and tick-related locks) are treated as reset-tolerant, volatile, and backed by PostgreSQL + replay.
+
+Before performing any coordination reset (region/tenant/cluster scope), operators should walk a short **pre-reset validation checklist**:
+
+- Confirm that PostgreSQL is healthy:
+  - Core tables for tick coordination (for example, tick effect ledger, `coordination_meta`/leadership tables) are reachable and not reporting corruption or constraint failures.
+  - Saga state for workflows that depend on coordination (for example, game startup/shutdown) is in a consistent state or can tolerate replay from the last committed step.
+- Verify tick effect ledger status for the target scope:
+  - No `SCHEDULED` or `IN_PROGRESS` tick effects remain that would be orphaned by dropping coordination state, or such effects are explicitly marked as `ABANDONED`/resolved at the domain layer.
+- Ensure game traffic is quiesced for the affected scope:
+  - Tick scheduling and new command intake are paused for the relevant `{tenantId, regionId}` or tenants.
+  - Any long-running maintenance or backfill jobs that depend on coordination keys are stopped.
+- Record operator intent:
+  - Capture which tenants/regions are being reset, why the reset is needed, and which Redis deployment/role is affected, so the action is auditable alongside normal break-glass events.
+
+Only after these checks pass should a reset proceed; if any item cannot be satisfied, treat the situation as an incident and resolve the underlying domain/database issues before discarding coordination state.
 
 ### Runbook: Mis-sharded coordination keys
 

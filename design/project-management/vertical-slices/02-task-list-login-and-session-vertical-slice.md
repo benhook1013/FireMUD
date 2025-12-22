@@ -35,6 +35,8 @@ This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` 
 
 ## 5. Telnet and WebSocket LOGIN Parity
 
+The canonical `SESSION` + `LOGIN` semantics for Telnet clients live in the [Telnet Session Envelope & Event Metrics](../../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section of the TCP Proxy Service design. This slice focuses on verifying that Telnet and WebSocket clients share the same login pipeline and observed behaviour rather than redefining the protocol.
+
 - [x] Confirm that Telnet connections using the `SESSION <sessionId> <tenantId>` envelope and then sending `LOGIN` lines are forwarded by the TCP Proxy Service into the same WebSocket `/ws/game/**` route and Game Session login pipeline used by direct WebSocket clients, with no Telnet-specific parsing beyond the session envelope and sensitive logging behaviour in `TelnetServerHandler`.
 - [x] Add a cross-service integration test (reusing the lightweight gateway and game-session stubs where appropriate) that starts TCP Proxy Service, Spring Cloud Gateway, Game Session Service, and an Account Service stub together, performs `LOGIN` + `LOOK` over a Telnet socket for the baseline flow (no `SESSION`), and asserts that the observed login and LOOK responses match those from a direct WebSocket client hitting Gateway. Add a second variant that exercises the optional `SESSION` + `LOGIN` + `LOOK` attach-to-session path using a session created via REST `POST /sessions`.
 - [x] Verify that `TelnetServerHandler` continues to redact `LOGIN` arguments in logs while still forwarding the full command to Game Session, and add tests that assert logging behaviour for sensitive vs non-sensitive commands.

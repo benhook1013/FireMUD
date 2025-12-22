@@ -76,8 +76,8 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
     - `chat:tell:{tenantId}:{conversationId}`
     - `chat:guild:{tenantId}:{guildId}`
     - `chat:account:{tenantId}:{accountId}`
-  - These lists mirror persisted history in PostgreSQL for quick retrieval and are subject to TTL and max-message limits configured via `FIREMUD_CHAT_*` variables, following the cache key and TTL guidance in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-  - New chat/cache prefixes or changes to Redis usage should be validated against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so they remain aligned with the global key catalog and SLOs.
+  - These lists mirror persisted history in PostgreSQL for quick retrieval and are subject to TTL and max-message limits configured via `FIREMUD_CHAT_*` variables, following the cache key and TTL guidance in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md). They are treated as **best-effort TTL-only caches**: correctness comes from PostgreSQL, while Redis provides short-lived history windows bounded by the configured TTLs and message counts.
+  - New chat/cache prefixes or changes to Redis usage should be validated against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so they remain aligned with the global key catalog and SLOs, and should be added to the Cache/Rate-Limit Redis Key Catalog with documented size/complexity budgets.
 
 ### Chat Pipeline
 

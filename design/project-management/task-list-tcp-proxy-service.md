@@ -2,7 +2,7 @@
 
 ## Telnet Bridge
 
-> **Note:** The Telnet `SESSION` + `LOGIN` + `LOOK` parity and reconnection flows are tracked in [design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md](vertical-slices/02-task-list-login-and-session-vertical-slice.md) so we avoid duplicating the same tasks here.
+> **Note:** The Telnet `SESSION` + `LOGIN` + `LOOK` parity and reconnection flows are tracked in [design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md](vertical-slices/02-task-list-login-and-session-vertical-slice.md), and the canonical protocol rules live in the [Telnet Session Envelope & Event Metrics](../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section of the TCP Proxy Service design. Refer to those docs rather than redefining behaviour here.
 
 - [x] Implement dedicated TCP Proxy Service bridging Telnet clients to the Gateway
 - [x] Define Telnet bridge gRPC APIs for TCP Proxy Service
@@ -20,7 +20,7 @@
 - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
 - [x] Enforce Telnet protocol command whitelist and input sanitization
 - [ ] Implement connection throttling and rate limits
-- [ ] Integrate `NotifyDisconnect` with the Reconnection Strategy to resume sessions transparently
+- [ ] Integrate `NotifyDisconnect` with the Reconnection Strategy as a best-effort, idempotent hint to support session resumption, matching the invariants described in the TCP Proxy and Reconnection design docs
 
 ## Security
 

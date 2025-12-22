@@ -11,6 +11,28 @@ re-invocation behavior for tick-related scripts.
 
 Tick-related scripts must be idempotent: **re-running the same script with the same `KEYS` and `ARGV` must not apply new logical effects**. To make this concrete, scripts follow a small set of patterns:
 
+Before authoring or reviewing a new script, use this quick checklist:
+
+- The script is **deterministic**: no RNG (`math.random`), no time-based control flow (`TIME`), and no external/global state.
+- All keys are passed via `KEYS[...]` and built using shared key helpers; no hard-coded string concatenation of prefixes.
+- The script’s category (region-lease, session-only, maintenance, automation, etc.) is clearly identified, and the expected **invariants** (lease token, epoch, lock tokens, session binding) are validated before any write.
+- Structured payloads include an explicit `schemaVersion`, and the script:
+  - Treats missing versions as a well-defined default.
+  - Understands at least `N` and `N‑1` for the current rollout.
+  - Returns a non-mutating `"UNSUPPORTED_SCHEMA_VERSION"` outcome for unknown versions.
+- Writes are **idempotent** with respect to their inputs:
+  - Lock and lease operations treat repeated acquire/refresh calls as no-ops with stable outcomes.
+  - Queue/timer/effect insertion uses set-style semantics to avoid duplicate entries on replay.
+- Error outcomes are explicit and non-mutating (for example `"STALE_LEASE"`, `"STALE_LOCK"`, `"SESSION_VERSION_MISMATCH"`); callers can safely retry or escalate based on return codes.
+- The script has an entry in the **Lua Script Registry** (in `firemud-common`) that describes:
+  - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
+  - Allowed prefixes and hash-tag assumptions.
+  - The script category and whether it is single-key or shard-local multi-key.
+- Tests cover at least:
+  - A fresh run from an initial state.
+  - A pure replay with the same `KEYS`/`ARGV` and no intervening changes.
+  - A replay after partial success (for example, some keys pre-populated) to prove the script does not double-apply effects.
+
 ### Determinism Requirements
 
 To keep AOF replay and retries safe, Lua scripts must be **deterministic functions of their inputs and current Redis state**:
@@ -55,6 +77,14 @@ Many coordination structures stored in Redis (for example `tick:{tenantRegionTag
 ### Script Categories and Validation Hedge
 
 Not every mutating script participates in the same coordination context. For clarity and review, scripts are grouped into a small set of categories, each with its own validation rules.
+
+The **Lua Script Registry** in `firemud-common` records, for each script:
+
+- The script name and category (for example `region_lease_tick`, `session_only`, `automation_queue`, `maintenance`).
+- The expected key roles and order (`KEYS[1] = lockKey`, `KEYS[2] = pendingKey`, etc.).
+- Required invariants for that category (for example, lease and lock token validation for region-lease scripts, session binding and expiry checks for session-only scripts).
+
+This registry is the authoritative mapping from **script name → category → required invariants** and is referenced by both application code and CI. When adding a new script or changing an existing one, update the registry entry so reviewers can see which category rules and validations apply without reverse-engineering the Lua source.
 
 #### Region-lease scripts (tick and coordination)
 

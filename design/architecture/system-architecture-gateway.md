@@ -2,6 +2,10 @@
 
 This document describes the role and configuration of **Spring Cloud Gateway** in the FireMUD platform, including routing, filtering, WebSocket support, and how it integrates with both modern and legacy clients.
 
+## Implementation Status
+
+- No further work is pending for the core behaviors described in this document; it reflects the current target and implemented state of the Spring Cloud Gateway deployment. Future changes should update this section if any major flow becomes partially implemented again.
+
 ---
 
 ## Gateway Pattern
@@ -33,6 +37,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   `application.yml` (used in production)
 - Initial routes are loaded on startup from `routes-dev.yml` or `routes-prod.yml` via `spring.config.import`.
 - Initial route targets are loaded on startup, but operators can override them using environment variables prefixed `FIREMUD_SERVICES_`, matching the `ServiceEndpointsProperties` approach used by other microservices. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#service-discovery).
+- Dynamic route management APIs (REST and gRPC) can add or remove routes at runtime as **ephemeral overrides** layered on top of the baseline configuration; config files remain the canonical source of truth for route definitions.
 
 ### Authentication Responsibilities
 
@@ -54,7 +59,7 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 
 ### Gameplay WebSocket Route
 
-- **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service. The `/api/session/**` predicate remains a legacy alias and is kept only for backward compatibility.
+- **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service.
 - **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value is set to `wss://…/ws/game` so the proxy–gateway hop is always encrypted, matching the target-state defined in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway).
 - **Required headers** – Spring Cloud Gateway preserves or sets:
   - `X-Client-IP` with the originating client address (Telnet clients via the TCP Proxy Service; web clients via the external load balancer).

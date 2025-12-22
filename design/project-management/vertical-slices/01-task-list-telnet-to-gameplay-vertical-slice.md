@@ -10,7 +10,7 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 2. Telnet Session Envelope and Event Metrics
 
-- [x] Document the Telnet session envelope format (`SESSION <sessionId> <tenantId>` and `SESSION <sessionId>:<tenantId>`) in the TCP Proxy design or README so MUD tools and scripts know how to bind a Telnet connection to a session.
+- [x] Document the Telnet session envelope format (`SESSION <sessionId> <tenantId>` and `SESSION <sessionId>:<tenantId>`) in the TCP Proxy design so MUD tools and scripts know how to bind a Telnet connection to a session, using the canonical [Telnet Session Envelope & Event Metrics](../../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section as the single source of truth.
 - [x] Add focused unit tests for `TelnetSessionContext` covering valid envelopes (space-separated, colon-separated) and invalid/malformed cases, asserting sessionId/tenantId handling and log behaviour.
 - [x] Add a Spring Boot test for `TelnetServerHandler` that opens a Netty channel, sends a valid `SESSION` envelope followed by a command, and asserts that `TcpProxyEventService.recordConnectEvent` is invoked with the expected sessionId, tenantId, and client IP.
 

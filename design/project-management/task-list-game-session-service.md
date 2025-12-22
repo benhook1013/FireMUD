@@ -129,6 +129,7 @@ participate in CI.
 - [x] Emit metrics for Redis connectivity and commands
 - [x] *(If participating in ticks)* implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
+- [ ] For any new or changed Redis prefixes, register them in the central key catalogs and walk the [Redis Change Checklist](../architecture/system-architecture-redis.md#redis-change-checklist) (role, hash tags, metrics, reset behavior) as part of design and review.
 
 ---
 

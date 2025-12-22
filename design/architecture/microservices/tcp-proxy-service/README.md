@@ -12,33 +12,12 @@ This document describes the target-state behaviour of the TCP Proxy Service.
 Where implementation is still catching up, treat the design below as the source
 of truth and reconcile code/tests accordingly.
 
-- **Telnet login-first flow (without `SESSION`)** – The intended baseline is
-  that all Telnet clients issue `LOGIN` and may optionally send a `SESSION`
-  envelope for advanced attach-to-session flows. Existing tests and smoke
-  scripts are being aligned to treat `SESSION` as optional; if you observe
-  discrepancies, update those flows to match this design.
-- **Proxy → Gateway WebSocket mTLS (implementation)** – Not yet fully implemented
-  or deployed. The Telnet → Gateway WebSocket client currently connects to
-  Spring Cloud Gateway without client certificates and relies on the default
-  JDK TLS behaviour when using `wss://`. The configuration described below is
-  the target-state mutual TLS setup using the shared `FIREMUD_GRPC_*` certificate
-  paths. Remaining work is tracked in
-  `design/project-management/task-list-tcp-proxy-service.md` under the mTLS task.
-- **MCP negotiation and richer Telnet heuristics** – MCP 2.1 negotiation,
-  extended Telnet abuse heuristics, and advanced connection throttling behaviour
-  are documented here as target-state features. Portions of this behaviour are
-  still being implemented and hardened; any gaps should be reconciled against
-  the tasks in `design/project-management/task-list-tcp-proxy-service.md` before
-  treating this document as fully representative of production behaviour.
-- **Connection limits and abuse protection** – Connection caps, idle timeouts,
-  and input size limits are documented here as the desired safeguards for the
-  DMZ boundary. The implementation enforces `TCP_PROXY_MAX_CONNECTIONS`,
-  `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, `TCP_PROXY_MAX_LINE_BYTES`, and
-  `TCP_PROXY_MAX_MALFORMED_ENVELOPES` and emits metrics such as
-  `tcpproxy.connections.limit.exceeded` when caps are hit. When adding or
-  modifying limits in code, keep metric names and behaviours consistent with
-  this section and update this status note if significant deviations are
-  required.
+| Area | Target behaviour | Current status | Tracked in |
+| --- | --- | --- | --- |
+| Telnet login-first flow (without `SESSION`) | All Telnet clients issue `LOGIN` and may optionally send a `SESSION` envelope for advanced attach-to-session flows; `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. | Behaviour is implemented as described; some older tests and smoke scripts may still assume `SESSION` is required. | Align any remaining flows with this doc when you encounter discrepancies rather than changing the protocol. |
+| Proxy → Gateway WebSocket mTLS | Telnet → Gateway WebSocket client connects over `wss://` using mutual TLS and the shared `FIREMUD_GRPC_*` certificate paths. | Not yet fully implemented or deployed; current client may connect without client certificates and rely on default JDK TLS when `wss://` is used. | `design/project-management/task-list-tcp-proxy-service.md` (mTLS task). |
+| MCP negotiation and Telnet heuristics | MCP 2.1 negotiation, extended Telnet abuse heuristics, and advanced connection throttling are enforced at the proxy edge while keeping MCP payloads intact. | Partially implemented; some heuristics and MCP handling are still being hardened. | `design/project-management/task-list-tcp-proxy-service.md` (MCP and abuse/heuristics tasks). |
+| Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and malformed-envelope budgets protect the DMZ boundary, with metrics such as `tcpproxy.connections.limit.exceeded`. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/task-list-tcp-proxy-service.md` (connection management and security sections). |
 
 ### Responsibilities
 
@@ -227,20 +206,35 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 The proxy does not expose a public client API. Instead it emits a gRPC event
 for internal coordination:
 
-– **NotifyDisconnect** – informs the Game Session Service when a Telnet client
-    drops so the session may be suspended.
+- **NotifyDisconnect** – informs the Game Session Service when a Telnet client
+  drops so the session may be suspended.
 
 These events let the Game Session Service resume suspended sessions and deliver
 any **Redis-backed queued commands** owned by the Game Session Service. The TCP
 Proxy never replays Telnet input after a disconnect; connection-local buffers
 are cleared as soon as the TCP session closes. The `NotifyDisconnect` event is
 therefore a **best-effort, at-least-once** lifecycle signal keyed by
-`{sessionId, tenantId}` rather than a request to re-run gameplay commands.
+`{sessionId, tenantId}` rather than a request to re-run gameplay commands. Game
+Session must treat `NotifyDisconnect` as strictly advisory and idempotent:
+
+- If a `NotifyDisconnect` arrives after a new session has already been
+  established for the same `{sessionId, tenantId}`, the newer session remains
+  authoritative and the event is ignored for state changes.
+- Missing events are tolerated because disconnects are also detected at the
+  Gateway and Game Session layers; recovery logic must not rely on this signal
+  as a single source of truth.
+- Duplicate events for the same `{sessionId, tenantId}` are handled without
+  side effects so the stream can be retried safely.
 
 Their definitions live in
 [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 
 ### Telnet Session Envelope & Event Metrics
+
+This section is the canonical reference for the TCP Proxy Service’s `SESSION` +
+`LOGIN` semantics. Other documents (such as the Reconnection Strategy, Protocol
+Bridging, and user-journey flows) intentionally summarize the behaviour at a
+higher level and should link back here rather than redefining the protocol.
 
 The `SESSION` envelope is an optional optimization used by first-party and other
 advanced Telnet clients to attach to an existing session before `LOGIN`. Normal
@@ -386,6 +380,19 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}` for TLS and mTLS failures.
 - `tcpproxy.telnet.discarded` and related `tcpproxy.disconnect.notify.failure` counters for abuse and error visibility.
 
+In Prometheus these Micrometer meters appear with the expected naming
+translation, for example:
+
+- `tcpproxy.connections.active` → `tcpproxy_connections_active`
+- `tcpproxy.connections.limit.exceeded` → `tcpproxy_connections_limit_exceeded`
+- `tcpproxy.telnet.discarded` → `tcpproxy_telnet_discarded`
+- `tcpproxy.websocket.reconnects` → `tcpproxy_websocket_reconnects`
+
+The example PromQL and Alertmanager rules in
+`design/observability/grafana/tcp-proxy-alerts-snippets.md` use these
+Prometheus-style names; treat this section as the canonical list of meters and
+the Grafana snippets as reference queries over them.
+
 Labels on these metrics are intentionally low-cardinality (for example `type`, and occasionally `tenantId`)
 to keep Prometheus usage aligned with the global guidelines. Detailed context such as client IP, `sessionId`,
 and error details is captured in structured logs and tracing spans rather than metric labels.
@@ -514,6 +521,8 @@ are intended to be tuned per environment:
   - Treat sustained increases in `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded` as signals to either:
     - Add capacity (more pods) and/or
     - Block or throttle specific abusive IP ranges at the network or gateway layer.
+
+When choosing `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, remember that many real-world deployments place large numbers of players behind a single NAT or carrier-grade IP (for example campus networks or shared ISPs). In those environments it is safer to keep the per-IP cap relatively high (or even leave it unset) and rely on Spring Cloud Gateway’s rate limiting and the Game Session Service’s per-IP and per-session limits for fairness, while treating the proxy’s per-IP ceiling primarily as a guardrail against obviously abusive sources.
 
 After changing any of these values, monitor at least:
 

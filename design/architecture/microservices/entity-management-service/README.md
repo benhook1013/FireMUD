@@ -43,7 +43,7 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
   - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
 - **Cache/Rate-Limit Redis usage**
   - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `characterCache:{tenantId}:{characterId}`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-  - Cache entries are best-effort performance helpers; PostgreSQL remains the authoritative store for entity state and inventories.
+  - These caches for character graphs and similar aggregates are treated as **strongly validated caches**: payloads include version or `lastModified` markers from the authoritative tables, and readers validate those versions before reusing cached data. PostgreSQL remains the authoritative store for entity state and inventories.
   - Any change to Redis usage in this service should be reviewed against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role selection, slotting, and observability updates.
 
 ## Key Features

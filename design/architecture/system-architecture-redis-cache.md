@@ -41,6 +41,24 @@ This section catalogs the primary categories of objects that services cache in (
 
 ## Version-Based Cache Validation
 
+Some dynamic aggregates will be easier to cache if the authoritative store exposes a version or `lastModified` field per aggregate root. Others are naturally best-effort and can tolerate occasional stale reads under simple TTL-based eviction. To keep designs consistent and reviewable, caches are grouped into two classes:
+
+- **Strongly validated caches (versioned)** – payloads that are validated against a version or `lastModified` value stored in the authoritative system:
+  - The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
+  - Redis entries for that aggregate store both version and payload together, typically inside a single serialized object.
+  - When fetching, callers can:
+    - Read the current version from the authoritative store or a lighter-weight index.
+    - Compare it with the version in Redis.
+    - Reuse the cached payload if versions match, or recompute and overwrite the cache if they differ.
+  - Versioning is applied per aggregate root (for example `inventory:{tenantId}:{containerId}`), not per field, and is treated as part of the aggregate’s API contract.
+
+- **Best-effort caches (TTL-only)** – payloads that are inexpensive to recompute or where occasional staleness is acceptable:
+  - Entries are written with a TTL that bounds staleness; readers accept that data may lag behind the source of truth within that window.
+  - No explicit version field is required in the cache payload.
+  - Cache invalidation may still be event-driven (for example, delete-on-change) but correctness does not depend on precise invalidation timing.
+
+Designs and reviews must explicitly record which class each cacheable aggregate belongs to (strongly validated vs best-effort) and which invalidation pattern it uses, so reviewers understand why a cache entry carries version metadata versus relying on TTLs.
+
 Some dynamic aggregates will be easier to cache if the authoritative store exposes a version or `lastModified` field per aggregate root:
 
 - The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
@@ -215,6 +233,12 @@ To keep rate limiting robust under high cardinality and load, `bucket` values sh
 
 This approach gives small games straightforward per-client buckets by default while providing a clear, hash-based pattern for larger or noisier workloads without introducing many configuration knobs.
 
+Cluster slotting implications:
+
+- Rate-limit keys are treated as **single-key operations** from the cluster’s perspective; scripts or commands should not attempt atomic multi-key updates across different buckets or time windows.
+- Hash tags are optional for rate-limit keys. When used (for example to keep all buckets for a tenant/time window in the same slot), they must be applied consistently by shared helper builders so cross-service usage remains aligned.
+- Multi-key operations over rate-limit data (for example, bulk inspection of multiple buckets) must tolerate `CROSSSLOT` errors and fall back to per-key operations; the design does not rely on cross-slot multi-key transactions for rate limiting.
+
 ### Key Naming and Overwrite Expectations
 
 Cached aggregates in Redis should follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Examples (subject to refinement):
@@ -230,6 +254,23 @@ Expectations:
 - Writing a new value for a key overwrites the previous entry. Cache writers do not attempt to merge old and new payloads inside Redis.
 - Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.
 - Future implementations should prefer single atomic commands or scripts (set value and TTL together, optionally with version) over multi-step delete plus set sequences unless there is a very specific, documented reason (such as maintaining backward-compatible behavior during a migration).
+
+### Cache Size and Complexity Budgets
+
+To keep Cache/Rate-Limit Redis predictable and avoid unbounded growth, cache prefixes adhere to **size and complexity budgets** similar in spirit to the coordination budgets in `system-architecture-redis.md`:
+
+- **Per-tenant key count envelopes**
+  - Each cache prefix documents an expected range of keys per tenant (for example, “chat history per tenant typically stays under a small, bounded number of keys across all chat prefixes”) so operators can detect runaway key creation.
+  - CI and observability should flag sustained deviations from these envelopes as potential design issues (for example, mis-keyed caches or forgotten TTLs).
+
+- **Per-key cardinality and payload size**
+  - Lists, sets, or sorted sets used for caches must declare a target maximum length (for example, “≤50 messages per chat buffer”, or “≤N entries per room view cache”) and enforce it via trimming or eviction logic.
+  - Serialized payloads should stay within a small, predictable size envelope (for example, tens of kilobytes), with warnings and metrics emitted when caches exceed those thresholds.
+
+- **TTL and retention expectations**
+  - TTLs are chosen so that caches do not accumulate long-lived data; prefixes that require longer retention for correctness should be reconsidered as candidates for Coordination Redis or PostgreSQL instead.
+
+New cache prefixes must document their budgets in the owning service’s design doc and, where applicable, in the central Cache/Rate-Limit Key Catalog so reviews can validate that Redis is being used as a cache rather than a secondary datastore.
 
 ## Future Work / TODO
 

@@ -8,13 +8,13 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ## Implementation Status
 
-- **Dynamic route management (REST/gRPC):** Implemented via `GatewayController` (`/routes` REST API) and the `GatewayManagementService` gRPC API for upsert/remove operations.
+- **Dynamic route management (REST/gRPC):** Implemented via `GatewayController` (`/routes` REST API) and the `GatewayManagementService` gRPC API for upsert/remove operations. These APIs apply **in-memory overrides** on top of the baseline routes loaded from configuration; config files remain the canonical source of truth and dynamic changes revert on restart unless persisted by a higher-level tool.
 - **Rate limiting and Redis wiring:** Implemented using Spring Cloud Gateway’s `RequestRateLimiter` filter backed by the Cache/Rate‑Limit Redis profile configured in `application.yml` for `dev` and `prod` profiles.
-- **Telnet WebSocket bridge expectations:** Implemented end‑to‑end through the `/ws/game/**` route in Spring Cloud Gateway and the TCP Proxy Service’s WebSocket bridge (`GATEWAY_WS_URL`), matching the behavior described in the reconnection and protocol bridging docs.
+- **Telnet WebSocket bridge expectations:** Implemented end‑to‑end through the `/ws/game/**` route in Spring Cloud Gateway and the TCP Proxy Service’s WebSocket bridge (`GATEWAY_WS_URL`), matching the behavior described in the reconnection and protocol bridging docs. The canonical Telnet-side protocol (including the `SESSION` envelope and header propagation rules) is defined in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
 
 ### Responsibilities
 
-- Enforce authentication for admin routes. TLS termination occurs at the load balancer as described in the [Security Architecture](../../system-architecture-security.md)
+- Enforce the presence of an `Authorization` header for admin routes; JWT parsing and validation are always performed by downstream services. TLS termination occurs at the load balancer as described in the [Security Architecture](../../system-architecture-security.md)
 - Upgrade WebSocket connections and forward them to backend services
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
@@ -23,7 +23,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 ## Architecture / Design Notes
 
 - Handles persistent WebSocket connections and supports raw TCP through the TCP Proxy Service.
-- Event-driven updates synchronize game state across connected players.
+- Forwards real-time gameplay and administrative messages between clients and backend services; game state changes and synchronization logic live in the Game Session Service and Game Logic Service.
 - Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../../system-architecture-reconnection.md).
 - Gateway restarts are transparent thanks to the layered reconnection model
   outlined in [Reconnection Strategy](../../system-architecture-reconnection.md).
@@ -37,7 +37,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 ## Key Features
 
 - Central API gateway and policy enforcement point (routing, rate limiting, and basic admin auth gating only; downstream services own JWT validation).
-- Real-time state synchronization for multiplayer actions.
+- Real-time delivery of gameplay and admin messages over HTTP and WebSocket.
 - Reconnection support for dropped clients.
 - Routes REST and gRPC traffic to appropriate backend services.
 
@@ -46,9 +46,11 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 The gateway is stateless and sits in the DMZ alongside the TCP Proxy Service.
 Route configurations live in `routes-dev.yml` and `routes-prod.yml`, which are
 imported by `application.yml` based on the active profile and reloaded on
-startup. Routes are managed as static configuration; adding or updating routes
-is done by changing config (or environment variables for service endpoints) and
-redeploying the gateway. The default configuration defines routes for the core
+startup. These files define the **baseline route set** for each environment.
+Dynamic route APIs can overlay additional routes or updates at runtime, but
+those changes are in-memory only and the system always converges back to the
+baseline definitions on restart unless a higher-level tool updates the config.
+The default configuration defines routes for the core
 services so Docker Compose environments work out of the box.
 
 ### Filter Chain
@@ -62,7 +64,7 @@ services so Docker Compose environments work out of the box.
 
 ### Key Routes
 
-- `/api/session/**` → Game Session Service (WebSocket and REST endpoints).
+- `/ws/game/**` → Game Session Service (WebSocket gameplay endpoint for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service).
 - `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
 - `/api/account/**` → Account Service for user profiles.
@@ -72,7 +74,7 @@ services so Docker Compose environments work out of the box.
 - `/api/social/**` → Social Groups Service.
 - `/api/world/**` → World Management Service.
 
-Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions follow identical login and reconnection flows: the Game Session Service always sees the same `SESSION` envelope headers and `LOGIN`/gameplay commands regardless of transport.
+Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions follow identical login and reconnection flows: the Game Session Service always sees the same `SESSION` envelope headers and `LOGIN`/gameplay commands regardless of transport. For the full Telnet protocol rules, including optional `SESSION` usage, see the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
 
 ## Dependencies
 
@@ -127,8 +129,8 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
   - Spring Cloud Gateway does not access Coordination Redis. It never issues commands against `tick:*`, `timer:*`, `retry:*`, `session:*`, or other coordination prefixes; gameplay coordination remains the responsibility of the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md).
 - **Cache/Rate-Limit Redis**
   - Uses **Cache/Rate-Limit Redis** exclusively for rate limiting and any future gateway-local caches, connecting via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` as documented in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) and [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-  - Rate-limit buckets and related keys follow the `ratelimit:{tenantId}:{bucket}:{timeWindow}` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design); gateway code should not invent ad-hoc `ratelimit:*` shapes.
-  - Changes to rate-limiting strategy or cache usage in the gateway should be reviewed using the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role separation, and monitoring coverage.
+  - Rate-limit buckets and related keys follow the `ratelimit:{tenantId}:{bucket}:{timeWindow}` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design). When present, tenant markers are included in keys for **isolation and observability only**; limit values and policy decisions remain global and are not derived at the gateway from tenant identity. These rate-limit structures are treated as **best-effort TTL-only caches** of counters; correctness comes from the gateway’s rate-limit policy and enforcement logic, not from Redis acting as a durable store.
+  - Changes to rate-limiting strategy or cache usage in the gateway should be reviewed using the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role separation, and monitoring coverage. Any additional gateway-local caches must explicitly declare whether they are strongly validated (version-based) or best-effort TTL-only and be registered in the Cache/Rate-Limit Redis Key Catalog.
 
 The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are not used by Spring Cloud Gateway to validate or parse JWTs; admin and other meta/control services consume these properties when verifying tokens, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
 

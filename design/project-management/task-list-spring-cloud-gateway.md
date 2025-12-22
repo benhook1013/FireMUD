@@ -6,7 +6,7 @@
 
 ## Core Gateway
 
-> **Note:** Telnet and WebSocket login/session behavior (including `/ws/game/**`) is maintained in [the Login & Session vertical slice](vertical-slices/02-task-list-login-and-session-vertical-slice.md), so please consult that checklist for the current work instead of duplicating tasks here.
+> **Note:** Telnet and WebSocket login/session behavior (including `/ws/game/**`) is maintained in [the Login & Session vertical slice](vertical-slices/02-task-list-login-and-session-vertical-slice.md), and the Telnet-side protocol (`SESSION` envelope, headers, and semantics) is defined canonically in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section. Please consult those docs for the current behaviour instead of duplicating protocol details here.
 
 - [x] Handle API routing and request validation
 - [ ] Terminate TLS and forward traffic to internal services using mTLS

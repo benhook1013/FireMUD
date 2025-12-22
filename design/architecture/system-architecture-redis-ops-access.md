@@ -26,6 +26,13 @@ Redis ACLs enforce a clear split between application and operations clients:
   - Restricted to `@read` commands; explicitly denied `EVAL`, `EVALSHA`, `SCRIPT LOAD`, and write commands for coordination deployments.
   - Allowed to run non-destructive inspection commands (`GET`, `HGETALL`, `ZRANGE`, `SCAN`, etc.) for debugging and incident analysis.
 
+In addition, coordination deployments must ensure that **configuration-changing commands** (such as `CONFIG *`, `SLAVEOF`/`REPLICAOF`, `CLUSTER *`, and `SHUTDOWN`) are reserved for infrastructure automation or dedicated admin roles, not everyday ops users:
+
+- Standard read-only ops users (`coord_ops_ro`) must **not** have access to configuration commands in production; they focus solely on inspection.
+- Any tooling that legitimately needs configuration access (for example, Kubernetes operators or controlled maintenance jobs) must:
+  - Use a distinct, tightly scoped Redis user.
+  - Be treated as part of the infrastructure control plane, not general incident response.
+
 Other Redis roles (for example cache/rate-limit clients) connect to separate deployments or logical databases that do not contain coordination prefixes.
 
 ## Configuration and Redis Role Selection
@@ -48,6 +55,12 @@ All ops scripts and maintenance tools must:
 
 This makes the target Redis role part of the tool’s type signature and configuration, reducing the chance that coordination tooling accidentally points at Cache Redis (or vice versa).
 
+Some health checks and observability tools legitimately need to talk to **both** roles in a single process (for example, a composite “Redis health” check or a diagnostic CLI). These multi-role tools must:
+
+- Accept both `RedisCoordConfig` and `RedisCacheConfig` explicitly and label logs/metrics with a `redis_role` tag (for example `coordination` vs `cache`) so misconfigurations are easy to spot.
+- Avoid sharing Redis client instances between roles; each role gets its own client configuration and connection pool.
+- Keep any write operations role-specific and minimal; cross-role flows (for example, verifying that a prefix truly lives only on Cache Redis) should be implemented as read-only checks, not cross-writing scripts.
+
 ## Supported Maintenance Tooling
 
 Operators interact with coordination state through **supported tools**, not raw Redis commands:
@@ -68,7 +81,12 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.
   - Immediately triggers the appropriate scoped coordination reset.
-  - Emits a structured audit event (for example `coordination_break_glass`) recording the affected tenants/regions, scope (region/tenant/cluster), and a free-form reason string.
+  - Emits a structured audit event (for example `coordination_break_glass`) recording:
+    - A unique event identifier and timestamp.
+    - The affected tenants/regions and reset scope (region/tenant/cluster).
+    - The operator or automation identity that initiated the change.
+    - The Redis role and deployment (for example `coordination`, cluster name, node ID).
+    - A free-form reason string describing why break-glass was used.
 - After the scoped reset completes, operators run the standard post-reset health checks (for example, verifying that core Lua scripts load successfully and that sample ticks can schedule and commit for the affected regions) before unpausing ticks. Larger, more formal deployments may additionally link these audit events to external incident tracking systems, but hobby and self-hosted setups can rely on the built-in audit log alone.
 
 ### Tooling Maintenance and Versioning
