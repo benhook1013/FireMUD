@@ -68,14 +68,14 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
 - If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
   2. Restart services to resume operation.
-  3. Coordination state is treated as reset-tolerant and is rebuilt from PostgreSQL and new activity as described in the Redis architecture and runbooks; cache/rate-limit keys refill on demand.
+  3. Coordination state is treated as reset-tolerant and is rebuilt as services run (where possible) from PostgreSQL state and new activity as described in the Redis architecture and runbooks; cache/rate-limit keys refill on demand.
 
 ## Redis Persistence
 
 - Redis stores only **transient state**:
   - Coordination Redis stores volatile coordination state (ticks, locks, timers, sessions) and uses AOF for crash recovery while the cluster is running.
   - Cache/Rate-Limit Redis stores best-effort caches and rate-limit counters and is not treated as durable.
-- Redis is **not restored** from backup during a cold start. If Coordination Redis starts empty (for example after a reset), services rebuild coordination state from PostgreSQL and new activity according to the Coordination Reset Model rather than attempting to “restore Redis”.
+- Redis is **not restored** from backup during a cold start. If Coordination Redis starts empty (for example after a reset), treat it as a coordination reset event and follow the Coordination Reset Model rather than attempting to “restore Redis”. See [Failover vs Cold Start vs Reset](./system-architecture-redis.md#failover-vs-cold-start-vs-reset) for what “rebuild from PostgreSQL” does and does not mean.
   In development a `redis-coord-data` volume can persist the Coordination Redis AOF between container restarts. Treat AOF restore as a debugging tool: restore into an isolated, throwaway Redis instance for inspection, and only restore into a live dev stack when services and Lua scripts match the AOF’s originating version.
 
 ### Redis AOF Reset on Deployment
@@ -99,6 +99,7 @@ Redis is treated as a **transient coordination layer** in terms of data authorit
 This behavior is distinct from **failover**:
 
 - **Failover (node crash or leader change):** Redis pods restart or leadership moves, but AOF files and replication state are preserved. Tick locks and `tick:{tenantRegionTag}:pending` entries survive so the Game Session Service can safely **replay or complete** in-flight ticks using idempotent domain logic.
+- **Cold start (Redis starts empty):** treat as a coordination reset event; replay is not possible because the coordination history is missing. Services re-establish coordination as new activity occurs, and operators may need to run explicit coordination reset tooling to clear partial or mis-keyed remnants.
 - **Deployment (Helm upgrade) in staging/production:** Application pods roll forward while Redis keeps its AOF and in‑memory state. In‑flight ticks and sessions remain active across deployment.
 
 ## Kubernetes Production
@@ -107,7 +108,7 @@ This behavior is distinct from **failover**:
   - Restoration process:
     1. Restore the latest `pg_dump` file onto the PostgreSQL volume.
     2. Use Velero to restore Kubernetes manifests.
-    3. Restart the affected pods; Redis starts empty and fills itself from PostgreSQL.
+    3. Restart the affected pods. If Redis PVCs are intact, Redis recovers via AOF/replication; if Redis starts empty, treat it as a cold start and follow the coordination reset model.
     4. Operators can run `dev-tools/restores/restore-cluster.sh <backup-name>` to automate these steps in production.
        Set `FIREMUD_K8S_NAMESPACE` if restoring to a different namespace.
 
@@ -119,7 +120,7 @@ This behavior is distinct from **failover**:
   `PG_DUMP_ENDPOINT` are configured.
 - Create ad hoc snapshots with `dev-tools/backups/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
-- Redis starts empty and repopulates when services access the database.
+- If Coordination Redis starts empty (for example after wiping volumes), treat it as a coordination reset event and rely on the documented reset behavior rather than expecting in-flight timers/retries/sessions to survive.
 - The compose stack includes a `pg-dump-cron` service running
   `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes to mirror the production
   backup schedule.
@@ -146,10 +147,10 @@ This behavior is distinct from **failover**:
 
 | Environment | Steps |
 | --- | --- |
-| **Kubernetes** | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → allow Redis to repopulate |
-| **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot → restart containers → Redis repopulates automatically |
+| **Kubernetes** | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → Redis recovers via AOF when PVCs exist (or starts empty and follows cold start/reset behavior) |
+| **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot → restart containers → Coordination Redis either reuses its AOF volume or starts empty and follows cold start/reset behavior |
 
-Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. Gameplay resumes after services restart and Redis repopulates from PostgreSQL.
+Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. If Coordination Redis starts empty, treat it as a reset/cold start scenario as described in the Redis architecture docs.
 
 For **diagnostic purposes**, operators may take ad hoc copies of Coordination Redis AOF files or RDB exports and load them into **isolated, throwaway Redis instances** to inspect keys and coordination history during incident analysis. These diagnostic snapshots are strictly read-only tools:
 

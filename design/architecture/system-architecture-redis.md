@@ -234,7 +234,7 @@ Redis is used **exclusively for non-authoritative, transient data**, including:
 - Gameplay session state and real-time coordination data (e.g., command queues, timers, tick participation — see [Session Keys](#session-keys-and-gameplay-binding))
 - Retry metadata and inter-tick conflict tracking
 - TTL-based service caches such as hot room lookups and recent chat history (see [Performance Optimization Guidelines](./performance-optimization.md))
-- Automation queue keys for script events (`automation_queue:<tenantId>:<entityId>`) that are treated as **single-key operations** from Redis’s perspective (see [Hash Tags and Redis Cluster Slotting](#hash-tags-and-redis-cluster-slotting) for guidance if future automation scripts need to combine these keys with tick-region keys atomically)
+- Automation queue keys for script events (`automation:queue:<tenantId>:<entityId>`) that are treated as **single-key operations** on Cache/Rate-Limit Redis. These keys must not be combined with Coordination Redis keys in one operation (roles are separate).
 
 FireMUD distinguishes between two **logical roles** for Redis:
 
@@ -442,6 +442,19 @@ Exact numeric thresholds and environment-specific variations live in the Redis o
 
 Mass failovers, mis-keyed prefixes, or misconfigured Redis clusters can produce **widespread or localized inconsistencies** in coordination state. FireMUD treats these situations as **explicit reset events**, not as normal volatility, and constrains how resets are performed.
 
+### Failover vs Cold Start vs Reset
+
+Avoid collapsing these scenarios into “Redis repopulates from PostgreSQL”, because they have different safety properties and different data-loss envelopes:
+
+- **Failover (node crash, leader change, pod restart with intact AOF/PVCs)**: Coordination Redis retains its AOF/replication history. Keys like `tick:{tenantRegionTag}:pending` may survive, so executors can replay or complete in-flight ticks using idempotent domain logic and PostgreSQL guards. This is the normal “Redis recovered” path.
+- **Cold start (empty Coordination Redis because the data directory/PVC is missing, wiped, or corrupted)**: treat this as a **coordination reset event**, not a failover. There is no durable coordination history to replay. Services re-establish leases/locks as new activity occurs, but any coordination intent that existed only in Redis (timers, retry schedules, in-flight queues, session bindings) is dropped unless its intent is also represented durably elsewhere.
+- **Reset (explicit operational action)**: an intentional, scoped choice to discard volatile coordination state (region/tenant/cluster scope) and then resume from PostgreSQL state and new activity. Resets must follow the coordination reset model and runbooks; ad-hoc `redis-cli` edits are treated as “unknown reset”.
+
+The design persists only the coordination intent that is required for correctness:
+
+- `remote:*` keys are an example of explicitly best-effort coordination hints; correctness relies on durable state and idempotency in PostgreSQL, not on `remote:*` being present.
+- Coordination keys are not “protected by PostgreSQL” by default. If a workflow requires a timer/retry/schedule to survive cold starts, the durable intent must be stored explicitly (for example in a PostgreSQL outbox/schedule table) rather than assuming Redis will be rebuilt.
+
 Resets come in three scopes:
 
 - **Region-level reset** – targets a single `<tenantId, regionId>` hash tag:
@@ -515,13 +528,13 @@ The table below summarizes reset expectations for the main Redis prefixes. Detai
 | `tick:{tenantRegionTag}:pending` and `tick:{tenantRegionTag}:queue:*` | Coordination | **Reset-tolerant** | Dropped and rebuilt from PostgreSQL ticks and new commands; idempotency guarantees prevent double-apply. |
 | `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Timers/retries are re-enqueued or skipped within the tail-loss envelope; acceptable to discard during region/tenant/cluster resets. |
 | `tick-executor-lease:{tenantRegionTag}` and tick lock keys (`tick:{tenantRegionTag}:lock:*`) | Coordination | **Reset-tolerant** | Leases and locks are transient; executors reacquire leases and lock state after reset. |
-| `session:<tenantId>:<sessionId>` | Coordination | **Reset-sensitive** | Non-authoritative but player-visible. Region/tenant resets may discard active sessions; cluster-wide resets require clear operator communication and may force players to log in again. |
+| `session:game:<tenantId>:<sessionId>` | Coordination | **Reset-sensitive** | Non-authoritative but player-visible. Region/tenant resets may discard active sessions; cluster-wide resets require clear operator communication and may force players to log in again. |
 | `remote:<tenantId>:*` hint markers | Coordination | **Reset-tolerant** | Best-effort cross-region wake-up hints only; durable follow-ups live in PostgreSQL so dropping/retaining hints affects latency, not correctness. |
 | `ratelimit:<tenantId>:*` | Cache/Rate-Limit | **Reset-tolerant** | Token buckets are best-effort; resets clear buckets and counters but do not affect authoritative state. |
-| `inventory:<tenantId>:*`, `worldDynamic:<tenantId>:*`, `view:roomLook:<tenantId>:*` and similar cache prefixes | Cache | **Reset-tolerant** | Cached views are regenerated from PostgreSQL; resets may temporarily increase load but do not lose authoritative data. |
+| `inventory:<tenantId>:*`, `world-dynamic:<tenantId>:*`, `view:room-look:<tenantId>:*` and similar cache prefixes | Cache | **Reset-tolerant** | Cached views are regenerated from PostgreSQL; resets may temporarily increase load but do not lose authoritative data. |
 | `script-scheduler:{tenantRegionTag}:lastTickId` | Coordination | **Reset-tolerant** | Automation scheduler checkpoint for “every N ticks” triggers; losing it causes the scheduler to re-establish its baseline from the heartbeat stream and may temporarily re-evaluate interval boundaries. |
 | `automation:tick:{tenantScriptTag}:*` (lock/queue/pending) | Coordination | **Reset-tolerant** | Automation tick staging keys are treated like other coordination state and may be dropped during scoped resets; authoritative script triggers and audit trails remain in PostgreSQL. |
-| `automation_queue:<tenantId>:*`, `script_quota:<tenantId>:*` and other automation caches | Cache/Rate-Limit | **Reset-tolerant** | Best-effort buffers and counters; resets clear them but do not affect authoritative state. |
+| `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` and other automation caches | Cache/Rate-Limit | **Reset-tolerant** | Best-effort buffers and counters; resets clear them but do not affect authoritative state. |
 
 When introducing a new prefix, service designs must extend this matrix (or the detailed key catalog) with a reset policy and ensure that reset tooling and runbooks can enforce it.
 
@@ -737,10 +750,10 @@ To make Redis Cluster slotting rules explicit:
   - `tick-executor-lease:{tenantRegionTag}`
   - `script-scheduler:{tenantRegionTag}:lastTickId`
 - **Tenant-scoped session/auth keys (single-key; no hash tag required):**
-  - `session:<tenantId>:<sessionId>` – gameplay sessions and reconnect context
-  - `session:<tenantId>:<tokenHash>` – Account/JWT bindings for internal auth
+  - `session:game:<tenantId>:<sessionId>` – gameplay sessions and reconnect context
+  - `session:auth:<tenantId>:<tokenHash>` – Account/JWT bindings for internal auth
 - **Other keys (single-key only; no hash tag by default):**
-  - `remote:<tenantId>:<entityId>` is a best-effort wake-up/hint marker for cross-region work. The authoritative record for cross-region follow-ups is stored durably in PostgreSQL (via the tick effect ledger / follow-up tables) so losing `remote:*` entries does not lose required state changes. The marker is allowed to be overwritten, deduplicated, or lost and must only affect latency, not correctness. These keys must not be combined with `tick:*` keys in one `EVAL`/`EVALSHA`. Cached room views and other read-side aggregates use cache-specific prefixes such as `view:roomLook:<tenantId>:<roomId>` and are stored on Cache/Rate-Limit Redis, not Coordination Redis.
+  - `remote:<tenantId>:<entityId>` is a best-effort wake-up/hint marker for cross-region work. The authoritative record for cross-region follow-ups is stored durably in PostgreSQL (via the tick effect ledger / follow-up tables) so losing `remote:*` entries does not lose required state changes. The marker is allowed to be overwritten, deduplicated, or lost and must only affect latency, not correctness. These keys must not be combined with `tick:*` keys in one `EVAL`/`EVALSHA`. Cached room views and other read-side aggregates use cache-specific prefixes such as `view:room-look:<tenantId>:<roomId>` and are stored on Cache/Rate-Limit Redis, not Coordination Redis.
 
 All multi-key Lua scripts that need atomic coordination use only region-scoped keys (sharing the same `{tenantRegionTag}`) or only tenant-scoped session keys; no script mixes region-scoped coordination keys and session keys in a single `EVALSHA` call.
 
@@ -751,13 +764,13 @@ Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination 
 | Prefix | Role | Owner / Semantics |
 | --- | --- | --- |
 | `inventory:<tenantId>:<containerId>` | Cache | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. |
-| `characterCache:<tenantId>:<characterId>` | Cache | Entity Management – cached character graphs for hot reads. |
-| `worldDynamic:<tenantId>:<aggregateId>` | Cache | World Management – cached dynamic world aggregates (for example, room dynamic state). |
+| `character-cache:<tenantId>:<characterId>` | Cache | Entity Management – cached character graphs for hot reads. |
+| `world-dynamic:<tenantId>:<aggregateId>` | Cache | World Management – cached dynamic world aggregates (for example, room dynamic state). |
 | `room:<tenantId>:<roomId>` | Cache | World Management – cached room snapshots/topology slices for LOOK and navigation. |
-| `view:roomLook:<tenantId>:<roomId>` | Cache | Game Session / Game Logic – cached rendered or pre-assembled room views for LOOK and similar commands. |
+| `view:room-look:<tenantId>:<roomId>` | Cache | Game Session / Game Logic – cached rendered or pre-assembled room views for LOOK and similar commands. |
 | `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | Spring Cloud Gateway – rate-limit buckets and optional sharded buckets as described in the Redis cache & rate-limiting doc. |
-| `automation_queue:<tenantId>:*` | Cache | Automation & Scripting – queued automation work items awaiting staging into automation ticks. |
-| `script_quota:<tenantId>:<scriptId>` | Cache | Automation & Scripting – per-script quota counters and fairness budgets. |
+| `automation:queue:<tenantId>:*` | Cache | Automation & Scripting – queued automation work items awaiting staging into automation ticks. |
+| `automation:quota:<tenantId>:<scriptId>` | Cache | Automation & Scripting – per-script quota counters and fairness budgets. |
 | `chat:say:<tenantId>:<playerId>` | Cache | Social & Groups – short-lived chat history for “say” messages. |
 | `chat:tell:<tenantId>:<conversationId>` | Cache | Social & Groups – short-lived direct-message history per conversation. |
 | `chat:guild:<tenantId>:<guildId>` | Cache | Social & Groups – short-lived guild chat history. |
@@ -796,7 +809,7 @@ New code is expected to honor both: never exceed the hard caps, and stay within 
     - The region is marked **degraded** and emits `redis.tick.timers_over_budget_total` metrics.
     - Additional timer insertions beyond the hard cap are **shed** with a clear error or dropped according to simple, documented rules (for example, rejecting new timers for low-priority effects first).
     - Operators can decide whether to lower timer density (design issue) or slow ticks (operational tuning), but the hard cap prevents unbounded growth.
-- `session:<tenantId>:<sessionId>` (per-player session payload)
+- `session:game:<tenantId>:<sessionId>` (per-player session payload)
   - Target maximum serialized session value size: roughly **≤16–32 KB**.
   - Session payloads may contain routing, bindings, and lightweight metadata, but must not embed large blobs or full gameplay history.
   - When a session value exceeds the budget:
@@ -830,7 +843,7 @@ Despite the hash-tag discipline above, mistakes in key shape or hash-tag constru
 
 - **Non-coordination keys (for example future cache keys, selected automation prefixes, or other long-lived aggregates)**:
   - When incorrect key shapes cannot be safely discarded, migrations are handled via **small, one-off migration tools** under the `dev-tools` profile rather than general-purpose key movers:
-    - Migration tools operate on clearly scoped prefixes (for example `automation_queue:<tenantId>:*` or `view:roomLook:<tenantId>:*`) rather than scanning the entire keyspace.
+    - Migration tools operate on clearly scoped prefixes (for example `automation:queue:<tenantId>:*` or `view:room-look:<tenantId>:*`) rather than scanning the entire keyspace.
     - They run against paused traffic or dedicated maintenance windows, rewriting keys from the old shape to the new shape on a clean Redis instance or while the affected prefixes are temporarily quiesced.
     - After the migration, services are updated to use the new key builders and prefixes exclusively; the old shape is considered deprecated and removed from descriptors and helpers.
   - These tools are treated as **per-mistake utilities**, not long-lived infrastructure: when a key-shape issue is discovered, a targeted migrator is written, executed once, and then retired alongside the old key format.
@@ -1081,23 +1094,23 @@ This protocol keeps migration operationally simple and avoids subtle cross-versi
 
 Session and timer keys do not participate in tick multi-key scripts and may use simpler patterns as long as they preserve `tenantId` prefixes and avoid cross-shard assumptions. In particular:
 
-- **Session-scope Lua scripts are strictly single-key**: a session script operates on one `session:<tenantId>:<sessionId>` key per invocation and must not touch tick-prefixed keys or other shards in the same `EVALSHA` call.
+- **Session-scope Lua scripts are strictly single-key**: a session script operates on one `session:game:<tenantId>:<sessionId>` key per invocation and must not touch tick-prefixed keys or other shards in the same `EVALSHA` call.
 - If a future script legitimately needs to combine a session key with other keys (for example, a per-region index), it must:
   - Either encode a hash tag that keeps all involved keys in the same slot, or
   - Be refactored into separate calls so each script remains shard-local and single-key for sessions.
 
 Automation and scripting keys follow a similar pattern:
 
-- `automation_queue:<tenantId>:<entityId>` keys are intentionally treated as **single-key, per-tenant/per-entity queues**:
+- `automation:queue:<tenantId>:<entityId>` keys are intentionally treated as **single-key, per-tenant/per-entity queues**:
   - They are decoupled from tick-region hash tags so that automation work items can be enqueued independently of region ownership and sharding.
-  - Scripts that operate on `automation_queue` keys treat them as single-key operations from Redis Cluster’s perspective and do not attempt to combine them atomically with tick-region keys inside the same Lua script.
+  - Scripts that operate on `automation:queue:*` keys treat them as single-key operations from Redis Cluster’s perspective and do not attempt to combine them atomically with tick-region keys inside the same Lua script.
 - When automation needs to interact with tick keys, it enqueues work via:
   - Dedicated staging keys such as `automation:tick:{tenantScriptTag}:...`, which are region-agnostic, and
   - Follow-up tick commands into region-local queues (`tick:{tenantRegionTag}:queue:<entityId>`) once the appropriate region is resolved.
 
 If future automation features legitimately require **region-local, atomic coordination** with tick keys, the migration path is clear:
 
-- Introduce new keys `automation_queue:{tenantRegionTag}:<entityId>` that adopt the same `{tenantRegionTag}` hash tag as tick keys so they map to the same shard.
+- Do not introduce automation queue keys that adopt `{tenantRegionTag}` in order to “join” tick shards; automation queues live on Cache/Rate-Limit Redis and are kept separate from tick coordination keys by design.
 - Update the shared key-building helpers, Lua Script Registry descriptors, and code generation so every automation script that touches regional queues must validate the hash tag and align with the tick region.
 - Migrate producers/consumers gradually, writing to both the old and new key shapes during the transition and iterating until the automation workload is fully region-local.
 - Treat this as an architectural shift: document the migration, review sharding implications, and implement it via the shared helpers rather than ad-hoc string concat.
@@ -1130,7 +1143,7 @@ These key-shape and hash-tag rules are **enforced**, not just conventions:
   - A Lua linter scans each script for literal key prefixes (`"tick:"`, `"session:"`, `"retry:"`, `"timer:"`, `"remote:"`, cache prefixes) and compares them with the script’s descriptor.
   - Tick coordination scripts are allowed to use only tick/coordination prefixes (`tick:`, `retry:`, `timer:`, `remote:`) and are rejected in CI if they reference `session:`, automation, or cache prefixes.
   - Session CAS scripts are allowed to use only `session:` keys and are rejected if they touch `tick:`, automation, or other coordination prefixes.
-  - Automation scripts are explicitly registered as **single-key** scripts whose allowed prefixes are `automation_queue:` and `automation:tick:`. CI rejects automation scripts that reference `tick:`, `session:`, or any other coordination prefixes, preventing mixed `automation:*` + `tick:*` key usage that could trigger `CROSSSLOT` errors.
+  - Automation scripts are explicitly registered as **single-key** scripts whose allowed prefixes are `automation:queue:` and `automation:tick:`. CI rejects automation scripts that reference `tick:`, `session:`, or any other coordination prefixes, preventing mixed `automation:*` + `tick:*` key usage that could trigger `CROSSSLOT` errors.
 
 Pull requests that introduce new tick-related keys or Lua scripts must:
 
@@ -1990,14 +2003,14 @@ Redis stores transient gameplay session state for each connected player, includi
 - Timer and cooldown data
 - Conflict and retry metadata
 
-Session keys use the pattern `session:<tenantId>:<sessionId>` as described in the
+Session keys use the pattern `session:game:<tenantId>:<sessionId>` as described in the
 [Game Session Service README](./microservices/game-session-service/README.md#redis-keys). The `sessionId` is an opaque server-side identifier (for example, a UUID or a fixed-length hash derived from the underlying JWT or account/session tuple) chosen to keep key length bounded and independent of the raw token size.
 
 Session entries expire after a **derived session TTL** as configured in [Environment & Secrets](./infrastructure/environment-and-secrets.md#authentication). The Game Session
 Service sets both:
 
-- A **logical expiry timestamp** (for example `logicalExpiryAtMs = issuedAtMs + session_expiration_ms`) inside the structured value stored under `session:<tenantId>:<sessionId>`, and
-- The Redis TTL for each `session:<tenantId>:<sessionId>` key to the same derived duration when the session is created or refreshed.
+- A **logical expiry timestamp** (for example `logicalExpiryAtMs = issuedAtMs + session_expiration_ms`) inside the structured value stored under `session:game:<tenantId>:<sessionId>`, and
+- The Redis TTL for each `session:game:<tenantId>:<sessionId>` key to the same derived duration when the session is created or refreshed.
 
 The logical expiry timestamp is treated as the **authoritative bound** on the reconnection window; the TTL is a best-effort enforcement mechanism that may drift slightly under AOF replay or failover but never extends the logical window.
 
@@ -2018,7 +2031,7 @@ Logical expiry timestamps and Redis TTLs rely on **reasonably synchronized clock
 
 In practice, the combination of `JWT exp`, the derived `session_expiration_ms`, and Redis TTL provides a clear envelope: sessions are considered resumable only while the JWT remains valid and the session’s logical expiry window has not elapsed. TTL serves as a garbage-collection hint to remove old keys; logical expiry remains the final authority for reconnect decisions on healthy, time-synchronized nodes.
 
-For reconnect flows, **both the presence of the `session:<tenantId>:<sessionId>` key and an unexpired logical expiry timestamp are required for a session to be resumable**. If the key no longer exists, or if the logical expiry has passed, the session is treated as expired and cannot be resumed, even if related database records still exist for audit or game-instance lifecycle.
+For reconnect flows, **both the presence of the `session:game:<tenantId>:<sessionId>` key and an unexpired logical expiry timestamp are required for a session to be resumable**. If the key no longer exists, or if the logical expiry has passed, the session is treated as expired and cannot be resumed, even if related database records still exist for audit or game-instance lifecycle.
 
 In practice, the derived `session_expiration_ms` defines the **maximum reconnection window** for gameplay sessions. It is intentionally computed from the JWT lifetime to eliminate subtle mismatches between “JWT still valid” and “server-side session already expired”:
 
@@ -2026,12 +2039,12 @@ In practice, the derived `session_expiration_ms` defines the **maximum reconnect
 
 Services validate that `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` is non-negative in non-dev profiles and refuse to start if it is not, so the session window cannot be shorter than the JWT lifetime by accident. Operators who intentionally want a shorter reconnection window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a second, independent session TTL knob; exposing an additional “session TTL” control is deliberately considered out of scope for this architecture.
 
-Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` affects the **derived expiry for new and refreshed sessions only**; existing `session:<tenantId>:<sessionId>` keys keep the logical expiry and Redis TTL they were created with. Tightening these values in a running cluster:
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` affects the **derived expiry for new and refreshed sessions only**; existing `session:game:<tenantId>:<sessionId>` keys keep the logical expiry and Redis TTL they were created with. Tightening these values in a running cluster:
 
 - Immediately shortens the effective reconnection window for new logins and reconnect attempts, because JWT validity is checked first using the new `exp`.
 - May leave some older `session:*` keys in Redis until their original TTLs elapse, even though their JWTs are no longer usable.
 
-This is acceptable from a correctness and security perspective—stale session keys cannot be used once their JWTs are invalid—but operators who want a clean cut-over after a major TTL reduction may run a **session cleanup** job (for example, deleting `session:<tenantId>:*` keys for selected tenants during a low-traffic window) so that all reconnects require a fresh `LOGIN` under the new envelope.
+This is acceptable from a correctness and security perspective—stale session keys cannot be used once their JWTs are invalid—but operators who want a clean cut-over after a major TTL reduction may run a **session cleanup** job (for example, deleting `session:game:<tenantId>:*` keys for selected tenants during a low-traffic window) so that all reconnects require a fresh `LOGIN` under the new envelope.
 
 From a capacity perspective, gameplay sessions are treated as **part of the normal coordination footprint**, not as a separate, tightly budgeted workload. At the expected self-hosted scale and reconnection windows, `session:*` keys are assumed to consume a relatively small, bounded share of Coordination Redis memory compared to tick locks, timers, and pending state. The design therefore does **not** introduce explicit per-tenant session quotas or dedicated session Redis topologies by default; general coordination memory thresholds, eviction/OOM alerts, and the ability to lower session TTLs or limit concurrent sessions per tenant are considered sufficient safeguards. If real-world usage ever shows `session:*` keys dominating memory or triggering coordination `OOM` conditions, the preferred remediation is to adjust TTLs or admission-control limits first, and only consider new Redis deployments for sessions if those simple measures prove inadequate.
 
@@ -2044,12 +2057,12 @@ This state is used by the **Game Session Service** to:
 - Deduplicate reconnect attempts
 - Handle character takeovers (one session per character)
 
-The **authoritative lifecycle** of a game instance remains in PostgreSQL (for example the `game_instances` table and related state), not in Redis. If Redis drops a `session:<tenantId>:<sessionId>` key while the underlying game instance is still `RUNNING`:
+The **authoritative lifecycle** of a game instance remains in PostgreSQL (for example the `game_instances` table and related state), not in Redis. If Redis drops a `session:game:<tenantId>:<sessionId>` key while the underlying game instance is still `RUNNING`:
 
 - Background operations and gameplay ticks continue based on tenant/game-instance identifiers; they do not depend on the presence of a specific `session:*` key.
 - A reconnect attempt with a valid JWT but a missing session key is treated as “no active binding” rather than “game instance missing”:
   - The Game Session Service verifies the JWT first.
-  - It then either binds a **new** `session:<tenantId>:<sessionId>` record to the existing game instance (subject to ownership rules) or rejects the reconnect if the reconnection window has intentionally elapsed.
+  - It then either binds a **new** `session:game:<tenantId>:<sessionId>` record to the existing game instance (subject to ownership rules) or rejects the reconnect if the reconnection window has intentionally elapsed.
   - If the JWT’s remaining lifetime is **less than a configurable safety margin** (for example 5 minutes) when the old session TTL has already expired, the reconnect path requires a **fresh LOGIN** even if the JWT is still technically valid; this prevents new redis sessions from being created with almost-expired tokens, which could otherwise result in very short-lived bindings and confusing UX.
   - The absence of the old `session:*` key never implies that the underlying `game_instances` row has stopped; it only affects how quickly a user can resume their previous socket binding.
 - Metrics such as “reconnect attempts missing session key but targeting a running game instance” surface misconfiguration or Redis instability so operators can adjust TTLs or investigate state loss. Operators can use these metrics to spot patterns such as:
@@ -2058,12 +2071,12 @@ The **authoritative lifecycle** of a game instance remains in PostgreSQL (for ex
 
 All session bind, rebind, and takeover flows are performed via a **Lua compare-and-set script** that operates on a **versioned value schema**:
 
-- The value stored under `session:<tenantId>:<sessionId>` is a structured payload that includes at least:
+- The value stored under `session:game:<tenantId>:<sessionId>` is a structured payload that includes at least:
   - A `schemaVersion` field (for example, `1`, `2`), which allows the script and Java code to evolve the shape of the value over time.
   - A `generation` counter used to detect stale rebind attempts.
   - The current binding information (for example, `socketId`, transport metadata, and any additional session attributes).
 - The CAS script:
-  - Reads the current binding for `session:<tenantId>:<sessionId>`.
+  - Reads the current binding for `session:game:<tenantId>:<sessionId>`.
   - Verifies that the binding is still compatible with the requested operation (for example, same session attempting a rebind, or an authorized takeover flow) and that the `generation`/`schemaVersion` values are understood.
   - Applies the new binding atomically (updating binding fields, incrementing the `generation` counter, and preserving or migrating any schema-versioned fields as needed).
   - Optionally emits structured metadata for audit and debugging (for example, `previousSocketId`, `newSocketId`, `reason`, `oldSchemaVersion`, `newSchemaVersion`).
@@ -2072,7 +2085,7 @@ All session bind, rebind, and takeover flows are performed via a **Lua compare-a
 
 Session keys and tick-region keys are intentionally decoupled for sharding and resilience, but they must still remain **logically aligned**:
 
-- For each active `session:<tenantId>:<sessionId>`, the Game Session Service tracks the **current region binding** in PostgreSQL (for example the `game_instances` row and any per-session routing metadata) rather than relying solely on Redis.
+- For each active `session:game:<tenantId>:<sessionId>`, the Game Session Service tracks the **current region binding** in PostgreSQL (for example the `game_instances` row and any per-session routing metadata) rather than relying solely on Redis.
 - A lightweight health loop periodically samples a small number of active sessions per tenant and:
   - Verifies that their recorded region binding matches the tick region that is currently processing commands for the associated character or game instance.
   - Emits metrics such as `session.region_mismatch_total` and `session.region_mismatch_current` when it finds discrepancies (for example, a session bound to Region A while ticks are executing in Region B).
@@ -2116,7 +2129,7 @@ When `UNSUPPORTED_SCHEMA_VERSION` appears in metrics or logs, runbooks treat it 
 - A sign that session schema or deployment versions are out of sync (for example, services writing a newer `schemaVersion` than the CAS script supports, or an incomplete rollback).
 - A trigger to:
   - Align deployments so all Game Session Service instances run scripts that understand the highest `schemaVersion` currently in use, and
-  - Optionally run a **session schema cleanup** tool for specific tenants that scans `session:<tenantId>:*` keys for unknown versions and deletes or aggressively expires those entries. Cleanup is run as a one-off, single-worker maintenance task (per Coordination Redis deployment) to avoid competing with ticks; because Redis sessions are non-authoritative and bounded by the derived `session_expiration_ms` window, removing unknown-version sessions is acceptable and affected players simply need to perform a fresh `LOGIN`.
+  - Optionally run a **session schema cleanup** tool for specific tenants that scans `session:game:<tenantId>:*` keys for unknown versions and deletes or aggressively expires those entries. Cleanup is run as a one-off, single-worker maintenance task (per Coordination Redis deployment) to avoid competing with ticks; because Redis sessions are non-authoritative and bounded by the derived `session_expiration_ms` window, removing unknown-version sessions is acceptable and affected players simply need to perform a fresh `LOGIN`.
 
 ### Session Schema Cleanup and Large Keyspaces
 
@@ -2132,8 +2145,8 @@ Session schema cleanup is a **hygiene and recovery tool**, not a required part o
 When runbooks call for explicit cleanup (for example, after a major schema change or to address a large number of unknown-version sessions in a specific tenant), cleanup tools must be designed for **large keyspaces**:
 
 - Scope:
-  - Operate on a **per-tenant prefix** such as `session:<tenantId>:*`; avoid scanning the entire Redis keyspace when only some tenants are affected.
-  - Prefer targeted selectors (for example, `session:<tenantId>:*` with filters inside the tool) over global `SCAN` patterns.
+  - Operate on a **per-tenant prefix** such as `session:game:<tenantId>:*`; avoid scanning the entire Redis keyspace when only some tenants are affected.
+  - Prefer targeted selectors (for example, `session:game:<tenantId>:*` with filters inside the tool) over global `SCAN` patterns.
 - Bounded SCAN usage:
   - Run **at most one cleanup worker at a time** per Coordination Redis deployment; do not schedule overlapping cleanup jobs for multiple tenants or run them from multiple services concurrently.
   - Use Redis `SCAN` with modest `COUNT` values (for example, 100–1000) to avoid long blocking periods.

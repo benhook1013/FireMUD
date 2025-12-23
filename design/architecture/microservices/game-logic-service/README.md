@@ -73,11 +73,15 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 ### Implementation status (LOOK slice)
 
+Last reviewed: 2025-12-23
+
 - **Live:** The data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`; it orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to the `LookResultRenderer`, and publishes the telemetry described in `../../project-management/look-instrumentation.md`.
 - **Stubbed:** Room and entity context still comes from the seeded demo world and entity fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
 - **Deferred:** Future slices will expand the renderer with richer prose, annotate `LookResult` with combat/effect metadata, and surface additional visibility hints once the core text shape proves stable.
 
 ### Implementation status (chat slice)
+
+Last reviewed: 2025-12-23
 
 - **Live:** `BroadcastSay` accepts authenticated `SAY`/`YELL`/`WHISPER` payloads, validates length, aggregates recipient/NPC metadata, and forwards the normalized message to the Social & Groups Service stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
 - **Stubbed:** Delivery currently uses the regression stubbed Social & Groups Service that records `SendMessage` calls and echoes success while the cross-service WebSocket/Telnet tests assert the structured response before adding a narrative layer for listeners.

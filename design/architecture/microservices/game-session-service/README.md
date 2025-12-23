@@ -8,7 +8,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - **Tenant** – a single game instance, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
 - **Game instance** – synonymous with tenant in platform terminology: one running world/campaign identified by `tenantId`.
-- **Player session** – a single player’s live connection and gameplay context bound to a specific game instance. Player sessions are stored in Redis under `session:<tenantId>:<sessionId>` and are purged when the session ends.
+- **Player session** – a single player’s live connection and gameplay context bound to a specific game instance. Player sessions are stored in Redis under `session:game:<tenantId>:<sessionId>` and are purged when the session ends.
 - **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
 
 ### Responsibilities
@@ -36,7 +36,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Player session state for reconnect recovery lives in Redis using keys of the form
-  `session:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions.
+  `session:game:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions.
   - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `<proxyConnectionId, disconnectSequence>` rather than a guaranteed source of truth. Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behaviour at the proxy can remain simple while consumption stays idempotent. When the Telnet client supplies a `SESSION <sessionId> <tenantId>` envelope, that `<tenantId, sessionId>` is carried as advisory context and may be used for logging/audit, but Game Session still validates any session ownership claims against Redis and its authenticated session state.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
@@ -72,7 +72,7 @@ Game Session uses the following Redis key prefixes; the **authoritative catalog*
 
 | Key prefix | Role | Notes |
 | --- | --- | --- |
-| `session:<tenantId>:<sessionId>` | Coordination | Session state and reconnect metadata for gameplay sessions. |
+| `session:game:<tenantId>:<sessionId>` | Coordination | Session state and reconnect metadata for gameplay sessions. |
 | `tick:{tenantRegionTag}:queue:<entityId>` | Coordination | Per-entity command queues within a tick region. |
 | `tick:{tenantRegionTag}:pending` | Coordination | Single in-flight tick payload per region. |
 | `tick:{tenantRegionTag}:lock:<entityId>` | Coordination | Entity locks during tick execution. |
@@ -490,7 +490,7 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 
 ### Redis Keys
 
-Session state needed for reconnect recovery is stored under `session:<tenantId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
+Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
 
 Tick coordination is **region-scoped**, not session-scoped. Tick queues, locks, timers, retry metadata, and the `tick:{tenantRegionTag}:pending` key use the `tick:{tenantRegionTag}:...` prefix described in the [Redis Architecture](../../system-architecture-redis.md#tick-integration-resilience-locking-staging). Region keys follow region lifecycle and crash-recovery rules:
 

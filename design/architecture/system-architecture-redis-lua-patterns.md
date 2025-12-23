@@ -100,7 +100,7 @@ These checks are enforced via the Lua Script Registry descriptors, generated key
 
 #### Session-only scripts
 
-Session scripts operate only on `session:<tenantId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
+Session scripts operate only on `session:game:<tenantId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
 
 - **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `playerId`/`tenantId` or token hash provided in `ARGV`.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).
@@ -129,12 +129,12 @@ Automation-related Lua scripts follow stricter cluster slotting rules to avoid `
 - Scripts that operate on `automation:tick:{tenantScriptTag}:*` keys are registered as **single-hash-slot** scripts:
   - They may include multiple `automation:tick:{tenantScriptTag}:*` keys for the **same** `<tenantId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantScriptTag}` values.
   - They must not include any `tick:{tenantRegionTag}:*` keys in the same invocation.
-- Scripts that operate on `automation_queue:<tenantId>:*` keys:
-  - Use only `automation_queue:<tenantId>:*` keys for a single tenant in `KEYS`.
+- Scripts that operate on `automation:queue:<tenantId>:*` keys:
+  - Use only `automation:queue:<tenantId>:*` keys for a single tenant in `KEYS`.
   - Must not include `automation:tick:*` or `tick:*` keys in the same invocation.
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
-  - Automation work is staged under `automation_queue:*` and `automation:tick:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
+  - Automation work is staged under `automation:queue:*` and `automation:tick:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
 
 CI must reject automation Lua scripts that:
 

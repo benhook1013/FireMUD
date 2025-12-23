@@ -18,7 +18,7 @@ Issue: multiple docs/configs still imply or default to one Redis instance for bo
 - [x] Update `.env.sample` to use `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` only.
 - [x] Update `DEVELOPER_SETUP.md` `.env` snippet and Redis debugging guidance for two roles.
 - [x] Update `k8s/base/README.md` env var example (`redis-coord` / `redis-cache`).
-- [ ] Audit remaining docs for stale single-Redis examples (if any).
+- [x] Audit remaining docs for stale single-Redis examples (if any).
 
 ### Update Docker Compose to actually run two Redis services by default
 - [x] Replace single `redis` service with `redis-coord` + `redis-cache` in `docker/docker-compose.yml`.
@@ -70,7 +70,7 @@ Clarification to incorporate into docs:
 
 Action items:
 - [x] Remove/replace vague phrases like “Redis repopulates transient state from PostgreSQL on access” unless the scope is explicit.
-- [ ] Add a short “Failover vs Cold Start vs Reset” subsection (single source of truth) in:
+- [x] Add a short “Failover vs Cold Start vs Reset” subsection (single source of truth) in:
   - `design/architecture/system-architecture-redis.md`
   - `design/architecture/system-architecture-backup-recovery.md`
   - `design/architecture/system-architecture-runbooks.md`
@@ -84,7 +84,7 @@ Action items:
 - Use `<...>` for example placeholders everywhere else (tenantId, regionId, entityId, etc.).
 
 Concrete fixes:
-- [x] Fix `automation_queue:{tenantId}:*` example to `automation_queue:<tenantId>:*`.
+- [x] Fix `automation_queue:{tenantId}:*` and other placeholder examples to use angle brackets and the normalized cache prefix (for example `automation:queue:<tenantId>:*`).
 - Audit Redis examples across:
   - `design/architecture/system-architecture-redis.md`
   - `design/architecture/system-architecture-ticks.md`
@@ -98,6 +98,10 @@ Concrete fixes:
 - Cache catalog mixes styles (`characterCache`, `worldDynamic`, `room:`) (`design/architecture/system-architecture-redis.md:754`).
   - Define a canonical naming convention (e.g. lowercase with `:` separators; no camelCase prefixes) and apply consistently.
 
+Action items:
+- [x] Split session key prefixes (`session:game:*` vs `session:auth:*`) and update all design docs accordingly.
+- [x] Normalize Cache/Rate-Limit prefixes to a consistent style (for example `character-cache:*`, `world-dynamic:*`, `view:room-look:*`, `automation:queue:*`, `automation:quota:*`) and update design docs accordingly.
+
 ---
 
 ## 5) Tenant Definition: Enforce “tenant == game instance”
@@ -107,7 +111,7 @@ Issue: docs currently allow tenant to mean “customer” while also having mult
 Action items:
 - [x] Update the Game Session Service terminology to enforce “tenant == game instance”.
 - [x] Fix obvious “tenant launches a new game world” phrasing in world creation docs.
-- [ ] Audit remaining docs for “tenant == customer” language and correct it.
+- [x] Audit remaining docs for “tenant == customer” language and correct it.
 
 ---
 
@@ -132,4 +136,4 @@ Per Ben: keep “Implementation status” blocks at top of relevant service desi
 Action items:
 - [x] Fix duplicated bullet in `design/architecture/system-architecture-redis.md:113` (duplicate “Multi-key access” line).
 - [x] Fix indentation/formatting errors and duplicated paragraphs in `design/architecture/system-architecture-redis-cache.md`.
-- [ ] Add a short “Last reviewed” date to implementation-status blocks while the work is pending.
+- [x] Add a short “Last reviewed” date to implementation-status blocks while the work is pending.

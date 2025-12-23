@@ -42,7 +42,7 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
   - Acquires tick locks via shared helpers using keys of the form `tick:{tenantRegionTag}:lock:<entityId>` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
   - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
 - **Cache/Rate-Limit Redis usage**
-  - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `characterCache:<tenantId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - These caches for character graphs and similar aggregates are treated as **strongly validated caches**: payloads include version or `lastModified` markers from the authoritative tables, and readers validate those versions before reusing cached data. PostgreSQL remains the authoritative store for entity state and inventories.
   - Any change to Redis usage in this service should be reviewed against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role selection, slotting, and observability updates.
 
@@ -91,6 +91,8 @@ Room-entity data is currently seeded through the `firemud.look.rooms` configurat
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 
 ### Implementation status (LOOK slice)
+
+Last reviewed: 2025-12-23
 
 - **Live:** The seeded `firemud.look.rooms` entries provide the visible entities for the demo rooms, `ListRoomEntities` is wired into Game Logic's `ResolveLook`, and the resulting instrumentation is captured in `../../project-management/look-instrumentation.md`.
 - **Stubbed:** Real-time behaviors such as item respawns, stealth/aura-driven visibility, and inventory states still rely on static fixtures so regression tests remain reproducible.

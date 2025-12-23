@@ -15,7 +15,7 @@ The following sections will be fleshed out as the implementation evolves:
 
 - **Domain Model** – How `payment_transaction`, `subscription`, and related tables map to Stripe objects.
 - **Payment Flows** – Sequence diagrams for creating payment intents, handling webhooks, issuing refunds, and managing retries.
-- **Multi-Tenancy & Security** – Key and customer isolation per tenant, webhook security, and PCI/sensitive-data considerations.
+- **Multi-Tenancy & Security** – Key and customer isolation per tenant (game instance), webhook security, and PCI/sensitive-data considerations.
 - **Service APIs** – gRPC/REST endpoints exposed by the Account Service for initiating payments and querying billing state.
 - **Operational Concerns** – Monitoring, alerting, and failure handling around Stripe outages or degraded behavior.
 

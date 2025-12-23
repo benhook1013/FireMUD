@@ -4,6 +4,8 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
 
 > ℹ️ **Implementation status**
 >
+> Last reviewed: 2025-12-23
+>
 > - Spring Cloud Gateway’s rate limiting is wired to Cache/Rate-Limit Redis today using the patterns in this document.
 > - Other services reference these cache and aggregate patterns (for example, Entity Management character caches and World Management room caches) as target-state behavior; concrete cache adoption may evolve over time while continuing to follow these rules.
 >
@@ -131,7 +133,7 @@ From a correctness perspective, cache usage falls into two broad classes:
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
-- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a “current room view” would exceed that size, split it into a set of chunked entries (for example `view:roomLook:<tenantId>:<roomId>:chunk:<n>`) instead of storing a multi-megabyte blob.
+- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a “current room view” would exceed that size, split it into a set of chunked entries (for example `view:room-look:<tenantId>:<roomId>:chunk:<n>`) instead of storing a multi-megabyte blob.
 - CI or static checks should exercise representative payloads to keep them within these limits, and reviewers must explicitly justify any intentional exception.
 - Large or streaming-style responses stay in PostgreSQL/object storage or behind dedicated APIs rather than being replicated wholesale into Redis, even on the Cache/Rate-Limit cluster.
 
@@ -232,8 +234,8 @@ Cluster slotting implications:
 Cached aggregates in Redis should follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Examples (subject to refinement):
 
 - `inventory:<tenantId>:<containerId>` – cached view of a single inventory or container (including room-ground containers).
-- `worldDynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
-- `view:roomLook:<tenantId>:<roomId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
+- `world-dynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
+- `view:room-look:<tenantId>:<roomId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
 
 Expectations:
 
@@ -250,8 +252,8 @@ To keep cache usage reviewable and consistent across services, common aggregate 
 | Prefix / Aggregate | Example Key | Policy | Notes |
 | --- | --- | --- | --- |
 | Inventory/container views | `inventory:<tenantId>:<containerId>` | **Versioned** | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL; writes bump the version, and cache entries are discarded when versions mismatch. |
-| Dynamic world aggregates | `worldDynamic:<tenantId>:<aggregateId>` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
-| Room LOOK views | `view:roomLook:<tenantId>:<roomId>` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
+| Dynamic world aggregates | `world-dynamic:<tenantId>:<aggregateId>` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
+| Room LOOK views | `view:room-look:<tenantId>:<roomId>` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
 | Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
 
 Service design docs may introduce additional cache aggregates, but each new prefix must declare whether it is **versioned** or **TTL-only** and explain why that choice is appropriate.
@@ -279,7 +281,7 @@ To keep Cache/Rate-Limit Redis predictable and avoid unbounded growth, cache pre
     - Using a synthetic tenant identifier for edge traffic (for example `gateway-edge`) so all rate-limit keys still carry a `tenantId` prefix.
     - Deriving `bucket` from a stable hash of the client IP and route identifier, and using a small, fixed `N` to bound the total bucket count per `timeWindow`.
   - Observability for rate limiting should include simple counters and gauges (for example, total active `ratelimit:*` keys per tenant, distribution of hits per bucket) so operators can detect when the configured `N`/`S` values are no longer appropriate for the workload.
-  - Runtime self-checks and ACLs reinforce role separation: Cache/Rate-Limit Redis deployments use cache-specific users (for example `cache_app`) that are denied access to coordination prefixes, while Coordination Redis ACLs deny access to cache prefixes such as `ratelimit:*` and `view:roomLook:*`. Misrouted cache traffic therefore surfaces as explicit authorization errors instead of silently mutating coordination keys.
+  - Runtime self-checks and ACLs reinforce role separation: Cache/Rate-Limit Redis deployments use cache-specific users (for example `cache_app`) that are denied access to coordination prefixes, while Coordination Redis ACLs deny access to cache prefixes such as `ratelimit:*` and `view:room-look:*`. Misrouted cache traffic therefore surfaces as explicit authorization errors instead of silently mutating coordination keys.
 
 New cache prefixes must document their budgets in the owning service’s design doc and, where applicable, in the central Cache/Rate-Limit Key Catalog so reviews can validate that Redis is being used as a cache rather than a secondary datastore.
 

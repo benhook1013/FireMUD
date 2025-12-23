@@ -47,7 +47,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   - Uses automation-specific coordination prefixes owned by the Game Session Service’s Lua registry, such as `automation:tick:{tenantScriptTag}:lock`, `automation:tick:{tenantScriptTag}:queue`, and `automation:tick:{tenantScriptTag}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
   - Automation scripts are registered as **single-hash-slot** Lua scripts that operate only on `automation:tick:{tenantScriptTag}:*` keys; they never mix `automation:*` and `tick:*` prefixes in a single script invocation to avoid `CROSSSLOT` issues in Redis Cluster.
 - **Cache/Rate-Limit Redis usage**
-  - Stores script quota counters and similar best-effort aggregates in **Cache/Rate-Limit Redis** using prefixes such as `script_quota:<tenantId>:<scriptId>` and `automation_queue:<tenantId>:*`, following the cache key naming and isolation rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Stores script quota counters and similar best-effort aggregates in **Cache/Rate-Limit Redis** using prefixes such as `automation:quota:<tenantId>:<scriptId>` and `automation:queue:<tenantId>:*`, following the cache key naming and isolation rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state. Quota and queue-oriented prefixes are treated as **best-effort TTL-only caches** unless explicitly documented as strongly validated caches with versioned payloads and stricter invalidation semantics.
 
 Ownership and durability expectations for Automation & Scripting–related prefixes:
@@ -57,8 +57,8 @@ Ownership and durability expectations for Automation & Scripting–related prefi
 | `automation:tick:{tenantScriptTag}:lock` | Coordination | Reset-tolerant; locks are volatile coordination state and can be dropped and reacquired after a coordination reset. |
 | `automation:tick:{tenantScriptTag}:queue` | Coordination | Reset-tolerant; in-flight automation tick queues are rebuilt from PostgreSQL and fresh events. Dropping these keys may cause some automation work to be skipped within the accepted tail-loss envelope. |
 | `automation:tick:{tenantScriptTag}:pending` | Coordination | Reset-tolerant; staged automation effects are coordinated with the main tick system and are replayed or discarded according to the same idempotency rules as tick `pending` entries. |
-| `automation_queue:<tenantId>:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work items. Loss is acceptable; authoritative script triggers and audit trails remain in PostgreSQL. |
-| `script_quota:<tenantId>:<scriptId>` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
+| `automation:queue:<tenantId>:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work items. Loss is acceptable; authoritative script triggers and audit trails remain in PostgreSQL. |
+| `automation:quota:<tenantId>:<scriptId>` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
 
 Any new Automation & Scripting–specific prefixes must be added to this table and to the central Redis key catalogs, with a clear statement of which Redis role they use and whether they are reset-tolerant, reset-sensitive, or reset-forbidden.
 
@@ -69,11 +69,11 @@ Any new Automation & Scripting–specific prefixes must be added to this table a
 - Automation Lua scripts must never perform multi-key operations that span both `automation:*` and `tick:*` keys in a single invocation:
   - **Allowed examples**
     - A script that touches only `automation:tick:{tenantScriptTag}:queue` and `automation:tick:{tenantScriptTag}:pending` for a single `<tenantId>` + `<scriptId>`.
-    - A script that touches only `automation_queue:<tenantId>:*` keys for a single tenant.
+    - A script that touches only `automation:queue:<tenantId>:*` keys for a single tenant.
   - **Disallowed examples**
     - A script that reads or writes both `automation:tick:{tenantScriptTag}:*` and `tick:{tenantRegionTag}:*` keys in one `EVALSHA` call.
     - A script that mixes `automation:tick:{tenantScriptTag}:*` with `automation:tick:{otherTenantScriptTag}:*` keys.
-- Automation work is staged under `automation:tick:*` and `automation_queue:*` and then handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes. This keeps automation scripts shard-local and avoids `CROSSSLOT` errors in Redis Cluster.
+- Automation work is staged under `automation:tick:*` and `automation:queue:*` and then handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes. This keeps automation scripts shard-local and avoids `CROSSSLOT` errors in Redis Cluster.
   - Any change to automation Redis usage or Lua scripts must follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) and the automation slotting rules above.
 
 ## Key Features
@@ -100,7 +100,7 @@ interaction.
 
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
-- `automation_queue` keys in Redis buffer **script work items** (the commands and metadata produced by sandboxed DSL handlers) after a script runs and before they are staged into tick-compatible command queues. Each entry includes the originating `scriptEventId`, `scriptId`, version metadata, and the domain commands that should be materialized when the event is processed.
+- `automation:queue` keys in Redis buffer **script work items** (the commands and metadata produced by sandboxed DSL handlers) after a script runs and before they are staged into tick-compatible command queues. Each entry includes the originating `scriptEventId`, `scriptId`, version metadata, and the domain commands that should be materialized when the event is processed.
 - Internal automation tick staging uses a dedicated namespace:
   - `automation:tick:{tenantScriptTag}:queue` – per-script queue of work items being staged into tick-compatible commands.
   - `automation:tick:{tenantScriptTag}:pending` – per-script pending list of work items currently being applied.
@@ -120,7 +120,7 @@ interaction.
 - Scripts reside in the Automation & Scripting Service database and are versioned along with other game data as described in the design service versioning process.
 - Events from the Game Session Service trigger script execution via gRPC. For each admitted trigger, the service executes the relevant sandboxed DSL handler **synchronously**, producing domain commands instead of mutating game state directly.
 - The sandboxed engine limits CPU time and memory for each script to prevent runaway behavior.
-- After a handler runs, the resulting commands and metadata are enqueued into `automation_queue` for the affected entity. `ScriptTickService` then stages, commits, and, when necessary, rolls back these queued work items in Redis. Automation ticks run independently of the main game tick loop and operate only on the `automation:tick:{tenantScriptTag}:*` namespace described above.
+- After a handler runs, the resulting commands and metadata are enqueued into `automation:queue:<tenantId>:<entityId>` for the affected entity. `ScriptTickService` then stages, commits, and, when necessary, rolls back these queued work items in Redis. Automation ticks run independently of the main game tick loop and operate only on the `automation:tick:{tenantScriptTag}:*` namespace described above.
   Script ticks never hold the game tick locks (`tick:{tenantRegionTag}:lock:<entityId>`); they only batch and stage automation work before handing it to the Game Session Service, which applies commands under its own tick and locking model. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed once they enter the per-entity tick queues.
 
 ### Hot Reload & Failure Handling
@@ -256,7 +256,7 @@ Expected response:
 
 `ScriptQuotaService` limits how many times a script may execute within a
 configurable window. Counters are stored in Redis using keys of the form
-`script_quota:<tenantId>:<scriptId>`. When the quota is exceeded the event is
+`automation:quota:<tenantId>:<scriptId>`. When the quota is exceeded the event is
 ignored and `script_quota_denied_total` is incremented. Enforcement metrics are
 exported via the standard `sagas.active` gauge.
 

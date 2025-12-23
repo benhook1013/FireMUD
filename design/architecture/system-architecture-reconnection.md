@@ -6,6 +6,8 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 ## Implemented Status
 
+Last reviewed: 2025-12-23
+
 - **Session takeover and resume** – Game Session now detects existing `accountId`/`playerId` links, emits `gamesession.session.takeover` and `gamesession.session.resume` counters, and rebinds Redis tick/command queues when the same character logs back in after a disconnect or another client takes over.
 - **Telnet/WebSocket parity** – The TCP Proxy → Gateway → Game Session path now shares the same login/resume flow so Telnet SESSION envelopes and WebSocket clients follow identical reconnection behavior.
 - **Remaining work** – Cross-region handoff, **Redis-backed command queue replay** after long outages (not proxy-side buffering), and admin-driven forced session transfers remain planned future steps.
@@ -23,7 +25,7 @@ Each layer handles fault tolerance independently.
 Game Session Service restarts are **transparent** if the client remains connected.
 The Gateway automatically re-establishes WebSocket sessions after a restart. Telnet clients typically remain connected to the TCP Proxy Service during a Gateway restart, but gameplay traffic may pause while the proxy re-establishes its WebSocket bridge to Spring Cloud Gateway (input buffering is limited and is governed by the proxy’s per-connection ceilings). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for how TCP and WebSocket clients share the same backend.
 TCP Proxy restarts drop Telnet clients, who must reconnect manually.
-If the Gateway link remains unavailable beyond a short reconnect window, the TCP Proxy Service fail-closes Telnet sockets with a clear message rather than buffering unbounded input at the DMZ edge; clients then reconnect and reauthenticate with `LOGIN`.
+If the Gateway link remains unavailable beyond the TCP Proxy Service’s short reconnect window (see `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` in the TCP Proxy design), the proxy fail-closes Telnet sockets with a clear message rather than buffering unbounded input at the DMZ edge; clients then reconnect and reauthenticate with `LOGIN`.
 
 ---
 
@@ -45,7 +47,7 @@ If the Gateway link remains unavailable beyond a short reconnect window, the TCP
 
 > TCP Proxy restarts drop Telnet connections.
 > Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically.
-> Telnet clients may remain connected to the TCP Proxy Service during brief Gateway blips, but if the proxy cannot re-establish its WebSocket bridge within a short reconnect window it closes the Telnet socket and the client reconnects.
+> Telnet clients may remain connected to the TCP Proxy Service during brief Gateway blips, but if the proxy cannot re-establish its WebSocket bridge within its short reconnect window it closes the Telnet socket and the client reconnects.
 
 ### Game Session Service
 

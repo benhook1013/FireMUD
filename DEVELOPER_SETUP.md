@@ -355,7 +355,7 @@ Use the Redis CLI to inspect transient state:
 Useful commands include:
 
 ```bash
-SCAN 0 MATCH 'session:<tenantId>:*'
+SCAN 0 MATCH 'session:game:<tenantId>:*'
 GET 'tick-executor-lease:{<tenantRegionTag>}'
 ZRANGE 'timer:{<tenantRegionTag>}' 0 10 WITHSCORES
 ```

@@ -44,7 +44,7 @@ The World Management Service stores and manages game world topology and content 
   - Does not own tick or session coordination prefixes; tick queues, locks, timers, and region leases remain owned by the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md#redis-coordination-invariants).
   - Interacts with Coordination Redis only indirectly via Game Session and Automation & Scripting APIs; it does not issue coordination writes itself.
 - **Cache/Rate-Limit Redis usage**
-  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` (or equivalent `worldDynamic:<tenantId>:<aggregateId>` shapes), consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
+  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` (or equivalent `world-dynamic:<tenantId>:<aggregateId>` shapes), consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
   - Cached rooms and world aggregates are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata). When version fields are available on the underlying aggregates, these caches are treated as **strongly validated caches** (version-checked before reuse); simpler, read-mostly slices may use best-effort TTL-only caching as long as correctness is preserved by database reads. Updates are propagated via explicit invalidation or TTL-based expiry.
   - When changing Redis usage or adding new prefixes here, follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to ensure correct role, slotting, and SLO coverage.
 
@@ -113,6 +113,8 @@ Room snapshots deliberately exclude live entities, items, and inventory contents
 The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this lifecycle (Candle-lit Antechamber and Crafting Hall of Ember) so integration tests and the LOOK transcripts stay stable. Developers can locate and extend that migration when the sample world needs more exits or environmental trivia.
 
 ### Implementation status (LOOK slice)
+
+Last reviewed: 2025-12-23
 
 - **Live:** `GetRoomSnapshot` returns the room metadata, descriptions, and exit labels that Game Logic needs to render the canonical `LOOK` transcript, and the telemetry for this pipeline is documented in `../../project-management/look-instrumentation.md`.
 - **Stubbed:** The current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.

@@ -8,6 +8,8 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ## Implementation Status
 
+Last reviewed: 2025-12-23
+
 - **Dynamic route management (REST/gRPC):** Implemented via `GatewayController` (`/routes` REST API) and the `GatewayManagementService` gRPC API for upsert/remove operations. These APIs apply **in-memory overrides** on top of the baseline routes loaded from configuration; config files remain the canonical source of truth and dynamic changes revert on restart unless persisted by a higher-level tool.
 - **Rate limiting and Redis wiring:** Implemented using Spring Cloud Gateway’s `RequestRateLimiter` filter backed by the Cache/Rate‑Limit Redis profile configured in `application.yml` for `dev` and `prod` profiles.
 - **Telnet WebSocket bridge expectations:** Implemented end‑to‑end through the `/ws/game/**` route in Spring Cloud Gateway and the TCP Proxy Service’s WebSocket bridge (`GATEWAY_WS_URL`), matching the behavior described in the reconnection and protocol bridging docs. The canonical Telnet-side protocol (including the `SESSION` envelope and header propagation rules) is defined in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.

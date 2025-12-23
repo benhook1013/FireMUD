@@ -18,6 +18,8 @@ This document describes the target-state behaviour of the TCP Proxy Service.
 Where implementation is still catching up, treat the design below as the source
 of truth and reconcile code/tests accordingly.
 
+Last reviewed: 2025-12-23
+
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
 | Telnet login-first flow (without `SESSION`) | All Telnet clients issue `LOGIN` and may optionally send a `SESSION` envelope for advanced attach-to-session flows; `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. | Behaviour is implemented as described; some older tests and smoke scripts may still assume `SESSION` is required. | Align any remaining flows with this doc when you encounter discrepancies rather than changing the protocol. |
@@ -102,7 +104,7 @@ the source of truth and update code/tests to match.
     exceeded.
 - **Input size and shape limits**
   - Maximum line and envelope length constraints, configured via
-    `TCP_PROXY_MAX_LINE_BYTES`, reject oversized lines without forwarding partial input. The proxy should send a clear, user-facing warning (for example “Line too long; max 4096 bytes”) so clients are not confused about what reached the game engine, and after repeated violations the proxy hard-closes the connection. The existing `MAX_BUFFER_DEPTH` constant in `TelnetServerHandler` acts as an additional safety net: once the in-memory buffer ceiling is reached, the connection is closed and `tcpproxy.telnet.discarded` is incremented even if `TCP_PROXY_MAX_LINE_BYTES` is not hit.
+    `TCP_PROXY_MAX_LINE_BYTES`, reject oversized lines without forwarding partial input. The proxy should send a clear, user-facing warning so clients are not confused about what reached the game engine. If the session has negotiated ANSI/color support, the warning may use that formatting, but it must remain readable on plain Telnet clients. Oversized-line violations are tracked per connection and the proxy hard-closes once the count exceeds `TCP_PROXY_MAX_OVERSIZE_LINES` (default `10`) so accidental oversizes are tolerated without enabling unbounded memory or CPU abuse. The existing `MAX_BUFFER_DEPTH` constant in `TelnetServerHandler` acts as an additional safety net: once the in-memory buffer ceiling is reached, the connection is closed and `tcpproxy.telnet.discarded` is incremented even if `TCP_PROXY_MAX_LINE_BYTES` is not hit.
   - Malformed `SESSION` envelopes increment a dedicated counter. When the number
     of malformed envelopes on a single connection exceeds
     `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection with a
@@ -186,7 +188,7 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 - TCP connections are accepted on a dedicated port and proxied to Spring Cloud Gateway
   using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
-- If the proxy cannot establish or maintain its WebSocket bridge to Spring Cloud Gateway beyond a short reconnect window, it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”). The proxy does not silently drop commands or buffer unbounded input while the bridge is down.
+- If the proxy cannot establish or maintain its WebSocket bridge to Spring Cloud Gateway beyond a short reconnect window (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, default `5000`), it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”). During the reconnect window, the proxy uses a bounded in-memory buffer (`TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`, default `64`) so brief Gateway blips can be seamless without buffering unbounded input at the DMZ edge.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
@@ -482,6 +484,7 @@ The full variable list is:
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `TCP_PROXY_PORT` | TCP port the proxy listens on | `2323` |
+| `TCP_PROXY_PROXY_PROTOCOL_PORT` | TCP port for the PROXY-protocol Telnet listener (internal-only; reachable only from the Telnet edge proxy) | `2325` |
 | `GATEWAY_WS_URL` | WebSocket URL for forwarding to the gateway | `ws://spring-cloud-gateway:8080/ws/game` |
 | `TCP_PROXY_TLS_ENABLED` | Enable Telnet-over-TLS termination | `false` |
 | `TCP_PROXY_TLS_PORT` | TCP port for the Telnet-over-TLS listener | `2324` |
@@ -490,7 +493,10 @@ The full variable list is:
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections (`0` or unset = no explicit ceiling) | `0` |
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling); accurate client IPs require source-IP preservation or PROXY protocol (see [Deployment Environments](../../infrastructure/deployment-environments.md)) | `0` |
 | `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line (including MCP control lines and continuation lines) in bytes before rejection/closure | `4096` |
+| `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
+| `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to keep a Telnet socket open while reconnecting the Proxy → Gateway WebSocket bridge | `5000` |
+| `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines while the Proxy → Gateway WebSocket bridge is reconnecting | `64` |
 | `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy → Gateway WebSocket mTLS | `certs/client.crt` |
 | `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy → Gateway WebSocket mTLS | `certs/client.key` |
 | `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | CA bundle path for verifying the gateway certificate on the WebSocket hop | `certs/ca.crt` |
@@ -517,6 +523,8 @@ Plaintext Telnet connections are also tagged so the Game Session Service can
 emit a landing-menu security warning recommending the TLS Telnet port or web
 client instead. TLS Telnet endpoints and the web client are not subject to this
 additional restriction.
+
+When PROXY protocol is enabled in production, expose `TCP_PROXY_PROXY_PROTOCOL_PORT` only on an internal-only surface behind the Telnet edge proxy. Do not publish the PROXY-protocol listener directly as a public `LoadBalancer` port.
 
 The gRPC server listens on port `6565` by default as configured in `src/main/resources/application.yml`.
 
