@@ -245,9 +245,9 @@ FIREMUD_POSTGRES_PASSWORD=firemud
 FIREMUD_POSTGRES_DB=firemud
 FIREMUD_POSTGRES_HOST=postgres
 FIREMUD_POSTGRES_PORT=5432
-FIREMUD_REDIS_COORD_HOST=redis
+FIREMUD_REDIS_COORD_HOST=redis-coord
 FIREMUD_REDIS_COORD_PORT=6379
-FIREMUD_REDIS_CACHE_HOST=redis
+FIREMUD_REDIS_CACHE_HOST=redis-cache
 FIREMUD_REDIS_CACHE_PORT=6379
 ```
 
@@ -297,16 +297,18 @@ the files to your object store.
 
 ### Optional Redis Persistence
 
-Redis normally starts empty between service restarts. If you want to keep the
-Append-Only File (AOF) across container launches, the compose stack mounts a
-`redis-data` volume. You can manually restore an AOF backup with:
+Cache/Rate-Limit Redis is best-effort and starts empty between restarts.
+Coordination Redis persists its AOF across container launches via the
+`redis-coord-data` volume. You can manually restore an AOF backup into the
+local Coordination Redis with:
 
 ```bash
 ./dev-tools/restores/restore-redis-aof.sh backups/appendonly.aof
 ```
 
 This helper is intended **only** for local development. Production Redis nodes
-rely on replication and automatically repopulate state from PostgreSQL.
+rely on their own durability/failover behavior and scoped coordination resets
+as described in the Redis architecture and runbooks.
 
 ## Manual Testing Tools
 
@@ -345,20 +347,28 @@ service hostname (e.g., `account-service:6565`).
 
 ### Redis Debugging
 
-Use the Redis CLI (`redis-cli -h localhost -p 6379`) to inspect transient game state. Useful commands include:
+Use the Redis CLI to inspect transient state:
+
+- Coordination Redis: `redis-cli -h localhost -p 6379`
+- Cache/Rate-Limit Redis: `redis-cli -h localhost -p 6380`
+
+Useful commands include:
 
 ```bash
-SCAN 0 MATCH session:*
-GET tick:lock:entity-xyz
-SCAN 0 MATCH timer:player-123:*
+SCAN 0 MATCH 'session:<tenantId>:*'
+GET 'tick-executor-lease:{<tenantRegionTag>}'
+ZRANGE 'timer:{<tenantRegionTag>}' 0 10 WITHSCORES
 ```
 
 For a graphical view, a RedisInsight container runs in development via
 `docker/docker-compose.override.yml`. Bring up the stack with `docker compose -f
 docker/docker-compose.yml -f docker/docker-compose.override.yml up --build -d`. RedisInsight is then
-available at <http://localhost:8001> and connects to the default Redis instance
-on `localhost:6379`. Typical key patterns are `session:*`, `tick:*`, and
-`timer:*`.
+available at <http://localhost:8001>. Add both Redis endpoints:
+
+- Coordination: `localhost:6379`
+- Cache/Rate-Limit: `localhost:6380`
+
+Typical key patterns include `session:*`, `tick:*`, `timer:*`, and `ratelimit:*`.
 
 ## Configuration Files
 

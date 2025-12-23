@@ -82,7 +82,7 @@ For local development, use `./gradlew devUp` to start Docker Compose and
        - Tick executors:
          - Do **not** attempt to resume in-flight locks or leases based on in-memory state.
          - Rely solely on surviving Redis keys (`tick:{tenantRegionTag}:pending`, `tick-executor-lease:{tenantRegionTag}`, and lock keys) plus PostgreSQL idempotency guards to decide what work needs replay.
-         - If `pending` survives for a region, the next executor for that `{tenantId, regionId}` replays the tick as described in the tick system design. If `pending` is missing (for example due to AOF tail loss), the scheduler treats partially executed work as lost and advances to the next `tickId`, relying on monitoring to surface inconsistencies.
+         - If `pending` survives for a region, the next executor for that `<tenantId, regionId>` replays the tick as described in the tick system design. If `pending` is missing (for example due to AOF tail loss), the scheduler treats partially executed work as lost and advances to the next `tickId`, relying on monitoring to surface inconsistencies.
        - Leases:
          - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
      - Sessions:
@@ -119,13 +119,13 @@ The following Redis-focused incident flows build on the general recovery steps a
 
 1. **Coordination AOF tail-loss SLO breach**
    - **Detect**
-     - `tail_loss_ms` or `tail_loss_ticks` regularly exceed the **1–2 second** envelope (or **2×** `tick_interval_ms`) for one or more `{tenantId, regionId}` shards.
+     - `tail_loss_ms` or `tail_loss_ticks` regularly exceed the **1–2 second** envelope (or **2×** `tick_interval_ms`) for one or more `<tenantId, regionId>` shards.
      - Region health shows `DEGRADED` or `COORDINATION_UNTRUSTWORTHY` for those shards.
    - **Decide**
      - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
      - For sustained violations or `COORDINATION_UNTRUSTWORTHY` regions, plan a **region- or tenant-scoped coordination reset**.
    - **Act**
-     1. Pause tick scheduling for affected `{tenantId, regionId}` scopes.
+     1. Pause tick scheduling for affected `<tenantId, regionId>` scopes.
      2. Run the corresponding coordination reset Job (region or tenant scope) as described in [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model).
      3. Verify region health returns to `HEALTHY` and `tail_loss_ms` drops back into the SLO envelope before resuming ticks.
 
@@ -139,13 +139,13 @@ The following Redis-focused incident flows build on the general recovery steps a
    - **Act**
      1. For coordination prefixes: follow the region/tenant/cluster reset flow from [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model) and rely on PostgreSQL/idempotent ticks to rebuild state.
      2. For non-coordination prefixes: write a small migration Job that:
-        - Iterates the affected prefix (for example `automation_queue:{tenantId}:*`).
+        - Iterates the affected prefix (for example `automation_queue:<tenantId>:*`).
         - Writes corrected keys using shared builders.
         - Deletes or expires the old keys once consumers have been updated.
 
 3. **Automation queue schema mistakes**
    - **Detect**
-     - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation_queue:{tenantId}:*` keys.
+     - Automation consumers log deserialization errors or unknown `schemaVersion` values for `automation_queue:<tenantId>:*` keys.
      - Metrics show sustained failures processing automation work items.
    - **Decide**
      - If automation queues are purely best-effort, consider treating affected items as lost and flushing the prefix.

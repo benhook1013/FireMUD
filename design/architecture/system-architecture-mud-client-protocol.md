@@ -16,7 +16,7 @@ The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for
 
 The TCP Proxy Service negotiates MCP with connecting clients and falls back to plain Telnet when unsupported.
 When MCP is enabled, structured messages (optionally containing JSON payloads) are exchanged inside MCP packages over the same Telnet connection.
-On the server side, the TCP Proxy interprets these messages and maps them to game session operations and events, reusing the same domain logic that drives the text protocol.
+The TCP Proxy Service treats MCP control lines as application-level text: it sanitizes and frames the Telnet transport, then forwards MCP traffic over the WebSocket bridge to the canonical gameplay route. MCP package semantics are handled by the backend session layer (Spring Cloud Gateway → Game Session Service), so Telnet and native WebSocket clients converge on the same runtime behavior.
 From the client’s perspective, all interaction still happens over a single MCP-aware Telnet session, but clients can render additional UI elements based on the structured data they receive.
 
 ## Protocol Handshake

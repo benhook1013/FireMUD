@@ -125,7 +125,7 @@ interaction.
 
 ### Hot Reload & Failure Handling
 
-Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each `{tenantId, scriptPatchVersion}`:
+Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each `<tenantId, scriptPatchVersion>`:
 
 - The service tracks the currently executing version as `activePatchVersion` and treats the incoming one as `pendingPatchVersion`, with a simple `reloadState` (`IDLE`, `RELOADING`, `FAILED`) mirroring [Hot Reload & Resume Behavior](../../system-architecture-scripting.md#hot-reload--resume-behavior).
 - On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for that tenant, but in-flight executions complete and triggers remain queued.

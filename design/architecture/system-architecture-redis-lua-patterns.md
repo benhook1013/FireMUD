@@ -172,7 +172,7 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
     - Behavior (sketch):
       - Read `KEYS[1]`; if missing or if the stored token does not equal `expectedLeaseToken`, return `"STALE_LEASE"` and perform **no writes**.
       - If the token matches, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
-    - Callers treat `"STALE_LEASE"` as loss of leadership for that `{tenantId, regionId}` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
+    - Callers treat `"STALE_LEASE"` as loss of leadership for that `<tenantId, regionId>` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
 - **Pattern 2 – Compare-and-set on `tickId` (monotonic guard)**
   - Scripts that touch `tick:{tenantRegionTag}:pending` treat `tickId` as a monotonic guard:

@@ -6,10 +6,10 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ### Terminology
 
-- **Tenant** – a logical game instance or customer, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
-- **Game instance** – a running game session owned by a tenant, tracked in the `game_instances` table. Multiple game instances may exist for a single tenant (for example, separate campaigns).
+- **Tenant** – a single game instance, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
+- **Game instance** – synonymous with tenant in platform terminology: one running world/campaign identified by `tenantId`.
 - **Player session** – a single player’s live connection and gameplay context bound to a specific game instance. Player sessions are stored in Redis under `session:<tenantId>:<sessionId>` and are purged when the session ends.
-- **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `{tenantId, regionId}` and do not follow individual player session lifecycles.
+- **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
 
 ### Responsibilities
 
@@ -17,7 +17,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Queue player commands and dispatch them to Game Logic Service
 - Broadcast lifecycle events and world updates to other services
 - Support reconnection and recovery of running games
-- Publish **coordination and tick health metrics** (per `{tenantId, regionId}`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
+- Publish **coordination and tick health metrics** (per `<tenantId, regionId>`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
 
 ## Architecture / Design Notes
 
@@ -36,8 +36,8 @@ Orchestrates live game sessions, including tick execution, player input validati
   games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Player session state for reconnect recovery lives in Redis using keys of the form
-  `session:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `{tenantId, regionId}` lifecycles rather than individual player sessions.
-  - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `{proxyConnectionId, disconnectSequence}` rather than a guaranteed source of truth. Game Session persists the latest processed `disconnectSequence` per `{proxyConnectionId}` and ignores older or duplicate events so retry behaviour at the proxy can remain simple while consumption stays idempotent. When the Telnet client supplies a `SESSION <sessionId> <tenantId>` envelope, that `{tenantId, sessionId}` is carried as advisory context and may be used for logging/audit, but Game Session still validates any session ownership claims against Redis and its authenticated session state.
+  `session:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions.
+  - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `<proxyConnectionId, disconnectSequence>` rather than a guaranteed source of truth. Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behaviour at the proxy can remain simple while consumption stays idempotent. When the Telnet client supplies a `SESSION <sessionId> <tenantId>` envelope, that `<tenantId, sessionId>` is carried as advisory context and may be used for logging/audit, but Game Session still validates any session ownership claims against Redis and its authenticated session state.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
   [Transaction Strategies](../../system-architecture-transactions.md).
@@ -126,7 +126,7 @@ affecting normal gameplay flow.
 - After execution, results are persisted and broadcast to connected clients.
 - If a command cannot acquire its required entity lock(s), the executor does not spin; it fails the attempt, rolls back any staged changes, and reschedules the command with a bounded, tick-based backoff (for example exponential backoff capped by `MAX_BACKOFF_TICKS`), tracking a per-command retry counter and enforcing a `MAX_RETRIES` limit before surfacing a player-visible error and logging a permanent failure.
 
-The Game Session Service acts as the **authoritative tick executor** for each `{tenantId, regionId}` it owns:
+The Game Session Service acts as the **authoritative tick executor** for each `<tenantId, regionId>` it owns:
 
 - It participates in region leadership using the Redis lease key `tick-executor-lease:{tenantRegionTag}` described in the [Redis Architecture](../../system-architecture-redis.md#region-leadership-and-tick-executor-lease).
 - While it holds the lease for a region, it is the only instance allowed to:
@@ -172,7 +172,7 @@ The Game Session Service acts as the **authoritative tick executor** for each `{
 
 ### Scaling and Region Rebalancing
 
-- Region-to-instance mapping is flexible and driven by a scheduler or consistent-hashing layer that assigns `{tenantId, regionId}` values to Game Session instances.
+- Region-to-instance mapping is flexible and driven by a scheduler or consistent-hashing layer that assigns `<tenantId, regionId>` values to Game Session instances.
 - To scale out, operators add more Game Session pods and allow the scheduler to assign regions to new instances; each instance acquires leases for its assigned regions.
 - To rebalance load, an instance can stop renewing the lease for selected regions and drain in-flight work to a safe point; other instances then acquire those leases and continue tick processing from the existing Redis state.
 - Combined with region sizing (splitting hot regions and merging cold ones), this lease-based ownership model allows FireMUD to scale horizontally without global downtime.

@@ -68,21 +68,22 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
 - If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
   2. Restart services to resume operation.
-  3. Redis repopulates transient state from PostgreSQL on access.
+  3. Coordination state is treated as reset-tolerant and is rebuilt from PostgreSQL and new activity as described in the Redis architecture and runbooks; cache/rate-limit keys refill on demand.
 
 ## Redis Persistence
 
-- Redis stores only **transient gameplay state**.
-- **AOF (Append‑Only File)** is enabled for crash recovery while the cluster is running.
-- Redis is **not restored** from backup during a cold start; it is repopulated from PostgreSQL after recovery.
-  In development a `redis-data` volume can persist the AOF between container restarts. Treat AOF restore as a debugging tool: restore into an isolated, throwaway Redis instance for inspection, and only restore into a live dev stack when services and Lua scripts match the AOF’s originating version.
+- Redis stores only **transient state**:
+  - Coordination Redis stores volatile coordination state (ticks, locks, timers, sessions) and uses AOF for crash recovery while the cluster is running.
+  - Cache/Rate-Limit Redis stores best-effort caches and rate-limit counters and is not treated as durable.
+- Redis is **not restored** from backup during a cold start. If Coordination Redis starts empty (for example after a reset), services rebuild coordination state from PostgreSQL and new activity according to the Coordination Reset Model rather than attempting to “restore Redis”.
+  In development a `redis-coord-data` volume can persist the Coordination Redis AOF between container restarts. Treat AOF restore as a debugging tool: restore into an isolated, throwaway Redis instance for inspection, and only restore into a live dev stack when services and Lua scripts match the AOF’s originating version.
 
 ### Redis AOF Reset on Deployment
 
 Redis is treated as a **transient coordination layer** in terms of data authority (PostgreSQL owns canonical game data), but in staging and production it is also a **long-lived availability dependency**. The lifecycle of Redis and its AOF differs by environment:
 
 - **Development and ephemeral test environments**
-  - A Kubernetes Job (`k8s/helm/firemud/templates/redis-aof-reset-job.yaml`) may be enabled to delete the Redis Append‑Only File (AOF) on each Helm install or upgrade.
+  - A Kubernetes Job (`k8s/helm/firemud/templates/redis-aof-reset-job.yaml`) may be enabled to wipe Coordination Redis data on each Helm install or upgrade.
   - This guarantees a clean slate between runs so stale gameplay state, tick locks, or timers do not leak across test cycles.
   - This behavior is appropriate for local/dev stacks and short‑lived preview environments where all games are disposable and no replay or uptime guarantees are made.
 

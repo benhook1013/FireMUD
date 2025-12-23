@@ -42,9 +42,13 @@ worldManagementService:
   image:
     repository: ghcr.io/example/world-management-service
     tag: latest
-redis:
+redisCoord:
   persistence:
     size: 8Gi
+  resetAofOnHelmUpgrade: false
+redisCache:
+  persistence:
+    enabled: false
 postgresql:
   persistence:
     size: 10Gi

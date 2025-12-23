@@ -8,5 +8,7 @@ services:
       - REDISINSIGHT_HOST=0.0.0.0
     restart: unless-stopped
     depends_on:
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy

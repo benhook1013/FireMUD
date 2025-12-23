@@ -73,7 +73,7 @@ Manual AOF “surgery” is **not supported**. Either the AOF is trusted and rep
 
 ### Rule-of-Thumb Coordination Capacity per Region
 
-**Goal:** Give operators a simple mental model for when a single `{tenantId, regionId}` is likely exceeding healthy coordination usage.
+**Goal:** Give operators a simple mental model for when a single `<tenantId, regionId>` is likely exceeding healthy coordination usage.
 
 These are approximate guidelines for typical tick intervals (for example `tick_interval_ms >= 250`) and modestly sized worlds on a small/self-hosted deployment. Larger clusters with more memory and CPU can scale beyond these values, but **ratios and trends** remain useful signals.
 
@@ -83,7 +83,7 @@ These are approximate guidelines for typical tick intervals (for example `tick_i
   - Timers and retry queue items: typically **≤ tens of thousands** per busy region; consistently higher counts indicate that timers or retries are being used as general-purpose data stores.
   - Session keys: roughly **one key per active session** for that region, expiring when sessions end or age out.
 - **Operator guidance**
-  - If a single `{tenantId, regionId}` routinely exceeds these envelopes and is responsible for a disproportionate share of memory usage or AOF growth:
+  - If a single `<tenantId, regionId>` routinely exceeds these envelopes and is responsible for a disproportionate share of memory usage or AOF growth:
     - Review gameplay and automation features for that tenant/region to ensure they are not using Coordination Redis for long-lived data.
     - Consider applying per-tenant caps on active regions, sessions, timers, or queued commands so coordination footprints remain bounded.
     - If mis-keyed or runaway coordination state is suspected, use the relevant coordination reset runbooks (either per-region or per-tenant) to drop volatile state and rebuild from PostgreSQL.
@@ -299,7 +299,7 @@ Before performing any coordination reset (region/tenant/cluster scope), operator
 - Verify tick effect ledger status for the target scope:
   - No `SCHEDULED` or `IN_PROGRESS` tick effects remain that would be orphaned by dropping coordination state, or such effects are explicitly marked as `ABANDONED`/resolved at the domain layer.
 - Ensure game traffic is quiesced for the affected scope:
-  - Tick scheduling and new command intake are paused for the relevant `{tenantId, regionId}` or tenants.
+  - Tick scheduling and new command intake are paused for the relevant `<tenantId, regionId>` or tenants.
   - Any long-running maintenance or backfill jobs that depend on coordination keys are stopped.
 - Record operator intent:
   - Capture which tenants/regions are being reset, why the reset is needed, and which Redis deployment/role is affected, so the action is auditable alongside normal break-glass events.
@@ -326,13 +326,13 @@ Fine-grained, live migration of mis-sharded coordination keys is **not** the def
 
 ### Signals
 
-- Repeated `STALE_LEASE`, `UNSUPPORTED_EPOCH`, or other Lua script responses that reference inconsistent `region_epoch` values for the same `{tenantId, regionId}`.
+- Repeated `STALE_LEASE`, `UNSUPPORTED_EPOCH`, or other Lua script responses that reference inconsistent `region_epoch` values for the same `<tenantId, regionId>`.
 - PostgreSQL epoch validation rejecting writes because a second executor attempted to bump the same `coordination_meta` row with an older epoch.
 - Redis/Sentinel/Cluster alerts showing simultaneous primaries for the same hash slot or other signs of split-brain.
 
 ### Runbook (control-plane implementation)
 
-1. The Logging & Admin Service (or a future dedicated coordination manager) pauses tick scheduling for the affected `{tenantId, regionId}` pairs via Game Session’s admin/control APIs (or globally if multiple slots are impacted).
+1. The Logging & Admin Service (or a future dedicated coordination manager) pauses tick scheduling for the affected `<tenantId, regionId>` pairs via Game Session’s admin/control APIs (or globally if multiple slots are impacted).
 2. It verifies, using Postgres and Redis health APIs/metrics, that the coordination metadata table’s `region_epoch` reflects the highest-authoritative epoch and that Redis has converged to a single primary for the impacted slots.
 3. It uses the coordination reset tooling:
    - Stop Redis or fail over to a clean node if necessary.
@@ -355,7 +355,7 @@ See the “Hash Tag Normalization” section in `system-architecture-redis.md` f
 
 1. Plan the change:
    - Implement the new normalization version (for example `NORMALIZATION_V2`) in shared helpers.
-   - Ensure the new normalization keeps `{tenantId, regionId}` stable and valid.
+   - Ensure the new normalization keeps `<tenantId, regionId>` stable and valid.
 2. Schedule a maintenance window.
 3. Pause ticks and stop accepting new commands for affected tenants/regions (or globally).
 4. Deploy services using the new normalization helpers.
@@ -378,7 +378,7 @@ When dropping all coordination state is not acceptable, operators may implement 
      - Operates on explicit prefixes (no full-keyspace scans).
      - Preserves values and semantics across the move.
 4. Validate:
-   - Confirm that keys for a given `{tenantId, regionId}` share the expected hash tag.
+   - Confirm that keys for a given `<tenantId, regionId>` share the expected hash tag.
    - Run smoke tests to verify tick and session behavior.
 5. Resume ticks and commands.
 6. Separately, perform any required Redis Cluster resharding as a **later, independent maintenance** once normalization is stable.

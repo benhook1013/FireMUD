@@ -76,7 +76,7 @@ This enables:
 - Seamless resumption without gameplay loss
 
 > 🔒 All session rebinding is enforced by the Game Session Service using Redis locks.
-> 🔗 See [Redis Session Keys](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding)
+> 🔗 See [Redis Session Keys](./system-architecture-redis.md#session-keys-and-gameplay-binding)
 
 ---
 
@@ -146,7 +146,7 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 
 - Session entries in Redis expire after the derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) so abandoned sessions cannot linger indefinitely.
 
-> 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#🧠-session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
+> 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 
 ---
 

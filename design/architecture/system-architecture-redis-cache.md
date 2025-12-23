@@ -18,7 +18,7 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
   - Static or topology data (world geometry, room/zone graphs, published templates, configuration) changes infrequently and is a good fit for aggressive caching with long TTLs or manual invalidation.
 - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
 - Purpose-driven caching only. Objects should be cached because they are expensive to compute or fetch and appear on hot paths, not “just in case.” Profiling and production telemetry will drive what actually lands in Redis.
-  - Coordination workload isolation:
+- Coordination workload isolation:
   - All environments, including local development and small self-hosted setups, run **at least two Redis roles**:
     - A **Coordination Redis** deployment dedicated to ticks, locks, timers, sessions, and other gameplay-critical coordination state.
     - A **Cache/Rate-Limit Redis** deployment dedicated to read-side caches and gateway rate limits.
@@ -58,18 +58,6 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
   - Cache invalidation may still be event-driven (for example, delete-on-change) but correctness does not depend on precise invalidation timing.
 
 Designs and reviews must explicitly record which class each cacheable aggregate belongs to (strongly validated vs best-effort) and which invalidation pattern it uses, so reviewers understand why a cache entry carries version metadata versus relying on TTLs.
-
-Some dynamic aggregates will be easier to cache if the authoritative store exposes a version or `lastModified` field per aggregate root:
-
-- The owning service (for example Entity Management or World Management) maintains a version counter or timestamp on the aggregate root (such as a container, character effective stats, or a room’s dynamic state row) and increments or updates it whenever the aggregate changes.
-- Redis entries for that aggregate store both version and payload together, typically inside a single serialized object.
-- When fetching, callers can:
-  - Read the current version from the authoritative store or a lighter-weight index.
-  - Compare it with the version in Redis.
-  - Reuse the cached payload if versions match, or recompute and overwrite the cache if they differ.
-- Versioning is applied per aggregate root (for example `inventory:<tenantId>:<containerId>` or `roomDynamic:<tenantId>:<roomId>`) rather than being added indiscriminately to every table or DTO.
-
-This pattern keeps cache correctness bounded to clearly defined aggregates and avoids random, hard-to-reason-about version fields scattered across the schema.
 
 ### Decision Criteria for Versioning
 

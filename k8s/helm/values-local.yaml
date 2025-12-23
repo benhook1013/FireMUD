@@ -1,6 +1,8 @@
-redis:
-  host: redis
-  port: 6379
+redisCoord:
+  releaseName: redis-coord
+  resetAofOnInstallUpgrade: true
+redisCache:
+  releaseName: redis-cache
 account-service:
   replicaCount: 1
 game-session-service:

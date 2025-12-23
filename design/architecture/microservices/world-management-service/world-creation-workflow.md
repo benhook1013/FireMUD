@@ -1,6 +1,6 @@
 # World Creation Workflow
 
-World creation is a long-running process that prepares the initial world state for a new game instance using already-published world data. The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled back if another step fails. `WorldCreationService` is invoked when a tenant launches a new game world, typically from the Game Session Service.
+World creation is a long-running process that prepares the initial world state for a new game instance (tenant) using already-published world data. The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled back if another step fails. `WorldCreationService` is invoked when the platform provisions a new tenant (game instance), typically from the Game Session Service.
 
 The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and spawn default NPCs. Additional stages run for large games that require deeper world seeding.
 

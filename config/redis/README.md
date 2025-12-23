@@ -1,3 +1,6 @@
 # Redis Configuration
 
-Stores `redis.conf` used by the local Docker Compose stack. The file enables AOF persistence and disables RDB snapshots.
+Stores Redis config files used by the local Docker Compose stack:
+
+- `redis.conf` (Coordination Redis): enables AOF persistence for coordination keys.
+- `redis-cache.conf` (Cache/Rate-Limit Redis): disables persistence and enables eviction behavior for best-effort caches and rate limits.

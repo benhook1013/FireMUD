@@ -51,6 +51,7 @@ of truth and reconcile code/tests accordingly.
   **Telnet protocol commands** as described in the
   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
 - Forwards client identity using a gateway canonicalization model. The proxy sets `X-Proxy-Client-IP` on its internal WebSocket hop so Spring Cloud Gateway can set the canonical `X-Client-IP` header after authenticating the TCP Proxy identity. In Kubernetes, the raw TCP peer address may be a load balancer or node IP due to SNAT; the preferred production deployment is to place a Telnet edge proxy (HAProxy) in front of the TCP Proxy Service and enable PROXY protocol so the proxy can recover the true client IP before setting `X-Proxy-Client-IP`. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
+- When PROXY protocol is enabled for IP preservation, it should be enabled only on a dedicated, internal-only listener/port that is reachable solely from the Telnet edge proxy (HAProxy). Do not enable PROXY parsing on the public Telnet listener, since accepting PROXY headers directly from the Internet would allow client-IP spoofing.
 - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -90,30 +91,22 @@ the source of truth and update code/tests to match.
 - **Connection limits**
   - A global concurrent connection cap (for example `TCP_PROXY_MAX_CONNECTIONS`)
     prevents the proxy from exhausting sockets or file descriptors. When the
-    limit is reached, new connections are rejected and counted via a dedicated
-    metric (for example `tcpproxy.connections.rejected{reason="max_exceeded"}`).
+    limit is reached, new connections are rejected and counted via `tcpproxy.connections.limit.exceeded`.
   - A per-client-IP cap (for example `TCP_PROXY_MAX_CONNECTIONS_PER_IP`) guards
     against a single address consuming the entire connection budget.
 - **Slow/abusive client handling**
   - Read idle timeouts and maximum connection lifetimes close connections that
-    send no data or linger indefinitely (for example `tcpproxy.connections.closed{reason="idle_timeout"}`),
-    limiting exposure to slowloris-style attacks.
+    send no data or linger indefinitely, limiting exposure to slowloris-style attacks. Idle closes are tracked via the `tcpproxy.idleClose` timer and connection lifecycle metrics.
   - Backpressure-aware write handling avoids unbounded buffer growth when
     sending data to very slow clients, closing the socket once thresholds are
     exceeded.
 - **Input size and shape limits**
   - Maximum line and envelope length constraints, configured via
-    `TCP_PROXY_MAX_LINE_BYTES`, truncate overly long input and, after repeated
-    violations, hard-close the connection with a
-    `tcpproxy.connections.closed{reason="line_too_long"}` event. The existing
-    `MAX_BUFFER_DEPTH` constant in `TelnetServerHandler` acts as an additional
-    safety net: once the in-memory buffer ceiling is reached, the connection is
-    closed and `tcpproxy.telnet.discarded` is incremented even if
-    `TCP_PROXY_MAX_LINE_BYTES` is not hit.
+    `TCP_PROXY_MAX_LINE_BYTES`, reject oversized lines without forwarding partial input. The proxy should send a clear, user-facing warning (for example “Line too long; max 4096 bytes”) so clients are not confused about what reached the game engine, and after repeated violations the proxy hard-closes the connection. The existing `MAX_BUFFER_DEPTH` constant in `TelnetServerHandler` acts as an additional safety net: once the in-memory buffer ceiling is reached, the connection is closed and `tcpproxy.telnet.discarded` is incremented even if `TCP_PROXY_MAX_LINE_BYTES` is not hit.
   - Malformed `SESSION` envelopes increment a dedicated counter. When the number
     of malformed envelopes on a single connection exceeds
     `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection with a
-    `tcpproxy.connections.closed{reason="malformed_envelope_limit"}` event.
+    hard close and emits the corresponding abuse/close metrics.
     Clients that choose to use `SESSION` should treat this as a per-connection
     budget for mistakes and either send a correct envelope or continue with
     `LOGIN` only after repeated failures.
@@ -193,6 +186,7 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 - TCP connections are accepted on a dedicated port and proxied to Spring Cloud Gateway
   using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
+- If the proxy cannot establish or maintain its WebSocket bridge to Spring Cloud Gateway beyond a short reconnect window, it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”). The proxy does not silently drop commands or buffer unbounded input while the bridge is down.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
@@ -252,7 +246,7 @@ clients do.
 
 When used, the envelope is a plain-text line that starts with `SESSION`
 (case-insensitive) followed by either `SESSION <sessionId> <tenantId>` or the
-more compact `SESSION <sessionId>:<tenantId>`. The
+more compact `SESSION <sessionId>:<tenantId>`. Both `sessionId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. The
 `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
 missing either identifier. Once captured, `sessionId` and `tenantId` are
@@ -274,7 +268,7 @@ propagated over the WebSocket bridge (`X-Proxy-Session-Id` and `X-Proxy-Tenant-I
 - **Consumed vs forwarded** – during the envelope capture window, lines beginning with `SESSION` are treated as envelope attempts and are **consumed by the TCP Proxy Service** (never forwarded to Spring Cloud Gateway / Game Session Service). After the envelope window closes, any lines beginning with `SESSION` are forwarded verbatim as normal gameplay text (and therefore have no special meaning at the proxy layer).
 - **Without any `SESSION` envelope** – all lines, including `LOGIN`, are forwarded verbatim to the gateway; the proxy does not drop or delay gameplay commands.
 - **With a valid `SESSION` envelope** – once the first valid `SESSION` line is parsed, the connection is bound to that `{sessionId, tenantId}` pair for its lifetime and those identifiers are propagated via headers and metrics. The envelope window closes immediately after a valid capture; any subsequent `SESSION` lines are forwarded as normal text and do not rebind the connection.
-- **Malformed `SESSION` lines** – if either `sessionId` or `tenantId` is missing or cannot be parsed, the line is logged and ignored; no error is sent back to the client. Clients that choose to use `SESSION` may resend a corrected envelope as long as the envelope window is still open, or they may proceed with `LOGIN` only. Each malformed envelope also increments a per-connection counter; once the number of malformed envelopes exceeds `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection as abusive and emits the corresponding metrics.
+- **Malformed `SESSION` lines** – if either `sessionId` or `tenantId` is missing or is not a valid UUID, the line is logged and ignored; no error is sent back to the client. Clients that choose to use `SESSION` may resend a corrected envelope as long as the envelope window is still open, or they may proceed with `LOGIN` only. Each malformed envelope also increments a per-connection counter; once the number of malformed envelopes exceeds `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection as abusive and emits the corresponding metrics.
 - **Diagnostics mode (future enhancement)** – a debug/diagnostics mode may surface
   explicit warnings or errors for malformed or repeated `SESSION` envelopes to
   help advanced Telnet clients detect configuration issues. Until that mode ships,
@@ -408,6 +402,7 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 [Logging & Monitoring](../../system-architecture-logging-monitoring.md). Key meters include:
 
 - `tcpproxy.connections.total`, `tcpproxy.connections.active`, and `tcpproxy.buffer.depth` for socket and buffer utilisation at the edge.
+- `tcpproxy.connections.limit.exceeded` for rejected connections when global/per-IP caps are reached.
 - `tcpproxy.connection.events{type="connect"|"disconnect"}` and `tcpproxy.connection.duration` for connection lifecycle and lifetime tracking.
 - `tcpproxy.command`, `tcpproxy.heartbeat`, `tcpproxy.idleClose`, and `tcpproxy.websocket.reconnect.delay` timers, plus `tcpproxy.websocket.reconnects` counters, for Telnet → Gateway bridge behaviour.
 - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}` for TLS and mTLS failures.
@@ -455,7 +450,7 @@ When `TCP_PROXY_DEV_ISOLATED=true`, the proxy runs with an in-process Telnet ech
 
 Prefer containers? A minimal Docker Compose profile launches just the proxy in dev-isolated mode. Start it with `docker compose -f docker/docker-compose.tcp-proxy-devisolated.yml --profile tcp-proxy-devisolated up` and in another terminal run `telnet localhost 2323`. Stop the stack with `docker compose -f docker/docker-compose.tcp-proxy-devisolated.yml --profile tcp-proxy-devisolated down` when finished.
 
-When pointing at a real gateway in non-dev-isolated mode, override `GATEWAY_WS_URL` with its WebSocket endpoint. Outside of the `dev` profile the default remains `ws://spring-cloud-gateway:8080/ws/game` so production pods continue to forward to the routed gameplay endpoint on the cluster gateway when the variable is unset.
+When pointing at a real gateway in non-dev-isolated mode, override `GATEWAY_WS_URL` with its WebSocket endpoint. Do not rely on the `ws://spring-cloud-gateway:8080/ws/game` default in production; production deployments must configure `GATEWAY_WS_URL` to target the Gateway’s internal-only WebSocket mTLS listener.
 
 ## Environment Variables
 
@@ -494,7 +489,7 @@ The full variable list is:
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections (`0` or unset = no explicit ceiling) | `0` |
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling); accurate client IPs require source-IP preservation or PROXY protocol (see [Deployment Environments](../../infrastructure/deployment-environments.md)) | `0` |
-| `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line (including MCP control lines and continuation lines) in bytes before truncation/closure | `4096` |
+| `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line (including MCP control lines and continuation lines) in bytes before rejection/closure | `4096` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
 | `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy → Gateway WebSocket mTLS | `certs/client.crt` |
 | `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy → Gateway WebSocket mTLS | `certs/client.key` |
@@ -507,6 +502,8 @@ The full variable list is:
 These certificate and observability variables are shared with other services; see
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
 for full details.
+
+**Production invariant:** Set `GATEWAY_WS_URL` to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`). Do not deploy the Proxy → Gateway hop with the default `ws://` URL in player-facing environments.
 
 The proxy may expose both a raw Telnet listener (`TCP_PROXY_PORT`) and a TLS-wrapped Telnet listener (`TCP_PROXY_TLS_PORT`) at the same time (when `TCP_PROXY_TLS_ENABLED=true`). In production, exposing the raw Telnet port directly on the public internet is treated as a **legacy, plaintext channel**: credentials and gameplay traffic may be observed in transit, so additional safeguards apply. When
 `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins
@@ -539,8 +536,7 @@ The WebSocket client certificate must include the `clientAuth` extended key usag
 TLS handshake failures are fail-closed: the proxy does not fall back to
 plaintext. Instead it logs errors and increments a dedicated metric
 (for example `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`),
-and Telnet connections may see temporary backoff behaviour while the
-Gateway link is unavailable. See
+and Telnet connections fail-close if the proxy cannot maintain the Gateway link beyond a short reconnect window. See
 [System Architecture: Security](../../system-architecture-security.md) for
 certificate issuance and rotation details.
 
@@ -634,6 +630,17 @@ curl http://localhost:8080/ping
 - `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected.
 
 All RPC definitions live in [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
+
+```bash
+grpcurl -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
+```
+
+##### Local dev shortcuts
+
+When running the proxy gRPC server without TLS/mTLS (dev-only), you can use:
 
 ```bash
 grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping

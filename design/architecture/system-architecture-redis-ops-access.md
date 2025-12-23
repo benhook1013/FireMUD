@@ -80,7 +80,7 @@ Operators interact with coordination state through **supported tools**, not raw 
 
 Direct `redis-cli` writes to coordination prefixes are reserved for **break-glass scenarios** and must follow the incident guidelines in `system-architecture-redis.md` (auditing, post-incident reset, and verification). As an additional guardrail:
 
-- Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` for a given `{tenantId, regionId}` (or tenant) must be followed by a **scoped coordination reset** for the affected scope before normal tick processing resumes.
+- Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` for a given `<tenantId, regionId>` (or tenant) must be followed by a **scoped coordination reset** for the affected scope before normal tick processing resumes.
 - Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.
