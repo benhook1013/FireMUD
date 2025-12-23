@@ -23,7 +23,7 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 ## 4. Game Session gRPC TcpProxyService Implementation
 
 - [x] Scaffold a `TcpProxyServiceImpl` gRPC server in `services/game-session-service` implementing the `TcpProxyService` proto (`NotifyDisconnect`) and register it with the existing gRPC server configuration.
-- [x] Implement `NotifyDisconnect` in `TcpProxyServiceImpl` to validate inputs and mark the appropriate session as disconnected/suspended in Redis using the existing session repository or service layer, returning an `ErrorDetail` code of `OK` on success.
+- [x] Implement `NotifyDisconnect` in `TcpProxyServiceImpl` to validate inputs, map `proxyConnectionId` to the authenticated session when available, and mark the appropriate session as disconnected/suspended in Redis using the existing session repository or service layer, returning an `ErrorDetail` code of `OK` on success.
 - [x] Add unit tests for `TcpProxyServiceImpl` covering happy paths and validation failures for `NotifyDisconnect`, ensuring `ErrorDetail` codes and `grpc.app_error` metrics are set correctly.
 
 ## 5. Telnet → Gateway → Game Session Cross-Service Flow

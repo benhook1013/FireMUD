@@ -31,7 +31,7 @@ JWT signing keys rotate manually or through cert-manager automation.
 ## TLS Termination & Internal Encryption
 
 - External `https/wss` traffic is terminated at the load balancer.
-- The **Spring Cloud Gateway** communicates with backend services over **TLS** to protect gameplay traffic.
+- The **Spring Cloud Gateway** routes client traffic to backend services over in-cluster `http://` / `ws://` targets. Internal service-to-service traffic (for example, Game Session Service to other microservices) uses **mutual TLS (mTLS)** gRPC.
 - All internal gRPC calls between microservices use **mutual TLS (mTLS)**:
   - Certificates are issued by **cert-manager**
   - Distributed via **Kubernetes Secrets**
@@ -44,11 +44,11 @@ TLS for player and Telnet flows is applied hop-by-hop so traffic stays protected
 - **Browser / Web client path**
   - Browser client → external load balancer over `https://` / `wss://` using a certificate issued by cert-manager (for example, via an Ingress or `LoadBalancer` Service).
   - The external load balancer terminates Internet-facing TLS and forwards plain `http://` / `ws://` traffic to Spring Cloud Gateway pods in the DMZ namespace.
-  - Spring Cloud Gateway then connects to backend microservices over mTLS-protected gRPC using certificates configured via `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` as described in [Environment & Secrets Management](./infrastructure/environment-and-secrets.md#grpc-tls-certificates).
+  - Spring Cloud Gateway then routes requests to backend services over in-cluster `http://` / `ws://` endpoints (typically on port `8080`). Internal service-to-service calls (for example, Game Session Service to other microservices) use mTLS-protected gRPC channels configured via `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` as described in [Environment & Secrets Management](./infrastructure/environment-and-secrets.md#grpc-tls-certificates).
 - **Telnet gameplay path**
   - Telnet client → TCP Proxy Service over raw TCP by default, or optionally over TLS when `TCP_PROXY_TLS_ENABLED=true` and `TCP_PROXY_TLS_CERT` / `TCP_PROXY_TLS_KEY` are provided. Raw Telnet remains supported even in production so that classic clients which do not understand TLS can connect, but operators should treat this as an intentionally legacy, plaintext channel and apply appropriate hardening (for example strong credential policies, careful IP throttling, and network-level filtering) rather than assuming it provides the same confidentiality guarantees as the HTTPS/WebSocket path.
   - TCP Proxy Service → Spring Cloud Gateway over `wss://` using mutual TLS in the **target-state** design. The proxy presents a client certificate and key from `FIREMUD_GRPC_CERT_CHAIN_PATH` / `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and validates the gateway certificate against `FIREMUD_GRPC_CA_CERT_PATH` with hostname verification enabled using the host from `GATEWAY_WS_URL`. See the TCP Proxy Service design's *Implementation Status* section for the current behavior.
-  - Spring Cloud Gateway → Game Session Service (and other backends) over mTLS gRPC using the same `FIREMUD_GRPC_*` variables that all services share.
+  - Spring Cloud Gateway forwards gameplay to the Game Session Service over the `/ws/game/**` WebSocket route. Game Session Service then communicates with other microservices over mTLS gRPC using the same `FIREMUD_GRPC_*` variables that all services share.
 
 Local Docker Compose environments may use plain `http://` / `ws://` for simplicity, but the production Kubernetes profile is expected to follow this termination chain so that only the Internet edge terminates TLS and all intra-cluster hops to and from the gateway are either mTLS (gRPC) or `wss://` with mTLS for the Telnet bridge.
 
@@ -101,14 +101,18 @@ Local Docker Compose environments may use plain `http://` / `ws://` for simplici
 - Telnet-derived flows are tagged with a **connection security** attribute at the TCP Proxy (“plaintext Telnet” vs “TLS Telnet”). This attribute is propagated via Spring Cloud Gateway to the Game Session Service, which uses it to:
   - Include a **landing menu security warning** in the pre-login menu for plaintext Telnet sessions, advising players to prefer the TLS Telnet port or the web client.
   - Include the transport context in `/auth/login` calls to the Account Service so deployment-wide rules such as `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags can be enforced consistently.
-- Client IP headers on Telnet-derived traffic follow the trust model described in [Protocol Bridging](./system-architecture-protocol-bridging.md#bridging-to-the-backend): the proxy always overwrites `X-Client-IP` with the TCP peer address on its internal WebSocket hop, and Spring Cloud Gateway strips any `X-Client-IP` received from **public** clients before forwarding to gameplay services. Downstream services treat the combination of the proxy-supplied `X-Client-IP` and the load balancer’s `X-Forwarded-For` chain as authoritative when applying rate limiting and abuse controls.
+- Client IP headers on Telnet-derived traffic follow the trust model described in [Protocol Bridging](./system-architecture-protocol-bridging.md#bridging-to-the-backend): the TCP Proxy Service supplies `X-Proxy-Client-IP` on its internal WebSocket hop and Spring Cloud Gateway sets the canonical `X-Client-IP` header after stripping spoofable headers from public ingress and authenticating the TCP Proxy identity. In production, the preferred deployment places a Telnet edge proxy (HAProxy) in front of the TCP Proxy Service and enables PROXY protocol so the TCP Proxy can recover the true client IP even when Kubernetes would otherwise SNAT the TCP peer address. When PROXY protocol is not enabled (or source IP is not preserved), per-IP limits and throttles should be treated as best-effort.
 
 ---
 
 ## Admin Interface Access Model
 
-- Admin functionality is **entirely controlled through JWT `roles`**, issued and managed by the **Account Service**.
-- There is **no special network-level access or infrastructure isolation** for admin features — this is an intentional design decision to rely solely on internal authentication and scoped authorization.
+- Product admin functionality (creator/moderator APIs exposed via Spring Cloud Gateway) is **entirely controlled through JWT `roles`**, issued and managed by the **Account Service**.
+- There is **no special network-level access or infrastructure isolation** for product admin APIs — this is an intentional design decision to rely on scoped authorization in the owning services rather than IP allowlists or private network access.
+- Operator control-plane endpoints (for example Spring Cloud Gateway dynamic route management and diagnostics) are treated separately from product admin APIs: they are **internal-only** and require mutual TLS (mTLS) client certificates, with reachability restricted by `ClusterIP` Services, private ingress, and `NetworkPolicy` allowlists.
+  - **Certificate trust root**: operator clients must present a certificate that chains to the cluster CA used for gRPC mTLS, issued by cert-manager (ClusterIssuer `firemud-ca-issuer`) and configured via `FIREMUD_GRPC_CA_CERT_PATH`.
+  - **Client certificate profile**: operator certificates must include the `clientAuth` extended key usage and should be provisioned as a dedicated Kubernetes Secret that is not mounted by normal workloads.
+  - **Distribution and access**: Kubernetes RBAC and Secret scoping must restrict which service accounts can read/mount the operator client certificate Secret; NetworkPolicies restrict which pods can reach the management endpoints so that holding a valid certificate alone is not sufficient outside the approved operator surface.
 - Admin and moderator accounts can enable **two-factor authentication** using TOTP codes. When enabled, login requests must supply an `otp` field to the Account Service. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication) for implementation details.
 
 ---
@@ -125,7 +129,7 @@ Local Docker Compose environments may use plain `http://` / `ws://` for simplici
 | Brute-Force Defense | Spring Cloud Gateway enforces Redis-backed request rate limiting for HTTP/WebSocket/Telnet-bridged traffic; Game Session Service enforces per-IP connection and command rate limits |
 | Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
 | Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service. Plaintext Telnet logins are further constrained by `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags. |
-| Admin Role Access | JWT-only; no special network-level restrictions |
+| Admin Role Access | Product admin APIs are JWT-only with no special network-level restrictions; operator control-plane endpoints are internal-only and require mTLS client certificates |
 | Zero Trust | Enforced via mTLS and JWT-based validation |
 | 2FA | Available for admin and moderator accounts via TOTP codes and, when `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled, required for any account that logs in over plaintext Telnet |
 

@@ -29,8 +29,8 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
   outlined in [Reconnection Strategy](../../system-architecture-reconnection.md).
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
-- Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Session-Id`) unchanged to backend services, and all tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
-- External TLS is terminated by the load balancer and traffic to backend services uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
+- Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Session-Id`) to backend services, but only after applying the gateway’s header trust and canonicalization rules. In particular, Spring Cloud Gateway strips spoofable tenant/session headers from public ingress and only forwards `X-Tenant-Id` / `X-Session-Id` when they are produced from trusted inputs (for example `X-Proxy-Tenant-Id` / `X-Proxy-Session-Id` on the authenticated TCP Proxy → Gateway hop) as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Header Trust Model](../../system-architecture-gateway.md#header-trust-model). All tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+- External TLS is terminated by the load balancer; Spring Cloud Gateway routes to backend services over in-cluster `http://` / `ws://` endpoints, while internal service-to-service traffic uses mTLS gRPC as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
 
@@ -39,7 +39,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Central API gateway and policy enforcement point (routing, rate limiting, and basic admin auth gating only; downstream services own JWT validation).
 - Real-time delivery of gameplay and admin messages over HTTP and WebSocket.
 - Reconnection support for dropped clients.
-- Routes REST and gRPC traffic to appropriate backend services.
+- Routes HTTP and WebSocket traffic to appropriate backend services. The gateway’s gRPC surface is reserved for internal management and diagnostics (for example, `GatewayManagementService` on port `6565`).
 
 ### Data Model
 
@@ -79,7 +79,7 @@ Telnet clients send every line through the TCP Proxy Service, which bridges the 
 ## Dependencies
 
 - **Internal:**
-  - Game Session Service and other microservices over gRPC.
+  - Game Session Service and other backend services via the configured `http://` and `ws://` route targets (typically port `8080`).
   - TCP Proxy Service forwards Telnet traffic into the gateway.
 - **External:** Spring Cloud Gateway infrastructure.
 
@@ -97,9 +97,10 @@ Spring Cloud Gateway exposes both HTTP and gRPC management interfaces for operat
   - The gRPC `GatewayManagementService` runs on port `6565` and is exposed only on internal network surfaces (for example, `ClusterIP` Services and private admin ingress), not on the public player ingress.
 - **Authentication and authorization**
   - gRPC management calls use mutual TLS with cert-manager–issued client certificates. Only clients presenting trusted admin certificates can connect.
-  - HTTP management endpoints reuse the gateway’s authentication filter chain: `JwtAuthFilter` enforces the presence of an `Authorization` header with an admin-role JWT, while downstream admin/meta services own full JWT validation and authorization logic.
+  - HTTP management endpoints are authenticated and authorized at the gateway boundary, not delegated to downstream services. The recommended model is mTLS client certificates (same trust root as the gRPC management plane), with `NetworkPolicy` allowlists restricting which pods/namespaces may reach the endpoint. JWT-based roles apply to product/admin APIs routed through the gateway but are not relied upon as the primary authorization mechanism for gateway-owned management endpoints.
+  - Operator client certificates should be issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, must include the `clientAuth` EKU, and should be distributed as a dedicated Kubernetes Secret that is readable only by operator tooling service accounts (so normal workloads cannot reuse service mTLS credentials to call management APIs).
 - **Data plane vs control plane**
-  - Port `8080` is reserved for player-facing HTTP/WebSocket traffic behind the public load balancer; port `6565` is used for internal gRPC management.
+  - Port `8080` hosts the gateway HTTP/WebSocket server. Public ingress exposes only data-plane routes on this port; management endpoints on this port are reachable only via internal-only Services or a dedicated private ingress. Port `6565` is used for internal gRPC management.
   - Kubernetes `Service` and `Ingress` objects keep these planes separate so that exposing gameplay routes does not accidentally publish management endpoints.
 
 > 🔗 See [Security Architecture](../../system-architecture-security.md) for TLS, mTLS, and admin access models, and [Gateway Architecture](../../system-architecture-gateway.md#management-plane-security) for the high-level boundary design.
@@ -129,7 +130,7 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
   - Spring Cloud Gateway does not access Coordination Redis. It never issues commands against `tick:*`, `timer:*`, `retry:*`, `session:*`, or other coordination prefixes; gameplay coordination remains the responsibility of the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md).
 - **Cache/Rate-Limit Redis**
   - Uses **Cache/Rate-Limit Redis** exclusively for rate limiting and any future gateway-local caches, connecting via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` as documented in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) and [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-  - Rate-limit buckets and related keys follow the `ratelimit:{tenantId}:{bucket}:{timeWindow}` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design). When present, tenant markers are included in keys for **isolation and observability only**; limit values and policy decisions remain global and are not derived at Spring Cloud Gateway from tenant identity. These rate-limit structures are treated as **best-effort TTL-only caches** of counters; correctness comes from the gateway’s rate-limit policy and enforcement logic, not from Redis acting as a durable store.
+  - Rate-limit buckets and related keys follow the `ratelimit:<tenantId>:<bucket>:<timeWindow>` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design). When present, tenant markers are included in keys for **isolation and observability only**; limit values and policy decisions remain global and are not derived at Spring Cloud Gateway from tenant identity. These rate-limit structures are treated as **best-effort TTL-only caches** of counters; correctness comes from the gateway’s rate-limit policy and enforcement logic, not from Redis acting as a durable store.
   - Changes to rate-limiting strategy or cache usage in Spring Cloud Gateway should be reviewed using the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role separation, and monitoring coverage. Any additional gateway-local caches must explicitly declare whether they are strongly validated (version-based) or best-effort TTL-only and be registered in the Cache/Rate-Limit Redis Key Catalog.
 
 The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are consumed by `AuthConfig` to materialize a `JwtUtil` instance and hot-reload secrets via `JwtSecretWatcher`. Spring Cloud Gateway does **not** use this utility to validate or parse JWTs for gameplay or admin traffic; admin and other meta/control services perform JWT validation themselves, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
@@ -168,6 +169,7 @@ health RPCs (such as `Ping`) used by operators and tooling.
 
 #### REST
 
+- These endpoints are internal-only in production (private ingress / cluster-internal access, protected by mTLS). The examples below are for local development and trusted operator contexts.
 - `GET /ping` – basic health check returning `"pong"`.
 
 ```bash

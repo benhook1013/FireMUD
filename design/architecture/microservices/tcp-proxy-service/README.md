@@ -6,6 +6,12 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
 This service also exposes an **internal-only gRPC API** (for `Ping` and `NotifyDisconnect`) used by other services and tooling; it is never published through Spring Cloud Gateway.
 
+> **Canonical specs:** This document is the authoritative reference for:
+> - `SESSION` + `LOGIN` semantics and header propagation (see **Telnet Session Envelope & Event Metrics**).
+> - `NotifyDisconnect` event semantics and layering guarantees.
+> - Proxy metrics naming and label cardinality rules (see **Metrics Summary**).
+> Other docs (Reconnection Strategy, Protocol Bridging, Gateway Architecture, and user journeys) intentionally summarize behaviour and link back here instead of redefining these protocols.
+
 ## Implementation Status
 
 This document describes the target-state behaviour of the TCP Proxy Service.
@@ -44,7 +50,7 @@ of truth and reconcile code/tests accordingly.
 - Sanitizes incoming Telnet data and enforces a whitelist of
   **Telnet protocol commands** as described in the
   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
-- Forwards client IPs via `X-Client-IP` so central throttling occurs in the Game Session Service. The proxy always overwrites any incoming `X-Client-IP` header on Telnet traffic so downstream services can treat this value as “set by the TCP Proxy only,” and the Gateway combines it with its own `X-Forwarded-For` handling on the WebSocket side. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
+- Forwards client identity using a gateway canonicalization model. The proxy sets `X-Proxy-Client-IP` on its internal WebSocket hop so Spring Cloud Gateway can set the canonical `X-Client-IP` header after authenticating the TCP Proxy identity. In Kubernetes, the raw TCP peer address may be a load balancer or node IP due to SNAT; the preferred production deployment is to place a Telnet edge proxy (HAProxy) in front of the TCP Proxy Service and enable PROXY protocol so the proxy can recover the true client IP before setting `X-Proxy-Client-IP`. Optional TLS termination is controlled by `TCP_PROXY_TLS_ENABLED`.
 - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
@@ -63,9 +69,7 @@ reconnection logic centralized in the Game Session Service:
   a second client logs in as the same character, so only one active session per
   character is allowed at any time.
 - The proxy does not emit a positive “reconnect” event. It only calls
-  `NotifyDisconnect` when a Telnet socket closes; Game Session interprets a
-  subsequent `LOGIN` (with or without a `SESSION` envelope) as either a fresh
-  login or a resume/takeover based on Redis session state.
+  `NotifyDisconnect` when a Telnet socket closes, using a server-generated `proxyConnectionId` and a per-connection `disconnectSequence` counter for idempotency; Game Session interprets a subsequent `LOGIN` (with or without a `SESSION` envelope) as either a fresh login or a resume/takeover based on Redis session state.
 - After `NotifyDisconnect`, session state remains eligible for reconnection
   until the configured `session_expiration_ms` window elapses; see the
   [Reconnection Strategy](../../system-architecture-reconnection.md) and
@@ -214,19 +218,21 @@ any **Redis-backed queued commands** owned by the Game Session Service. The TCP
 Proxy never replays Telnet input after a disconnect; connection-local buffers
 are cleared as soon as the TCP session closes. The `NotifyDisconnect` event is
 therefore a **best-effort, at-least-once** lifecycle signal keyed by
-`{sessionId, tenantId}` rather than a request to re-run gameplay commands. Game
-Session must treat `NotifyDisconnect` as strictly advisory and idempotent and must
+`{proxyConnectionId, disconnectSequence}` rather than a request to re-run gameplay commands.
+
+The proxy generates `proxyConnectionId` when the Telnet socket is accepted and propagates it to the gateway hop as a WebSocket handshake header (`X-Proxy-Connection-Id`). Spring Cloud Gateway strips this header from public ingress and forwards it only when it has authenticated the TCP Proxy identity; Game Session captures this identifier during login/session binding so it can associate disconnect events with the correct authenticated session even when the client did not provide a `SESSION` envelope.
+
+When a valid `SESSION <sessionId> <tenantId>` envelope is captured, the proxy forwards those identifiers as WebSocket handshake headers (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id`). Spring Cloud Gateway strips these from public ingress and may forward canonical `X-Session-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These values remain advisory context, not trusted facts: Game Session validates them against Redis-backed session ownership and tenant authorization.
+
+Game Session must treat `NotifyDisconnect` as strictly advisory and idempotent and must
 always be able to detect disconnects without relying on this stream as a single
 source of truth:
 
-- If a `NotifyDisconnect` arrives after a new session has already been
-  established for the same `{sessionId, tenantId}`, the newer session remains
-  authoritative and the event is ignored for state changes.
+- If a `NotifyDisconnect` arrives after the session has already been rebound to a new socket (and therefore a different `proxyConnectionId`), the event is ignored for state changes because it refers to an old, closed connection.
 - Missing events are tolerated because disconnects are also detected at the
   Gateway and Game Session layers; recovery logic must not rely on this signal
   as a single source of truth.
-- Duplicate events for the same `{sessionId, tenantId}` are handled without
-  side effects so the stream can be retried safely.
+- Duplicate events for the same `{proxyConnectionId, disconnectSequence}` (or older `disconnectSequence` values for a given `proxyConnectionId`) are handled without side effects so the stream can be retried safely.
 
 Their definitions live in
 [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
@@ -250,8 +256,7 @@ more compact `SESSION <sessionId>:<tenantId>`. The
 `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
 missing either identifier. Once captured, `sessionId` and `tenantId` are
-propagated over the WebSocket bridge (`X-Session-Id` and `X-Tenant-Id` headers)
-and also drive the event and metric generation below.
+propagated over the WebSocket bridge (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id` handshake headers, which Spring Cloud Gateway may promote to canonical `X-Session-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity) and also drive the event and metric generation below.
 
 #### Where `sessionId` and `tenantId` come from
 
@@ -351,6 +356,18 @@ private static final Set<Byte> ALLOWED_COMMANDS =
 ```
 
 Commands outside this list are discarded and only sanitized printable characters are forwarded to the gateway.
+
+Supported Telnet commands/options are intentionally minimal but cover the needs of common MUD clients. The proxy’s abuse heuristics treat some signals as **hard abuse** that may close connections, and others as **diagnostic-only**:
+
+- Hard abuse signals include:
+  - Line-length floods or repeated lines exceeding `TCP_PROXY_MAX_LINE_BYTES`.
+  - Repeated malformed `SESSION` envelopes that drive the per-connection counter past `TCP_PROXY_MAX_MALFORMED_ENVELOPES`.
+  - Excessive connection churn from the same IP that collides with global connection-limit policy (`TCP_PROXY_MAX_CONNECTIONS` / `TCP_PROXY_MAX_CONNECTIONS_PER_IP`).
+- Diagnostic-only signals include:
+  - Isolated malformed `SESSION` envelopes that do not trip the malformed-envelope budget.
+  - Unknown MCP packages or malformed MCP control lines; these may be logged for debugging but must not be treated as abuse on their own.
+
+Within those constraints, the proxy preserves compatibility while still enforcing a small, hardened Telnet surface.
 
 Supported Telnet commands/options are intentionally minimal but cover the needs of common MUD clients:
 
@@ -480,7 +497,7 @@ The full variable list is:
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
 | `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections (`0` or unset = no explicit ceiling) | `0` |
-| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling) | `0` |
+| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling); accurate client IPs require source-IP preservation or PROXY protocol (see [Deployment Environments](../../infrastructure/deployment-environments.md)) | `0` |
 | `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet line/envelope length in bytes before truncation/closure | `4096` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
 | `FIREMUD_GRPC_CERT_CHAIN_PATH` | Certificate chain path for mTLS; shared between the proxy’s gRPC server and its target-state WebSocket client | `certs/client.crt` |
@@ -556,21 +573,28 @@ service exports OpenTelemetry spans to the collector defined by
 
 The connection and envelope limits exposed via `TCP_PROXY_MAX_CONNECTIONS`,
 `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, and `TCP_PROXY_MAX_MALFORMED_ENVELOPES`
-are intended to be tuned per environment:
+are intended to be tuned per environment.
 
-- **Dev / Hobby setups**
-  - `TCP_PROXY_MAX_CONNECTIONS=50` – small cap to catch runaway local clients.
-  - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=10` – enough for multiple terminals per developer.
-  - `TCP_PROXY_MAX_MALFORMED_ENVELOPES=10` – generous tolerance while iterating on tools or tests.
-- **Small production deployments**
-  - `TCP_PROXY_MAX_CONNECTIONS` sized to expected concurrent players plus a safety margin (for example `500`–`1000` depending on cluster size).
-  - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=3`–`5` – allows multiple windows per player while limiting abuse from a single IP.
-  - `TCP_PROXY_MAX_MALFORMED_ENVELOPES=5` – closes connections that repeatedly send bad `SESSION` lines.
-- **Heavier deployments**
-  - Scale the proxy horizontally and keep per-pod limits moderate (for example `TCP_PROXY_MAX_CONNECTIONS=2000` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP=5`), rather than pushing a single instance to extreme totals.
-  - Treat sustained increases in `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded` as signals to either:
-    - Add capacity (more pods) and/or
-    - Block or throttle specific abusive IP ranges at the network or gateway layer.
+**Recommended dev defaults**
+
+- `TCP_PROXY_MAX_CONNECTIONS=50` – small cap to catch runaway local clients.
+- `TCP_PROXY_MAX_CONNECTIONS_PER_IP=10` – enough for multiple terminals per developer.
+- `TCP_PROXY_MAX_MALFORMED_ENVELOPES=10` – generous tolerance while iterating on tools or tests.
+- It is acceptable to use `ws://` for `GATEWAY_WS_URL` in local/docker-compose setups; mTLS is not required in dev, but be cautious when forwarding dev traffic over the public Internet.
+
+**Minimum viable prod hardening**
+
+- Size `TCP_PROXY_MAX_CONNECTIONS` to expected concurrent players plus a safety margin (for example `500`–`1000` depending on cluster size).
+- Set `TCP_PROXY_MAX_CONNECTIONS_PER_IP=3`–`5` so individual IPs cannot exhaust the connection pool while still allowing multiple windows per player.
+- Use `TCP_PROXY_MAX_MALFORMED_ENVELOPES=5` so connections that repeatedly send bad `SESSION` lines are closed as abusive.
+- Strongly prefer `wss://` with mutual TLS for `GATEWAY_WS_URL` so the Proxy → Gateway hop always uses mTLS in production; fall back to `ws://` only in tightly controlled internal test environments.
+
+**Heavier deployments**
+
+- Scale the proxy horizontally and keep per-pod limits moderate (for example `TCP_PROXY_MAX_CONNECTIONS=2000` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP=5`), rather than pushing a single instance to extreme totals.
+- Treat sustained increases in `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded` as signals to either:
+  - Add capacity (more pods) and/or
+  - Block or throttle specific abusive IP ranges at the network or gateway layer.
 
 When choosing `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, remember that many real-world deployments place large numbers of players behind a single NAT or carrier-grade IP (for example campus networks or shared ISPs). In those environments it is safer to keep the per-IP cap relatively high (or even leave it unset) and rely on Spring Cloud Gateway’s rate limiting and the Game Session Service’s per-IP and per-session limits for fairness, while treating the proxy’s per-IP ceiling primarily as a guardrail against obviously abusive sources.
 

@@ -5,7 +5,7 @@ This quick guide shows example commands for both WebSocket and Telnet clients so
 ## WebSocket Example
 
 1. Start the services needed for the cross-service regression (Account, World, Entity, Social, Game Logic, Redis, Postgres, Game Session).
-1. Connect to the Game Session WebSocket at `/ws/game`. Advanced clients or test harnesses that resume an existing session created via REST (`POST /sessions`) may first send `SESSION <sessionId>` (and include `X-Session-Id` on the connection); typical browser clients never need to send `SESSION` and can rely on the server to create or bind a session on `LOGIN`, matching the Telnet flow.
+1. Connect to the Game Session WebSocket at `/ws/game`. Advanced clients or test harnesses that resume an existing session created via REST (`POST /sessions`) may first send `SESSION <sessionId>` as an in-band line; typical browser clients never need to send `SESSION` and can rely on the server to create or bind a session on `LOGIN`, matching the Telnet flow. In production deployments, Spring Cloud Gateway strips spoofable session/tenant headers from public clients; header-based session hints are reserved for the authenticated TCP Proxy → Gateway path.
 1. Send `LOGIN demo@example.com swordfish`.
 1. Once you receive `OK LOGIN ...`, send `SAY Hello travelers`.
 1. Expect the structured `OK SAY` response:

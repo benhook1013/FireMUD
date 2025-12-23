@@ -3007,6 +3007,8 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
+| proxy_connection_id | [string](#string) |  |  |
+| disconnect_sequence | [uint64](#uint64) |  |  |
 
 
 

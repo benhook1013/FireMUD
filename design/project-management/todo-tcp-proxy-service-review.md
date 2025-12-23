@@ -85,3 +85,10 @@ vertical-slice task lists.
   - `design/architecture/microservices/tcp-proxy-service/README.md`
 - [ ] J2 – If additional minor inconsistencies or typos are discovered while implementing these tasks, fix them and add a brief note to this list (as a completed sub-item) to keep an audit trail of doc-only cleanups.
 
+## K. Telnet Client IP Preservation (HAProxy + PROXY protocol)
+
+- [x] K1 – Document HAProxy Telnet edge proxy + PROXY protocol as the preferred production approach for preserving client IPs without relying on `externalTrafficPolicy: Local` (`design/architecture/infrastructure/deployment-environments.md`, `design/architecture/system-architecture-security.md`, `design/architecture/system-architecture-protocol-bridging.md`, `design/architecture/microservices/tcp-proxy-service/README.md`, `design/architecture/system-architecture-gateway.md`)
+
+## L. Header Trust Model (Gateway Canonicalization)
+
+- [x] L1 – Add a dedicated “Header Trust Model” section to `design/architecture/system-architecture-gateway.md` defining `X-Proxy-*` inputs, strip/drop rules, and gateway output rules; align TCP Proxy, Protocol Bridging, and related docs to use `X-Proxy-Client-IP` / `X-Proxy-Session-Id` / `X-Proxy-Tenant-Id` / `X-Proxy-Connection-Id` as inputs rather than trusting `X-Client-IP` or `X-Session-Id` from upstream
