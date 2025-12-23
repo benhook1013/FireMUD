@@ -96,6 +96,8 @@ Local Docker Compose environments may use plain `http://` / `ws://` for simplici
 
 ## Telnet Command Handling and Controls
 
+This section is the authoritative reference for plaintext Telnet security invariants (2FA requirements, per-account opt-in, and landing-menu warnings) and how the TCP Proxy Service and Game Session Service enforce them.
+
 - Telnet clients connect through the **TCP Proxy Service**, which is sandboxed in the DMZ. It forwards **all gameplay traffic** to the backend exclusively via WebSocket through Spring Cloud Gateway and uses a narrow, mTLS-protected gRPC link to the **Game Session Service** only to emit `NotifyDisconnect` lifecycle events (no gameplay payloads). These gRPC endpoints are internal-only and are never published through the gateway.
 - The proxy **enforces a whitelisted subset of Telnet protocol commands** and **sanitizes** incoming input to protect against malformed sequences, using a dedicated Telnet pipeline in the TCP Proxy Service (currently implemented by `TelnetServerHandler`).
 - Telnet-derived flows are tagged with a **connection security** attribute at the TCP Proxy (“plaintext Telnet” vs “TLS Telnet”). This attribute is propagated via Spring Cloud Gateway to the Game Session Service, which uses it to:
