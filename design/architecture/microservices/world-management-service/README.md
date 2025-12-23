@@ -114,8 +114,6 @@ The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this
 
 ### Implementation status (LOOK slice)
 
-Last reviewed: 2025-12-23
-
 - **Live:** `GetRoomSnapshot` returns the room metadata, descriptions, and exit labels that Game Logic needs to render the canonical `LOOK` transcript, and the telemetry for this pipeline is documented in `../../project-management/look-instrumentation.md`.
 - **Stubbed:** The current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
 - **Deferred:** Future work will enrich snapshots with ambient metadata (weather, hazard warnings) and push updates through `/ws/game/**` so Gateway/TCP Proxy clients can react to world changes as soon as they happen.

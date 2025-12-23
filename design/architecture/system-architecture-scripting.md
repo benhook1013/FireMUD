@@ -6,8 +6,6 @@ This document outlines how FireMUD executes custom in-game behavior through a sa
 
 This document describes the **target-state architecture** for scripting and automation. The implementation is evolving toward this design; this section captures a snapshot as of 2025-12-04.
 
-Last reviewed: 2025-12-23
-
 For the most accurate, fine-grained status, refer to the [Automation & Scripting Service Task List](../project-management/task-list-automation-scripting-service.md).
 
 - **Implemented and in active use**

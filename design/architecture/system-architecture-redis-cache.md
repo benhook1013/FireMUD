@@ -4,8 +4,6 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
 
 > ℹ️ **Implementation status**
 >
-> Last reviewed: 2025-12-23
->
 > - Spring Cloud Gateway’s rate limiting is wired to Cache/Rate-Limit Redis today using the patterns in this document.
 > - Other services reference these cache and aggregate patterns (for example, Entity Management character caches and World Management room caches) as target-state behavior; concrete cache adoption may evolve over time while continuing to follow these rules.
 >

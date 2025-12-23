@@ -18,8 +18,6 @@ This document describes the target-state behaviour of the TCP Proxy Service.
 Where implementation is still catching up, treat the design below as the source
 of truth and reconcile code/tests accordingly.
 
-Last reviewed: 2025-12-23
-
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
 | Telnet login-first flow (without `SESSION`) | All Telnet clients issue `LOGIN` and may optionally send a `SESSION` envelope for advanced attach-to-session flows; `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. | Behaviour is implemented as described; some older tests and smoke scripts may still assume `SESSION` is required. | Align any remaining flows with this doc when you encounter discrepancies rather than changing the protocol. |

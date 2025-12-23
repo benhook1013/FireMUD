@@ -9,8 +9,6 @@ This document describes how the Automation & Scripting Service enforces script s
 
 This document describes the **target-state architecture** for script sandboxing and resource limits. Some aspects may be partially implemented or stubbed out in the current codebase.
 
-Last reviewed: 2025-12-23
-
 For the latest progress, see:
 
 - `design/project-management/task-list-automation-scripting-service.md`
