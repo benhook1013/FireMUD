@@ -50,7 +50,7 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
     - Read the current version from the authoritative store or a lighter-weight index.
     - Compare it with the version in Redis.
     - Reuse the cached payload if versions match, or recompute and overwrite the cache if they differ.
-  - Versioning is applied per aggregate root (for example `inventory:{tenantId}:{containerId}`), not per field, and is treated as part of the aggregate’s API contract.
+- Versioning is applied per aggregate root (for example `inventory:<tenantId>:<containerId>`), not per field, and is treated as part of the aggregate’s API contract.
 
 - **Best-effort caches (TTL-only)** – payloads that are inexpensive to recompute or where occasional staleness is acceptable:
   - Entries are written with a TTL that bounds staleness; readers accept that data may lag behind the source of truth within that window.
@@ -67,7 +67,7 @@ Some dynamic aggregates will be easier to cache if the authoritative store expos
   - Read the current version from the authoritative store or a lighter-weight index.
   - Compare it with the version in Redis.
   - Reuse the cached payload if versions match, or recompute and overwrite the cache if they differ.
-- Versioning is applied per aggregate root (for example `inventory:{tenantId}:{containerId}` or `roomDynamic:{tenantId}:{roomId}`) rather than being added indiscriminately to every table or DTO.
+- Versioning is applied per aggregate root (for example `inventory:<tenantId>:<containerId>` or `roomDynamic:<tenantId>:<roomId>`) rather than being added indiscriminately to every table or DTO.
 
 This pattern keeps cache correctness bounded to clearly defined aggregates and avoids random, hard-to-reason-about version fields scattered across the schema.
 
@@ -143,7 +143,7 @@ From a correctness perspective, cache usage falls into two broad classes:
 
 To avoid noisy-neighbor effects on coordination workloads, cache writers must also enforce **per-value size limits** and avoid unbounded lists or blobs in Redis:
 
-- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a “current room view” would exceed that size, split it into a set of chunked entries (for example `view:roomLook:{tenantId}:{roomId}:chunk:{n}`) instead of storing a multi-megabyte blob.
+- Cap serialized values to a practical ceiling (for example, roughly 32 KB or two protobuf pages) before writing them to Redis. If an aggregate such as a “current room view” would exceed that size, split it into a set of chunked entries (for example `view:roomLook:<tenantId>:<roomId>:chunk:<n>`) instead of storing a multi-megabyte blob.
 - CI or static checks should exercise representative payloads to keep them within these limits, and reviewers must explicitly justify any intentional exception.
 - Large or streaming-style responses stay in PostgreSQL/object storage or behind dedicated APIs rather than being replicated wholesale into Redis, even on the Cache/Rate-Limit cluster.
 
@@ -210,8 +210,8 @@ This approach keeps configuration minimal—a single notion of “cache under pr
 Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestRateLimiter`) should be designed to avoid **hot keys** under heavy load:
 
 - Per-client or per-token prefixes are preferred over global counters so that no single key receives a disproportionate share of traffic.
-- Define a canonical pattern such as `ratelimit:{tenantId}:{bucket}:{timeWindow}` (for example, `bucket` may be a hash of the client/token plus an optional slice) and publish helper builders so services reuse the same bucketing logic instead of inventing divergent, hotspot-prone schemes.
-- Support more granular sub-bucketing where heads-on credentials are unavoidable (for example `ratelimit:{tenantId}:{bucket}:{timeWindow}:{shard}`) to spread aggregates across multiple keys within the rate-limit Redis cluster.
+- Define a canonical pattern such as `ratelimit:<tenantId>:<bucket>:<timeWindow>` (for example, `bucket` may be a hash of the client/token plus an optional slice) and publish helper builders so services reuse the same bucketing logic instead of inventing divergent, hotspot-prone schemes.
+- Support more granular sub-bucketing where heads-on credentials are unavoidable (for example `ratelimit:<tenantId>:<bucket>:<timeWindow>:<shard>`) to spread aggregates across multiple keys within the rate-limit Redis cluster.
 
 #### Rate-Limit Bucket Design
 
@@ -223,9 +223,9 @@ To keep rate limiting robust under high cardinality and load, `bucket` values sh
 - **Higher-cardinality or multi-tenant deployments**
   - Use a **stable hash** of the client/token into a bounded number of buckets per tenant:
     - Example: `bucket = H(clientId) mod N`, where `N` is a small fixed number (for example 64 or 256) chosen per deployment, not per tenant.
-    - This caps the number of keys per `{tenantId, timeWindow}` while avoiding single-key hotspots.
-  - Introduce `{shard}` only when profiling shows that individual buckets are still too hot:
-    - For example, split each logical bucket into a small number of shards (`0..S-1`) using `ratelimit:{tenantId}:{bucket}:{timeWindow}:{shard}` where `shard = H(requestId) mod S`.
+    - This caps the number of keys per the `(tenantId, timeWindow)` pair while avoiding single-key hotspots.
+  - Introduce `<shard>` only when profiling shows that individual buckets are still too hot:
+    - For example, split each logical bucket into a small number of shards (`0..S-1`) using `ratelimit:<tenantId>:<bucket>:<timeWindow>:<shard>` where `shard = H(requestId) mod S`.
     - Keep `S` small and fixed so the total key count remains predictable.
 - **Key count and rotation**
   - Choose `N` (and optional `S`) so the total number of active `ratelimit:*` keys per tenant across all live `timeWindow` values stays within a comfortable range for the deployment.
@@ -236,16 +236,16 @@ This approach gives small games straightforward per-client buckets by default wh
 Cluster slotting implications:
 
 - Rate-limit keys are treated as **single-key operations** from the cluster’s perspective; scripts or commands should not attempt atomic multi-key updates across different buckets or time windows.
-- Hash tags are optional for rate-limit keys. When used (for example to keep all buckets for a tenant/time window in the same slot), they must be applied consistently by shared helper builders so cross-service usage remains aligned.
+  - Rate-limit keys are treated as single-key operations; the design intentionally does not rely on Redis Cluster hash tags for rate limiting.
 - Multi-key operations over rate-limit data (for example, bulk inspection of multiple buckets) must tolerate `CROSSSLOT` errors and fall back to per-key operations; the design does not rely on cross-slot multi-key transactions for rate limiting.
 
 ### Key Naming and Overwrite Expectations
 
 Cached aggregates in Redis should follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Examples (subject to refinement):
 
-- `inventory:{tenantId}:{containerId}` – cached view of a single inventory or container (including room-ground containers).
-- `worldDynamic:{tenantId}:{aggregateId}` – cached view of room-level dynamic state or other world-scoped aggregates.
-- `view:roomLook:{tenantId}:{roomId}` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
+- `inventory:<tenantId>:<containerId>` – cached view of a single inventory or container (including room-ground containers).
+- `worldDynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
+- `view:roomLook:<tenantId>:<roomId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
 
 Expectations:
 
@@ -261,10 +261,10 @@ To keep cache usage reviewable and consistent across services, common aggregate 
 
 | Prefix / Aggregate | Example Key | Policy | Notes |
 | --- | --- | --- | --- |
-| Inventory/container views | `inventory:{tenantId}:{containerId}` | **Versioned** | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL; writes bump the version, and cache entries are discarded when versions mismatch. |
-| Dynamic world aggregates | `worldDynamic:{tenantId}:{aggregateId}` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
-| Room LOOK views | `view:roomLook:{tenantId}:{roomId}` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
-| Short-lived chat buffers | `chat:say:{tenantId}:{playerId}`, `chat:guild:{tenantId}:{guildId}`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
+| Inventory/container views | `inventory:<tenantId>:<containerId>` | **Versioned** | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL; writes bump the version, and cache entries are discarded when versions mismatch. |
+| Dynamic world aggregates | `worldDynamic:<tenantId>:<aggregateId>` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
+| Room LOOK views | `view:roomLook:<tenantId>:<roomId>` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
+| Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
 
 Service design docs may introduce additional cache aggregates, but each new prefix must declare whether it is **versioned** or **TTL-only** and explain why that choice is appropriate.
 
@@ -284,9 +284,9 @@ To keep Cache/Rate-Limit Redis predictable and avoid unbounded growth, cache pre
   - TTLs are chosen so that caches do not accumulate long-lived data; prefixes that require longer retention for correctness should be reconsidered as candidates for Coordination Redis or PostgreSQL instead.
 
 - **Rate-limit key and bucket budgets**
-  - Cache/Rate-Limit Redis tracks rate limiting keys under the `ratelimit:{tenantId}:{bucket}:{timeWindow}` (and optional `:{shard}`) prefixes described above. Deployments should choose `N` (buckets per tenant) and any `S` (shards per bucket) so that:
+  - Cache/Rate-Limit Redis tracks rate limiting keys under the `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) prefixes described above. Deployments should choose `N` (buckets per tenant) and any `S` (shards per bucket) so that:
     - The total number of active `ratelimit:*` keys per tenant across all live `timeWindow` values remains within a modest, documented envelope (for example, on the order of **a few thousand** keys for small/self-hosted deployments).
-    - No single `{tenantId, bucket}` tuple becomes a pathological hot key under expected load; when profiling reveals such hotspots, operators either increase `N` or introduce a small `S` to fan out writes.
+    - No single `(tenantId, bucket)` tuple becomes a pathological hot key under expected load; when profiling reveals such hotspots, operators either increase `N` or introduce a small `S` to fan out writes.
   - Spring Cloud Gateway’s `RequestRateLimiter` maps its per-client IP and route buckets into this scheme by:
     - Using a synthetic tenant identifier for edge traffic (for example `gateway-edge`) so all rate-limit keys still carry a `tenantId` prefix.
     - Deriving `bucket` from a stable hash of the client IP and route identifier, and using a small, fixed `N` to bound the total bucket count per `timeWindow`.

@@ -33,7 +33,7 @@
 - [ ] Implement timer scanning and dynamic time scaling
 - [ ] Implement session rebinding and deduplication using Redis keys
 - [ ] Fan out global events across tick regions
-- [ ] Implement cross-region command relay using `remote:{tenantId}:{entityId}` keys
+- [ ] Implement cross-region command relay using `remote:<tenantId>:<entityId>` hint markers (durable follow-ups live in PostgreSQL)
 
 ## Analytics & Coordination
 

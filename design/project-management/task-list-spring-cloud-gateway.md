@@ -102,7 +102,7 @@ participate in CI.
 
 - [x] *(Cache/Rate-Limit Redis only)* Use Redis for gateway-local rate limiting and caches only; gameplay coordination remains in the Game Session Service
 - [x] *(Cache/Rate-Limit Redis only)* Access Redis through Spring Cloud Gateway’s `RequestRateLimiter` and any shared helpers in `firemud-common`
-- [x] *(Cache/Rate-Limit Redis only)* Follow the `ratelimit:{tenantId}:{bucket}:{timeWindow}` key conventions described in the Redis Cache design docs
+- [x] *(Cache/Rate-Limit Redis only)* Follow the `ratelimit:<tenantId>:<bucket>:<timeWindow>` key conventions described in the Redis Cache design docs
 - [x] *(Cache/Rate-Limit Redis only)* Emit metrics for Redis connectivity and rate-limit operations
 - [x] *(N/A - no Coordination Redis usage)* Do not use Coordination Redis prefixes such as `tick:*`, `timer:*`, or `session:*`; gameplay coordination remains the responsibility of the Game Session Service
 

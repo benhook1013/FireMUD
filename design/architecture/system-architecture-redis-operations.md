@@ -160,9 +160,18 @@ Session lifetimes and coordination resets interact in predictable ways. The tabl
 
 | Scenario | Steps | Redis impact | Player behavior | Optional cleanup |
 | --- | --- | --- | --- | --- |
-| Decrease JWT/session TTL without reset | Lower `FIREMUD_AUTH_JWT_EXPIRATION_MS` and/or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, roll out services. | New `session:{tenantId}:{sessionId}` and `session:{tenantId}:{tokenHash}` keys get shorter TTLs; existing keys keep their original TTL until they expire naturally. | Existing sessions continue until their original TTLs; new logins and reconnects enforce the tighter lifetime immediately. | Not required. Operators may optionally run per‑tenant session cleanup (delete `session:{tenantId}:*`) to accelerate convergence if memory is tight. |
+| Decrease JWT/session TTL without reset | Lower `FIREMUD_AUTH_JWT_EXPIRATION_MS` and/or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, roll out services. | New `session:{tenantId}:<sessionId>` and `session:{tenantId}:<tokenHash>` keys get shorter TTLs; existing keys keep their original TTL until they expire naturally. | Existing sessions continue until their original TTLs; new logins and reconnects enforce the tighter lifetime immediately. | Not required. Operators may optionally run per‑tenant session cleanup (delete `session:{tenantId}:*`) to accelerate convergence if memory is tight. |
 | Decrease JWT/session TTL and intentionally force reconnect | Same as above, then proactively delete session keys for selected tenants/regions (for example, `session:{tenantId}:*`) during a maintenance window. | Coordination Redis drops affected session keys immediately; memory for those sessions is reclaimed at once. | All affected players must log in again; reconnect attempts for deleted sessions behave like expired sessions. | Recommended when making a large TTL reduction and wanting a clean cut-over or when reclaiming session memory quickly. |
 | Coordination reset with many active sessions | Follow the **Explicit Coordination Reset** runbook for the targeted scope; all coordination prefixes, including `session:*`, are dropped for the affected deployment/regions. | Coordination Redis restarts with an empty keyspace for coordination prefixes (locks, timers, queues, `session:*`, etc.). | All gameplay sessions are effectively terminated; players must log in again and sessions are recreated under the new coordination state. | No separate session cleanup is needed; the reset itself drops `session:*` keys. Operators should communicate expected reconnect behavior to players and monitor memory/latency as sessions rebuild. |
+
+### Cluster-Safe Session Cleanup Procedure (No `KEYS`)
+
+When runbooks call for per-tenant session cleanup (for example, deleting `session:{tenantId}:*` to accelerate a TTL cut-over), the procedure must be safe for Redis Cluster and large keyspaces:
+
+- Never use `KEYS session:{tenantId}:*`.
+- Iterate over **each master node** and run `SCAN` with `MATCH session:{tenantId}:*` using small `COUNT` values, strict time budgets per run (for example 10–30 seconds), and rate limiting between batches.
+- Delete via `UNLINK` (preferred) to keep deletions non-blocking; fall back to `DEL` only when `UNLINK` is unavailable.
+- Treat cleanup as a maintenance job: run one worker at a time per deployment/tenant, emit metrics, and stop early if Redis latency is elevated.
 
 ## Lua Compatibility Registry & Script Upgrades
 

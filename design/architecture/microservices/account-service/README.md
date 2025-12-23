@@ -46,7 +46,7 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 - **Coordination Redis**
   - The Account Service does **not** participate in tick or gameplay coordination and never touches `tick:*`, `timer:*`, `retry:*`, or other tick-related prefixes on Coordination Redis; those responsibilities remain with the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
   - It does, however, use the tenant-scoped auth/session keys documented under “Tenant-scoped session/auth keys” in [Redis Architecture – Key Slotting Cheat Sheet](../../system-architecture-redis.md#key-slotting-cheat-sheet):
-    - `session:{tenantId}:{tokenHash}` – Account/JWT bindings for internal auth (hash-tagging on `{tenantId}` only).
+    - `session:{tenantId}:<tokenHash>` – Account/JWT bindings for internal auth (hash-tagging on `{tenantId}` only).
   - These keys live on Coordination Redis so that auth/session bindings share the same AOF, reset, and hash-tag semantics as gameplay sessions, and they are treated as short-lived, reset-tolerant state.
 - **Cache/Rate-Limit Redis**
   - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
@@ -214,7 +214,7 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{tokenHash}` (hash-tagging on `tenantId` only), where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). Their TTL is derived from the JWT lifetime:
+Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:<tokenHash>` (hash-tagging on `tenantId` only), where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). Their TTL is derived from the JWT lifetime:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 

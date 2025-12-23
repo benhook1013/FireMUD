@@ -44,7 +44,7 @@ The World Management Service stores and manages game world topology and content 
   - Does not own tick or session coordination prefixes; tick queues, locks, timers, and region leases remain owned by the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md#redis-coordination-invariants).
   - Interacts with Coordination Redis only indirectly via Game Session and Automation & Scripting APIs; it does not issue coordination writes itself.
 - **Cache/Rate-Limit Redis usage**
-  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:{tenantId}:{roomId}` (or equivalent `worldDynamic:{tenantId}:{aggregateId}` shapes), consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
+  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` (or equivalent `worldDynamic:<tenantId>:<aggregateId>` shapes), consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
   - Cached rooms and world aggregates are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata). When version fields are available on the underlying aggregates, these caches are treated as **strongly validated caches** (version-checked before reuse); simpler, read-mostly slices may use best-effort TTL-only caching as long as correctness is preserved by database reads. Updates are propagated via explicit invalidation or TTL-based expiry.
   - When changing Redis usage or adding new prefixes here, follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to ensure correct role, slotting, and SLO coverage.
 
@@ -78,7 +78,7 @@ The World Management Service stores and manages game world topology and content 
 - `region.weather` column records the current weather state.
 - `region.shard_id` indicates which server shard hosts the region.
 - Redis caches hot rooms for active sessions to speed up lookups.
-- Cached rooms use keys `room:{tenantId}:{roomId}` and expire after `world.room.cache-ttl-seconds`.
+- Cached rooms use keys `room:<tenantId>:<roomId>` and expire after `world.room.cache-ttl-seconds`.
 
 ### Multi-Server Shards
 

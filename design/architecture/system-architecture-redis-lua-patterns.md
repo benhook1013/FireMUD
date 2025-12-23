@@ -88,19 +88,19 @@ This registry is the authoritative mapping from **script name → category → r
 
 #### Region-lease scripts (tick and coordination)
 
-These scripts operate on region-scoped coordination keys (`tick:{tenantId}:{regionId}:*`, `timer:{tenantId}:{regionId}`, `retry:{tenantId}:{regionId}`, `tick-executor-lease:{tenantId}:{regionId}` via the shared `{tenantRegionTag}`) and must run under an active region lease.
+These scripts operate on region-scoped coordination keys (`tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and must run under an active region lease.
 
 Every region-lease script must perform the following validations before executing any writes:
 
-- **Lease token and epoch** – re-read `tick-executor-lease:{tenantId}:{regionId}` and compare its stored token and epoch to the supplied values in `ARGV`. If they differ or the key is missing, the script returns a non-mutating outcome such as `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and performs no writes.
-- **Lock tokens** – for each `tick:{tenantId}:{regionId}:lock:{entityId}` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
-- **`tickId` guard** – when touching `tick:{tenantId}:{regionId}:pending` or other tick-scoped structures, verify the stored `tickId` is ≤ the requested `tickId`. Commit/rollback scripts abort if `tickId` is out of order so only the intended tick makes progress.
+- **Lease token and epoch** – re-read `tick-executor-lease:{tenantRegionTag}` and compare its stored token and epoch to the supplied values in `ARGV`. If they differ or the key is missing, the script returns a non-mutating outcome such as `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and performs no writes.
+- **Lock tokens** – for each `tick:{tenantRegionTag}:lock:<entityId>` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
+- **`tickId` guard** – when touching `tick:{tenantRegionTag}:pending` or other tick-scoped structures, verify the stored `tickId` is ≤ the requested `tickId`. Commit/rollback scripts abort if `tickId` is out of order so only the intended tick makes progress.
 
 These checks are enforced via the Lua Script Registry descriptors, generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. Scripts that cannot make these validations are not allowed to touch tick/coordination prefixes.
 
 #### Session-only scripts
 
-Session scripts operate only on `session:{tenantId}:{sessionId}` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
+Session scripts operate only on `session:{tenantId}:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
 
 - **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `playerId`/`tenantId` or token hash provided in `ARGV`.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).
@@ -126,11 +126,11 @@ Scripts that do not clearly fit one of these categories should be refactored unt
 
 Automation-related Lua scripts follow stricter cluster slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
 
-- Scripts that operate on `automation:tick:{tenantId}:{scriptId}:*` keys are registered as **single-key** scripts:
-  - They may include multiple `automation:tick:{tenantId}:{scriptId}:*` keys for the **same** `{tenantId, scriptId}` in `KEYS`, but they must not mix different `{tenantId, scriptId}` pairs.
-  - They must not include any `tick:{tenantId}:{regionId}:*` keys in the same invocation.
-- Scripts that operate on `automation_queue:{tenantId}:*` keys:
-  - Use only `automation_queue:{tenantId}:*` keys for a single tenant in `KEYS`.
+- Scripts that operate on `automation:tick:{tenantScriptTag}:*` keys are registered as **single-hash-slot** scripts:
+  - They may include multiple `automation:tick:{tenantScriptTag}:*` keys for the **same** `<tenantId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantScriptTag}` values.
+  - They must not include any `tick:{tenantRegionTag}:*` keys in the same invocation.
+- Scripts that operate on `automation_queue:<tenantId>:*` keys:
+  - Use only `automation_queue:<tenantId>:*` keys for a single tenant in `KEYS`.
   - Must not include `automation:tick:*` or `tick:*` keys in the same invocation.
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
@@ -161,12 +161,12 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
 
 - **Pattern 1 – Lease/lock token validation (guard-then-no-op)**
   - Every mutating script begins by validating the current lease and, where applicable, lock tokens:
-    - Read `tick-executor-lease:{tenantId}:{regionId}` and compare its stored token to the `leaseToken` passed in `ARGV`.
+    - Read `tick-executor-lease:{tenantRegionTag}` and compare its stored token to the `leaseToken` passed in `ARGV`.
     - For each entity lock key, compare the stored lock token to the expected token in `ARGV`.
   - If any token does not match, the script returns a **non-mutating outcome** such as `"STALE_LEASE"` or `"STALE_LOCK"` and performs **no writes**. Callers interpret this as “retry under the new lease” rather than as partial progress.
   - Region lease **renewal** uses a small, dedicated compare-and-extend helper that follows the same pattern:
     - Inputs:
-      - `KEYS[1] = tick-executor-lease:{tenantId}:{regionId}`
+      - `KEYS[1] = tick-executor-lease:{tenantRegionTag}`
       - `ARGV[1] = expectedLeaseToken`
       - `ARGV[2] = lease_ttl_ms`
     - Behavior (sketch):
@@ -175,14 +175,14 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
     - Callers treat `"STALE_LEASE"` as loss of leadership for that `{tenantId, regionId}` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
 - **Pattern 2 – Compare-and-set on `tickId` (monotonic guard)**
-  - Scripts that touch `tick:{tenantId}:{regionId}:pending` treat `tickId` as a monotonic guard:
+  - Scripts that touch `tick:{tenantRegionTag}:pending` treat `tickId` as a monotonic guard:
     - Read the current `tickId` stored in `pending`.
     - If there is an existing `tickId` that is greater than the requested `tickId`, the script returns a replay/out-of-date result and does not modify state.
     - If the `tickId` is equal, the script proceeds but treats existing effect entries as already staged (see Pattern 3).
     - If there is no `tickId` or it is less than the requested `tickId`, the script sets/updates it and stages new effects.
 
 - **Pattern 3 – Effect-key sets for staging (no duplicate staging)**
-  - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:{entityId}:apply:damage:{commandId}`), and scripts use **set-style semantics**:
+  - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:<entityId>:apply:damage:<commandId>`), and scripts use **set-style semantics**:
     - Before adding a staged effect, the script checks whether `effectKey` already exists in the pending structure (for example via `HEXISTS`, membership in a `SET`, or `ZSCORE` on a ZSET).
     - If the effect is already present, the script returns a replay outcome for that effect and does not create a second entry.
     - If it is not present, the script inserts or updates a single canonical entry for that `effectKey`.
@@ -215,10 +215,10 @@ New tick-related scripts are expected to adopt these patterns (or motivated vari
 As a concrete illustration, a simplified lock-acquire Lua script follows these patterns:
 
 - **Inputs**
-  - `KEYS[1]` – `tick:{tenantId}:{regionId}:lock:{entityId}`
+  - `KEYS[1]` – `tick:{tenantRegionTag}:lock:<entityId>`
   - `ARGV[1]` – `lockToken`
   - `ARGV[2]` – `leaseToken`
-  - `KEYS[2]` – `tick-executor-lease:{tenantId}:{regionId}` (optional, when validating lease)
+  - `KEYS[2]` – `tick-executor-lease:{tenantRegionTag}` (optional, when validating lease)
 
 - **Behavior (sketch)**
   1. Read `KEYS[2]` (lease) and verify its token matches `ARGV[2]`; if not, return `"STALE_LEASE"` without writing.

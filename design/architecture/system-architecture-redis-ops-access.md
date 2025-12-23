@@ -23,10 +23,14 @@ Redis ACLs enforce a clear split between application and operations clients:
   - Not used from interactive shells or general-purpose admin tooling in production.
 - Read-only ops user (for example `coord_ops_ro`):
   - Used by human operators and generic tools.
-  - Restricted to `@read` commands; explicitly denied `EVAL`, `EVALSHA`, `SCRIPT LOAD`, and write commands for coordination deployments.
-  - Allowed to run non-destructive inspection commands (`GET`, `HGETALL`, `ZRANGE`, `SCAN`, etc.) for debugging and incident analysis.
+  - Restricted to read-only capabilities; explicitly denied `EVAL`, `EVALSHA`, `SCRIPT LOAD`, and write commands for coordination deployments.
+  - Must not rely on `@read` alone: many essential diagnostics commands are not in `@read` and need explicit allowlisting. The recommended baseline is `@read` plus an incident-response allowlist that remains strictly non-mutating, for example:
+    - Keyspace-safe inspection: `+scan +sscan +hscan +zscan +type +ttl +pttl +exists`
+    - Latency/health diagnostics: `+info +slowlog|get +slowlog|len +latency|latest +latency|doctor`
+    - Client/memory diagnostics (read-only subcommands only): `+client|list +client|id +memory|usage +memory|stats`
+    - Cluster topology visibility (read-only subcommands only): `+cluster|info +cluster|nodes`
 
-In addition, coordination deployments must ensure that **configuration-changing commands** (such as `CONFIG *`, `SLAVEOF`/`REPLICAOF`, `CLUSTER *`, and `SHUTDOWN`) are reserved for infrastructure automation or dedicated admin roles, not everyday ops users:
+In addition, coordination deployments must ensure that **configuration-changing commands** (such as `CONFIG *`, `SLAVEOF`/`REPLICAOF`, `CLUSTER MEET`/`ADDSLOTS`/`DELSLOTS`/resharding operations, and `SHUTDOWN`) are reserved for infrastructure automation or dedicated admin roles, not everyday ops users:
 
 - Standard read-only ops users (`coord_ops_ro`) must **not** have access to configuration commands in production; they focus solely on inspection.
 - Any tooling that legitimately needs configuration access (for example, Kubernetes operators or controlled maintenance jobs) must:

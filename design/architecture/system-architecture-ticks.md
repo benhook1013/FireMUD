@@ -37,7 +37,7 @@ Two related but distinct concepts appear in the design:
 
 Tick execution itself never depends on external event buses. Instead:
 
-- The Game Session Service owns the tick loop and all Redis keys under `tick:{tenantId}:{regionId}:...`.
+- The Game Session Service owns the tick loop and all Redis keys under `tick:{tenantRegionTag}:...`.
 - External services interact with tick progression via a **gRPC server-streaming API**, not via direct access to tick queues.
 
 A representative API shape is:
@@ -50,7 +50,7 @@ Automation & Scripting Service instances:
 
 - Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
 - For each heartbeat message:
-  - Update `script-scheduler:{tenantId}:{regionId}:lastTickId` in Redis.
+  - Update `script-scheduler:{tenantRegionTag}:lastTickId` in Redis.
   - Compute which “every N ticks” boundaries have elapsed since the last processed tick.
   - Enqueue due `onInterval` and other tick-derived script triggers, subject to quotas and budgets.
 
@@ -70,8 +70,8 @@ Tick regions are coordinated by a **single authoritative executor** at any point
 
 On crash or failover:
 
-- A new Game Session instance acquires the `tick-executor-lease:{tenantId}:{regionId}` key.
-- It inspects `tick:{tenantId}:{regionId}:pending`, `retry:{tenantId}:{regionId}`, and `timer:{tenantId}:{regionId}`.
+- A new Game Session instance acquires the `tick-executor-lease:{tenantRegionTag}` key.
+- It inspects `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and `timer:{tenantRegionTag}`.
 - It resumes tick processing using the existing idempotency rules (`tickId`, `last_tick_id`, `tick_effect_guard`) so replays are safe and partially-applied ticks can be completed or skipped deterministically.
 
 The **region boundary** is therefore the unit of atomicity and authority:
@@ -85,12 +85,12 @@ Redis key construction for tick regions, including the `{tenantRegionTag}` hash
 tag and normalization helpers, is defined in
 the [Redis Architecture](./system-architecture-redis.md#hash-tags-and-redis-cluster-slotting).
 Tick-related examples in this document (such as
-`tick:{tenantRegionTag}:queue:{entityId}` and `tick:{tenantRegionTag}:pending`)
+`tick:{tenantRegionTag}:queue:<entityId>` and `tick:{tenantRegionTag}:pending`)
 assume callers use those shared helpers rather than hand-rolled key strings.
 
 Tick coordination relies on Redis for the fast staging surface, but PostgreSQL remains the source of truth for whether a tick effect was ever applied. To make this explicit:
 
-- Every tick effect that can be staged in `tick:{tenantId}:{regionId}:pending` or the retry/timer queues must also write a durable row in a “tick effect ledger” table (`tick_effects` or similar) owned by the Game Session Service. Each row records `tenant_id`, `region_id`, `tick_id`, `effect_key`, `command_id`, `status` (`SCHEDULED`, `APPLIED`, `ABANDONED`), a `reason` or `outcome` code, `created_at`, and `updated_at`.
+- Every tick effect that can be staged in `tick:{tenantRegionTag}:pending` or the retry/timer queues must also write a durable row in a “tick effect ledger” table (`tick_effects` or similar) owned by the Game Session Service. Each row records `tenant_id`, `region_id`, `tick_id`, `effect_key`, `command_id`, `status` (`SCHEDULED`, `APPLIED`, `ABANDONED`), a `reason` or `outcome` code, `created_at`, and `updated_at`.
 - The ledger enforces the invariant that for any `(tenant_id, region_id, tick_id, effect_key)` exactly one terminal state exists: either `status = APPLIED` (effect successfully committed to domain state) or `status = ABANDONED` (effect intentionally skipped or unrecoverable), and rows may not remain stuck in `SCHEDULED` beyond a configurable grace window.
 - On replay (for example after failover or replaying `pending` entries), the executor loads ledger rows with `status = SCHEDULED` for that tick and:
   - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then update the row to `APPLIED`.
@@ -157,7 +157,7 @@ The design intentionally treats “idempotent tick effects” as a **service-lev
 
 Region leases are intentionally **short‑lived coordination hints**, not full health indicators. It is possible for an executor to:
 
-- Continue renewing the `tick-executor-lease:{tenantId}:{regionId}` key (Redis and lease logic are healthy), while
+- Continue renewing the `tick-executor-lease:{tenantRegionTag}` key (Redis and lease logic are healthy), while
 - Making little or no **forward progress** because downstream dependencies (PostgreSQL, domain gRPC services) are slow or unreachable.
 
 To distinguish this “lease held but stalled” case from a true lease loss:
@@ -182,7 +182,7 @@ Lease expiry and failover remain strictly about **coordination safety** (avoidin
 
 To prevent concurrent entity updates, ticks acquire **distributed locks** in Redis using:
 
-- `tick:{tenantId}:{regionId}:lock:{entityId}` (see [Redis Key Reference](./system-architecture-redis.md#key-naming-and-shard-discipline))
+- `tick:{tenantRegionTag}:lock:<entityId>` (see [Redis Key Reference](./system-architecture-redis.md#key-naming-and-shard-discipline))
 - **Lua-based lock/lease scripts** registered in the shared Lua Script Registry for acquisition, verification, and release. Tick and lease keys are **never** created or modified via ad-hoc `SET NX PX` calls; all coordination flows use the registry-backed Lua helpers so lock tokens and lease epochs are consistently enforced.
 
 In practice, the system keeps this simple by exposing a **single primary knob**—the region tick interval—and deriving lock/lease TTLs from that:
@@ -226,7 +226,7 @@ Conflict metadata is recorded and reported to the Game Session Service, which **
 
 Each acquired lock stores a **unique token** (for example, a UUID) as its value. The Game Session Service records this token and only releases the lock via a Lua script that verifies the stored value still matches the original token before deleting the key. This prevents one worker from accidentally releasing another worker’s lock if the TTL expires and the lock is reacquired. Before applying any stateful work for a tick, workers:
 
-- Verify that `tick:{tenantId}:{regionId}:pending` either does not exist or, if it exists, corresponds to the `tickId` they are about to process.
+- Verify that `tick:{tenantRegionTag}:pending` either does not exist or, if it exists, corresponds to the `tickId` they are about to process.
 - Confirm that the currently held lock’s token still matches the value stored in Redis.
 - Perform these validations and any subsequent commit/rollback + lock-release steps within the **same Lua script invocation** that touches the lock and `pending` key; no domain mutation is allowed to rely on lock state checked in a prior, separate script call.
 
@@ -239,7 +239,7 @@ If either check fails (for example, the lock token was lost and reacquired by an
 Many gameplay commands conceptually touch **multiple entities** (for example trades, area-of-effect spells, or group buffs). FireMUD avoids Redis-level deadlocks and complex multi-lock coordination with the following rules:
 
 - **One entity lock per script invocation (default):**
-  - Tick Lua scripts are written to acquire and operate on **at most one** `tick:{tenantId}:{regionId}:lock:{entityId}` per invocation.
+  - Tick Lua scripts are written to acquire and operate on **at most one** `tick:{tenantRegionTag}:lock:<entityId>` per invocation.
   - Multi-entity commands are decomposed into separate, per-entity legs (for example, one tick leg per participant), each executed under a single entity lock and keyed by a shared `tickId` and effect identifiers for idempotency.
   - Coordination between legs (for example ensuring that both sides of a trade succeed or fail together) occurs via PostgreSQL and/or small coordinator records, not by holding multiple Redis entity locks simultaneously.
   - There is an explicit **fan-in cap** per command (for example `MAX_LOCKED_ENTITIES_PER_COMMAND`); features that need to touch more entities must do so over multiple ticks or via chunked follow-up commands.
@@ -329,7 +329,7 @@ The World Management Service owns region topology:
 Region **ownership** (which Game Session instance executes ticks for a region) is flexible:
 
 - A consistent-hashing or scheduler layer maps `{tenantId, regionId}` to Game Session instances.
-- The chosen executor acquires the `tick-executor-lease:{tenantId}:{regionId}` key in Redis and becomes the authoritative tick executor for that region.
+- The chosen executor acquires the `tick-executor-lease:{tenantRegionTag}` key in Redis and becomes the authoritative tick executor for that region.
 - To rebalance load:
   - The current executor stops renewing the lease for selected regions and drains in-flight work to a safe boundary (for example, after the current pending tick commits or is recovered).
   - Another instance acquires the lease and continues tick processing from the existing Redis state.
@@ -347,7 +347,7 @@ Within a region’s tick, each **command** is treated as a small, idempotent wor
 
 1. **Enqueue**
    - The Game Session Service accepts commands from Telnet/WebSocket clients or automation.
-   - It enqueues them into per-entity or per-region queues in Redis (for example `tick:{tenantRegionTag}:queue:{entityId}`).
+   - It enqueues them into per-entity or per-region queues in Redis (for example `tick:{tenantRegionTag}:queue:<entityId>`).
 
 2. **Target Resolution (read-only)**
    - During the relevant tick, the executor computes the target set for the command using the pinned snapshot for that `{tenantId, regionId}`:
@@ -357,11 +357,12 @@ Within a region’s tick, each **command** is treated as a small, idempotent wor
 
 3. **Region-Local Mutations**
    - For commands that affect only the origin region:
-     - The executor acquires the required entity locks (possibly multiple per command, in deterministic order) under `tick:{tenantId}:{regionId}:lock:{entityId}`.
+     - The executor acquires the required entity locks (possibly multiple per command, in deterministic order) under `tick:{tenantRegionTag}:lock:<entityId>`.
      - It stages and commits changes via the tick Lua scripts and gRPC calls to domain services, using `tickId` and effect-guard tables for idempotency.
    - For cross-region commands:
      - The origin region applies any purely local effects first (for example, local animations, partial buffs, or immediate messaging).
-     - It then enqueues follow-up commands into the target regions’ queues (for example under `remote:{tenantId}:{entityId}`) so remote executors can apply their parts in their own ticks. See [Cross-Region Command Execution and Result Relay](#cross-region-command-execution-and-result-relay).
+     - It then records **durable follow-up work** for the target entities (in PostgreSQL via the tick effect ledger / follow-up tables) so the region that owns those entities can apply their parts in its own ticks.
+     - It may also emit a best-effort Redis hint marker under `remote:<tenantId>:<entityId>` to reduce latency, but correctness does not depend on this hint surviving restarts or resets. See [Cross-Region Command Execution and Result Relay](#cross-region-command-execution-and-result-relay).
 
 4. **Completion / Finalization (optional)**
    - Many commands do not require awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
@@ -373,7 +374,7 @@ Within a region’s tick, each **command** is treated as a small, idempotent wor
 Each phase is designed to be **idempotent**:
 
 - Commands carry a `tickId` and effect keys so replays become safe no-ops in domain services.
-- Redis staging and commit scripts treat `tick:{tenantId}:{regionId}:pending` as “this tick may need to be (re)applied,” and domain services enforce idempotency at the database layer.
+- Redis staging and commit scripts treat `tick:{tenantRegionTag}:pending` as “this tick may need to be (re)applied,” and domain services enforce idempotency at the database layer.
 - Retry paths (lock contention, timeouts, missing dependencies) reschedule commands without violating correctness.
 
 ---
@@ -393,10 +394,11 @@ To illustrate the phases for a multi-target, cross-region command, consider a **
    - No HP or inventory state is mutated yet; this phase only determines the target and the target region.
 
 3. **Region-Local Mutations (target region)**
-   - The origin region enqueues a follow-up “apply lifesteal damage” command into `{tenantId, regionB}` (for example via `remote:{tenantId}:{targetEntityId}`).
+   - The origin region records a durable follow-up for the target entity in PostgreSQL (via the tick effect ledger / follow-up tables), attributed to `{tenantId, regionB}` and keyed by a stable `effectKey` / command identity.
+   - It may also write a best-effort hint marker under `remote:<tenantId>:<targetEntityId>` to reduce latency, but correctness does not depend on the marker.
    - In the next tick for `{tenantId, regionB}`, the target region’s executor:
      - Computes the damage amount as a percentage of the target’s authoritative current HP.
-     - Acquires the target’s lock (`tick:{tenantId}:{regionB}:lock:{targetEntityId}`) and applies damage via Entity Management using the normal tick idempotency rules.
+     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<targetEntityId>`) and applies damage via Entity Management using the normal tick idempotency rules.
      - Emits a result event back to `{tenantId, regionA}` containing `casterEntityId` and the actual `damageApplied`.
 
 4. **Region-Local Mutations (origin region heal)**
@@ -444,23 +446,23 @@ The **Game Session Service** manages orchestration, while gameplay rules are res
 
 ## Tick Staging and Commit Flow
 
-State changes are first **staged in Redis** under keys like `tick:{tenantId}:{regionId}:pending`:
+State changes are first **staged in Redis** under keys like `tick:{tenantRegionTag}:pending`:
 
 - Only committed if **all actions succeed**
 - Timeout or failed actions are **excluded** and **rescheduled with priority**
 - Commit and rollback are coordinated by Game Session Service using Lua scripts in Redis
 
-Each `tick:{tenantId}:{regionId}:pending` entry represents a **single tick** for that region and carries a monotonically increasing `tickId` plus the staged effects for that tick. The execution model follows the three-phase pattern described in the Redis architecture:
+Each `tick:{tenantRegionTag}:pending` entry represents a **single tick** for that region and carries a monotonically increasing `tickId` plus the staged effects for that tick. The execution model follows the three-phase pattern described in the Redis architecture:
 
 1. **Stage** – Lua scripts under the current region lease and entity locks write the intended effects into `pending` (using `tickId` and effect keys) without calling external services.
 2. **Apply** – Game Session issues gRPC calls to domain services based on the staged payload; handlers apply changes under local transactions and idempotency rules keyed by `(tenantId, regionId, tickId, effectKey)`.
 3. **Commit / Cleanup** – A final Lua script reconciles Redis state with the outcomes of the domain calls: it validates the lease and lock tokens, removes `pending` and releases locks on success, or leaves/updates `pending` for retry or operator-driven recovery on failure.
 
-If a crash or lock timeout leaves `pending` present, the next executor for that region treats the entry as “this tick may need to be (re)applied”: it re-runs the Apply and Commit/Cleanup phases. Domain updates are written to be idempotent so repeating the same `tickId` does not corrupt state, and successful completion both applies any remaining effects (if needed) and deletes the `tick:{tenantId}:{regionId}:pending` key.
+If a crash or lock timeout leaves `pending` present, the next executor for that region treats the entry as “this tick may need to be (re)applied”: it re-runs the Apply and Commit/Cleanup phases. Domain updates are written to be idempotent so repeating the same `tickId` does not corrupt state, and successful completion both applies any remaining effects (if needed) and deletes the `tick:{tenantRegionTag}:pending` key.
 
 The **TickScheduler** in the Game Session Service enforces this **single in-flight tick per region** rule:
 
-- A region is considered **busy** while `tick:{tenantId}:{regionId}:pending` exists for its current `tickId`.
+- A region is considered **busy** while `tick:{tenantRegionTag}:pending` exists for its current `tickId`.
 - The scheduler does not start a new tick for that `{tenantId, regionId}` until the pending entry has been removed as part of a successful commit or explicitly handled during crash recovery.
 - Any additional work enqueued for the same region while a tick is in-flight is modeled as a retry or as follow-up work for a later `tickId`, not as a second concurrent tick.
 
@@ -470,7 +472,7 @@ This ensures:
 - Partial failure recovery
 - Conflict-free shared state across retries
 
-If FireMUD later introduces limited intra-region parallelism (for example, sharding a single region into multiple independent buckets of entities), this model will evolve to use **per-bucket pending keys** (for example, `tick:{tenantId}:{regionId}:{bucketId}:pending`) and matching idempotency/locking rules. Until such a change is explicitly designed, the invariant is **one `pending` entry and one in-flight tick per `{tenantId, regionId}`.**
+If FireMUD later introduces limited intra-region parallelism (for example, sharding a single region into multiple independent buckets of entities), this model will evolve to use **per-bucket pending keys** (for example, `tick:{tenantRegionTag}:bucket:<bucketId>:pending`) and matching idempotency/locking rules. Until such a change is explicitly designed, the invariant is **one `pending` entry and one in-flight tick per `{tenantId, regionId}`.**
 
 ---
 
@@ -539,7 +541,7 @@ This guarantees **clean, deterministic ticks** and safe replays after crash or r
 
 Time-based effects (e.g., cooldowns, regeneration) are managed with **real-time timers in milliseconds**, stored per region in a sorted set:
 
-- `timer:{tenantId}:{regionId}` – a ZSET where the score is the expiration timestamp (in ms) and each member encodes the target entity/effect (for example, `entityId:effectId` or a serialized descriptor).
+- `timer:{tenantRegionTag}` – a ZSET where the score is the expiration timestamp (in ms) and each member encodes the target entity/effect (for example, `entityId:effectId` or a serialized descriptor).
 
 Timer scores are computed using a **single, consistent time source** on the application side:
 
@@ -553,7 +555,7 @@ Each tick processes timers for its region by:
 
 If a tick is delayed, multiple timers may fire at once; the processing loop remains bounded by the configured per-tick limit to avoid O(N) scans even when a large number of timers are scheduled.
 
-Timer scheduling, rescheduling, and cancellation are coordinated by the same Lua scripts and region-scoped locks that drive tick processing (see [Redis Architecture – Atomicity and Concurrency Control](./system-architecture-redis.md#atomicity-and-concurrency-control)). Domain services do not modify `timer:{tenantId}:{regionId}` directly with ad-hoc Redis commands; all writes to timer keys occur under the region lock so timers and command queues cannot race or diverge.
+Timer scheduling, rescheduling, and cancellation are coordinated by the same Lua scripts and region-scoped locks that drive tick processing (see [Redis Architecture – Atomicity and Concurrency Control](./system-architecture-redis.md#atomicity-and-concurrency-control)). Domain services do not modify `timer:{tenantRegionTag}` directly with ad-hoc Redis commands; all writes to timer keys occur under the region lock so timers and command queues cannot race or diverge.
 
 ### Dynamic Time Scaling
 
@@ -565,14 +567,14 @@ Durations can be modified on the fly:
 
 ### Tick Event Stream
 
-The Game Session Service publishes a **tick event stream** so other services (schedulers, monitoring, leaders) can observe progression without altering the tick loop. Each event is keyed by `{tenantId}:{regionId}` and includes:
+The Game Session Service publishes a **tick event stream** so other services (schedulers, monitoring, leaders) can observe progression without altering the tick loop. Each event is keyed by `{tenantId, regionId}` and includes:
 
 - `tickId` (monotonic per region, used by schedulers to count intervals)
 - `shardId`/`regionId` metadata
 - `timestamp` when the tick began
 - `activeVersionId` pinned for that tick
 
-Leaders lease Redis keys (`tick-events-lease:{tenantId}:{regionId}`) before consuming the stream to avoid duplicate processing. The stream can be delivered via Redis Streams or pub/sub; the implementation ensures catch-up by storing the last processed offset in Redis so a recovering scheduler can resume from the right `tickId`. This event stream powers the Automation & Scripting scheduler’s “every N ticks” logic, the reconnection doc’s timer replay hints, and any other out-of-band reporting you need.
+Leaders lease Redis keys (`tick-events-lease:{tenantRegionTag}`) before consuming the stream to avoid duplicate processing. The stream can be delivered via Redis Streams or pub/sub; the implementation ensures catch-up by storing the last processed offset in Redis so a recovering scheduler can resume from the right `tickId`. This event stream powers the Automation & Scripting scheduler’s “every N ticks” logic, the reconnection doc’s timer replay hints, and any other out-of-band reporting you need.
 
 > Runtime feature flags controlling global pace or status effects are applied by the Game Session Service before tick execution.
 > For design-time definitions see [Game Design Service Feature Flags](./microservices/game-design-service/feature-flags.md);
@@ -584,8 +586,8 @@ Leaders lease Redis keys (`tick-events-lease:{tenantId}:{regionId}`) before cons
 
 If a tick crashes mid-flight (e.g., Game Session Service restart), Redis preserves:
 
-- Tick locks (`tick:{tenantId}:{regionId}:lock:*`)
-- Staged effects (`tick:{tenantId}:{regionId}:pending`)
+- Tick locks (`tick:{tenantRegionTag}:lock:*`)
+- Staged effects (`tick:{tenantRegionTag}:pending`)
 - Timers (`timer:*`)
 - Retry and conflict state
 
@@ -601,13 +603,13 @@ This supports **at-least-once, idempotent, replayable** ticks — ticks may be s
 
 ## Domain Idempotency Rules (TickId in PostgreSQL)
 
-Domain services treat `tickId` as the canonical idempotency token for every tick-side effect. Replays of the same `tick:{tenantId}:{regionId}:pending` entry must never apply a logically new effect to PostgreSQL.
+Domain services treat `tickId` as the canonical idempotency token for every tick-side effect. Replays of the same `tick:{tenantRegionTag}:pending` entry must never apply a logically new effect to PostgreSQL.
 
 ### Scope: Which Operations Must Be Idempotent?
 
 The idempotency rules in this section apply to any operation that is:
 
-- Invoked as part of tick execution (driven by commands dequeued from `tick:{tenantRegionTag}:queue:{entityId}` or by timers/retries tied to the same `tickId` stream), **and**
+- Invoked as part of tick execution (driven by commands dequeued from `tick:{tenantRegionTag}:queue:<entityId>` or by timers/retries tied to the same `tickId` stream), **and**
 - Persists or triggers side effects outside Redis, including:
   - PostgreSQL mutations (rows in Entity Management, World Management, Social, etc.).
   - Durable queues or outboxes consumed by other services.
@@ -637,7 +639,7 @@ Every tick-driven effect MUST use one of the following strategies:
     - `tenant_id`
     - `region_id`
     - `tick_id`
-    - `effect_key` – a deterministic identifier describing the logical effect (for example `entity:{entityId}:award:achievement:{achievementId}` or `room:{roomId}:drop:item:{itemId}`).
+    - `effect_key` – a deterministic identifier describing the logical effect (for example `entity:<entityId>:award:achievement:<achievementId>` or `room:<roomId>:drop:item:<itemId>`).
   - Inside the same database transaction as the domain update:
     - The service attempts to insert `(tenant_id, region_id, tick_id, effect_key)` into the guard table.
     - If the insert **succeeds**, the effect is considered **new** for this tick and the service applies all associated state changes.
@@ -663,11 +665,11 @@ Every tick-driven effect MUST use one of the following strategies:
 
 ### Replay Handling and Service Responsibilities
 
-- Tick replays are always driven by the **Game Session Service** based on the presence of `tick:{tenantId}:{regionId}:pending` in Redis and the `tickId` it carries.
+- Tick replays are always driven by the **Game Session Service** based on the presence of `tick:{tenantRegionTag}:pending` in Redis and the `tickId` it carries.
 - Domain services (Entity Management, World Management, Game Logic hosts, Social Groups, etc.) are responsible for:
   - Persisting tick idempotency state in their own PostgreSQL schema via shadow tables and guard tables.
   - Ensuring that **every tick-driven write path** uses either the per-aggregate `last_tick_id` pattern or the operation-level guard pattern.
-  - Treating Redis locks and leases as **opaque tick-engine concerns**: domain handlers do not read `tick:{tenantId}:{regionId}:lock:{entityId}` or `tick-executor-lease:{tenantId}:{regionId}` to make application-level decisions. All coordination based on locks/leases happens inside the Game Session Service via registered Lua scripts; domains see only `(tenantId, regionId, tickId, effectKey)` and their own idempotency state.
+  - Treating Redis locks and leases as **opaque tick-engine concerns**: domain handlers do not read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions. All coordination based on locks/leases happens inside the Game Session Service via registered Lua scripts; domains see only `(tenantId, regionId, tickId, effectKey)` and their own idempotency state.
 - At least one concrete example per service should document:
   - The name of its tick-state table(s).
   - The fields used (`last_tick_id`, `tenant_id`, `region_id`, `effect_key`).
@@ -685,7 +687,7 @@ The crash-recovery story depends on domain services implementing these patterns 
     - Per-aggregate `last_tick_id` tables (for single-entity updates).
     - Operation-level `tick_effect_guard` tables (for multi-entity effects).
 - A shared test harness (in the common library or individual services) should make it easy to:
-  - Construct a synthetic `tick:{tenantId}:{regionId}:pending` payload.
+  - Construct a synthetic `tick:{tenantRegionTag}:pending` payload.
   - Drive the same sequence of domain calls multiple times, mimicking a replay of the same pending tick after a crash.
   - Verify that the final PostgreSQL state is identical regardless of how many times the tick is “reapplied.”
 - CI pipelines must run these replay tests; changes to tick handlers that break idempotency should fail tests before reaching production.
@@ -695,7 +697,7 @@ The crash-recovery story depends on domain services implementing these patterns 
 When introducing a new command type that will run under tick control, implementers must answer the following questions in design docs and code review:
 
 - **Is this command tick-driven?**
-  - Does it run because an entry is dequeued from `tick:{tenantRegionTag}:queue:{entityId}` or a tick-timer/retry fired?
+  - Does it run because an entry is dequeued from `tick:{tenantRegionTag}:queue:<entityId>` or a tick-timer/retry fired?
   - If not, it may follow different idempotency rules and does not belong in this section.
 - **What is the idempotency key?**
   - For single-aggregate updates: which `last_tick_id` field and table enforce “at most one update per tick” for that aggregate?
@@ -718,7 +720,7 @@ PRs that add new tick-driven commands should link to this checklist and demonstr
 Redis is essential for **coordinating tick execution** across distributed worker services. It provides:
 
 - Per-entity **command queues**
-- Durable **tick staging** via `tick:{tenantId}:{regionId}:pending`
+- Durable **tick staging** via `tick:{tenantRegionTag}:pending`
 - Distributed **locks** and **retry tracking**
 - **Conflict metadata** for retry prioritization
 - Accurate **cooldown and timer tracking**
@@ -729,9 +731,9 @@ To keep idempotency and crash behavior consistent, all tick execution follows a 
 
 1. **Stage effects in Redis (Lua)**
    - Under region leadership and entity locks, a Lua script:
-     - Validates the current `tick-executor-lease:{tenantId}:{regionId}` token and lock tokens.
+    - Validates the current `tick-executor-lease:{tenantRegionTag}` token and lock tokens.
      - Computes the intended tick effects for the region (for example, “apply damage X to entity A” and “move entity B to room R”).
-     - Writes a **pure description** of those effects into `tick:{tenantId}:{regionId}:pending` along with the `tickId`. This payload contains only enough data for domain services to re-derive their work (entity IDs, effect keys, parameters), not a separate shadow copy of the entire authoritative state.
+    - Writes a **pure description** of those effects into `tick:{tenantRegionTag}:pending` along with the `tickId`. This payload contains only enough data for domain services to re-derive their work (entity IDs, effect keys, parameters), not a separate shadow copy of the entire authoritative state.
    - The script does **not** call out to gRPC or mutate PostgreSQL; it only updates Redis atomically.
 
 2. **Apply effects in domain services (gRPC + PostgreSQL)**
@@ -746,7 +748,7 @@ To keep idempotency and crash behavior consistent, all tick execution follows a 
 3. **Commit or roll back in Redis (Lua)**
    - Once all domain calls for a given tick have either succeeded or failed definitively, the Game Session Service invokes a second Lua script that:
      - Re-validates the `tick-executor-lease` token and lock tokens for the region.
-     - Checks the current `tick:{tenantId}:{regionId}:pending` entry and `tickId`.
+    - Checks the current `tick:{tenantRegionTag}:pending` entry and `tickId`.
      - Decides, based on the collected outcomes:
        - **Commit path** – if all required effects succeeded:
          - Clears the `pending` entry for that `tickId`.
@@ -777,13 +779,13 @@ The table below summarizes how common failure patterns interact with Redis and P
 
 ### Stuck Pending Entries and Recovery
 
-In rare cases where domain code is faulty, a `tick:{tenantId}:{regionId}:pending` entry may remain present even though repeated replays cannot complete successfully. A small tick recovery subsystem handles these situations:
+In rare cases where domain code is faulty, a `tick:{tenantRegionTag}:pending` entry may remain present even though repeated replays cannot complete successfully. A small tick recovery subsystem handles these situations:
 
 - A background watcher scans metrics or a compact Redis/PostgreSQL index of `pending` entries to identify **stuck ticks** (for example, `pending` keys that have existed for multiple tick intervals with exhausted retries).
 - Candidate stuck ticks are enqueued into a `tick_recovery` queue or table with metadata such as `{tenantId, regionId, tickId, firstSeenAt, lastRetryAt}`.
 - An automated recovery worker:
   - Marks clearly terminal ticks as `FAILED` or `SKIPPED` in PostgreSQL using the same effect-guard and idempotency rules as normal handlers.
-  - Clears `tick:{tenantId}:{regionId}:pending` and associated retry metadata in Redis via a dedicated, idempotent helper path.
+  - Clears `tick:{tenantRegionTag}:pending` and associated retry metadata in Redis via a dedicated, idempotent helper path.
   - Emits detailed logs and metrics for audit.
 - Operator tooling allows manual override for complex cases (for example, data corruption), and environments can choose between:
   - **Recommendation mode** – operators approve or override proposed recoveries.
@@ -791,8 +793,8 @@ In rare cases where domain code is faulty, a `tick:{tenantId}:{regionId}:pending
 
 Retry and timer queues are protected against unbounded growth by design:
 
-- Retry queues (`retry:{tenantId}:{regionId}`) use ZSETs keyed by `retry:{tenantId}:{regionId}` with scores encoding next-eligible execution time; scripts process at most `N` entries per invocation and enforce a maximum retry budget per action.
-- Timer keys (`timer:{tenantId}:{regionId}`) use ZSETs keyed by `timer:{tenantId}:{regionId}` with scores encoding due time; scripts pop at most `N` timers per call and delete processed members.
+- Retry queues (`retry:{tenantRegionTag}`) use ZSETs keyed by `retry:{tenantRegionTag}` with scores encoding next-eligible execution time; scripts process at most `N` entries per invocation and enforce a maximum retry budget per action.
+- Timer keys (`timer:{tenantRegionTag}`) use ZSETs keyed by `timer:{tenantRegionTag}` with scores encoding due time; scripts pop at most `N` timers per call and delete processed members.
 - Defensive limits (for example, maximum timers per region) trigger alerts or throttling if exceeded so that bugs cannot create unbounded timer growth.
 
 Entity Management provides the reference example for per-aggregate tick state; see [Entity Management Service – Tick Idempotency](./microservices/entity-management-service/README.md#tick-idempotency) for details.
@@ -801,18 +803,15 @@ Entity Management provides the reference example for per-aggregate tick state; s
 
 ## Cross-Region Command Execution and Result Relay
 
-Some commands originate in one region but affect targets in another — for
+Some commands originate in one region but affect targets in another – for
 example, remote attacks, cross-world spells, or administrative inventory moves.
 The process is **asynchronous and multi-phased**:
 
 1. A tick-local command executes in the **origin region**.
-2. A follow-up action — including the `sourceEntityId` — is enqueued in the
-   **target region's** command queue (often under a `remote:{tenantId}:{entityId}` key; see
-   [Redis Key Naming](./system-architecture-redis.md#key-naming-and-shard-discipline)).
-3. The target region processes the action during its next tick and determines
-   the outcome locally.
-4. The Game Session Service uses the `sourceEntityId` to route the result back
-   to the origin region or directly to the player's active session.
+2. The origin region records a **durable follow-up** in PostgreSQL for the target entity (tick effect ledger / follow-up tables).
+3. The origin region may also emit a best-effort Redis hint marker under `remote:<tenantId>:<targetEntityId>` to reduce latency, but correctness does not depend on this marker.
+4. The target region’s tick executor drains due follow-ups from PostgreSQL into its normal tick pipeline (enqueueing tick commands and staging effects under `tick:{tenantRegionTag}:pending`).
+5. The Game Session Service uses the `sourceEntityId` to route the result back to the origin region or directly to the player's active session.
 
 Players experience a smooth flow:
 
@@ -823,6 +822,30 @@ Players experience a smooth flow:
 
 No region waits synchronously for another shard, preserving responsiveness and
 deterministic replay.
+
+### Remote Follow-up Drain Algorithm (Budgets, Fairness, Backpressure)
+
+Remote follow-ups are treated as part of the same reliability envelope as ordinary tick commands: they are pulled into the target region as tick commands and executed under the region lease, lock, staging, retry, and idempotency rules.
+
+Each tick in a region includes a bounded “remote drain” step:
+
+- **Budget per tick**
+  - The executor pulls at most `MAX_REMOTE_FOLLOWUPS_PER_TICK` follow-up rows from PostgreSQL for entities in the region.
+  - A separate per-entity cap `MAX_REMOTE_FOLLOWUPS_PER_ENTITY_PER_TICK` prevents one hot entity from consuming the entire budget.
+- **Fairness across entities**
+  - Selection favors oldest-due follow-ups first but avoids starvation by limiting per-entity intake per tick (for example, round-robin across entities with due follow-ups).
+  - Claiming uses database-side concurrency control (for example `FOR UPDATE SKIP LOCKED` or an equivalent “claim” update) so multiple executors cannot drain the same follow-up concurrently.
+- **Backpressure when remote queues grow**
+  - If the number of due follow-ups for a region exceeds a threshold, the region is marked `DEGRADED` and emits metrics (for example `remote_followups_due_total`, `remote_followups_drain_lag_ms`, `remote_followups_backlog_over_budget_total`).
+  - The executor may temporarily bias processing toward remote follow-ups (up to the configured cap) so cross-region effects do not accumulate unbounded lag.
+  - Admission control applies at the origin: when the target region is degraded or backlog is high, new cross-region actions may be delayed, rate-limited, or rejected with a clear error so the system sheds load instead of building an unbounded remote backlog.
+
+The Redis hint marker `remote:<tenantId>:<entityId>` is explicitly best-effort: it may be overwritten, duplicated, or lost. It must only affect latency (for example, encouraging earlier drain), not correctness.
+
+### Resets and Remote Follow-ups
+
+- Region-level coordination resets cannot precisely target `remote:*` (those keys are tenant-scoped), so resets do not attempt to delete remote hint markers.
+- This is safe because follow-ups are durable in PostgreSQL: after a region reset, the next tick executor resumes draining due follow-ups and executing them under the normal tick safety wrapper; stale or missing `remote:*` markers only influence how quickly the region notices new work.
 
 ### Tick Chaining and Reentrant Effect Control
 

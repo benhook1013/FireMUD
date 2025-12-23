@@ -39,10 +39,10 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 ### Redis Role and Prefixes
 
 - **Coordination Redis participation**
-  - Acquires tick locks via shared helpers using keys of the form `tick:{tenantId}:{regionId}:lock:{entityId}` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
+  - Acquires tick locks via shared helpers using keys of the form `tick:{tenantRegionTag}:lock:<entityId>` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
   - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
 - **Cache/Rate-Limit Redis usage**
-  - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `characterCache:{tenantId}:{characterId}`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `characterCache:<tenantId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - These caches for character graphs and similar aggregates are treated as **strongly validated caches**: payloads include version or `lastModified` markers from the authoritative tables, and readers validate those versions before reusing cached data. PostgreSQL remains the authoritative store for entity state and inventories.
   - Any change to Redis usage in this service should be reviewed against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role selection, slotting, and observability updates.
 
@@ -178,7 +178,7 @@ grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/P
 
 ### Tick Locking
 
-This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantId}:{regionId}:lock:{entityId}` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs follow the simplified formula from the Redis design:
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantRegionTag}:lock:<entityId>` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs follow the simplified formula from the Redis design:
 
 - The Game Session Service exposes `game.tick-interval-ms` as the primary pacing knob.
 - Internally it derives a soft budget and TTLs, for example:
@@ -189,7 +189,7 @@ Entity Management treats `lock_ttl_ms` as an opaque value supplied by shared hel
 
 At runtime, the Game Session Service also compares **observed tick execution time** to `lock_ttl_ms` as described in the [Tick System design](../../system-architecture-ticks.md#timeout-and-fairness-policy). Regions whose `p99` tick runtime begins to approach or exceed a configured fraction of `lock_ttl_ms` are treated as degraded, and operators are expected to either increase the tick interval or simplify per-tick work. Entity Management does not adjust TTLs itself; it relies on the shared helpers and scheduler behavior to keep lock usage within safe bounds.
 
-Entity Management assumes the **per-command execution phases** described in the [Tick System design](../../system-architecture-ticks.md#per-command-execution-phases): commands that touch multiple entities in the same region resolve their target set first (for example, the two parties in a trade or all entities in a room for AoE effects), then acquire the necessary `tick:{tenantId}:{regionId}:lock:{entityId}` keys in a deterministic order. If any required lock is unavailable, the command fails, staged changes are rolled back via Redis, and the Game Session Service reschedules the work using the retry mechanisms described in the Tick System and Redis designs.
+Entity Management assumes the **per-command execution phases** described in the [Tick System design](../../system-architecture-ticks.md#per-command-execution-phases): commands that touch multiple entities in the same region resolve their target set first (for example, the two parties in a trade or all entities in a room for AoE effects), then acquire the necessary `tick:{tenantRegionTag}:lock:<entityId>` keys in a deterministic order. If any required lock is unavailable, the command fails, staged changes are rolled back via Redis, and the Game Session Service reschedules the work using the retry mechanisms described in the Tick System and Redis designs.
 
 ### Tick Idempotency
 
@@ -210,7 +210,7 @@ Examples:
   - Skips the update if `last_tick_id >= currentTickId` (replay), or applies the HP change and sets `last_tick_id = currentTickId` in the same transaction if `last_tick_id < currentTickId`.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
-  - The handler computes a deterministic `effectKey` such as `trade:{fromEntityId}:{toEntityId}:{itemId}`.
+  - The handler computes a deterministic `effectKey` such as `trade:<fromEntityId>:<toEntityId>:<itemId>`.
   - It inserts `(tenantId, regionId, tickId, effectKey)` into the guard table before moving items between inventories.
   - On primary-key conflict, the trade is treated as an already-applied effect for that tick and becomes a no-op.
 

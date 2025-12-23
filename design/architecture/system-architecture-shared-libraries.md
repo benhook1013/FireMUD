@@ -46,18 +46,19 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 Tick coordination and other Redis-backed workflows rely on a small set of shared helpers provided by the common library:
 
-- **Key Naming helpers** – A `RedisKeyNaming` (or similarly named) utility centralizes construction of tick-related keys such as `tick:{tenantId}:{regionId}:lock:{entityId}`, `tick:{tenantId}:{regionId}:pending`, `retry:{tenantId}:{regionId}`, and `timer:{tenantId}:{regionId}`. Application code must build these keys exclusively through the helper; direct string concatenation of `tick:`, `retry:`, or `timer:` prefixes in services is discouraged so hash-tag and naming rules remain consistent. The helper enforces the `{tenantId}:{regionId}` hash tag and is the single source of truth for tick key shapes.
+- **Key Naming helpers** – A `RedisKeyNaming` (or similarly named) utility centralizes construction of tick-related keys such as `tick:{tenantRegionTag}:lock:<entityId>`, `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and `timer:{tenantRegionTag}`. Application code must build these keys exclusively through the helper; direct string concatenation of `tick:`, `retry:`, or `timer:` prefixes in services is discouraged so hash-tag and naming rules remain consistent. The helper enforces the `{tenantRegionTag}` hash tag and is the single source of truth for tick key shapes.
 - **Lua scripts, descriptors, and invocation helpers** – The common library owns:
   - All coordination-related Lua scripts (tick staging/commit/rollback, locks, timers, retries, session CAS, automation scheduling) under a shared `redis/` resources path.
   - Machine-readable script descriptors that declare `KEYS` order, allowed prefixes, and shard-locality for each script.
   - A small Redis/Lua helper class that wraps `EVALSHA` calls for tick/session/automation scripts. It ensures that:
-  - Scripts are invoked with the correct first key (a tick key with the `{tenantId}:{regionId}` hash tag).
+  - Scripts are invoked with the correct first key (a tick key with the `{tenantRegionTag}` hash tag).
   - `NOSCRIPT` errors are handled by reloading the script on the appropriate master and retrying once.
   - Callers pass keys built via `RedisKeyNaming` so multi-key operations stay shard-local.
 - **Test and lint hooks** – Shared test fixtures validate that:
   - Keys produced by `RedisKeyNaming` share a common hash tag substring and map to the same cluster slot for multi-key operations.
   - Lua scripts respect the configured `MAX_TICK_SCRIPT_KEYS` bound and do not introduce “just one more key” without extending tests.
-  - Automation and session scripts are declared as **single-key** in their descriptors; tests assert that their `KEYS` length is exactly one and fail fast if additional keys are introduced without an explicit design change.
+  - Session scripts are declared as **single-key** in their descriptors; tests assert that their `KEYS` length is exactly one and fail fast if additional keys are introduced without an explicit design change.
+  - Automation scripts are declared as **single-hash-slot** scripts (hash-tagged on `{tenantScriptTag}`) and are forbidden from mixing `automation:tick:{tenantScriptTag}:*` keys with `tick:{tenantRegionTag}:*` keys in a single invocation; tests assert hash-slot alignment for automation keys when they are multi-key.
   - Prefix discipline is enforced consistently: tick scripts are allowed only tick/coordination prefixes (`tick:`, `retry:`, `timer:`, `remote:`), session scripts only `session:`, and automation scripts only `automation_queue:` / `automation:tick:`. CI lints Lua sources against these rules so mixed `tick:*` + `automation:*` or `tick:*` + `session:*` scripts cannot be added inadvertently.
   - Any new tick-related script or key path added by a service includes corresponding updates to the shared scripts, descriptors, helpers, and tests in `firemud-common`; individual services do not define their own independent copies.
 

@@ -272,7 +272,7 @@ Coordination Redis also enforces its role via ACL and simple self‑checks:
   so even if environment variables are misconfigured, cache clients cannot read
   or mutate tick/session keys.
 - Human operators and generic tools connect via **read-only ops users** (for example `coord_ops_ro`) that:
-  - Are restricted to `@read` commands for coordination deployments.
+  - Are restricted to read-only capabilities (typically `@read` plus an explicit allowlist of non-mutating diagnostics commands such as `INFO`/`SLOWLOG`/`LATENCY`/`SCAN`; see [Coordination Redis Ops Access & Tooling](./system-architecture-redis-ops-access.md)).
   - Are explicitly denied `EVAL`, `EVALSHA`, `SCRIPT LOAD`, and write commands (`SET`, `DEL`, `EXPIRE`, `PEXPIRE`, etc.) against coordination databases to prevent ad-hoc modification of tick/session prefixes from interactive shells.
 - Coordination clients perform a lightweight startup self‑check in non‑dev
   profiles (for example, verifying expected role markers or DB selections and
@@ -470,6 +470,33 @@ In all cases, **PostgreSQL is the sole authority for domain history** (entities,
   3. Resume ticks so Coordination Redis is rebuilt from PostgreSQL and new commands, relying on idempotent tick logic and `tail_loss_ms` / region health metrics to bound and surface any lost recent coordination state.
 
 All reset tooling routes through the same key builders and Lua descriptors used by application code and is classified by **reset tolerance** in the Redis operations docs (reset-tolerant, reset-sensitive, reset-forbidden). Operators must not perform ad-hoc manual edits to `tick:*`, `session:*`, `timer:*`, `retry:*`, or `remote:*` prefixes; any such needs should be implemented as changes to the reset tooling itself.
+
+### Key Enumeration Strategy for Scoped Resets (Cluster-Safe)
+
+Redis Cluster does not provide a cheap, precise way to “list all keys in a hash slot” or “list all keys for a given hash tag”. Scoped reset tooling therefore relies on **prefix-scoped SCAN per master** under strict operational preconditions.
+
+Region-level resets (targeting one `{tenantRegionTag}`) enumerate keys as follows:
+
+1. **Pause the region**: tick scheduling is stopped for the affected `{tenantId, regionId}` and executors release `tick-executor-lease:{tenantRegionTag}`.
+2. **Acquire a reset lock**: tooling acquires a short-lived “reset in progress” lock scoped to the region (for example `coord-reset:{tenantRegionTag}`) so two resets cannot run concurrently for the same region.
+3. **Enumerate by known prefix families**: tooling does not attempt to “discover” arbitrary keys; it scans only the explicitly cataloged families for that region, for example:
+   - `tick:{tenantRegionTag}:*` (locks, queues, pending, and any other tick-local keys)
+   - `timer:{tenantRegionTag}` (and any supporting timer keys that share the same tag)
+   - `retry:{tenantRegionTag}`
+   - `tick-executor-lease:{tenantRegionTag}`
+4. **SCAN per master node**: for each master in the cluster, run `SCAN` with `MATCH <pattern>` and a modest `COUNT` (for example 100–1000), respecting strict time budgets (for example 10–30 seconds per invocation) and rate limiting between batches so the reset job cannot monopolize Redis CPU or I/O.
+5. **Delete with `UNLINK`**: delete discovered keys via `UNLINK` (preferred) or `DEL` (fallback) so deletions do not block the Redis event loop for large values.
+6. **Repeat until stable**: because the cluster can still accept background writes, the tool may need multiple passes. The precondition “ticks paused for the region” is what makes convergence practical: new keys for that `{tenantRegionTag}` should not be created while the reset runs.
+
+Operational risks and tradeoffs:
+
+- Even scoped `SCAN` is still O(keys scanned) and can add latency if run without budgets; reset tooling must always be rate-limited and observable.
+- Maintaining a per-region “key index set” to make deletes exact is intentionally not part of the baseline design: it adds continuous write amplification and creates another correctness-critical structure that itself would need reset semantics.
+
+Remote follow-up hint scoping:
+
+- `remote:<tenantId>:<entityId>` keys are tenant-scoped hint markers, not region-scoped keys. Region-level resets therefore do not attempt to delete `remote:*` keys (they cannot be targeted precisely by `{tenantRegionTag}`).
+- This is safe because `remote:*` is explicitly best-effort and not the authoritative follow-up mechanism; leaving or dropping hints affects latency only. Tenant-level resets may optionally clear `remote:<tenantId>:*` hints as part of a “full tenant restart”.
 
 ### Reset Policy Matrix (Prefix Summary)
 

@@ -15,7 +15,7 @@ This document describes the **target-state architecture** for scripting and auto
 - **Planned or partially implemented**
   - Copying published version data into the Automation & Scripting Service schema via Saga, and broader script-driven world generation flows (runtime generation requests via isolated ticks, generation seed persistence, and script-driven population triggers).
   - Expansion of the PvE encounter library, biome-specific events, and world generation features called out in the Automation & Scripting Service and world generation task lists.
-  - Scheduler leadership leases and per-region tick-stream consumption for `script-leader:{tenantId}` are implemented; sharded leases, `automation:timer:{tenantId}:{regionId}` indexing, and long-term audit-retention jobs continue to evolve. See [Scheduler Leadership & Coordination](#scheduler-leadership--coordination) for scripting-specific lease and timer keys, the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#architecture--design-notes`) for current runtime behavior, and the [Automation & Scripting Service Task List](../project-management/task-list-automation-scripting-service.md) for remaining work.
+- Scheduler leadership leases and per-region tick-stream consumption for `script-leader:{tenantId}` are implemented; sharded leases, `automation:timer:{tenantRegionTag}` indexing, and long-term audit-retention jobs continue to evolve. See [Scheduler Leadership & Coordination](#scheduler-leadership--coordination) for scripting-specific lease and timer keys, the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#architecture--design-notes`) for current runtime behavior, and the [Automation & Scripting Service Task List](../project-management/task-list-automation-scripting-service.md) for remaining work.
 
 Operators looking for **runtime knobs and environment variables** should see the [Environment Variables](#environment-variables) section of this document and the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`), which is the authoritative source for current settings and defaults.
 
@@ -28,9 +28,9 @@ The table below summarizes the high-level implementation status of major areas d
 | Area | Status (as of 2025-12-04) | Notes |
 | --- | --- | --- |
 | Script runtime & DSL | Implemented | Sandbox execution, core Automation & Scripting Service, and visual DSL editor are in active use, including basic quotas. |
-| Automation queues & script ticks | Implemented | `automation_queue:{tenantId}:{entityId}` and `automation:tick:{tenantId}:{scriptId}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
+| Automation queues & script ticks | Implemented | `automation_queue:<tenantId>:<entityId>` and `automation:tick:{tenantScriptTag}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
 | Integration with tick commands | Implemented | Script-generated tick commands are enqueued into the same per-entity tick queues used by Game Session, and participate in the normal lock/idempotency model. |
-| Scheduler leadership & timers | Designed / partial | Per-tenant `script-leader:{tenantId}` leases and heartbeat-driven interval scheduling are implemented; sharded leases, `automation:timer:{tenantId}:{regionId}`–backed timer indexing, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
+| Scheduler leadership & timers | Designed / partial | Per-tenant `script-leader:{tenantId}` leases and heartbeat-driven interval scheduling are implemented; sharded leases, `automation:timer:{tenantRegionTag}`–backed timer indexing, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
 | Quotas & fairness | Implemented / evolving | Per-script quotas (`ScriptQuotaService`) and basic fairness rules are implemented; multi-level budgets and advanced throttling controls continue to evolve. |
 | Audit & metrics | Implemented / evolving | `script_event_audit` and core automation metrics exist; retention policies and additional dashboards are being refined. |
 
@@ -70,9 +70,9 @@ The table below summarizes the high-level implementation status of major areas d
 
 ## Terminology Glossary
 
-- **Game tick** – a region-scoped tick in the Game Session Service. Each `{tenantId, regionId}` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantId}:{regionId}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
-- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation_queue:{tenantId}:{entityId}`, stages them under `automation:tick:{tenantId}:{scriptId}:...`, and enqueues resulting **tick commands** into per-entity tick command queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
-- **Automation queue** – a per-tenant, per-entity Redis queue (`automation_queue:{tenantId}:{entityId}`) that holds **post-handler script work items** (domain commands plus script metadata such as `scriptEventId`, `scriptId`, and version information) after sandboxed DSL execution and before automation ticks convert them into tick commands and move them into tick-compatible queues.
+- **Game tick** – a region-scoped tick in the Game Session Service. Each `{tenantId, regionId}` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantRegionTag}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
+- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation_queue:<tenantId>:<entityId>`, stages them under `automation:tick:{tenantScriptTag}:...`, and enqueues resulting **tick commands** into per-entity tick command queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Automation queue** – a per-tenant, per-entity Redis queue (`automation_queue:<tenantId>:<entityId>`) that holds **post-handler script work items** (domain commands plus script metadata such as `scriptEventId`, `scriptId`, and version information) after sandboxed DSL execution and before automation ticks convert them into tick commands and move them into tick-compatible queues.
 - **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `tickId` progression per `{tenantId, regionId}`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details.
 
 ### Versioning Terms
@@ -91,8 +91,8 @@ The scripting pipeline uses a small set of terms repeatedly; the table below sum
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata). | Enqueued in `automation_queue:{tenantId}:{entityId}` and staged under `automation:tick:{tenantId}:{scriptId}:...`. |
-| 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantId}:{regionId}:queue:{entityId}` for consumption by the tick loop. |
+| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata). | Enqueued in `automation_queue:<tenantId>:<entityId>` and staged under `automation:tick:{tenantScriptTag}:...`. |
+| 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
 Later sections use these terms consistently: triggers lead to DSL runs, which produce script work items in the automation queues, which automation ticks turn into tick commands for the Game Session Service.
 
@@ -125,8 +125,8 @@ At a high level, scripting follows this pipeline:
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `{tenantId, eventType}` and applies per-script and per-tenant limits via `ScriptQuotaService`.
 3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are enqueued into Redis-backed automation queues under keys such as `automation_queue:{tenantId}:{entityId}`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity and represent the backlog of post-DSL script work items awaiting processing by automation ticks; region-scoped tick keys remain the responsibility of the Game Session Service.
-5. **Script ticks & commit** – `ScriptTickService` drains `automation_queue` entries, batches automation events into tick-compatible queues with quotas and budgets under `automation:tick:{tenantId}:{scriptId}:...`, and only then commits the resulting **domain commands** into the tick command queues using Redis Lua scripts for atomic staging and commit.
+4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are enqueued into Redis-backed automation queues under keys such as `automation_queue:<tenantId>:<entityId>`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity and represent the backlog of post-DSL script work items awaiting processing by automation ticks; region-scoped tick keys remain the responsibility of the Game Session Service.
+5. **Script ticks & commit** – `ScriptTickService` drains `automation_queue` entries, batches automation events into tick-compatible queues with quotas and budgets under `automation:tick:{tenantScriptTag}:...`, and only then commits the resulting **domain commands** into the tick command queues using Redis Lua scripts for atomic staging and commit.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
 ```mermaid
@@ -140,9 +140,9 @@ sequenceDiagram
     Player->>GameSession: Command / world event
     GameSession-->>Scripting: Script trigger (event + metadata)
     Scripting->>Scripting: Run sandboxed DSL handler
-    Scripting->>Redis: Enqueue script work to automation_queue:{tenantId}:{entityId}
-    Scripting->>Redis: ScriptTickService stages automation:tick:{tenantId}:{scriptId}:*
-    Scripting->>Redis: Commit into tick:{tenantId}:{regionId}:queue:{entityId}
+    Scripting->>Redis: Enqueue script work to automation_queue:<tenantId>:<entityId>
+    Scripting->>Redis: ScriptTickService stages automation:tick:{tenantScriptTag}:*
+    Scripting->>Redis: Commit into tick:{tenantRegionTag}:queue:<entityId>
     GameSession->>Redis: Read per-entity tick queue on tick
     GameSession->>GameLogic: Apply command under locks / ticks
     GameLogic-->>GameSession: Effects, updates, events
@@ -188,8 +188,8 @@ This section walks through a typical happy-path flow where an NPC script reacts 
    - Instead of mutating game state directly, action nodes produce a set of **domain commands** (for example, “NPC says a line,” “NPC targets the player,” “schedule a follow-up patrol timer”) that describe what should happen in the game world.
 
 4. **Command enqueue into tick-compatible queues**
-   - After sandbox execution, the Automation & Scripting Service records **script event entries** into Redis-backed automation queues such as `automation_queue:{tenantId}:{entityId}`, tagging each entry with the originating `scriptEventId`, `scriptId`, version metadata, and the domain commands that should be materialized when the event is processed. At this stage, `automation_queue` is still an **event backlog**, not the final tick command queue.
-   - A dedicated Lua staging script (invoked by `ScriptTickService`) drains `automation_queue`, processes events under `automation:tick:{tenantId}:{scriptId}:...`, and merges the resulting domain commands into the same per-entity tick command queues used by the Game Session Service. This preserves FIFO ordering and the invariant of at most one command per entity per tick as described in the [Tick System and Runtime Design](./system-architecture-ticks.md).
+- After sandbox execution, the Automation & Scripting Service records **script event entries** into Redis-backed automation queues such as `automation_queue:<tenantId>:<entityId>`, tagging each entry with the originating `scriptEventId`, `scriptId`, version metadata, and the domain commands that should be materialized when the event is processed. At this stage, `automation_queue` is still an **event backlog**, not the final tick command queue.
+- A dedicated Lua staging script (invoked by `ScriptTickService`) drains `automation_queue`, processes events under `automation:tick:{tenantScriptTag}:...`, and merges the resulting domain commands into the same per-entity tick command queues used by the Game Session Service. This preserves FIFO ordering and the invariant of at most one command per entity per tick as described in the [Tick System and Runtime Design](./system-architecture-ticks.md).
    - Each enqueued command carries the originating `scriptEventId`, `scriptId`, and version metadata so downstream logs, metrics, and audits can correlate behavior to the script that produced it.
 
 5. **Tick execution and world updates**
@@ -219,7 +219,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
 
 4. **Sandbox execution and command enqueue**
    - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.
-   - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and recorded as script work items in `automation_queue:{tenantId}:{entityId}` for the affected entity. Each work item carries the originating `scriptEventId`, `scriptId`, version metadata, and the **current region** for the entity at enqueue time. `ScriptTickService` later drains `automation_queue`, stages these events under `automation:tick:{tenantId}:{scriptId}:...`, and merges the resulting commands into the appropriate `tick:{tenantId}:{regionId}:queue:{entityId}` so they execute during future ticks.
+- Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and recorded as script work items in `automation_queue:<tenantId>:<entityId>` for the affected entity. Each work item carries the originating `scriptEventId`, `scriptId`, version metadata, and the **current region** for the entity at enqueue time. `ScriptTickService` later drains `automation_queue`, stages these events under `automation:tick:{tenantScriptTag}:...`, and merges the resulting commands into the appropriate `tick:{tenantRegionTag}:queue:<entityId>` so they execute during future ticks.
 
 5. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
@@ -433,13 +433,13 @@ Implementations should align emitted metrics with those documents; the intent he
 - Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 - **ScriptTickService** stages events in Redis before committing them to the tick queues. It uses a **per-script automation tick namespace**:
-  - `automation:tick:{tenantId}:{scriptId}:lock`
-  - `automation:tick:{tenantId}:{scriptId}:queue`
-  - `automation:tick:{tenantId}:{scriptId}:pending`
+  - `automation:tick:{tenantScriptTag}:lock`
+  - `automation:tick:{tenantScriptTag}:queue`
+  - `automation:tick:{tenantScriptTag}:pending`
 
-  Keys within this namespace share a hash tag on `{tenantId}:{scriptId}` so multi-key Lua operations remain shard-local in Redis Cluster. These automation tick locks are **separate from the game tick locks** (`tick:{tenantId}:{regionId}:lock:{entityId}`) managed by the Game Session Service. Script ticks never bypass entity-level locking or tick isolation; they only batch and stage automation events before handing them to the normal tick pipeline. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed once they enter the per-entity command queues.
+  Keys within this namespace share a hash tag on `{tenantScriptTag}` (derived from `<tenantId>` + `<scriptId>`) so multi-key Lua operations remain shard-local in Redis Cluster. These automation tick locks are **separate from the game tick locks** (`tick:{tenantRegionTag}:lock:<entityId>`) managed by the Game Session Service. Script ticks never bypass entity-level locking or tick isolation; they only batch and stage automation events before handing them to the normal tick pipeline. See [Tick System and Runtime Design](./system-architecture-ticks.md) for how staged commands are processed once they enter the per-entity command queues.
 
-  **ScriptTickService lock isolation:** `ScriptTickService` uses only the `automation:tick:{tenantId}:{scriptId}:*` keys for locking and staging. It never reads from or writes to `tick:{tenantId}:{regionId}:lock:{entityId}` or other `tick:{tenantId:...}` locks; those remain exclusively owned by the Game Session Service’s tick executors.
+  **ScriptTickService lock isolation:** `ScriptTickService` uses only the `automation:tick:{tenantScriptTag}:*` keys for locking and staging. It never reads from or writes to `tick:{tenantRegionTag}:lock:<entityId>` or other `tick:{tenantRegionTag}:...` locks; those remain exclusively owned by the Game Session Service’s tick executors.
 
 ### Redis Key Summary for Scripting
 
@@ -447,18 +447,18 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 | Key pattern | Owner / service | Purpose | Hash tag / shard scope | TTL / retention expectations |
 | --- | --- | --- | --- | --- |
-| `automation_queue:{tenantId}:{entityId}` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work items awaiting automation ticks. | Sharded by `{tenantId}:{entityId}`; automation ticks drain these and enqueue commands into tick queues. | Ephemeral backlog; drained continuously by automation ticks. Any TTL is a short safety valve, not long-term storage. |
-| `automation:tick:{tenantId}:{scriptId}:lock` | Automation & Scripting (`ScriptTickService`) | Per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantId}:{scriptId}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
-| `automation:tick:{tenantId}:{scriptId}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantId}:{scriptId}`. | Batch-scoped staging; entries exist only while a batch is being processed and are cleared on commit/rollback. |
-| `automation:tick:{tenantId}:{scriptId}:pending` | Automation & Scripting (`ScriptTickService`) | Pending entry for an in-flight automation tick batch; replayable if a crash occurs mid-staging. | Hash-tagged on `{tenantId}:{scriptId}`. | Crash-replay state; retained only for the duration of an in-flight batch and removed once replay/commit completes. |
-| `automation:timer:{tenantId}:{regionId}` | Automation & Scripting scheduler | Region-scoped index of script timers/intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). | Hash-tagged on `{tenantId}:{regionId}` to align with tick-region keys. | Persistent while timers are active; entries are added/updated per timer and removed when the timer is cancelled or fully drained. |
-| `automation:script:{tenantId}:{scriptId}:timer` | Automation & Scripting scheduler | Optional script-centric projection of timers for debugging/maintenance; derived from the region index. | Sharded consistently with the region index; not used for authoritative timing decisions. | Projection of the region index; retained only while corresponding region-index timers exist. |
+| `automation_queue:<tenantId>:<entityId>` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work items awaiting automation ticks. | Single-key queue per entity; automation ticks drain these and enqueue commands into tick queues. | Ephemeral backlog; drained continuously by automation ticks. Any TTL is a short safety valve, not long-term storage. |
+| `automation:tick:{tenantScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantScriptTag}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
+| `automation:tick:{tenantScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantScriptTag}`. | Batch-scoped staging; entries exist only while a batch is being processed and are cleared on commit/rollback. |
+| `automation:tick:{tenantScriptTag}:pending` | Automation & Scripting (`ScriptTickService`) | Pending entry for an in-flight automation tick batch; replayable if a crash occurs mid-staging. | Hash-tagged on `{tenantScriptTag}`. | Crash-replay state; retained only for the duration of an in-flight batch and removed once replay/commit completes. |
+| `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers/intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). | Hash-tagged on `{tenantRegionTag}` to align with tick-region keys. | Persistent while timers are active; entries are added/updated per timer and removed when the timer is cancelled or fully drained. |
+| `automation:script:{tenantScriptTag}:timer` | Automation & Scripting scheduler | Optional script-centric projection of timers for debugging/maintenance; derived from the region index. | Projection only; not used for authoritative timing decisions. | Projection of the region index; retained only while corresponding region-index timers exist. |
 | `script-leader:{tenantId}` / `script-leader:{tenantId}:{shardId}` | Automation & Scripting scheduler | Leadership lease key(s) for script schedulers per tenant and optional shard. | Hash-tagged on `{tenantId}` or `{tenantId}:{shardId}`, ensuring one leader per lease key. | Short TTL (seconds); continuously renewed by the active leader. Expiry triggers leadership failover, no historical retention. |
-| `script-scheduler:{tenantId}:{regionId}:lastTickId` | Automation & Scripting scheduler | Stores the last processed `tickId` per region so new leaders can resume `onInterval` counting correctly. | Hash-tagged on `{tenantId}:{regionId}` to match the region’s tick keys. | Coordination state; retained across leader restarts and cleared only when regions/tenants are removed or reset by ops tooling. |
+| `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler | Stores the last processed `tickId` per region so new leaders can resume `onInterval` counting correctly. | Hash-tagged on `{tenantRegionTag}` to match the region’s tick keys. | Coordination state; retained across leader restarts and cleared only when regions/tenants are removed or reset by ops tooling. |
 
 ### Ordering Between Player and Script Commands
 
-- Each entity has a **single authoritative command queue** in Redis (for example, `tick:{tenantId}:{regionId}:queue:{entityId}`) that aggregates both player-originated commands and script-generated commands.
+- Each entity has a **single authoritative command queue** in Redis (for example, `tick:{tenantRegionTag}:queue:<entityId>`) that aggregates both player-originated commands and script-generated commands.
 - Player commands and automation commands are appended to this queue in the order they are accepted by the Game Session Service and the Automation & Scripting Service. Within a given entity’s queue, commands are therefore processed in **FIFO order**, regardless of whether they came from a player or a script.
 - During tick processing, the Game Session Service:
   - Reads at most one command per entity per tick from this combined queue.
@@ -482,11 +482,11 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 ### Script Timers vs Tick Timers
 
-- Core gameplay timers (cooldowns, regeneration, generic delayed effects) live in the **Game Session Service** under `timer:{tenantId}:{regionId}` and are processed as part of each region’s tick loop (see [Timers and Time Scaling](./system-architecture-ticks.md#timers-and-time-scaling)). These timers are governed by `game.tick-max-timers` and share pacing with other tick work.
+- Core gameplay timers (cooldowns, regeneration, generic delayed effects) live in the **Game Session Service** under `timer:{tenantRegionTag}` and are processed as part of each region’s tick loop (see [Timers and Time Scaling](./system-architecture-ticks.md#timers-and-time-scaling)). These timers are governed by `game.tick-max-timers` and share pacing with other tick work.
 - Scripted timers power `onTimerExpire`, `onInterval`, and `intervalTicks` scheduling and are tracked in a **two-level Automation & Scripting timer index**:
-  - A **region index** under `automation:timer:{tenantId}:{regionId}` that stores one entry per active `{tenantId, regionId, scriptId, entityId}` interval or timer, including cadence (`intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`). This region-scoped set is the **authoritative source of truth** for which timers exist and when they are due.
-  - An optional **per-script index** under `automation:script:{tenantId}:{scriptId}:timer` that provides a script-centric view of the same timers (for example, for debugging or script-level maintenance). When present, this index is derived from and kept consistent with the region index; it does not introduce additional timing state.
-- Both timer key families share the same hash tags as the region’s tick keys for locality but are never mixed into the core `timer:{tenantId}:{regionId}` ZSET.
+  - A **region index** under `automation:timer:{tenantRegionTag}` that stores one entry per active `{tenantId, regionId, scriptId, entityId}` interval or timer, including cadence (`intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`). This region-scoped set is the **authoritative source of truth** for which timers exist and when they are due.
+  - An optional **per-script index** under `automation:script:{tenantScriptTag}:timer` that provides a script-centric view of the same timers (for example, for debugging or script-level maintenance). When present, this index is derived from and kept consistent with the region index; it does not introduce additional timing state.
+- Both timer key families share shard locality with the region’s tick keys but are never mixed into the core `timer:{tenantRegionTag}` ZSET.
 - The script scheduler uses the **region index** as the single authoritative input when deciding which timers have expired for a `{tenantId, regionId}` and converts expirations into **script triggers**, then enqueues resulting commands into the same per-entity command queues that ticks consume. The per-script index, when used, is updated as a projection of this region-local truth.
 - Script timers obey their own **per-tick and per-window limits** controlled by automation-specific settings such as `AUTOMATION_TICK_MAX_EVENTS` and `AUTOMATION_TICK_BUDGET_MS`, in addition to per-script quotas. They do **not** count against `game.tick-max-timers`; instead, they are bounded by `AUTOMATION_TICK_MAX_EVENTS` as they are staged into tick queues (see the Automation & Scripting Service README for the corresponding Spring property names and exact defaults).
 - This separation avoids double-scheduling and unexpected load coupling: tick timers determine when gameplay effects should fire within a region, while script timers determine **when scripts decide to enqueue actions**. Both ultimately converge on the same tick-based command queues, but each subsystem enforces its own quotas and per-tick limits.
@@ -505,26 +505,26 @@ When a script or tenant consumes too many resources, adjust settings in this ord
 This section summarizes how a single `onInterval` timer behaves across normal operation, leader changes, and script reloads, and which Redis keys are authoritative at each step.
 
 - **Normal operation**
-  - When an NPC spawns or a script is first loaded, the scheduler creates or updates an interval entry for the `{tenantId, scriptId, entityId}` tuple in the **region index** under `automation:timer:{tenantId}:{regionId}`. That entry stores at least the configured cadence (`intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`). If a per-script index is enabled, a corresponding projection entry is written under `automation:script:{tenantId}:{scriptId}:timer`, but the region index remains authoritative.
-  - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and updating `script-scheduler:{tenantId}:{regionId}:lastTickId`. For **“every N ticks”** intervals, the leader compares `lastTickId` with the current `tickId` and the stored `intervalTicks` / `nextTick` for each timer entry to decide which `onInterval` triggers are due.
+  - When an NPC spawns or a script is first loaded, the scheduler creates or updates an interval entry for the `{tenantId, scriptId, entityId}` tuple in the **region index** under `automation:timer:{tenantRegionTag}`. That entry stores at least the configured cadence (`intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`). If a per-script index is enabled, a corresponding projection entry is written under `automation:script:{tenantScriptTag}:timer`, but the region index remains authoritative.
+  - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and updating `script-scheduler:{tenantRegionTag}:lastTickId`. For **“every N ticks”** intervals, the leader compares `lastTickId` with the current `tickId` and the stored `intervalTicks` / `nextTick` for each timer entry to decide which `onInterval` triggers are due.
   - When an interval fires and passes quota/budget checks, the scheduler:
     - emits a trigger (and audit row) for the `onInterval` handler, and
     - recomputes and persists the next due point (`nextTick` or `nextRunAt`) in the timer entry so the cadence remains stable, even if some firings are delayed by load.
 
 - **Leader failover**
-  - Leaders periodically persist `script-scheduler:{tenantId}:{regionId}:lastTickId` as they process the heartbeat stream. The authoritative source of **“how far this region has progressed”** is therefore the combination of:
+  - Leaders periodically persist `script-scheduler:{tenantRegionTag}:lastTickId` as they process the heartbeat stream. The authoritative source of **“how far this region has progressed”** is therefore the combination of:
     - the most recent `tickId` seen on the heartbeat stream, and
     - the stored `lastTickId` for that `{tenantId, regionId}` key.
   - When leadership changes, the new leader:
-    - reads `script-scheduler:{tenantId}:{regionId}:lastTickId` for each region it owns,
+    - reads `script-scheduler:{tenantRegionTag}:lastTickId` for each region it owns,
     - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream, and
-    - for each timer entry in the **region index** `automation:timer:{tenantId}:{regionId}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued exactly once before the leader resumes normal scheduling from the latest `tickId`. If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
+    - for each timer entry in the **region index** `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued exactly once before the leader resumes normal scheduling from the latest `tickId`. If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
   - Because the authoritative timer state lives in Redis (the region index plus `lastTickId`), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
 - **Script reload**
-  - During reload, leaders set `reloadState=RELOADING` for the affected `{tenantId, pendingPatchVersion}` and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in the **region index** `automation:timer:{tenantId}:{regionId}` (and any derived per-script projections) remain in Redis but are treated as **pending**.
+  - During reload, leaders set `reloadState=RELOADING` for the affected `{tenantId, pendingPatchVersion}` and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in the **region index** `automation:timer:{tenantRegionTag}` (and any derived per-script projections) remain in Redis but are treated as **pending**.
   - Once reload succeeds and `activePatchVersion` is switched, the leader:
-    - re-reads `script-scheduler:{tenantId}:{regionId}:lastTickId` and the current `tickId`,
+    - re-reads `script-scheduler:{tenantRegionTag}:lastTickId` and the current `tickId`,
     - updates each interval entry’s next due point (`nextTick` or `nextRunAt`) in the region index as needed so the cadence resumes from the latest tick/time (rather than replaying the paused window), and
     - resumes normal scheduling for `onInterval` using the updated `activePatchVersion`. No interval runs against a partially loaded script definition.
   - If reload fails, `activePatchVersion` remains unchanged, `pendingPatchVersion` is marked failed, and the leader resumes using the existing region-index timer entries as-is. Any `onInterval` triggers that fire after a failed reload are still scheduled according to the stored cadence, but always execute under the last known good patch version.
@@ -535,7 +535,7 @@ The script scheduler runs inside a small cohort of Automation & Scripting Servic
 
 Leaders consume the tick heartbeat stream produced by the Game Session Service (see [Tick System and Runtime Design](./system-architecture-ticks.md#tick-events--heartbeat-stream)). That stream provides a monotonically increasing `tickId` per `{tenantId, regionId}`. By counting tick events, the scheduler knows when “every N ticks” has elapsed without needing to control why ticks fire. Each tick event includes shard metadata, so multiple leaders can coordinate per-shard schedules **only when sharding is enabled** (for example, different `{tenantId, shardId}` groups); a given lease key (`script-leader:{tenantId}` or `script-leader:{tenantId}:{shardId}`) is always held by at most one instance. If a leader misses a tick it simply replays the delta against the stored `lastTickId` before continuing.
 
-To make this stream resumable across leadership changes, the scheduler stores the **last processed tick** per `{tenantId, regionId}` in Redis under a key such as `script-scheduler:{tenantId}:{regionId}:lastTickId` (sharing the same hash tag as the region’s tick keys). When a new leader takes over, it:
+To make this stream resumable across leadership changes, the scheduler stores the **last processed tick** per `{tenantId, regionId}` in Redis under a key such as `script-scheduler:{tenantRegionTag}:lastTickId` (sharing the same hash tag as the region’s tick keys). When a new leader takes over, it:
 
 - Reads `lastTickId` for each region it owns.
 - Compares it to the latest `tickId` observed on the heartbeat stream.
@@ -543,7 +543,7 @@ To make this stream resumable across leadership changes, the scheduler stores th
 
 Multiple leaders may exist **across tenants** (one leader per `script-leader:{tenantId}`) and, in sharded deployments, per shard (one leader per `script-leader:{tenantId}:{shardId}`), but there is never more than one leader for the same lease key at a time. Each script’s metadata stores scheduling rules, concurrency policy, and type tags (e.g., `npc-behavior`, `world-background`, `maintenance`). The leader for a given lease key uses this metadata plus observed tick counts, `lastTickId` state, and available quotas to decide when to enqueue the next execution.
 
-Automation-specific keys such as `script-leader:{tenantId}` and `script-scheduler:{tenantId}:{regionId}:lastTickId` follow the same naming and hash-tagging conventions described in [Redis Architecture – Key Naming and Shard Discipline](./system-architecture-redis.md#key-naming-and-shard-discipline). For a full catalog of tick and lock keys, see [Redis Architecture – Key Format Examples](./system-architecture-redis.md#key-format-examples); this document only calls out the scripting-specific keys used by the scheduler.
+Automation-specific keys such as `script-leader:{tenantId}` and `script-scheduler:{tenantRegionTag}:lastTickId` follow the same naming and hash-tagging conventions described in [Redis Architecture – Key Naming and Shard Discipline](./system-architecture-redis.md#key-naming-and-shard-discipline). For a full catalog of tick and lock keys, see [Redis Architecture – Key Format Examples](./system-architecture-redis.md#key-format-examples); this document only calls out the scripting-specific keys used by the scheduler.
 
 ### Leadership Scope and Failure Semantics
 
@@ -554,9 +554,9 @@ Automation-specific keys such as `script-leader:{tenantId}` and `script-schedule
 - **Heartbeat loss vs Redis availability**
   - If a leader loses access to the tick heartbeat stream (for example, due to network partition or Game Session unavailability) but can still reach Redis, it treats the tick timeline as **unreliable**:
     - `onInterval` and other cadence-based triggers pause for the affected `{tenantId, regionId}` entries rather than extrapolating tick counts locally.
-    - The authoritative timer state in `automation:timer:{tenantId}:{regionId}` is effectively **frozen** during the outage: entries remain in Redis with their current `nextTick` / `nextRunAt` values, but leaders do not advance or fire them while the heartbeat is unhealthy.
+    - The authoritative timer state in `automation:timer:{tenantRegionTag}` is effectively **frozen** during the outage: entries remain in Redis with their current `nextTick` / `nextRunAt` values, but leaders do not advance or fire them while the heartbeat is unhealthy.
     - When the heartbeat recovers and a healthy tick stream resumes, leaders:
-      - Reconcile the stored `script-scheduler:{tenantId}:{regionId}:lastTickId` with the latest observed `tickId`.
+      - Reconcile the stored `script-scheduler:{tenantRegionTag}:lastTickId` with the latest observed `tickId`.
       - Walk forward through the gap and determine which timers became due while the heartbeat was unavailable.
       - Enqueue a bounded set of **catch-up triggers** for each timer (typically one trigger per missed `onInterval` boundary or `onTimerExpire` event), subject to per-script quotas, per-tenant budgets, and cluster ceilings so that long outages do not produce unbounded bursts. There is no fixed global “catch-up horizon”; the effective replay window is defined by these budgets and ceilings, so very old due timers may never be replayed and are treated as intentionally dropped once the system has advanced to the current tick/time.
       - Update `lastTickId` and each timer’s `nextTick` / `nextRunAt` so cadence resumes from the latest tick/time, treating any skipped triggers as intentionally dropped once the system has caught up to “now.”
@@ -688,7 +688,7 @@ Per-tenant and per-script metrics include:
 - `script_quota_allowed_total` / `script_quota_denied_total` for per-script quota checks.
 - Queue-level metrics such as `automation_queue_enqueued_total` and `automation_queue_drained_total` are defined and documented in the Automation & Scripting Service README and should be used alongside the metrics above to monitor how quickly automation queues are filling and draining per tenant and script.
 - A lightweight **orphan detection** signal helps catch drift between automation queues and tick execution:
-  - `automation_queue_orphaned_entries_total` counts work items that have remained in `automation_queue:{tenantId}:{entityId}` beyond a bounded age window (for example, N ticks or seconds) without corresponding staging in `automation:tick:{tenantId}:{scriptId}:...` or entries in the tick effect ledger.
+  - `automation_queue_orphaned_entries_total` counts work items that have remained in `automation_queue:<tenantId>:<entityId>` beyond a bounded age window (for example, N ticks or seconds) without corresponding staging in `automation:tick:{tenantScriptTag}:...` or entries in the tick effect ledger.
   - `automation_queue_oldest_entry_age_seconds` records the age of the oldest sampled queue item per tenant/script so operators can see when automation backlogs are failing to drain into ticks.
   - A small, bounded inspector loop in `ScriptTickService` samples a subset of queues per interval to update these metrics; it does **not** attempt to repair or delete items itself, but surfaces misalignment between automation and tick processing for investigation.
 
