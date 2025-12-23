@@ -437,7 +437,7 @@ Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to valida
 2. Start Spring Cloud Gateway with the dev profile so `/dev/echo` is exposed (see the Gateway docs for details).
 3. Point the bridge at the local echo: `GATEWAY_WS_URL=ws://localhost:8080/dev/echo`.
 4. Connect from a Telnet/MUD client: `telnet localhost 2323`.
-5. Type any text. The proxy logs the input at INFO and you should see the same text echoed back via the Gateway `/dev/echo` handler.
+5. Type any text. You should see the same text echoed back via the Gateway `/dev/echo` handler. Avoid logging raw Telnet input during this workflow (especially `LOGIN` lines); if you enable deep payload logging for debugging, it must be explicitly opt-in and redact credentials.
 
 ### Proxy dev-isolated mode (standalone echo)
 
@@ -446,7 +446,7 @@ When `TCP_PROXY_DEV_ISOLATED=true`, the proxy runs with an in-process Telnet ech
 1. Start the proxy in dev-isolated mode: `./gradlew :tcp-proxy-service:bootRunDevIsolated`. This sets `spring.profiles.active=dev` and `TCP_PROXY_DEV_ISOLATED=true`.
 2. The proxy no longer opens a WebSocket connection to the gateway. It echoes subsequent commands directly back over the Telnet session while still allowing advanced clients to send an optional `SESSION <sessionId> <tenantId>` envelope if they want to exercise the attach-to-session path.
 3. Connect from a Telnet/MUD client: `telnet localhost 2323`.
-4. Send a few commands (for example `LOGIN demo@example.com swordfish`, `LOOK`, `SAY hello`). Watch the logs and Telnet output to verify that input is sanitized and echoed without requiring Spring Cloud Gateway, Game Session, or any other services.
+4. Send a few commands (for example `LOOK`, `SAY hello`). Watch the Telnet output to verify that input is sanitized and echoed without requiring Spring Cloud Gateway, Game Session, or any other services. Do not use real credentials in this echo mode, and do not log raw input unless it is explicitly enabled and credential-redacted.
 
 Prefer containers? A minimal Docker Compose profile launches just the proxy in dev-isolated mode. Start it with `docker compose -f docker/docker-compose.tcp-proxy-devisolated.yml --profile tcp-proxy-devisolated up` and in another terminal run `telnet localhost 2323`. Stop the stack with `docker compose -f docker/docker-compose.tcp-proxy-devisolated.yml --profile tcp-proxy-devisolated down` when finished.
 
