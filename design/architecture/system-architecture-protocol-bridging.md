@@ -45,6 +45,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Sanitizes incoming data and allows only a safe subset of **Telnet protocol commands** as outlined in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls).
 - Runs alongside Spring Cloud Gateway in the network **DMZ** so no client ever reaches internal services directly. See [Security Architecture](./system-architecture-security.md#🌐-network-security--boundary-design).
 - Supports Telnet-over-TLS when `TCP_PROXY_TLS_ENABLED` is set; certificates are provided via `TCP_PROXY_TLS_CERT` and `TCP_PROXY_TLS_KEY`. The detailed plaintext Telnet security rules (2FA requirements, per-account opt-in, and landing-menu warnings) are defined in the **Telnet Command Handling and Controls** section of [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls); this document summarizes only the high-level flow.
+- Telnet-over-TLS certificates (client ↔ proxy) are independent from the Proxy → Gateway WebSocket mutual TLS certificates (proxy ↔ Spring Cloud Gateway); they may reuse the same files in small deployments, but they are different trust surfaces.
 
 ### Bridging to the backend
 
@@ -60,6 +61,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Disconnect handling is **layered**: the proxy cleans up Telnet sessions, Spring Cloud Gateway automatically recreates WebSocket backends, and the Game Session Service reloads state from Redis-backed session and command queues.
 - The proxy defines a `NotifyDisconnect` gRPC event so the Game Session Service can recover Telnet sessions when Telnet clients drop. This event stream is best-effort and **at-least-once**; Game Session must consume events idempotently keyed by `{proxyConnectionId, disconnectSequence}` and may treat missing events as normal disconnects detected at other layers.
 - Metrics are exported at `/actuator/prometheus` and tracing data is sent to the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
+- Environment-specific tuning guidance for the TCP Proxy Service (connection caps, envelope budgets, and production hardening) is documented in the TCP Proxy Service design under **Tuning TCP Proxy for Different Environments**.
 
 ### WebSocket Bridge Configuration
 
