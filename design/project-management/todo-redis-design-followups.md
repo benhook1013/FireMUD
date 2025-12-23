@@ -36,7 +36,7 @@ Issue: current Helm template wipes AOF on every install/upgrade and is not role-
 
 ### Make Redis role split explicit in Helm values and templates
 - [x] Add `redisCoord` / `redisCache` blocks in chart values where applicable.
-- [ ] Ensure Kubernetes Redis deployments are explicitly split by role (templates live outside this TODO unless already present).
+- [x] Ensure Kubernetes environments point coordination and cache clients at distinct Redis Services (for example `redis-coord` and `redis-cache`). This repo does not currently deploy Redis clusters via Helm; it assumes those Services exist.
 
 ### Fix / gate the AOF wipe job
 - [x] Gate the AOF wipe job behind an explicit opt-in value (dev/ephemeral only).
