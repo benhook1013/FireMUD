@@ -75,7 +75,7 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
 - Redis stores only **transient gameplay state**.
 - **AOF (Append‑Only File)** is enabled for crash recovery while the cluster is running.
 - Redis is **not restored** from backup during a cold start; it is repopulated from PostgreSQL after recovery.
-  In development a `redis-data` volume can persist the AOF between container restarts. Restore an AOF file with `dev-tools/restores/restore-redis-aof.sh`.
+  In development a `redis-data` volume can persist the AOF between container restarts. Treat AOF restore as a debugging tool: restore into an isolated, throwaway Redis instance for inspection, and only restore into a live dev stack when services and Lua scripts match the AOF’s originating version.
 
 ### Redis AOF Reset on Deployment
 

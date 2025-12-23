@@ -38,7 +38,7 @@ vertical-slice task lists.
 
 - [ ] D1 – In `design/architecture/microservices/tcp-proxy-service/README.md` **Environment Variables** table, group or annotate TLS-related variables by surface:
   - Telnet listener TLS: `TCP_PROXY_TLS_ENABLED`, `TCP_PROXY_TLS_CERT`, `TCP_PROXY_TLS_KEY`.
-  - Proxy → Gateway WebSocket mTLS: `GATEWAY_WS_URL` plus `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`.
+  - Proxy → Gateway WebSocket mTLS: `GATEWAY_WS_URL` plus `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH`.
   - Internal gRPC server mTLS: the same `FIREMUD_GRPC_*` variables where applicable.
 - [ ] D2 – Add a one-sentence clarification in both the TCP Proxy design and `design/architecture/system-architecture-protocol-bridging.md` that **Telnet-over-TLS** certs are independent from the **Proxy → Gateway mTLS** certs; they may reuse the same files, but are conceptually different trust surfaces.
 

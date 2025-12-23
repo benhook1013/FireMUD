@@ -100,7 +100,7 @@ These checks are enforced via the Lua Script Registry descriptors, generated key
 
 #### Session-only scripts
 
-Session scripts operate only on `session:{tenantId}:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
+Session scripts operate only on `session:<tenantId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
 
 - **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `playerId`/`tenantId` or token hash provided in `ARGV`.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).

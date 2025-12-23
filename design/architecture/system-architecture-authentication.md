@@ -14,7 +14,7 @@ Admin and moderator accounts can optionally enable **two-factor authentication**
 
 When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over **plaintext Telnet** are further constrained: only accounts that both (a) have two-factor authentication enabled and (b) explicitly opt in to “allow plaintext Telnet login” may authenticate via the raw TCP port. All other accounts must use the TLS Telnet port or the web client and receive a clear error if they attempt to log in over plaintext Telnet.
 
-Issued JWTs are stored in Redis using keys `session:{tenantId}:<tokenHash>` (hash-tagging on `tenantId` only) where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
+Issued JWTs are stored in Redis using keys `session:<tenantId>:<tokenHash>` where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
@@ -22,8 +22,8 @@ JWT lifetime and the session safety margin are documented in [Environment & Secr
 
 Token validity semantics:
 
-- A JWT must be cryptographically valid (signature and time-based claims such as `exp`), and its `session:{tenantId}:<tokenHash>` entry must be present in Redis.
-- Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:{tenantId}:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:*` force re-authentication.
+- A JWT must be cryptographically valid (signature and time-based claims such as `exp`), and its `session:<tenantId>:<tokenHash>` entry must be present in Redis.
+- Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:<tenantId>:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:*` force re-authentication.
 - During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the allowlist check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side session/token entries to be present.
 
 ---

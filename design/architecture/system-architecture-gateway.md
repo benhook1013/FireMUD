@@ -62,7 +62,12 @@ For any connection that arrives from the public player/admin ingress, Spring Clo
 
 ### TCP Proxy → Gateway Authentication
 
-In the target-state production design, the TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** and Spring Cloud Gateway authenticates the TCP Proxy Service based on the client certificate identity (for example, cert-manager-issued certificates with a known SAN/SPIFFE identity). The gateway only accepts `X-Proxy-*` inputs when this proxy identity check passes.
+In the target-state production design, the TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). Spring Cloud Gateway treats the upstream hop as authenticated as the TCP Proxy Service only when:
+
+- The presented client certificate chains to the cluster trust root (cert-manager under ClusterIssuer `firemud-ca-issuer`), and
+- The certificate contains an expected SAN identity for the TCP Proxy Service (for example a URI SAN such as `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`, or a DNS SAN such as `tcp-proxy-service.<namespace>.svc.cluster.local`).
+
+If either check fails, the gateway rejects the WebSocket handshake and does not promote any `X-Proxy-*` inputs.
 
 Until mTLS is fully deployed for the TCP Proxy → Gateway hop, treat any non-mTLS acceptance of `X-Proxy-*` headers as a **temporary dev-only stopgap**, protected by strict internal-only network exposure and NetworkPolicies. Do not rely on “internal network” alone for player-facing environments.
 
@@ -92,14 +97,14 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 ### Gameplay WebSocket Route
 
 - **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service.
-- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value is set to a `wss://<gateway-host>/ws/game` URL so the proxy–gateway hop is always encrypted, matching the target-state defined in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). Exact `SESSION` envelope semantics and header propagation rules are defined in the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section; this document intentionally summarizes only the routing side.
+- **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value is set to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mTLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). Exact `SESSION` envelope semantics and header propagation rules are defined in the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section; this document intentionally summarizes only the routing side.
 - **Required headers** – Spring Cloud Gateway preserves or sets:
   - `X-Client-IP` with the originating client address. For web clients this is derived from the external load balancer’s forwarded headers. For Telnet clients this is derived by the gateway from `X-Proxy-Client-IP` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - `X-Proxy-Session-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the TCP Proxy → Gateway hop when advanced Telnet clients provide a `SESSION` envelope or when the proxy needs disconnect correlation. The gateway strips these from public ingress and only forwards canonical `X-Session-Id` / `X-Tenant-Id` and `X-Proxy-Connection-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - Standard correlation and trace headers defined in the logging/observability guidelines.
 - **TLS expectations**
   - External clients connect over `wss://` to the public load balancer, which forwards to Spring Cloud Gateway as described in [Security Architecture](./system-architecture-security.md#tls-termination--internal-encryption).
-  - The TCP Proxy Service connects to `/ws/game/**` using `wss://` with mutual TLS in production; plain `ws://` is reserved for local/dev-only flows.
+  - The TCP Proxy Service connects to `/ws/game/**` using `wss://` with mutual TLS to the Gateway’s internal-only WebSocket mTLS listener in production; plain `ws://` is reserved for local/dev-only flows.
 
 ---
 
@@ -170,7 +175,7 @@ Spring Cloud Gateway does not implement tenant-aware routing or isolation logic 
 ## TLS Termination for Gateway
 
 - **Browser / Web clients** – External `https://` / `wss://` connections terminate at the Internet-facing load balancer. The load balancer forwards `http://` / `ws://` traffic to Spring Cloud Gateway pods in the DMZ. The gateway then routes traffic to backend services using in-cluster `http://` and `ws://` targets (typically on port `8080`), while backend services communicate with each other over mTLS-protected gRPC as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway).
-- **Telnet clients** – Telnet or Telnet-over-TLS connections terminate at the TCP Proxy Service. The proxy then connects to the canonical gameplay route `/ws/game/**` on Spring Cloud Gateway over `wss://` using mutual TLS. Spring Cloud Gateway forwards gameplay to the Game Session Service over the same WebSocket route (`/ws/game/**`). Detailed certificate and environment variable mappings are documented in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway) and [Protocol Bridging](./system-architecture-protocol-bridging.md#websocket-bridge-configuration).
+- **Telnet clients** – Telnet (plaintext) or Telnet-over-TLS connections terminate at the TCP Proxy Service. The proxy then connects to the canonical gameplay route `/ws/game/**` on Spring Cloud Gateway by dialing the Gateway’s internal-only WebSocket mTLS listener over `wss://` with mutual TLS. Spring Cloud Gateway forwards gameplay to the Game Session Service over the same WebSocket route (`/ws/game/**`). Detailed certificate and environment variable mappings are documented in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway) and [Protocol Bridging](./system-architecture-protocol-bridging.md#websocket-bridge-configuration).
 
 ## Management Plane Security
 
@@ -213,7 +218,7 @@ The following table summarizes the main network surfaces exposed or used by Spri
 | Surface | Direction | Protocol(s) | Typical Port(s) | Auth / TLS Expectations |
 | --- | --- | --- | --- | --- |
 | Public player/admin ingress → Spring Cloud Gateway | Inbound | `HTTP(S)`, `WS(S)` | Load balancer ports (for example, `80`/`443`) | TLS terminates at the Internet-facing load balancer; gateway receives `http://` / `ws://` as described in [TLS Termination for Gateway](./system-architecture-security.md#tls-termination-for-gateway). |
-| TCP Proxy Service → Spring Cloud Gateway gameplay route | Inbound | `WS(S)` | Load balancer / gateway WebSocket port | Mutual TLS using `FIREMUD_GRPC_*` certificate paths; the host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
+| TCP Proxy Service → Spring Cloud Gateway gameplay route | Inbound (internal only) | `WS(S)` | Gateway internal mTLS port (for example, `8443`) | Mutual TLS is required on the internal-only WebSocket listener; the gateway authenticates the TCP Proxy Service by verifying the client certificate chains to the cluster CA and carries the expected SAN identity before promoting any `X-Proxy-*` inputs. The host in `GATEWAY_WS_URL` must match the gateway certificate’s SANs. |
 | Spring Cloud Gateway → backend services | Outbound | `HTTP`, `WS` | `8080` (typical) | In-cluster hop; protected by NetworkPolicies and namespace boundaries. Backend services handle JWT validation/authorization as applicable; gameplay traffic remains on the `/ws/game/**` WebSocket route to the Game Session Service. |
 | Spring Cloud Gateway management plane (REST/gRPC) | Inbound (internal only) | `HTTP(S)`, gRPC | `8080` (REST), `6565` (gRPC) | Exposed only on internal surfaces (`ClusterIP` / private ingress); management operations require mTLS client certificates and are authorized at the gateway boundary (not delegated to downstream services). |
 

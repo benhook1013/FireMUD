@@ -72,9 +72,10 @@ For local development, use `./gradlew devUp` to start Docker Compose and
      Services reconnect on restart. See
      [Redis Architecture](./system-architecture-redis.md)
      for persistence and recovery details.
-   - For local development, restore an AOF file with
-     `dev-tools/restores/restore-redis-aof.sh <file>` if you need to recover transient
-     state.
+   - For local development, treat AOF restore as a debugging tool, not a normal recovery path:
+     - Prefer restarting the Docker Compose stack and letting Coordination Redis rebuild transient state from PostgreSQL and new activity.
+     - If you need to inspect coordination history, restore the AOF into an **isolated, throwaway Redis instance** (not the live dev coordination container).
+     - Only restore an AOF into your live dev stack when the services and Lua registry match the AOF’s originating version; otherwise use a coordination reset instead of importing old coordination history.
 
    - **Coordination Redis recovery behavior**
      - When Coordination Redis recovers after an outage or severe degradation:
@@ -84,9 +85,9 @@ For local development, use `./gradlew devUp` to start Docker Compose and
          - If `pending` survives for a region, the next executor for that `{tenantId, regionId}` replays the tick as described in the tick system design. If `pending` is missing (for example due to AOF tail loss), the scheduler treats partially executed work as lost and advances to the next `tickId`, relying on monitoring to surface inconsistencies.
        - Leases:
          - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
-       - Sessions:
-        - If `session:{tenantId}:<sessionId>` keys survive, reconnect flows behave normally.
-         - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).
+     - Sessions:
+       - If `session:<tenantId>:<sessionId>` keys survive, reconnect flows behave normally.
+       - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).
 
 ### Redis Session Schema and TTL Cleanup
 
@@ -94,12 +95,12 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
 
 1. **Detect the issue**
    - Watch `session.cas_unsupported_schema_total` and reconnect error rates for non-zero values outside brief rollout windows.
-   - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:{tenantId}:<sessionId>` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
+   - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:<tenantId>:<sessionId>` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
 2. **Align deployments**
    - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis Architecture docs).
 3. **Run the session cleanup Job**
    - Use the session schema/TTL cleanup Job described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis.md#session-schema-cleanup-and-large-keyspaces):
-     - Scope the Job to one tenant at a time by prefix (for example `session:{tenantId}:*`).
+     - Scope the Job to one tenant at a time by prefix (for example `session:<tenantId>:*`).
      - Configure it to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
 4. **Verify recovery**
    - Monitor `session.cas_unsupported_schema_total`, reconnect error rates, and Redis key counts for the affected tenant(s) to confirm the issue has cleared.

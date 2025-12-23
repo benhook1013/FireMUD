@@ -68,6 +68,8 @@ The TCP Proxy Service acts as the bridge and speaks directly to Spring Cloud Gat
 [Gateway Architecture](./system-architecture-gateway.md) document (`Path=/api/session/**,/ws/game/**`). This keeps the Telnet flow and the web client flow aligned:
 they both traverse the same filters, metrics, and downstream `game-session-service` backend.
 
+In production, set `GATEWAY_WS_URL` to the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mutual TLS and the gateway can authenticate the TCP Proxy identity before promoting any `X-Proxy-*` inputs.
+
 Override `GATEWAY_WS_URL` only when the Spring Cloud Gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
 whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point. When using `wss://`, the host portion of
 `GATEWAY_WS_URL` must match a name present in the Gateway certificate’s SANs; pointing it at a bare IP or an unrelated hostname causes TLS validation to fail on the TCP
