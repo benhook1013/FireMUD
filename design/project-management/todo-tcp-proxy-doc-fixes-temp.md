@@ -13,14 +13,14 @@ This file tracks the agreed documentation fixes from an AI-assisted review. It i
 
 ## Doc Tasks (To Apply)
 
-- [ ] Update `design/architecture/system-architecture-mud-client-protocol.md` to align MCP termination with “TCP Proxy forwards; backend interprets”, removing statements that the TCP Proxy maps MCP to game operations.
-- [ ] Update `design/architecture/microservices/tcp-proxy-service/README.md` to:
+- [x] Update `design/architecture/system-architecture-mud-client-protocol.md` to align MCP termination with “TCP Proxy forwards; backend interprets”, removing statements that the TCP Proxy maps MCP to game operations.
+- [x] Update `design/architecture/microservices/tcp-proxy-service/README.md` to:
   - Specify fail-fast behavior when the gateway WebSocket bridge is unavailable.
   - Replace “truncate” semantics for `TCP_PROXY_MAX_LINE_BYTES` with reject+notify semantics.
   - Define `SESSION` token formats as UUID/UUID.
   - Remove/adjust local echo guidance that logs raw input and includes password examples.
-- [ ] Update `design/architecture/system-architecture-reconnection.md` to match fail-fast semantics for prolonged proxy↔gateway WebSocket outages (brief pause is fine; sustained outage closes Telnet sockets).
-- [ ] Update `design/architecture/infrastructure/deployment-environments.md` to explicitly recommend PROXY protocol only on a dedicated internal-only listener/port behind HAProxy (separate Service + NetworkPolicy).
+- [x] Update `design/architecture/system-architecture-reconnection.md` to match fail-fast semantics for prolonged proxy↔gateway WebSocket outages (brief pause is fine; sustained outage closes Telnet sockets).
+- [x] Update `design/architecture/infrastructure/deployment-environments.md` to explicitly recommend PROXY protocol only on a dedicated internal-only listener/port behind HAProxy (separate Service + NetworkPolicy).
 
 ## Open Decision
 

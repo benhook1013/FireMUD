@@ -92,3 +92,9 @@ vertical-slice task lists.
 ## L. Header Trust Model (Gateway Canonicalization)
 
 - [x] L1 – Add a dedicated “Header Trust Model” section to `design/architecture/system-architecture-gateway.md` defining `X-Proxy-*` inputs, strip/drop rules, and gateway output rules; align TCP Proxy, Protocol Bridging, and related docs to use `X-Proxy-Client-IP` / `X-Proxy-Session-Id` / `X-Proxy-Tenant-Id` / `X-Proxy-Connection-Id` as inputs rather than trusting `X-Client-IP` or `X-Session-Id` from upstream
+
+## M. Gateway Handshake Failure Reason Enum
+
+- [ ] M1 – Decide how to standardize `tcpproxy.gateway.handshake.failures{reason="..."}`:
+  - Prefer a small bounded enum for `reason` (no exception messages/classes).
+  - Reuse an existing `firemud-common` error/code enum only if it cleanly fits TLS/WebSocket handshake failures; otherwise define a proxy-local enum and document the mapping rules.
