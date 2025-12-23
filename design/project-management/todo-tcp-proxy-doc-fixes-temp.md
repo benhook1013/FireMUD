@@ -24,6 +24,6 @@ This file tracks the agreed documentation fixes from an AI-assisted review. It i
 
 ## Open Decision
 
-- [ ] Decide how to standardize `tcpproxy.gateway.handshake.failures{reason="..."}`:
+- [x] Decide how to standardize `tcpproxy.gateway.handshake.failures{reason="..."}`:
   - Define a small bounded enum for `reason` (possibly shared from `firemud-common` if an appropriate enum exists).
   - Document the allowed values and the mapping rules from low-level failures to those values.

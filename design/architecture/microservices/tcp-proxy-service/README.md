@@ -407,7 +407,17 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.connections.limit.exceeded` for rejected connections when global/per-IP caps are reached.
 - `tcpproxy.connection.events{type="connect"|"disconnect"}` and `tcpproxy.connection.duration` for connection lifecycle and lifetime tracking.
 - `tcpproxy.command`, `tcpproxy.heartbeat`, `tcpproxy.idleClose`, and `tcpproxy.websocket.reconnect.delay` timers, plus `tcpproxy.websocket.reconnects` counters, for Telnet → Gateway bridge behaviour.
-- `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}` for TLS and mTLS failures.
+- `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}` for TLS and mTLS failures. The `reason` label is a small, bounded enum:
+  - `bad_url` – invalid `GATEWAY_WS_URL` configuration.
+  - `dns` – host resolution failure.
+  - `connect_refused` – target actively refused the TCP connection.
+  - `timeout` – connect or handshake timed out.
+  - `cert_validation` – server certificate validation or hostname verification failure.
+  - `client_cert_missing` – server requested client auth but no client certificate was configured.
+  - `client_cert_invalid` – client certificate present but rejected/invalid.
+  - `handshake_protocol` – TLS/WebSocket handshake protocol error (for example unsupported versions/ciphers or HTTP upgrade rejection).
+  - `unexpected_close` – connection closed during handshake/reconnect.
+  - `unknown` – fallback bucket for unexpected failures.
 - `tcpproxy.telnet.discarded` and related `tcpproxy.disconnect.notify.failure` counters for abuse and error visibility.
 
 In Prometheus these Micrometer meters appear with the expected naming

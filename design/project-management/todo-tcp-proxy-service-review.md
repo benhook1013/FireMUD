@@ -98,3 +98,4 @@ vertical-slice task lists.
 - [ ] M1 – Decide how to standardize `tcpproxy.gateway.handshake.failures{reason="..."}`:
   - Prefer a small bounded enum for `reason` (no exception messages/classes).
   - Reuse an existing `firemud-common` error/code enum only if it cleanly fits TLS/WebSocket handshake failures; otherwise define a proxy-local enum and document the mapping rules.
+- [ ] M2 – Document the chosen bounded enum values (target ~10) and the mapping guidelines in the TCP Proxy design’s **Metrics Summary** section.

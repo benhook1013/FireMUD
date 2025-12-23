@@ -5,17 +5,19 @@ These steps exercise the same `LOGIN` + `LOOK` flow that users take over both We
 ## Requirements
 
 1. Account Service stub or real credential provider must be running (`grpcurl` prefix `account-service:6565` by default).
-2. Game Session Service and Spring Cloud Gateway must be running with the same tenant (`tenantId=1`), or use `GATEWAY_WS_URL` / `ACCOUNT_SERVICE_ENDPOINT` overrides to target your locally running instances.
+2. Game Session Service and Spring Cloud Gateway must be running with the same tenant, or use `GATEWAY_WS_URL` / `ACCOUNT_SERVICE_ENDPOINT` overrides to target your locally running instances. Use the tenant and session identifiers for your environment (in the target-state design these are UUIDs).
 
 ## 1. Direct WebSocket Smoke Flow
 
 Use `websocat` (or your favorite WebSocket client) to connect directly to Game Session:
 
 ```bash
-websocat -H "X-Session-Id: 1" -H "X-Tenant-Id: 1" ws://localhost:8080/ws/game
+websocat -H "X-Session-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8080/ws/game
 LOGIN demo@example.com swordfish
 LOOK
 ```
+
+Replace the `X-Session-Id` and `X-Tenant-Id` header values with the session and tenant identifiers for your environment.
 
 Expected output (two newline-separated responses):
 
@@ -65,10 +67,12 @@ Open a Telnet session directly against the TCP Proxy (default port `2323`):
 
 ```bash
 telnet localhost 2323
-SESSION 1 1
+SESSION 00000000-0000-0000-0000-000000000001 00000000-0000-0000-0000-000000000001
 LOGIN demo@example.com swordfish
 LOOK
 ```
+
+Replace the `SESSION` envelope identifiers with a real `{sessionId, tenantId}` pair for your environment.
 
 Telnet should display the redacted login acknowledgement followed by the same `LOOK` payload:
 
