@@ -38,3 +38,5 @@ redisCoord:
   # When true, a Helm hook Job wipes the Coordination Redis data directory on
   # each install/upgrade. This is intended only for dev/ephemeral environments.
   resetAofOnInstallUpgrade: false
+redisCache:
+  releaseName: redis-cache

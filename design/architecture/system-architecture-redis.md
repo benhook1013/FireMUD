@@ -940,9 +940,9 @@ From the coordination layer’s perspective, **lease and lock tokens are meaning
 
 For self-hosted deployments, FireMUD keeps lease and lock TTLs intentionally simple:
 
-- The **only** timing setting you normally configure is a region’s tick interval (`game.tick-interval-ms`).
-- The Game Session Service derives internal values from that single knob using fixed multipliers:
-  - `tick_budget_ms = tick_interval_ms * 0.8` (soft execution budget, not exposed as config).
+- The primary timing setting is a region’s tick interval (`tick_interval_ms`, exposed as `game.tick-interval-ms`).
+- The tick engine also uses a separate **tick budget** (`tick_budget_ms`): how long a tick is allowed to hold locks and perform work. By default, `tick_budget_ms` is derived from `tick_interval_ms` (for example `tick_budget_ms = tick_interval_ms * 0.8`), but it may be configured independently to support slower tick cadence without proportionally longer lock TTLs.
+- The Game Session Service derives internal values from `tick_budget_ms` using fixed multipliers:
   - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)` – entity lock TTL.
   - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)` – region lease TTL for `tick-executor-lease:{tenantRegionTag}`.
 
@@ -950,9 +950,13 @@ This keeps the relationship simple and predictable:
 
 - Locks live significantly longer than a normal tick’s work, so transient pauses rarely cause expiries.
 - Leases outlive locks by a fixed factor, so region leadership remains stable unless the executor truly disappears or stalls for an extended period.
-- All three values scale together when you change `tick-interval-ms`; there is no need to tune separate TTL properties per environment.
+- There is no need to tune separate TTL properties per environment unless you intentionally separate cadence from tick budget.
 
-To avoid repeated mid-tick lease or lock expiration caused by aggressive `tick_interval_ms` values, production and staging profiles enforce a *validation envelope*: `lease_ttl_ms` must be at least **2×** `tick_interval_ms` (after applying the clamp), and `lock_ttl_ms` must be no less than **1.5×** `tick_interval_ms`. Startup checks in those profiles (and CI validation suites) compute the derived TTLs, compare them to the exposed interval, and refuse to start if the ratios fall below the expected thresholds. This forces operators to either increase `tick_interval_ms` or adjust regional budget caps rather than accidentally creating a configuration where locks expire mid-work.
+To avoid repeated mid-tick lease or lock expiration caused by misconfigured timing, production and staging profiles enforce a *validation envelope*:
+
+- `tick_budget_ms` must be **≤ 0.8×** `tick_interval_ms` (so the scheduler does not attempt to run more work than fits inside the cadence).
+- With the default clamps, `tick_budget_ms` must remain within a practical upper bound (for example, **≤ 625ms**) so `lock_ttl_ms` can still be derived as a meaningful multiple of the budget rather than being dominated by the max clamp.
+- Startup checks (and CI validation suites) compute the derived TTLs and refuse to start when `tick_budget_ms`, `lock_ttl_ms`, and `lease_ttl_ms` fall outside these envelopes. This forces operators to either reduce the tick budget or adjust the TTL caps intentionally rather than operating in a mode where locks expire mid-work.
 
 Under rare, worst-case pauses:
 
@@ -1435,14 +1439,14 @@ Tick-related scripts must be idempotent: **re-running the same script with the s
 
 #### Lock TTL Formula and Guardrails
 
-Tick locks use a TTL derived from the **tick interval** to balance safety and recovery:
+Tick locks use a TTL derived from the **tick budget** to balance safety and recovery:
 
 - The Game Session Service exposes `game.tick-interval-ms` as the primary knob that controls pacing.
+- The tick engine also uses `tick_budget_ms` (soft execution budget). By default it is derived from `tick_interval_ms` (for example `tick_budget_ms = tick_interval_ms * 0.8`), but it may be configured independently in deployments that want slower cadence without longer lock TTLs.
 - Internally it computes:
-  - `tick_budget_ms = tick_interval_ms * 0.8`
   - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
   - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)`
-- These values are not meant to be tuned independently in typical deployments; changing `tick-interval-ms` is usually sufficient. Deployments may additionally enable a **simple auto-tuning loop** in the Game Session Service to account for JVM pauses and workload differences:
+- These values are not meant to be tuned independently in typical deployments; changing `tick-interval-ms` (and letting the default budget follow it) is usually sufficient. Deployments may additionally enable a **simple auto-tuning loop** in the Game Session Service to account for JVM pauses and workload differences:
   - The service tracks the ratio of `tick.execution_time_ms` to `lock_ttl_ms` per region (for example via `gamesession.tick.lock_ttl_ratio` metrics).
   - When a region repeatedly approaches the TTL (for example many ticks with `lock_ttl_ratio >= 0.8`) but does not routinely exceed it, the service may increase a single global “TTL safety multiplier” within a capped range (for example from 8× up to at most 12×) and recompute `lock_ttl_ms`/`lease_ttl_ms` accordingly.
   - When ticks are consistently far below the TTL (for example `lock_ttl_ratio <= 0.25` over a long window), the service may decrease that multiplier (down to a documented minimum) to surface liveness issues sooner without introducing extra configuration.

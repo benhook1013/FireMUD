@@ -195,8 +195,8 @@ The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see 
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `GAME_TICK_DURATION_MS` | Length of a single game tick in milliseconds | `1000` |
-| `GAME_TICK_BUDGET_MS` | Soft execution budget for a tick in milliseconds | `100` |
+| `GAME_TICK_DURATION_MS` | Tick cadence (`tick_interval_ms`): target interval between ticks for a region | `1000` |
+| `GAME_TICK_BUDGET_MS` | Tick work budget (`tick_budget_ms`): soft max work/lock-hold time per tick; must be ≤ ~0.8× `GAME_TICK_DURATION_MS` | Derived (for example `0.8 × GAME_TICK_DURATION_MS`, capped) |
 | `GAME_SOLO_TICK_BUDGET_MS` | Execution budget for isolated solo ticks | `500` |
 | `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (host:port) for the Game Logic Service | *(none)* |

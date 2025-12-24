@@ -185,15 +185,16 @@ To prevent concurrent entity updates, ticks acquire **distributed locks** in Red
 - `tick:{tenantRegionTag}:lock:<entityId>` (see [Redis Key Reference](./system-architecture-redis.md#key-naming-and-shard-discipline))
 - **Lua-based lock/lease scripts** registered in the shared Lua Script Registry for acquisition, verification, and release. Tick and lease keys are **never** created or modified via ad-hoc `SET NX PX` calls; all coordination flows use the registry-backed Lua helpers so lock tokens and lease epochs are consistently enforced.
 
-In practice, the system keeps this simple by exposing a **single primary knob**—the region tick interval—and deriving lock/lease TTLs from that:
+In practice, the system keeps this simple by exposing a **single primary knob**—the region tick interval—and (by default) deriving a soft execution budget and lock/lease TTLs from that. Deployments that want slower tick cadence without proportionally longer lock TTLs may override the budget explicitly; cadence and “how long a tick may hold locks” are separate concerns.
 
 - `tick_interval_ms` is the configured target interval between ticks for a region.
-- Internally, the Game Session Service computes a soft execution budget (for example `tick_budget_ms = tick_interval_ms * 0.8`) and then derives TTLs using fixed multipliers:
+- `tick_budget_ms` is the soft execution budget for a tick (how long the tick engine is allowed to hold locks and perform work). By default it is derived from `tick_interval_ms` (for example `tick_budget_ms = tick_interval_ms * 0.8`) but it may be configured independently.
+- Internally, the Game Session Service derives TTLs from `tick_budget_ms` using fixed multipliers:
   - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
   - `lease_ttl_ms = clamp(tick_budget_ms * 16, 2_000, 15_000)`
 - These multipliers are **hard-coded defaults** chosen to give generous headroom for GC pauses and hiccups without requiring per‑environment tuning. Deployment profiles that need different behavior can adjust `tick-interval-ms` and, optionally, the TTL safety multiplier described in the Redis architecture.
 
-This keeps configuration light—typically you only adjust `tick_interval_ms`—while still ensuring locks live long enough for normal work to finish and stale locks are cleared after a bounded window.
+This keeps configuration light—typically you only adjust `tick_interval_ms`—while still allowing advanced deployments to keep a larger tick cadence without inflating lock TTLs.
 
 Region health transitions (`HEALTHY` → `DEGRADED` → `HALTED`) and the thresholds that drive them are defined in [Redis Availability, Consistency, and Safety Guarantees](./system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees) and the Redis observability contract. This section focuses on how TTLs interact with that shared health model.
 
@@ -478,7 +479,7 @@ If FireMUD later introduces limited intra-region parallelism (for example, shard
 
 ## Timeout and Fairness Policy
 
-Each tick enforces a **soft execution budget** (for example `tick_budget_ms = tick_interval_ms * 0.8`):
+Each tick enforces a **soft execution budget** (`tick_budget_ms`):
 
 - Slow actions are **deferred** to retry in exclusive follow-up ticks
 - These retries are **not executed in parallel**
@@ -499,12 +500,12 @@ The Game Session Service continuously **compares observed tick runtime to the co
   - `tick.execution_time_ms_p99 / lock_ttl_ms`
 - These ratios drive a simple, environment-agnostic health model:
   - **Healthy:** `p99 < 0.5 × lock_ttl_ms` – tick work comfortably fits within the lock budget.
-  - **Degraded:** `0.5× ≤ p99 < 0.75× lock_ttl_ms` – region is flagged as degraded; dashboards and logs recommend either increasing `game.tick-interval-ms` or simplifying work for that region.
+- **Degraded:** `0.5× ≤ p99 < 0.75× lock_ttl_ms` – region is flagged as degraded; dashboards and logs recommend either increasing the tick budget (and, if needed, the tick interval) or simplifying work for that region.
   - **Unsafe:** `p99 ≥ 0.75 × lock_ttl_ms` over a sustained window – the scheduler treats this as a **configuration/architecture error** for that region:
     - New ticks may be slowed or temporarily halted for the affected `<tenantId, regionId>` until the operator adjusts configuration (for example, larger tick interval) or reduces per-tick work.
     - Logs include explicit guidance that normal tick work must complete well within `lock_ttl_ms` and that repeated over-budget ticks will cause retries and degraded throughput.
 
-These checks complement the static TTL guardrails described in the Redis design (for example, `lock_ttl_ms >= 1.5× tick_interval_ms` and `lease_ttl_ms >= 2× tick_interval_ms`). Together they ensure that:
+These checks complement the static TTL guardrails described in the Redis design (for example, `tick_budget_ms <= 0.8× tick_interval_ms`, `lock_ttl_ms` comfortably exceeds `tick_budget_ms`, and `lease_ttl_ms` comfortably exceeds `lock_ttl_ms`). Together they ensure that:
 
 - Misconfigured environments are caught at startup, and
 - Environments that drift over time (for example, as more cross-service work is added to a tick) surface as **runtime warnings or errors** rather than silently operating with constant lock expiries and retries.

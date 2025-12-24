@@ -155,7 +155,7 @@ Redis always uses AOF for crash recovery during runtime but is **never** restore
 For **diagnostic purposes**, operators may take ad hoc copies of Coordination Redis AOF files or RDB exports and load them into **isolated, throwaway Redis instances** to inspect keys and coordination history during incident analysis. These diagnostic snapshots are strictly read-only tools:
 
 - They must **not** be restored into live Coordination Redis clusters or used to overwrite existing AOF/volumes.
-- They are never treated as rollback images for gameplay; recovery for player-visible environments always follows the pattern above (restore PostgreSQL, let Coordination Redis repopulate, and, when needed, apply the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model)). Severe logical bugs that corrupt coordination state are remediated via scoped coordination resets, not by rolling Redis back to older snapshots.
+- They are never treated as rollback images for gameplay; recovery for player-visible environments always follows the pattern above (restore PostgreSQL, restart services so Redis recovers via AOF or starts empty, and, when needed, apply the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model)). Severe logical bugs that corrupt coordination state are remediated via scoped coordination resets, not by rolling Redis back to older snapshots.
 
 ## Related Documentation
 
