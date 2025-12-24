@@ -39,6 +39,18 @@ This document outlines FireMUD’s usage of Redis as a **transient, high-perform
   - [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)
   - The key format cheat sheet in [Key Format Examples](#key-format-examples)
 
+### Operational Surface: Defaults vs Advanced Controls
+
+FireMUD’s Redis design follows the project-wide “minimal knobs unless justified” principle described in `design/project-management/ai-rules-local.md`. To keep this document aligned with that constraint:
+
+- Sections and tables highlight a **small set of default operator knobs** that most deployments are expected to adjust (for example, Redis role endpoints, tick interval, and AOF/memory profile choice).
+- Other settings, runbooks, and tuning options are treated as **advanced controls**: they exist for exceptional cases and are normally left at their documented defaults.
+- New Redis features, prefixes, or workflows must prefer:
+  - Extending existing roles, scripts, and tooling over adding new operator-visible configuration, and
+  - Automation or derived behavior over additional manual runbook steps.
+
+When in doubt during design or review, prefer folding new behavior into the existing default knobs and flows rather than introducing a fresh operator-facing switch.
+
 ### Redis Change Checklist
 
 Before making any change that touches Redis (keys, roles, scripts, or tooling), designers and reviewers should walk through this checklist:

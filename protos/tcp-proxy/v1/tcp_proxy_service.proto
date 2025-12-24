@@ -7,9 +7,14 @@ option java_multiple_files = true;
 
 import "shared/v1/errors.proto";
 
-// TcpProxyService exposes internal-only gRPC endpoints for health checks and
-// Telnet lifecycle events. These RPCs are not exposed through Spring Cloud
-// Gateway and are intended for use by other backend services and tooling.
+// TcpProxyService defines internal-only gRPC endpoints used by the TCP Proxy and Game Session services.
+//
+// Directionality:
+// - Ping is implemented by the TCP Proxy Service for operator tooling and tests.
+// - NotifyDisconnect is implemented by the Game Session Service as an event sink that the TCP Proxy calls
+//   when Telnet connections close.
+//
+// These RPCs are not exposed through Spring Cloud Gateway and are intended for use by backend services and tooling only.
 service TcpProxyService {
   // Simple connectivity check used by operators and tests.
   rpc Ping(PingRequest) returns (PingResponse);
@@ -17,7 +22,7 @@ service TcpProxyService {
   // Emits a best-effort, at-least-once lifecycle event whenever a Telnet
   // connection closes.
   //
-  // Semantics:
+  // Semantics and failure expectations:
   // - Events may be delivered more than once; the Game Session Service must treat them as idempotent.
   // - The primary idempotency key is {proxy_connection_id, disconnect_sequence}.
   // - session_id and tenant_id may be omitted when a client does not provide a SESSION envelope.
@@ -25,6 +30,10 @@ service TcpProxyService {
   //   disconnects. Command queues remain owned by Game Session and Redis.
   // - Transport-level failures surface as standard gRPC statuses; logical
   //   failures are reported via the ErrorDetail in NotifyDisconnectResponse.
+  // - Lost or delayed events must not cause stuck or "ghost" sessions: Game Session is responsible for
+  //   independently detecting liveness via its own mechanisms (for example, WebSocket/TCP close and Redis
+  //   timeouts). In the worst case, losing a NotifyDisconnect should only slow down cleanup, not leave
+  //   players incorrectly logged in or unable to resume.
   rpc NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse);
 }
 

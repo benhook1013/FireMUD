@@ -11,7 +11,7 @@
 - [ ] Wire mutual TLS for Proxy → Gateway WebSocket traffic (update the TCP Proxy Service WebSocket client to use `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, and `FIREMUD_GATEWAY_WS_CA_CERT_PATH` so it matches the target-state design described in `design/architecture/microservices/tcp-proxy-service/README.md` and `design/architecture/system-architecture-overview.md`. This task is complete when the Proxy → Gateway hop uses `wss://` with client certificates in all target environments, TLS failures are surfaced via `tcpproxy.gateway.handshake.failures{reason=...}`, and the architecture docs no longer need “target-state” qualifiers for this link.)
 - [ ] Handle Telnet option negotiation and character encoding quirks
 - [ ] Negotiate the Mud Client Protocol (MCP) when supported
-- [ ] Add a developer-local WebSocket echo target and console logging path so Telnet/MUD clients can validate stubbed traffic without a full gateway stack
+- [x] Add a developer-local WebSocket echo target and console logging path so Telnet/MUD clients can validate stubbed traffic without a full gateway stack (implemented via the `/dev/echo` WebSocket handler, `TCP_PROXY_DEV_ISOLATED` mode, and the local flows documented in `services/tcp-proxy-service/README.md` and the TCP Proxy design’s **Local development and echo loop** section)
 - [x] Document the lightweight cross-service harness (`TelnetGatewayGameSessionCrossServiceIntegrationTest` + `stub/GatewayStubApplication`) so developers can quickly spin up the Telnet → Gateway → Game Session flow without the full gateway stack.
 
 ## Connection Management

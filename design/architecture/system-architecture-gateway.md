@@ -62,7 +62,7 @@ For any connection that arrives from the public player/admin ingress, Spring Clo
 
 ### TCP Proxy → Gateway Authentication
 
-In the target-state production design, the TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). Spring Cloud Gateway treats the upstream hop as authenticated as the TCP Proxy Service only when:
+The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). Spring Cloud Gateway treats the upstream hop as authenticated as the TCP Proxy Service only when:
 
 - The presented client certificate chains to the cluster trust root (cert-manager under ClusterIssuer `firemud-ca-issuer`), and
 - The certificate contains an expected SAN identity for the TCP Proxy Service (for example a URI SAN such as `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`, or a DNS SAN such as `tcp-proxy-service.<namespace>.svc.cluster.local`).

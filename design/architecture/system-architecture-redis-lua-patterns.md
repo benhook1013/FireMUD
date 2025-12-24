@@ -7,6 +7,13 @@ re-invocation behavior for tick-related scripts.
 > 🔗 The high-level Redis coordination model, key naming, and failure modes are
 > described in [System Architecture: Redis](./system-architecture-redis.md).
 
+**Default author/reviewer expectations in this doc**
+
+- New or changed scripts must fit one of the existing **script categories** and satisfy the idempotency, determinism, and `schemaVersion` rules described here.
+- Compatibility decisions (`compatible` vs `breaking_requires_reset`) and rollout plans are made via the **Lua Script Registry**, not by introducing per-script operational knobs.
+
+Any proposal that relies on special per-script runtime flags or bespoke operational handling should be treated as **advanced** and pushed back toward these shared patterns and the central registry.
+
 ## Idempotent Script Patterns and Examples
 
 Tick-related scripts must be idempotent: **re-running the same script with the same `KEYS` and `ARGV` must not apply new logical effects**. To make this concrete, scripts follow a small set of patterns:

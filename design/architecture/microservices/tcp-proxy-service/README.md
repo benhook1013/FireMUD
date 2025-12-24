@@ -4,7 +4,7 @@
 
 Bridges legacy Telnet clients into the platform by converting raw TCP traffic into WebSocket connections for the Spring Cloud Gateway.
 The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
-This service also exposes an **internal-only gRPC API** (for `Ping` and `NotifyDisconnect`) used by other services and tooling; it is never published through Spring Cloud Gateway.
+This service exposes an **internal-only gRPC health check** (`Ping`) for operators and tooling, and it uses an **internal-only gRPC client** to call the Game Session Service’s `NotifyDisconnect` event sink when Telnet connections close; neither surface is ever published through Spring Cloud Gateway.
 
 > **Canonical specs:** This document is the authoritative reference for:
 > - `SESSION` + `LOGIN` semantics and header propagation (see **Telnet Session Envelope & Event Metrics**).
@@ -14,9 +14,10 @@ This service also exposes an **internal-only gRPC API** (for `Ping` and `NotifyD
 
 ## Implementation Status
 
-This document describes the target-state behaviour of the TCP Proxy Service.
+This document describes the behaviour of the TCP Proxy Service in its target architecture.
 Where implementation is still catching up, treat the design below as the source
-of truth and reconcile code/tests accordingly.
+of truth and reconcile code/tests accordingly; any known gaps are called out in
+the **Implementation Status** section below.
 
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
@@ -46,7 +47,9 @@ of truth and reconcile code/tests accordingly.
   on the configured TCP port for classic clients (for example the Windows
   `telnet` command). Forwarding to the gateway uses WebSocket connections and
   supports mutual TLS. See [Security Architecture](../../system-architecture-security.md).
-- Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC link to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events. This gRPC surface is **internal-only** and is secured using the same `FIREMUD_GRPC_*` certificate paths as other services. Telnet‑side TLS (if enabled) is configured via `TCP_PROXY_TLS_*` and is independent from the Proxy → Gateway WebSocket mTLS settings, which use the separate `FIREMUD_GATEWAY_WS_*` certificate paths.
+- Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC client call to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events. This event surface is **internal-only** and is secured using the same `FIREMUD_GRPC_*` certificate paths as other services. Telnet‑side TLS (if enabled) is configured via `TCP_PROXY_TLS_*` and is independent from the Proxy → Gateway WebSocket mTLS settings, which use the separate `FIREMUD_GATEWAY_WS_*` certificate paths.
+
+> **Legacy Telnet requirement:** Support for plaintext/raw Telnet in production is an intentional, non-removable requirement so that classic MUD clients which cannot speak TLS can connect. Security hardening for this legacy channel lives in the [Telnet Command Handling and Controls](../../system-architecture-security.md#telnet-command-handling-and-controls) section of the Security Architecture (2FA requirements, per-account opt‑in, warnings, rate limits, DMZ boundary, etc.). Architecture and security reviews must treat raw Telnet as an accepted, documented trade-off rather than a defect to remove; concerns should focus on whether the documented mitigations are correctly implemented and configured.
 - Sanitizes incoming Telnet data and enforces a whitelist of
   **Telnet protocol commands** as described in the
   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
@@ -57,7 +60,8 @@ of truth and reconcile code/tests accordingly.
 
 ### Redis Role and Prefixes
 
-- The TCP Proxy Service does **not** access Redis directly. It treats all Redis-backed session and coordination state as an implementation detail of the Game Session Service and only participates via WebSocket forwarding to Spring Cloud Gateway and the internal `NotifyDisconnect` gRPC surface.
+- The TCP Proxy Service does **not** access Coordination Redis and never depends on Redis for correctness or session recovery.
+- The proxy may use Cache/Rate-Limit Redis for **optional, non-authoritative caches** (for example, a short-lived Telnet `LOOK` cache to reduce perceived latency immediately after login). When enabled, this must use the Cache/Rate-Limit Redis deployment (not Coordination Redis) and must degrade safely when Redis is unavailable.
 
 ### Reconnection Behaviour at the Proxy Layer
 
@@ -227,6 +231,12 @@ source of truth:
   Gateway and Game Session layers; recovery logic must not rely on this signal
   as a single source of truth.
 - Duplicate events for the same `{proxyConnectionId, disconnectSequence}` (or older `disconnectSequence` values for a given `proxyConnectionId`) are handled without side effects so the stream can be retried safely.
+
+**Failure modes and expectations**
+
+- Loss or delay of `NotifyDisconnect` events must never leave players “stuck logged in” or unable to resume; Game Session is responsible for independently detecting liveness via WebSocket/TCP close and Redis-backed timeouts.
+- Retries and at-least-once delivery should only increase duplication of advisory events, not change observable gameplay behaviour; idempotent handling keyed by `{proxyConnectionId, disconnectSequence}` is required.
+- In practice, losing events at this layer should only slow down session cleanup or metrics accuracy slightly, not introduce new correctness states.
 
 Their definitions live in
 [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
@@ -467,7 +477,7 @@ When pointing at a real gateway in non-dev-isolated mode, override `GATEWAY_WS_U
 The proxy uses minimal configuration. It still follows the scheme in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
 so the standard `FIREMUD_POSTGRES_*` and `FIREMUD_REDIS_*` variables may be present
-but are ignored. TLS certificates are supplied via the standard shared paths where applicable:
+but the proxy does not use PostgreSQL. If Redis-backed proxy caches are enabled, configure the proxy to use the Cache/Rate-Limit Redis deployment (see `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` in the environment and secrets docs). TLS certificates are supplied via the standard shared paths where applicable:
 
 - The proxy’s **internal gRPC server mTLS** uses [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
 - The **Proxy → Gateway WebSocket mTLS** hop uses `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, and `FIREMUD_GATEWAY_WS_CA_CERT_PATH` so operators can provision and rotate this identity independently from gRPC.
@@ -485,7 +495,7 @@ Additional variables control the proxy runtime behaviour. TLS‑related settings
   - `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` – client private key path used by the WebSocket client in target‑state mTLS configurations.
   - `FIREMUD_GATEWAY_WS_CA_CERT_PATH` – CA bundle path for verifying the gateway certificate.
 - **Internal gRPC server mTLS (other services ↔ proxy gRPC)**:
-  - The same `FIREMUD_GRPC_*` variables are reused by the proxy’s gRPC server for mutual TLS on `TcpProxyService` RPCs.
+  - The same `FIREMUD_GRPC_*` variables are reused by the proxy’s gRPC server for mutual TLS on internal-only diagnostics RPCs such as `Ping`.
 
 The full variable list is:
 
@@ -538,7 +548,7 @@ The gRPC server listens on port `6565` by default as configured in `src/main/res
 
 ### WebSocket mTLS to Spring Cloud Gateway *(Target-state; see Implementation Status)*
 
-In the target-state production configuration, the TCP Proxy Service connects to Spring Cloud Gateway over
+In production, the TCP Proxy Service connects to Spring Cloud Gateway over
 `wss://` using mutual TLS by dialing a dedicated internal-only Gateway WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`):
 
 - Client certificate and key are loaded from `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` and `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`.
@@ -643,7 +653,7 @@ curl http://localhost:8080/ping
 #### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check.
-- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – informs the Game Session Service a Telnet client disconnected.
+- `NotifyDisconnect(NotifyDisconnectRequest) returns (NotifyDisconnectResponse)` – implemented by the Game Session Service as an internal-only event sink that the TCP Proxy Service calls when a Telnet client disconnects; it is not exposed as a TCP Proxy inbound RPC.
 
 All RPC definitions live in [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 

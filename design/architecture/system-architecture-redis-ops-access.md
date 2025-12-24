@@ -2,6 +2,13 @@
 
 This document expands on the access control and operational guardrails described in `system-architecture-redis.md`. It focuses on how human operators and maintenance tooling are allowed to interact with **coordination prefixes** and how those tools participate in the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model).
 
+**Default operator surface in this doc**
+
+- Using the **read-only ops user** for inspection and the **application user** (via supported tooling) for any coordination writes.
+- Running coordination maintenance exclusively through the **versioned maintenance CLI** and its documented commands.
+
+Defining additional Redis users, ACL variations, or ad-hoc tools is considered **advanced** and should be avoided unless existing roles and tooling are clearly insufficient for a documented operational requirement.
+
 ## Coordination Redis Access Rules
 
 - Coordination Redis is treated as an **application-only write surface**:

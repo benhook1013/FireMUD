@@ -11,6 +11,13 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
 > [System Architecture: Redis](./system-architecture-redis.md). This document
 > focuses on cache/rate-limit usage and separation from Coordination Redis.
 
+**Default operator knobs in this doc**
+
+- Which aggregates are cached at all, and whether they are **versioned** or **TTL-only** (per-prefix correctness class).
+- Cache TTL ranges and high-level size/pressure budgets on Cache/Rate-Limit Redis (not per-tenant micro-tuning).
+
+All other controls (for example, per-tenant heuristics, noisy-tenant detection strategies, or advanced bucketing schemes) are **advanced** and should normally stay at their documented defaults unless a concrete production need is demonstrated.
+
 ## Core Principles
 
 - Database and domain services remain authoritative. PostgreSQL and the owning microservices define the source of truth for entities, rooms, inventories, and configuration; Redis is a helper, not a primary store.

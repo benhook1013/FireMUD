@@ -4,6 +4,13 @@ This document captures **operational runbooks and migration procedures** for Coo
 
 The invariants and contracts in `system-architecture-redis.md` remain authoritative. This file focuses on **“when X happens, do 1–2–3”** guidance.
 
+**Default operator flows in this doc**
+
+- Selecting an appropriate **AOF profile** (`dev_local`, `hobby_self_hosted`, or `production_clustered`) and watching the associated size/restart targets.
+- Running the named **coordination reset** and **script upgrade** flows when metrics or the Lua Compatibility Registry indicate they are required.
+
+Other procedures and tuning advice here are **advanced** and should not be expanded into bespoke, one-off sequences; new remediation paths should be expressed in terms of these named flows wherever possible.
+
 ## Table of Contents
 
 - [FireMUD Redis Operations & Migrations](#firemud-redis-operations--migrations)

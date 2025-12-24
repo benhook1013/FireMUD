@@ -36,7 +36,7 @@
 | Triggered script execution | | | | | | | ✔ | | | | |
 | Redis-backed automation tick coordination (`automation:*` keys) | | | | | | | ✔ | | | | |
 | Coordination Redis participation via shared helpers (locks, automation tick prefixes) | | | | ✔ | ✔ | | ✔ | | | | |
-| Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | | | | ✔ | | ✔ | ✔ | | | ✔ |
+| Cache/Rate-Limit Redis usage (caches, quotas, rate limiting) | | | | | ✔ | | ✔ | ✔ | | ✔ | ✔ |
 | Chat and private messaging | | | | | | | | ✔ | | | |
 | Guilds and group discovery | | | | | | | | ✔ | | | |
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |
