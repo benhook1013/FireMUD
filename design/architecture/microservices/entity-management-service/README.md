@@ -38,6 +38,8 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 
 ### Redis Role and Prefixes
 
+### Redis Role and Prefixes
+
 - **Coordination Redis participation**
   - Acquires tick locks via shared helpers using keys of the form `tick:{tenantRegionTag}:lock:<entityId>` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
   - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
@@ -45,6 +47,13 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
   - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - These caches for character graphs and similar aggregates are treated as **strongly validated caches**: payloads include version or `lastModified` markers from the authoritative tables, and readers validate those versions before reusing cached data. PostgreSQL remains the authoritative store for entity state and inventories.
   - Any change to Redis usage in this service should be reviewed against the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role selection, slotting, and observability updates.
+
+> If you change Redis usage for this service, you must read and apply:
+>
+> - [Redis Architecture](../../system-architecture-redis.md)
+> - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
+> - [FireMUD Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md)
+> - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
 
 ## Key Features
 

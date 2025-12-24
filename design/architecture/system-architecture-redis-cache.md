@@ -208,6 +208,15 @@ Rate limiting keys (for example those used by Spring Cloud Gateway’s `RequestR
 - Define a canonical pattern such as `ratelimit:<tenantId>:<bucket>:<timeWindow>` (for example, `bucket` may be a hash of the client/token plus an optional slice) and publish helper builders so services reuse the same bucketing logic instead of inventing divergent, hotspot-prone schemes.
 - Support more granular sub-bucketing where heads-on credentials are unavoidable (for example `ratelimit:<tenantId>:<bucket>:<timeWindow>:<shard>`) to spread aggregates across multiple keys within the rate-limit Redis cluster.
 
+Helpers for rate limiting must distinguish between:
+
+- **Single-bucket operations** (default): commands or scripts that operate on exactly one `ratelimit:*` key at a time and never attempt cross-key atomicity. These are the only operations that may live on the hot path.
+- **Multi-bucket inspection** (advanced): best-effort tooling that scans or inspects multiple buckets and must tolerate:
+  - `CROSSSLOT` errors when running against Redis Cluster.
+  - Non-atomic views of rate-limit state (for example, two keys changing while they are being read).
+
+Shared helper APIs should make this explicit by providing separate entrypoints (for example, `RateLimitBucketHelper.singleBucket(...)` vs `RateLimitBucketHelper.inspectBuckets(...)`) and by documenting that the latter is **observability-only**, not a control-plane primitive.
+
 #### Rate-Limit Bucket Design
 
 To keep rate limiting robust under high cardinality and load, `bucket` values should follow a simple, predictable scheme:
@@ -231,7 +240,7 @@ This approach gives small games straightforward per-client buckets by default wh
 Cluster slotting implications:
 
 - Rate-limit keys are treated as **single-key operations** from the cluster’s perspective; scripts or commands should not attempt atomic multi-key updates across different buckets or time windows.
-  - Rate-limit keys are treated as single-key operations; the design intentionally does not rely on Redis Cluster hash tags for rate limiting.
+- Rate-limit keys are treated as single-key operations; the design intentionally does not rely on Redis Cluster hash tags for rate limiting.
 - Multi-key operations over rate-limit data (for example, bulk inspection of multiple buckets) must tolerate `CROSSSLOT` errors and fall back to per-key operations; the design does not rely on cross-slot multi-key transactions for rate limiting.
 
 ### Key Naming and Overwrite Expectations

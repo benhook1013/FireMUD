@@ -73,7 +73,31 @@ Before making any change that touches Redis (keys, roles, scripts, or tooling), 
 - **Reset and runbook implications**
   - Clarify whether new prefixes are reset-tolerant, reset-sensitive, or reset-forbidden.
   - Update the relevant runbooks (for example, coordination reset or cache maintenance) if the change affects how operators remediate issues.
-  - Ensure the central key catalogs and reset matrix reflect the new prefix and its policy; designs must not introduce prefixes that lack catalog entries.
+  - Ensure the central key catalogs and reset matrix reflect the new prefix and its policy; designs must not introduce prefixes that lack catalog entries or omit a clear “behavior when dropped” description.
+
+#### Reviewer Quick-Check (High-Friction Summary)
+
+During review, do not approve a Redis-affecting change unless you can answer **all** of the following for the diff:
+
+1. **Role:** Which Redis role does it target – Coordination Redis or Cache/Rate-Limit Redis – and have you verified the correct `FIREMUD_REDIS_*` endpoints and ACL expectations?
+2. **Prefix catalog entry:** Which prefix (or new prefix) in the central key catalogs or the Reset Policy Matrix does it use, and is that catalog entry accurate?
+3. **Reset classification:** What is the reset policy for the affected prefixes (reset-tolerant, reset-sensitive, or reset-forbidden), and what happens to gameplay if those keys are dropped?
+4. **Metrics & alerts:** Which metrics, dashboards, or alerts must be updated or verified so the new/changed Redis usage is observable under load and during failure?
+5. **Lua compatibility (if applicable):** For any Lua/script changes, what is the compatibility classification (`compatible` vs `breaking_requires_reset` vs explicit multi-version), and where is that recorded in the Lua Script Registry?
+
+When creating PRs that touch Redis, authors are encouraged to include a short checklist block such as:
+
+```markdown
+Redis Impact Checklist
+
+- [ ] Role: Coordination / Cache-Rate-Limit (details: …)
+- [ ] Prefixes and catalog entries: …
+- [ ] Reset policy and behavior if dropped: …
+- [ ] Metrics/dashboards/alerts reviewed or updated: …
+- [ ] Lua changes (if any) classified and recorded: compatible / breaking_requires_reset / multi-version
+```
+
+Reviewers should expect this section (or equivalent answers) for any change that adds new prefixes, modifies Lua behavior, or changes Redis-related configuration.
 
 ### Redis Design & Review Checklist
 
@@ -236,6 +260,33 @@ All subsequent sections assume this **long-lived coordination log** behavior for
 
 ---
 
+### Tail-Loss Compatibility Checklist
+
+Designs that use Redis for new coordination flows must be explicitly checked against the tail-loss model above. Before approving a new Redis usage, ensure:
+
+- **Acceptable tail-loss impact**
+  - Losing **1–2 seconds** of recent coordination state for an affected `<tenantId, regionId>` (for example, a few ticks’ worth of keys) results only in:
+    - Dropped or delayed **volatile gameplay actions** (commands, buffs, transient effects) that can be retried or re-applied from user input, or
+    - Temporary latency changes (for example, timers firing slightly later).
+  - It does **not** cause:
+    - Irreversible real-money or premium-currency effects (purchases, currency transfers, refunds).
+    - Cross-tenant or cross-shard invariants to be violated (for example, “the same item ends up in two tenants”).
+    - External side effects (emails, webhooks, billing calls) to be duplicated or silently lost without a durable ledger outside Redis.
+- **Authoritative source of truth**
+  - The canonical outcome for the workflow is recorded in PostgreSQL or another durable system (for example, a tick-effect ledger, transaction table, or domain event log).
+  - Redis is used only for **coordination**, **staging**, or **performance**, not as the only place where a critical state change is represented.
+- **Replay and detection**
+  - Idempotency guards (for example, effect IDs in PostgreSQL) prevent double-apply even if Redis replays or loses some tail coordination keys.
+  - Metrics and health checks surface when tail-loss envelopes are exceeded (for example, repeated gaps in tick watermarks or missing `pending` entries), so operators can decide whether to repair or accept the loss per tenant/region.
+
+Some flows are **explicitly forbidden** from relying on Redis tail-loss semantics alone:
+
+- Real-money or premium-currency purchases, grants, and refunds.
+- Cross-tenant asset or currency transfers.
+- Any external integration where the only record of work done would be a Redis key.
+
+Such flows must use durable, idempotent domain mechanisms (for example, transaction tables and gRPC sagas) even if they also interact with Redis for coordination.
+
 ## Redis as a Volatile State Layer
 
 Redis is used **exclusively for non-authoritative, transient data**, including:
@@ -264,6 +315,14 @@ In **all supported FireMUD deployments**, including local development, hobby/sel
 - A Cache/Rate‑Limit Redis deployment dedicated to read‑side caches and token buckets.
 
 These deployments may share the same host or Kubernetes node, but they must run as **separate processes or containers** (for example `redis-coord` and `redis-cache` in Docker Compose and Helm). A “single Redis for all roles” topology is treated as non‑compliant with the architecture, even in development, and must not be used for environments that run automated tests, QA, staging, or production workloads.
+
+For local development, `docker/docker-compose.yml` already provisions this split:
+
+- `redis-coord` runs with the coordination configuration and a dedicated data volume (`redis-coord-data`).
+- `redis-cache` runs with the cache/rate-limit configuration and no shared volume.
+- Application containers receive `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` endpoints via the shared `x-service-environment` block.
+
+Running `./gradlew devUp` is therefore sufficient to bring up a **prod-like dual-Redis topology** on a single machine; no additional Redis instances, clusters, or manual wiring are required beyond the standard dev stack.
 
 Environment variables make the split **config‑driven and explicit** (see also [Environment & Secrets](./infrastructure/environment-and-secrets.md#redis-connection)):
 
@@ -533,22 +592,34 @@ Remote follow-up hint scoping:
 
 ### Reset Policy Matrix (Prefix Summary)
 
-The table below summarizes reset expectations for the main Redis prefixes. Detailed behavior and any exceptions are described in the per-prefix sections and service design docs.
+This table is the **canonical reset-policy catalog** for the main Redis prefixes. It is authoritative for:
 
-| Prefix / Family | Role | Reset Policy (Coordination Reset) | Notes |
-| --- | --- | --- | --- |
-| `tick:{tenantRegionTag}:pending` and `tick:{tenantRegionTag}:queue:*` | Coordination | **Reset-tolerant** | Dropped and rebuilt from PostgreSQL ticks and new commands; idempotency guarantees prevent double-apply. |
-| `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Timers/retries are re-enqueued or skipped within the tail-loss envelope; acceptable to discard during region/tenant/cluster resets. |
-| `tick-executor-lease:{tenantRegionTag}` and tick lock keys (`tick:{tenantRegionTag}:lock:*`) | Coordination | **Reset-tolerant** | Leases and locks are transient; executors reacquire leases and lock state after reset. |
-| `session:game:<tenantId>:<sessionId>` | Coordination | **Reset-sensitive** | Non-authoritative but player-visible. Region/tenant resets may discard active sessions; cluster-wide resets require clear operator communication and may force players to log in again. |
-| `remote:<tenantId>:*` hint markers | Coordination | **Reset-tolerant** | Best-effort cross-region wake-up hints only; durable follow-ups live in PostgreSQL so dropping/retaining hints affects latency, not correctness. |
-| `ratelimit:<tenantId>:*` | Cache/Rate-Limit | **Reset-tolerant** | Token buckets are best-effort; resets clear buckets and counters but do not affect authoritative state. |
-| `inventory:<tenantId>:*`, `world-dynamic:<tenantId>:*`, `view:room-look:<tenantId>:*` and similar cache prefixes | Cache | **Reset-tolerant** | Cached views are regenerated from PostgreSQL; resets may temporarily increase load but do not lose authoritative data. |
-| `script-scheduler:{tenantRegionTag}:lastTickId` | Coordination | **Reset-tolerant** | Automation scheduler checkpoint for “every N ticks” triggers; losing it causes the scheduler to re-establish its baseline from the heartbeat stream and may temporarily re-evaluate interval boundaries. |
-| `automation:tick:{tenantScriptTag}:*` (lock/queue/pending) | Coordination | **Reset-tolerant** | Automation tick staging keys are treated like other coordination state and may be dropped during scoped resets; authoritative script triggers and audit trails remain in PostgreSQL. |
-| `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` and other automation caches | Cache/Rate-Limit | **Reset-tolerant** | Best-effort buffers and counters; resets clear them but do not affect authoritative state. |
+- Prefix naming and the associated Redis **role** (Coordination vs Cache/Rate-Limit).
+- The **reset policy** (reset-tolerant, reset-sensitive, or reset-forbidden) used by coordination reset tooling.
+- A brief description of **what happens to gameplay or behavior if the prefix is dropped** during a reset.
 
-When introducing a new prefix, service designs must extend this matrix (or the detailed key catalog) with a reset policy and ensure that reset tooling and runbooks can enforce it.
+Service design docs and per-service READMEs must link to this matrix (or any future expanded key catalog derived from it) instead of duplicating their own reset-policy tables; when a service introduces new prefixes, the catalog is extended here first.
+
+| Prefix / Family | Role | Reset Policy (Coordination Reset) | Behavior When Dropped | Notes |
+| --- | --- | --- | --- | --- |
+| `tick:{tenantRegionTag}:pending` and `tick:{tenantRegionTag}:queue:*` | Coordination | **Reset-tolerant** | In-flight ticks and queued commands for affected regions are discarded; future ticks process only new commands. | Dropped and rebuilt from PostgreSQL ticks and new commands; idempotency guarantees prevent double-apply. |
+| `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Timers and retries within the tail-loss window are lost; timers/retries beyond the window are rescheduled or re-enqueued from durable state. | Acceptable to discard during region/tenant/cluster resets within the documented tail-loss envelope. |
+| `tick-executor-lease:{tenantRegionTag}` and tick lock keys (`tick:{tenantRegionTag}:lock:*`) | Coordination | **Reset-tolerant** | Existing leases/locks vanish; new executors reacquire leadership and locks as ticks resume. | Leases and locks are transient; executors reacquire leases and lock state after reset. |
+| `session:game:<tenantId>:<sessionId>` | Coordination | **Reset-sensitive** | Active sessions are invalidated; players must perform a fresh `LOGIN` and re-establish gameplay sessions. | Non-authoritative but player-visible. Region/tenant resets may discard active sessions; cluster-wide resets require clear operator communication and may force players to log in again. |
+| `remote:<tenantId>:*` hint markers | Coordination | **Reset-tolerant** | Cross-region follow-ups rely solely on durable tables; hints may be temporarily missing, increasing latency only. | Best-effort cross-region wake-up hints only; durable follow-ups live in PostgreSQL so dropping/retaining hints affects latency, not correctness. |
+| `ratelimit:<tenantId>:*` (and optional `:<shard>`) | Cache/Rate-Limit | **Reset-tolerant** | Rate-limit counters reset; future requests rebuild bucket state from zero. | Token buckets are best-effort; resets clear buckets and counters but do not affect authoritative state. |
+| `inventory:<tenantId>:*`, `world-dynamic:<tenantId>:*`, `view:room-look:<tenantId>:*` and similar cache prefixes | Cache | **Reset-tolerant** | Cached aggregates are flushed; subsequent reads recompute views from PostgreSQL and repopulate Redis. | Cached views are regenerated from PostgreSQL; resets may temporarily increase load but do not lose authoritative data. |
+| `script-scheduler:{tenantRegionTag}:lastTickId` | Coordination | **Reset-tolerant** | Automation scheduler treats the next heartbeat as its baseline and may re-evaluate “every N ticks” windows. | Automation scheduler checkpoint for “every N ticks” triggers; losing it causes the scheduler to re-establish its baseline from the heartbeat stream and may temporarily re-evaluate interval boundaries. |
+| `automation:tick:{tenantScriptTag}:*` (lock/queue/pending) | Coordination | **Reset-tolerant** | In-flight automation ticks are dropped; new tick-driven triggers rebuild coordination state. | Automation tick staging keys are treated like other coordination state and may be dropped during scoped resets; authoritative script triggers and audit trails remain in PostgreSQL. |
+| `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` and other automation caches | Cache/Rate-Limit | **Reset-tolerant** | Queued work and quotas restart from an empty state; automation re-enqueues work based on durable triggers and budgets. | Best-effort buffers and counters; resets clear them but do not affect authoritative state. |
+
+When introducing a new prefix, service designs must extend this matrix (or a directly linked, expanded key catalog) with:
+
+- Prefix pattern and Redis role.
+- Reset policy (reset-tolerant, reset-sensitive, or reset-forbidden).
+- A concise statement of what happens to gameplay or behavior if the prefix is dropped during a reset.
+
+Reset tooling and runbooks are expected to consume this catalog to enforce reset behavior.
 
 ### Reset vs Manual Repair – Decision Guide
 

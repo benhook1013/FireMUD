@@ -62,6 +62,7 @@ the **Implementation Status** section below.
 
 - The TCP Proxy Service does **not** access Coordination Redis and never depends on Redis for correctness or session recovery.
 - The proxy may use Cache/Rate-Limit Redis for **optional, non-authoritative caches** (for example, a short-lived Telnet `LOOK` cache to reduce perceived latency immediately after login). When enabled, this must use the Cache/Rate-Limit Redis deployment (not Coordination Redis) and must degrade safely when Redis is unavailable.
+- These caches do **not** change the proxy’s fundamental design as a stateless edge: any derived entries may be dropped, cold, or unavailable at any time without affecting correctness. Authoritative gameplay and session state remains exclusively in the Game Session Service and Redis as described in the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Redis Architecture](../../system-architecture-redis.md).
 
 ### Reconnection Behaviour at the Proxy Layer
 
@@ -86,18 +87,27 @@ reconnection logic centralized in the Game Session Service:
 Because the TCP Proxy Service sits in the network DMZ, it enforces hard resource
 ceilings even though tenant-aware throttling and rich abuse policies live in
 Spring Cloud Gateway and the Game Session Service. Limits are configured via the
-environment variables described in the **Environment Variables** section; existing
-constants such as the `MAX_BUFFER_DEPTH` value in `TelnetServerHandler` serve as
-implementation defaults when the corresponding configuration is unset. When code
-and configuration diverge, treat this document and its environment variables as
-the source of truth and update code/tests to match.
+environment variables described in the **Environment Variables** section; any
+implementation defaults must remain aligned with those variables. When code and
+configuration diverge, treat this document and its environment variables as the
+source of truth and update code/tests accordingly. The exact handler classes and
+constants used in the implementation (for example the Telnet pipeline and in-memory
+buffer sizes) are **implementation details**; this section defines the normative
+behaviour regardless of which classes or frameworks the service uses internally.
 
 - **Connection limits**
   - A global concurrent connection cap (for example `TCP_PROXY_MAX_CONNECTIONS`)
     prevents the proxy from exhausting sockets or file descriptors. When the
     limit is reached, new connections are rejected and counted via `tcpproxy.connections.limit.exceeded`.
   - A per-client-IP cap (for example `TCP_PROXY_MAX_CONNECTIONS_PER_IP`) guards
-    against a single address consuming the entire connection budget.
+    against a single address consuming the entire connection budget. This cap is
+    only as accurate as the observed client IP: in Kubernetes deployments, it is
+    expected that either source IP preservation or PROXY protocol is enabled so
+    `X-Proxy-Client-IP` reflects the real client as described in
+    [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls)
+    and [Deployment Environments](../../infrastructure/deployment-environments.md). When those
+    mechanisms are not in place, treat per-IP limits as best-effort heuristics rather
+    than strict fairness guarantees.
 - **Slow/abusive client handling**
   - Read idle timeouts and maximum connection lifetimes close connections that
     send no data or linger indefinitely, limiting exposure to slowloris-style attacks. Idle closes are tracked via the `tcpproxy.idleClose` timer and connection lifecycle metrics.
@@ -106,7 +116,7 @@ the source of truth and update code/tests to match.
     exceeded.
 - **Input size and shape limits**
   - Maximum line and envelope length constraints, configured via
-    `TCP_PROXY_MAX_LINE_BYTES`, reject oversized lines without forwarding partial input. The proxy should send a clear, user-facing warning so clients are not confused about what reached the game engine. If the session has negotiated ANSI/color support, the warning may use that formatting, but it must remain readable on plain Telnet clients. Oversized-line violations are tracked per connection and the proxy hard-closes once the count exceeds `TCP_PROXY_MAX_OVERSIZE_LINES` (default `10`) so accidental oversizes are tolerated without enabling unbounded memory or CPU abuse. The existing `MAX_BUFFER_DEPTH` constant in `TelnetServerHandler` acts as an additional safety net: once the in-memory buffer ceiling is reached, the connection is closed and `tcpproxy.telnet.discarded` is incremented even if `TCP_PROXY_MAX_LINE_BYTES` is not hit.
+    `TCP_PROXY_MAX_LINE_BYTES`, reject oversized lines without forwarding partial input. The proxy should send a clear, user-facing warning so clients are not confused about what reached the game engine. If the session has negotiated ANSI/color support, the warning may use that formatting, but it must remain readable on plain Telnet clients. Oversized-line violations are tracked per connection and the proxy hard-closes once the count exceeds `TCP_PROXY_MAX_OVERSIZE_LINES` (default `10`) so accidental oversizes are tolerated without enabling unbounded memory or CPU abuse. Implementations must also enforce an in-memory buffer ceiling for per-connection input so that once the buffer is full the connection is closed and `tcpproxy.telnet.discarded` is incremented, even if `TCP_PROXY_MAX_LINE_BYTES` is not hit. The specific buffer constant and handler class are implementation details; the behavioural guarantee is that buffered input is always bounded and abusive clients are closed rather than being allowed to grow unbounded buffers.
   - Malformed `SESSION` envelopes increment a dedicated counter. When the number
     of malformed envelopes on a single connection exceeds
     `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection with a
@@ -390,10 +400,22 @@ Options outside this subset (for example NAWS, terminal type, or arbitrary exper
 - **Internal:** Spring Cloud Gateway, Game Session Service.
 - **External:** None, runs as a standalone proxy.
 
+### TLS & Trust Surfaces (Summary)
+
+The TCP Proxy Service participates in three distinct TLS / trust boundaries:
+
+| Surface | Direction | Purpose | Key configuration |
+| --- | --- | --- | --- |
+| Telnet plaintext or Telnet‑over‑TLS | Client ↔ TCP Proxy Service | Player Telnet connections from legacy MUD clients. Plaintext is an intentional, hardened legacy channel; Telnet‑over‑TLS is preferred when clients support it. | `TCP_PROXY_PORT` for plaintext; `TCP_PROXY_TLS_ENABLED`, `TCP_PROXY_TLS_PORT`, `TCP_PROXY_TLS_CERT`, `TCP_PROXY_TLS_KEY` for Telnet‑over‑TLS. |
+| WebSocket mTLS bridge | TCP Proxy Service ↔ Spring Cloud Gateway | Internal WebSocket hop that normalizes Telnet traffic into the same `/ws/game/**` route used by web clients. Uses mutual TLS in the target state so the gateway can authenticate the proxy and safely promote `X-Proxy-*` headers. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH`. |
+| Internal gRPC mTLS | Game Session Service (and other internal clients) ↔ TCP Proxy Service | Internal‑only gRPC endpoints such as `Ping` and the `NotifyDisconnect` event sink; no player traffic flows directly here. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`. |
+
+Telnet‑over‑TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production. See [Security Architecture](../../system-architecture-security.md#tls-termination--internal-encryption) and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for end‑to‑end topology details.
+
 ### Data Model
 
-The proxy is stateless. Any buffered input lives only in memory until forwarded
-to the Spring Cloud Gateway while the Telnet connection is still active.
+The proxy is stateless in the sense that it does not own any authoritative gameplay or session state. Any buffered input lives only in memory until forwarded
+to the Spring Cloud Gateway while the Telnet connection is still active. Optional Redis-backed caches (as described under **Redis Role and Prefixes**) are treated as derived, non-authoritative state: they may be empty or unavailable without affecting correctness, and all session recovery behaviour is governed by the Game Session Service and Redis keys documented in the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Redis Architecture](../../system-architecture-redis.md) docs.
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
@@ -508,8 +530,8 @@ The full variable list is:
 | `TCP_PROXY_TLS_PORT` | TCP port for the Telnet-over-TLS listener | `2324` |
 | `TCP_PROXY_TLS_CERT` | Path to the Telnet listener TLS certificate | *(empty)* |
 | `TCP_PROXY_TLS_KEY` | Path to the Telnet listener TLS private key | *(empty)* |
-| `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections (`0` or unset = no explicit ceiling) | `0` |
-| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling); accurate client IPs require source-IP preservation or PROXY protocol (see [Deployment Environments](../../infrastructure/deployment-environments.md)) | `0` |
+| `TCP_PROXY_MAX_CONNECTIONS` | Maximum concurrent Telnet connections (`0` or unset = no explicit ceiling; **never use `0` in shared/player-facing environments**) | `0` |
+| `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP (`0` or unset = no explicit ceiling; **never use `0` in shared/player-facing environments**); accurate client IPs require source-IP preservation or PROXY protocol (see [Deployment Environments](../../infrastructure/deployment-environments.md)) | `0` |
 | `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line (including MCP control lines and continuation lines) in bytes before rejection/closure | `4096` |
 | `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
@@ -594,6 +616,7 @@ are intended to be tuned per environment.
 - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=10` – enough for multiple terminals per developer.
 - `TCP_PROXY_MAX_MALFORMED_ENVELOPES=10` – generous tolerance while iterating on tools or tests.
 - It is acceptable to use `ws://` for `GATEWAY_WS_URL` in local/docker-compose setups; mTLS is not required in dev, but be cautious when forwarding dev traffic over the public Internet.
+- In dev/CI-only environments it is permissible to leave `TCP_PROXY_MAX_CONNECTIONS` / `TCP_PROXY_MAX_CONNECTIONS_PER_IP` at `0` while iterating locally, but any shared or player-facing deployment must override these to non-zero values as outlined below.
 
 **Minimum viable prod hardening**
 

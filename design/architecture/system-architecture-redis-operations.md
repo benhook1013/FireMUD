@@ -210,6 +210,22 @@ For the purposes of this registry, **`compatible` is intentionally narrow**:
 
 All other changes must be tagged `breaking_requires_reset` or accompanied by explicit multi-version handling and data migration for affected keys.
 
+#### Concrete examples: `compatible` vs `breaking_requires_reset`
+
+To make the boundary less subjective, use these examples as guidance:
+
+- Changes that are **not compatible** (must be `breaking_requires_reset` or multi-version), even if they “feel minor”:
+  - Changing a script’s return code for any valid input (for example, from `"OK"` to `"ALREADY_APPLIED"`), because callers and AOF replay may observe different outcomes.
+  - Turning an error/early-return path into a mutating path (for example, previously returning `"STALE_LOCK"` without writes, now attempting a best-effort recovery write).
+  - Reinterpreting existing `schemaVersion = N` payload fields (for example, changing how a flag or counter is mapped to behavior) without first draining or migrating data written under the old semantics.
+  - Introducing new keys or members that would be created on AOF replay for historic entries (for example, emitting additional ZSET members for already-processed ticks).
+- Changes that can be **compatible** when proven by tests:
+  - Pure refactors that reorder internal logic but, under golden tests, produce identical key mutations and return codes for all supported `schemaVersion` fixtures and `(KEYS, ARGV)` combinations.
+  - Adding **extra observability only** (for example, incrementing a metrics counter or emitting structured logs) without branching on those signals.
+  - Fixing behavior that was already outside the documented contract (for example, a bug where a script sometimes failed to enforce a documented `STALE_LEASE` check) when the compatibility rationale calls this out explicitly and golden tests cover both before/after states.
+
+When in doubt, default to `breaking_requires_reset` or introduce explicit multi-version handling; optimistic “this is probably compatible” classifications without golden tests are not acceptable.
+
 ### Runbook: Upgrading scripts
 
 1. Classify changes:

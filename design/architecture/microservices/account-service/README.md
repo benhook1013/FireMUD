@@ -52,6 +52,12 @@ Public login APIs exist for administrators and account portals, but gameplay cli
   - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
   - When introducing new Redis usage here, follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so auth/session keys, roles, and observability remain consistent with the global design.
 
+> If you change Redis usage for this service, you must read and apply:
+>
+> - [Redis Architecture](../../system-architecture-redis.md)
+> - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
+> - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
+
 ## Key Features
 
 - Account registration and login.

@@ -68,7 +68,11 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 #### Key Prefix Summary
 
-Game Session uses the following Redis key prefixes; the **authoritative catalog** of coordination and cache prefixes lives in [Redis Architecture – Key Format Examples](../../system-architecture-redis.md#key-format-examples) and the Cache/Rate-Limit Redis Key Catalog:
+Game Session uses the following Redis key prefixes; the **authoritative catalog** of coordination and cache prefixes, reset policies, and “behavior when dropped” lives in:
+
+- [Redis Architecture – Key Format Examples](../../system-architecture-redis.md#key-format-examples)
+- [Redis Architecture – Reset Policy Matrix](../../system-architecture-redis.md#reset-policy-matrix-prefix-summary)
+- [Redis Architecture – Cache/Rate-Limit Redis Key Catalog](../../system-architecture-redis.md#cache-rate-limit-redis-key-catalog)
 
 | Key prefix | Role | Notes |
 | --- | --- | --- |

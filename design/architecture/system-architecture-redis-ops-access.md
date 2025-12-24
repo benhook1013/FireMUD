@@ -115,6 +115,15 @@ The coordination maintenance client/CLI is treated as a first-class part of the 
 
 This ensures that operators use the same abstractions as application code and reduces the risk that maintenance tools silently drift away from the main coordination design.
 
+**Discovery and version discipline**
+
+- The coordination maintenance CLI is shipped as part of the normal build/release pipeline (for example as a small JVM application or script under `dev-tools/`); runbooks and Helm hooks should reference its **concrete entrypoint** (for example, `dev-tools/coord-maintenance.sh` or the corresponding Gradle task) so operators do not need to guess how to invoke it.
+- Operators must only use a CLI version that matches the deployed services and Lua registry:
+  - If the CLI build version does **not** match the image tag or Git commit used for the running deployment, do not attempt coordination repairs; instead, run the CLI from the same artifact version that produced the deployment or perform a coordinated upgrade.
+  - Break-glass or manual `redis-cli` operations are not an acceptable substitute for a mismatched maintenance CLI; they still require a scoped coordination reset afterwards and should be treated as incident-only paths.
+
+Runbooks that reference coordination repairs or resets should always call the maintenance CLI entrypoint explicitly and avoid embedding raw Redis commands.
+
 ## Static Checks for Ops Scripts
 
 To keep operational scripts aligned with application code:

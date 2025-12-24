@@ -48,6 +48,12 @@ The World Management Service stores and manages game world topology and content 
   - Cached rooms and world aggregates are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata). When version fields are available on the underlying aggregates, these caches are treated as **strongly validated caches** (version-checked before reuse); simpler, read-mostly slices may use best-effort TTL-only caching as long as correctness is preserved by database reads. Updates are propagated via explicit invalidation or TTL-based expiry.
   - When changing Redis usage or adding new prefixes here, follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to ensure correct role, slotting, and SLO coverage.
 
+> If you change Redis usage for this service, you must read and apply:
+>
+> - [Redis Architecture](../../system-architecture-redis.md)
+> - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
+> - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
+
 ## Key Features
 
 - Region and location management with shard support. Each region stores a

@@ -133,6 +133,12 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
   - Rate-limit buckets and related keys follow the `ratelimit:<tenantId>:<bucket>:<timeWindow>` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design). When present, tenant markers are included in keys for **isolation and observability only**; limit values and policy decisions remain global and are not derived at Spring Cloud Gateway from tenant identity. These rate-limit structures are treated as **best-effort TTL-only caches** of counters; correctness comes from the gateway’s rate-limit policy and enforcement logic, not from Redis acting as a durable store.
   - Changes to rate-limiting strategy or cache usage in Spring Cloud Gateway should be reviewed using the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to confirm prefix registration, role separation, and monitoring coverage. Any additional gateway-local caches must explicitly declare whether they are strongly validated (version-based) or best-effort TTL-only and be registered in the Cache/Rate-Limit Redis Key Catalog.
 
+> If you change Redis usage for this service, you must read and apply:
+>
+> - [Redis Architecture](../../system-architecture-redis.md)
+> - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
+> - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
+
 The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are consumed by `AuthConfig` to materialize a `JwtUtil` instance and hot-reload secrets via `JwtSecretWatcher`. Spring Cloud Gateway does **not** use this utility to validate or parse JWTs for gameplay or admin traffic; admin and other meta/control services perform JWT validation themselves, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
 
 When internal WebSocket clients such as the TCP Proxy Service connect over

@@ -62,6 +62,13 @@ Ownership and durability expectations for Automation & Scripting–related prefi
 
 Any new Automation & Scripting–specific prefixes must be added to this table and to the central Redis key catalogs, with a clear statement of which Redis role they use and whether they are reset-tolerant, reset-sensitive, or reset-forbidden.
 
+> If you change Redis usage for this service (new prefixes, Lua scripts, or cache adoption), you must read and apply:
+>
+> - [Redis Architecture](../../system-architecture-redis.md)
+> - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
+> - [FireMUD Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md)
+> - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
+
 - Quota and queue-related caches are treated as **best-effort TTL-only caches** unless this README states otherwise; any future strongly validated caches must document their version fields and invalidation strategy explicitly, in line with the Redis cache design.
 
 #### Redis Cluster Slotting Rules for Automation
