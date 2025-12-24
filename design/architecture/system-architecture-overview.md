@@ -112,7 +112,7 @@ Session state is stored in Redis and reused for recovery.
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the full pipeline, including Fluent Bit, Prometheus, and related dashboards.
 
-> 🔗 See additional Redis metrics in [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability).
+> 🔗 See additional Redis metrics and SLO guidance in [Redis Operations & Migrations](./system-architecture-redis-operations.md).
 
 ---
 

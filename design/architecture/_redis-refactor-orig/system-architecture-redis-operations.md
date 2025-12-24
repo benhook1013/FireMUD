@@ -90,65 +90,6 @@ The tail-loss envelope described in [System Architecture: Redis](./system-archit
 
 These alerts should link directly to dashboards that show affected prefixes, regions, and tenants, so operators can decide whether to initiate a coordination reset, slow work for specific tenants, or adjust capacity.
 
-### Coordination Metrics & Thresholds Contract
-
-The metrics below form the **minimum contract** for Coordination Redis observability in player-facing environments. They tie directly into the coordination health model and reset/degradation behaviour.
-
-> **Core vs extended signals**
->
-> - **Core** metrics are required before hosting real players; they drive halt/degrade decisions and region health.
-> - **Extended** metrics are recommended for diagnosis and tuning but not strictly required for small/self-hosted deployments.
-
-| Metric | Threshold (example) | Duration | Tier | Operator action |
-| --- | --- | --- | --- | --- |
-| `redis.lua.script_load_failures` | ≥1 per shard | ~5m | Core | Mark affected shards degraded, pause ticks until scripts reload; investigate script registry/rollout issues. |
-| `redis.lua.script_missing_for_region` | ≥1 per region | Immediate | Core | Stop scheduling ticks for that `<tenantId, regionId>` until every master hosting the region has the script loaded. |
-| `redis.lua.script_runtime_p99` | >2× `tick_interval_ms` | ~3m | Core | Degrade the region, slow tick fan-out, and reject/shed new commands until latency recovers. |
-| `redis.tick.lock_ttl_exceeded_total` | >5 occurrences per region | ~5m | Core | Treat as a headroom breach; mark the region degraded, review workloads, and consider slowing ticks. |
-| `redis.coordination_oom_errors` | ≥1 | ~1m | Core | Critical incident — halt ticks for affected regions, investigate `maxmemory`/payload sizes, and restore headroom before resuming. |
-| `redis.tick.pending_stuck_total` | >0 for a region | ≥2 tick intervals | Core | Halt ticks for that region, inspect tick effect ledger, repair or reset coordination state, then resume. |
-| `redis.tick.command_queue_overflow_total` | ≥1 per entity | Immediate | Extended | Treat as per-entity overload; shed or deny further commands for that entity until queue depth returns within budget. |
-| `redis.tick.timers_over_budget_total` | >0 sustained per region | ~10m | Extended | Region has too many timers; either slow tick rate and/or reduce timer density via design changes. |
-| `redis.session.payload_oversized_total` | ≥1 per tenant | ~10m | Extended | Audit session payload shape; strip non-essential fields and enforce size limits before writing session state. |
-
-Deployments may tighten or relax these thresholds, but the **classes of behaviour** above—script unavailability, high script runtimes, repeated lock/TTL breaches, coordination `OOM`/evictions, stuck `pending` entries, and runaway queue/timer/session sizes—are treated as canonical red lines that justify automated degradation and paging.
-
-### Coordination Size and Complexity Budgets
-
-To keep Coordination Redis predictable and avoid single-key pathologies that blow AOF size or latency SLOs, FireMUD applies conservative envelopes to core coordination structures. These budgets are expressed in two layers:
-
-- **Global safety invariants** – hard caps that are always enforced (for example, maximum per-entity queue depth and maximum per-region timer cardinality).
-- **Alerting thresholds** – soft budgets that drive warnings and degraded-region behaviour but may be tuned per deployment.
-
-New code is expected to honour both: never exceed the hard caps, and stay within the soft budgets unless a design explicitly extends them and updates this section.
-
-- `tick:{tenantRegionTag}:pending` (per region, one in-flight tick)
-  - Target maximum serialized payload size: roughly **32–64 KB**.
-  - Target maximum staged effects per tick: on the order of **≤128** effect entries.
-  - If either envelope is exceeded:
-    - The tick executor logs a structured warning with `<tenantId, regionId, tickId>` and approximate payload size/effect count.
-    - Metrics such as `redis.tick.pending_oversized_total` and `redis.tick.pending_effects_over_budget_total` are incremented.
-    - The region may be marked **degraded**; command intake can be throttled or shed until the workload is reduced.
-- `tick:{tenantRegionTag}:queue:<entityId>` (per-entity command queue)
-  - Global safety cap on queue depth per entity: **≤50–100** commands (exact value defined in shared configuration and applied uniformly).
-  - When a queue reaches this cap:
-    - New commands for that entity are **always** rejected or shed with a clear error (for example “queue full / region under load”) rather than growing unbounded queues.
-    - A `redis.tick.command_queue_overflow_total` metric is incremented, tagged by `<tenantId, regionId>`, so operators can see which regions are hitting the cap frequently.
-- `timer:{tenantRegionTag}` (per-region timer ZSET)
-  - Global safety cap on timer cardinality per region: on the order of **a few thousand** timers (for example ≤10 000; exact value defined in shared configuration and applied uniformly).
-  - Per-tick processing remains bounded by a configured `maxTimersPerTick` value; timers beyond that budget are processed in later ticks.
-  - When cardinality or per-tick processing budgets are exceeded:
-    - The region is marked **degraded** and emits `redis.tick.timers_over_budget_total` metrics.
-    - Additional timer insertions beyond the hard cap are **shed** with a clear error or dropped according to simple, documented rules (for example, rejecting new timers for low-priority effects first).
-- `session:game:<tenantId>:<sessionId>` (per-player session payload)
-  - Target maximum serialized session value size: roughly **≤16–32 KB**.
-  - Session payloads may contain routing, bindings, and lightweight metadata, but must not embed large blobs or full gameplay history.
-  - When a session value exceeds the budget:
-    - The binding logic logs a warning and increments `redis.session.payload_oversized_total`.
-    - Implementations treat oversize sessions as an error in the caller; they may drop optional fields, reject binding, or force a fresh `LOGIN` rather than writing very large values.
-
-These budgets complement the AOF size and restart targets in this document. Environments may tune concrete numeric thresholds, but the contract remains the same: coordination keys stay small and bounded, and exceeding a budget results in **explicit logs + metrics + controlled failure modes**, not silent degradation or unbounded growth.
-
 ### Runbook: AOF too large or restarts too slow
 
 1. Confirm via metrics or `INFO`:
@@ -186,43 +127,12 @@ These are approximate guidelines for typical tick intervals (for example `tick_i
 - **Operator guidance**
   - If a single `<tenantId, regionId>` routinely exceeds these envelopes and is responsible for a disproportionate share of memory usage or AOF growth:
     - Review gameplay and automation features for that tenant/region to ensure they are not using Coordination Redis for long-lived data.
-    - Prefer simple global caps and admission-control limits first; **per-tenant caps** on active regions, sessions, timers, or queued commands are treated as advanced tuning knobs that require explicit design review and documentation.
+    - Consider applying per-tenant caps on active regions, sessions, timers, or queued commands so coordination footprints remain bounded.
     - If mis-keyed or runaway coordination state is suspected, use the relevant coordination reset runbooks (either per-region or per-tenant) to drop volatile state and rebuild from PostgreSQL.
 
 These rules of thumb are intentionally conservative. For a single-admin hobby deployment, they help distinguish “normal busy evening” from “this one tenant/region is using Redis in a way the architecture did not intend”.
 
 ---
-
-### Session Schema Cleanup and Large Keyspaces
-
-Session schema cleanup is a **hygiene and recovery tool**, not a required part of normal operation. It is used when session payloads change shape or when unknown `schemaVersion` values appear frequently in metrics:
-
-- The primary safety mechanisms for sessions are:
-  - TTL-based expiry governed by the derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`).
-  - The CAS script’s conservative behaviour for unknown `schemaVersion` values (no mutation + explicit `"UNSUPPORTED_SCHEMA_VERSION"` outcome and metrics).
-- In steady state, it is acceptable to:
-  - Rely on TTL for natural drainage of older or unknown-version sessions.
-  - Treat occasional `"UNSUPPORTED_SCHEMA_VERSION"` results as deployment-mismatch signals that prompt rollout fixes rather than continuous keyspace scrubbing.
-
-When runbooks call for explicit cleanup (for example, after a major schema change or to address a large number of unknown-version sessions in a specific tenant), cleanup tools must be designed for **large keyspaces**:
-
-- **Scope**
-  - Operate on a **per-tenant prefix** such as `session:game:<tenantId>:*`; avoid scanning the entire Redis keyspace when only some tenants are affected.
-  - Prefer targeted selectors (for example, `session:game:<tenantId>:*` with filters inside the tool) over global `SCAN` patterns.
-- **Bounded SCAN usage**
-  - Run **at most one cleanup worker at a time** per Coordination Redis deployment; do not schedule overlapping cleanup jobs for multiple tenants or run them from multiple services concurrently.
-  - Use Redis `SCAN` with modest `COUNT` values (for example, 100–1000) to avoid long blocking periods.
-  - Enforce a maximum runtime per invocation (for example, 10–30 seconds) and exit cleanly when the time budget is exhausted; subsequent runs resume from the last cursor or continuation token.
-  - Insert small delays between batches so scans do not monopolize CPU or I/O on the Redis node; cleanup jobs are treated as **maintenance tasks**, not continuous background load.
-- **Observability**
-  - Emit metrics such as `session.cleanup_scanned_total`, `session.cleanup_deleted_total`, and `session.cleanup_duration_seconds` to capture how much work the cleaner performs and its impact.
-  - Log tenant identifiers and approximate key counts so operators can correlate cleanup activity with changes in memory usage and `"UNSUPPORTED_SCHEMA_VERSION"` metrics.
-- **Coordination**
-  - Cleanup jobs acquire a short-lived coordination lock (for example `session-cleanup-lock:<tenantId>`) before scanning and release it when they pause; this ensures only one cleanup worker touches a tenant’s keyspace at a time and prevents conflict with normal session scripts.
-  - Cleaners throttle their work by yielding after each batch (for example sleeping a few milliseconds or waiting for a small timer) when throughput is high, and they stop/exit gracefully if they detect elevated Redis latency or when another maintenance job holds the same lock.
-  - Cleanup and maintenance tooling must respect the same per-region/tenant boundaries as production scripts, log every key or prefix they modify (with `tenantId` / `regionId` context), and expose a dry-run mode so operators can preview the impact before making changes.
-
-Default runbooks should prefer **fixing deployments** (aligning scripts and writers) and relying on TTL over running aggressive cleanup jobs. Session cleanup tools remain available for exceptional cases where operators explicitly choose to trade short-lived overhead for faster convergence of session keyspace to a new schema.
 
 ### Runbook: Explicit Coordination Reset
 
@@ -467,30 +377,6 @@ Only after these checks pass should a reset proceed; if any item cannot be satis
    - Allow coordination keys to rebuild naturally from PostgreSQL and fresh gameplay activity.
 
 Fine-grained, live migration of mis-sharded coordination keys is **not** the default; it is considered an advanced, optional extension when dropping coordination state is unacceptable for particular tenants.
-
-### Key Enumeration Strategy for Scoped Resets (Cluster-Safe)
-
-Redis Cluster does not provide a cheap, precise way to “list all keys in a hash slot” or “list all keys for a given hash tag”. Scoped reset tooling therefore relies on **prefix-scoped SCAN per master** under strict operational preconditions.
-
-Region-level resets (targeting one `{tenantRegionTag}`) enumerate keys as follows:
-
-1. **Pause the region**: tick scheduling is stopped for the affected `<tenantId, regionId>` and executors release `tick-executor-lease:{tenantRegionTag}`.
-2. **Acquire a reset lock**: tooling acquires a short-lived “reset in progress” lock scoped to the region (for example `coord-reset:{tenantRegionTag}`) so two resets cannot run concurrently for the same region.
-3. **Enumerate by known prefix families**: tooling does not attempt to “discover” arbitrary keys; it scans only the explicitly cataloged families for that region, for example:
-   - `tick:{tenantRegionTag}:*` (locks, queues, pending, and any other tick-local keys)
-   - `timer:{tenantRegionTag}` (and any supporting timer keys that share the same tag)
-   - `retry:{tenantRegionTag}`
-   - `tick-executor-lease:{tenantRegionTag}`
-4. **SCAN per master node**: for each master in the cluster, run `SCAN` with `MATCH <pattern>` and a modest `COUNT` (for example 100–1000), respecting strict time budgets (for example 10–30 seconds per invocation) and rate limiting between batches so the reset job cannot monopolize Redis CPU or I/O.
-5. **Delete with `UNLINK`**: delete discovered keys via `UNLINK` (preferred) or `DEL` (fallback) so deletions do not block the Redis event loop for large values.
-6. **Repeat until stable**: because the cluster can still accept background writes, the tool may need multiple passes. The precondition “ticks paused for the region” is what makes convergence practical: new keys for that `{tenantRegionTag}` should not be created while the reset runs.
-
-Operational risks and tradeoffs:
-
-- Even scoped `SCAN` is still O(keys scanned) and can add latency if run without budgets; reset tooling must always be rate-limited and observable.
-- Maintaining a per-region “key index set” to make deletes exact is intentionally not part of the baseline design: it adds continuous write amplification and creates another correctness-critical structure that itself would need reset semantics.
-
-Tenant- and cluster-scoped resets follow the same principles but target broader sets of prefixes and possibly multiple `{tenantRegionTag}` values. For all scopes, reset tooling should rely on the central reset policy matrix (`system-architecture-redis-reset-and-recovery.md`) and shared key builders rather than ad-hoc key name patterns.
 
 ## Dual-Leader Detection & Coordination Reset
 

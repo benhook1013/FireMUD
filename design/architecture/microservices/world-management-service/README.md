@@ -46,7 +46,7 @@ The World Management Service stores and manages game world topology and content 
 - **Cache/Rate-Limit Redis usage**
   - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` (or equivalent `world-dynamic:<tenantId>:<aggregateId>` shapes), consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
   - Cached rooms and world aggregates are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata). When version fields are available on the underlying aggregates, these caches are treated as **strongly validated caches** (version-checked before reuse); simpler, read-mostly slices may use best-effort TTL-only caching as long as correctness is preserved by database reads. Updates are propagated via explicit invalidation or TTL-based expiry.
-  - When changing Redis usage or adding new prefixes here, follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) to ensure correct role, slotting, and SLO coverage.
+- When changing Redis usage or adding new prefixes here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) to ensure correct role, slotting, and SLO coverage.
 
 > If you change Redis usage for this service, you must read and apply:
 >

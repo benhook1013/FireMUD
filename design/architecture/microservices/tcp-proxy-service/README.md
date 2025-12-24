@@ -410,7 +410,7 @@ The TCP Proxy Service participates in three distinct TLS / trust boundaries:
 | WebSocket mTLS bridge | TCP Proxy Service ↔ Spring Cloud Gateway | Internal WebSocket hop that normalizes Telnet traffic into the same `/ws/game/**` route used by web clients. Uses mutual TLS in the target state so the gateway can authenticate the proxy and safely promote `X-Proxy-*` headers. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH`. |
 | Internal gRPC mTLS | Game Session Service (and other internal clients) ↔ TCP Proxy Service | Internal‑only gRPC endpoints such as `Ping` and the `NotifyDisconnect` event sink; no player traffic flows directly here. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`. |
 
-Telnet‑over‑TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production. See [Security Architecture](../../system-architecture-security.md#tls-termination--internal-encryption) and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for end‑to‑end topology details.
+Telnet‑over‑TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production. See [Security Architecture](../../system-architecture-security.md#tls-termination-for-gateway) for the cluster‑wide TLS topology and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for how these surfaces fit into the end‑to‑end Telnet/WebSocket flow.
 
 ### Data Model
 

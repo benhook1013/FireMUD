@@ -30,13 +30,13 @@ Orchestrates live game sessions, including tick execution, player input validati
   When Redis becomes slow or unavailable, the Game Session Service applies the
   graceful degradation and halt behavior defined in
   [Redis Architecture – Graceful Degradation & Redis Outage Policy](../../system-architecture-redis.md#graceful-degradation--redis-outage-policy)
-  instead of buffering authoritative commands only in memory.
-- Every session record includes a `tenantId` identifying the game instance.
+  instead of buffering authoritative commands only in memory. If coordination state must be cleared or repaired, operators follow the scoped reset flows in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) rather than issuing ad-hoc key deletions.
+  - Every session record includes a `tenantId` identifying the game instance.
   Redis keys and database tables prefix this value so sessions from different
   games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Player session state for reconnect recovery lives in Redis using keys of the form
-  `session:game:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions.
+  `session:game:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions; see also [Session Keys and Gameplay Binding](../../system-architecture-redis.md#session-keys-and-gameplay-binding).
   - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `<proxyConnectionId, disconnectSequence>` rather than a guaranteed source of truth. Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behaviour at the proxy can remain simple while consumption stays idempotent. When the Telnet client supplies a `SESSION <sessionId> <tenantId>` envelope, that `<tenantId, sessionId>` is carried as advisory context and may be used for logging/audit, but Game Session still validates any session ownership claims against Redis and its authenticated session state.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
@@ -58,21 +58,21 @@ Orchestrates live game sessions, including tick execution, player input validati
     - `timer:{tenantRegionTag}`
     - `retry:{tenantRegionTag}`
     - `tick-executor-lease:{tenantRegionTag}`
-    - `remote:<tenantId>:<entityId>` and other coordination keys listed in [Redis Architecture – Key Format Examples](../../system-architecture-redis.md#key-format-examples).
+    - `remote:<tenantId>:<entityId>` and other coordination keys listed in the prefix tables in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md).
   - All multi-key coordination operations (ticks, timers, retries, locks, region leadership, and tick recovery flows) use registered Lua scripts that follow the determinism and idempotency rules in [FireMUD Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
 - **Cache/Rate-Limit Redis usage**
   - Does not use Cache/Rate-Limit Redis for gameplay-critical coordination; session state, tick queues, locks, timers, and retry metadata always live on Coordination Redis so they share the same AOF and reset semantics described in [Redis Architecture – Redis Availability, Consistency, and Safety Guarantees](../../system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees).
   - Any future Game Session–local caches must use **Cache/Rate-Limit Redis** and the key naming/TTL rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), and must not overlap with coordination prefixes.
   - When such caches are introduced, this README must declare, for each cached aggregate, whether it is a **strongly validated cache** (version-based) or a **best-effort TTL-only cache**, and which events or signals act as the invalidator of record, following the cache classes described in the Redis cache design.
-  - Changes to Redis usage in this service must follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) so prefixes, roles, slotting, and SLOs stay consistent.
+- Changes to Redis usage in this service must follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so prefixes, roles, slotting, and SLOs stay consistent.
 
 #### Key Prefix Summary
 
 Game Session uses the following Redis key prefixes; the **authoritative catalog** of coordination and cache prefixes, reset policies, and “behavior when dropped” lives in:
 
-- [Redis Architecture – Key Format Examples](../../system-architecture-redis.md#key-format-examples)
-- [Redis Architecture – Reset Policy Matrix](../../system-architecture-redis.md#reset-policy-matrix-prefix-summary)
-- [Redis Architecture – Cache/Rate-Limit Redis Key Catalog](../../system-architecture-redis.md#cache-rate-limit-redis-key-catalog)
+- [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md)
+- [Redis Reset & Recovery – Reset Policy Matrix](../../system-architecture-redis-reset-and-recovery.md#reset-policy-matrix-prefix-summary)
+- [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
 
 | Key prefix | Role | Notes |
 | --- | --- | --- |

@@ -45,7 +45,7 @@ Executes the core gameplay rules and command parsing. It processes player action
   - Tick context is provided by Game Session via gRPC (for example, `tickId`, region metadata, and effect-guard identifiers) rather than by reading Redis state.
 - **Cache/Rate-Limit Redis**
   - The Game Logic Service does not maintain its own Redis-backed caches today; any future read-side caches for rules or computed aggregates must use **Cache/Rate-Limit Redis** and the key naming/TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), never Coordination Redis.
-  - Any future Redis usage in this service should adhere to the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist), including prefix registration, role selection, and slotting rules.
+- Any future Redis usage in this service should adhere to the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md), including prefix registration, role selection, and slotting rules.
 
 ## Key Features
 

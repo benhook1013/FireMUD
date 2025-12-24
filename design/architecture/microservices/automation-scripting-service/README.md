@@ -81,7 +81,7 @@ Any new Automation & Scripting–specific prefixes must be added to this table a
     - A script that reads or writes both `automation:tick:{tenantScriptTag}:*` and `tick:{tenantRegionTag}:*` keys in one `EVALSHA` call.
     - A script that mixes `automation:tick:{tenantScriptTag}:*` with `automation:tick:{otherTenantScriptTag}:*` keys.
 - Automation work is staged under `automation:tick:*` and `automation:queue:*` and then handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes. This keeps automation scripts shard-local and avoids `CROSSSLOT` errors in Redis Cluster.
-  - Any change to automation Redis usage or Lua scripts must follow the [Redis Change Checklist](../../system-architecture-redis.md#redis-change-checklist) and the automation slotting rules above.
+- Any change to automation Redis usage or Lua scripts must follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) and the automation slotting rules above.
 
 ## Key Features
 

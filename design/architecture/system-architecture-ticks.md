@@ -221,7 +221,7 @@ Conflict metadata is recorded and reported to the Game Session Service, which **
 - After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is marked as permanently failed, a player-visible error is emitted, and metrics/logs capture the contention so operators can see hotspots.
 - Fairness is guaranteed **per entity**: within a given entity’s queue, commands are processed in FIFO order and retries are appended to the back of that queue. Cross-entity fairness is best-effort and driven by normal tick scheduling plus the backoff rules.
 
-> 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#🔒-atomicity-and-concurrency-control)
+> 🔗 See [Atomicity and Concurrency Control](./system-architecture-redis.md#atomicity-and-concurrency-control)
 
 ### Lock Token Semantics
 

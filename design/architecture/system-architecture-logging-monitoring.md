@@ -29,7 +29,7 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 - Metrics are recorded with Micrometer. The shared `MetricsInterceptor` tracks `grpc.server.requests` for each call. Services increment the `grpc.app_error` counter in their `error()` helpers as described in the [gRPC API Style guidelines](./system-architecture-grpc.md).
 - Business methods in services are annotated with `@Timed` to publish custom Prometheus timers.
 - Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals are tuned per environment (typically 15s in development and 30s in production).
-- Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment, and a PostgreSQL exporter is available for database metrics. Redis dashboards surface Lua script latency, lock contention, retry queue depth, keyspace hits/misses, eviction rates, and latency percentiles for tick-related commands so operators can distinguish cache pressure from coordination issues. The **Redis SLO & Alert Checklist** in [Redis Architecture](./system-architecture-redis.md#redis-slo--alert-checklist) summarizes the minimum metrics and alerts that must be wired for each Redis role.
+- Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment, and a PostgreSQL exporter is available for database metrics. Redis dashboards surface Lua script latency, lock contention, retry queue depth, keyspace hits/misses, eviction rates, and latency percentiles for tick-related commands so operators can distinguish cache pressure from coordination issues. The minimum Redis SLOs and alert wiring are defined in the Tail-Loss observability and **Coordination Metrics & Thresholds Contract** sections of [Redis Operations & Migrations](./system-architecture-redis-operations.md#tail-loss-slo-observability), which summarize the core metrics and alerts that must be wired for each Redis role.
   - Additional application metrics track:
     - Failed lock acquisitions per region (for example `redis.tick.lock_acquire_failed`) to highlight contention hotspots.
     - The ratio of replayed ticks to total ticks (for example `gamesession.tick.replayed_total` vs `gamesession.tick.executed_total`) so operators can see when idempotent recovery paths are being exercised frequently.
@@ -64,5 +64,5 @@ Logs in Kibana are searched daily for uncaught exceptions or repeated crashes. A
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Logging & Admin Service](./microservices/logging-admin-service/README.md)
 - [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md)
-- [Redis Architecture](./system-architecture-redis.md#📈-observability-and-reliability)
+- [Redis Operations & Migrations](./system-architecture-redis-operations.md)
 - [System Architecture Overview](./system-architecture-overview.md)

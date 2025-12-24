@@ -10,3 +10,37 @@ The content is derived from the protobuf definitions under the top-level `protos
 
 For schema evolution rules and guidance on error handling, see the architectural [gRPC API Style & Versioning Guidelines](../architecture/system-architecture-grpc.md). For service-level behavior, consult each microservice’s `README.md` under `design/architecture/microservices/` and the corresponding `services/<service>/` implementation.
 
+## How to Navigate `grpc-api.md`
+
+`grpc-api.md` is intentionally a **single, generated reference file** so that:
+
+- It stays in sync with the `.proto` definitions.
+- You can use your editor’s **search** to jump directly to a service, request, or response type.
+
+When browsing it in a Markdown viewer (GitHub, IDE, etc.):
+
+- Use the built-in **table of contents** to jump to a given `.proto` file (for example `account/v1/account_service.proto`).
+- Or search for the fully qualified name (for example `account.v1.AccountService`, `game_session.v1`, `automation_scripting.v1`).
+
+Some frequently used domains and their approximate sections:
+
+- **Account & authentication** – search for `account/v1/account_service.proto`.
+- **Payments & subscriptions** – search for `account/v1/payment_service.proto`.
+- **Gameplay sessions & login** – search for `game_session/v1` service definitions.
+- **Automation & scripting** – see the automation scripting section of the generated reference at  
+  `grpc-api.md#automation-scripting_v1_automation_scripting_service-proto`.
+
+Because all details are generated, this file is the single source of truth; other docs should **link into it** rather than duplicating request/response schemas.
+
+## Regenerating the gRPC Docs
+
+After changing any `.proto` schema under `protos/`, regenerate the docs:
+
+```bash
+BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint
+BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main
+./gradlew generateProto
+./dev-tools/docs/generate-grpc-docs.sh
+```
+
+This pipeline ensures both the gRPC stubs and `grpc-api.md` stay consistent with the protobuf definitions.

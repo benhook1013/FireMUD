@@ -8,12 +8,10 @@ Redis is already used for transient coordination (ticks, sessions, locks). This 
 > - Other services reference these cache and aggregate patterns (for example, Entity Management character caches and World Management room caches) as target-state behavior; concrete cache adoption may evolve over time while continuing to follow these rules.
 >
 > 🔗 Tick locks, session coordination, and Lua-based execution are covered in
-> [System Architecture: Redis](./system-architecture-redis.md). Usage patterns,
-> environment profiles, and role wiring are described in
-> [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md).
-> This document focuses narrowly on cache/rate-limit key design and separation
-> from Coordination Redis. For a concise overview of prefixes, roles, and owning
-> services, see the [Redis Cheat Sheet](./system-architecture-redis-cheatsheet.md).
+> [System Architecture: Redis](./system-architecture-redis.md). This document
+> assumes those core invariants and focuses only on cache/rate-limit usage and
+> separation from Coordination Redis. For a concise overview of prefixes,
+> roles, and owning services, see the [Redis Cheat Sheet](./system-architecture-redis-cheatsheet.md).
 
 **Default operator knobs in this doc**
 
@@ -252,9 +250,7 @@ Cluster slotting implications:
 Cached aggregates in Redis should follow structured, namespaced key patterns to keep responsibilities clear and enable targeted invalidation. Examples (subject to refinement):
 
 - `inventory:<tenantId>:<containerId>` – cached view of a single inventory or container (including room-ground containers).
-- `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
 - `world-dynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
-- `room:<tenantId>:<roomId>` – cached room snapshots/topology slices used for LOOK/navigation.
 - `view:room-look:<tenantId>:<roomId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
 
 Expectations:
@@ -265,30 +261,6 @@ Expectations:
 - Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.
 - Future implementations should prefer single atomic commands or scripts (set value and TTL together, optionally with version) over multi-step delete plus set sequences unless there is a very specific, documented reason (such as maintaining backward-compatible behavior during a migration).
 
-### Cache/Rate-Limit Key Catalog
-
-Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination log and may be evicted under pressure. Designs and CI treat this table as the authoritative catalog for non-coordination Redis keys; new cache/rate-limit prefixes must be added here and labelled with their role.
-
-| Prefix | Role | Owner / Semantics |
-| --- | --- | --- |
-| `inventory:<tenantId>:<containerId>` | Cache | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. |
-| `character-cache:<tenantId>:<characterId>` | Cache | Entity Management – cached character graphs for hot reads. |
-| `world-dynamic:<tenantId>:<aggregateId>` | Cache | World Management – cached dynamic world aggregates (for example, room dynamic state). |
-| `room:<tenantId>:<roomId>` | Cache | World Management – cached room snapshots/topology slices for LOOK and navigation. |
-| `view:room-look:<tenantId>:<roomId>` | Cache | Game Session / Game Logic – cached rendered or pre-assembled room views for LOOK and similar commands. |
-| `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | Spring Cloud Gateway – rate-limit buckets and optional sharded buckets as described in the Redis cache & rate-limiting design. |
-| `automation:queue:<tenantId>:*` | Cache | Automation & Scripting – queued automation work items awaiting staging into automation ticks. |
-| `automation:quota:<tenantId>:<scriptId>` | Cache | Automation & Scripting – per-script quota counters and fairness budgets. |
-| `chat:say:<tenantId>:<playerId>` | Cache | Social & Groups – short-lived chat history for “say” messages. |
-| `chat:tell:<tenantId>:<conversationId>` | Cache | Social & Groups – short-lived direct-message history per conversation. |
-| `chat:guild:<tenantId>:<guildId>` | Cache | Social & Groups – short-lived guild chat history. |
-| `chat:account:<tenantId>:<accountId>` | Cache | Social & Groups – short-lived account-to-account message history. |
-
-CI and code review checks are expected to:
-
-- Fail when new Redis prefixes are introduced in cache/rate-limit contexts without being added to this catalog.
-- Ensure that cache/rate-limit tooling and scripts explicitly bind to the Cache/Rate-Limit Redis role, not Coordination Redis, when using these prefixes.
-
 ### Cache Invalidation Policy Table
 
 To keep cache usage reviewable and consistent across services, common aggregate types follow standard invalidation policies:
@@ -296,9 +268,7 @@ To keep cache usage reviewable and consistent across services, common aggregate 
 | Prefix / Aggregate | Example Key | Policy | Notes |
 | --- | --- | --- | --- |
 | Inventory/container views | `inventory:<tenantId>:<containerId>` | **Versioned** | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL; writes bump the version, and cache entries are discarded when versions mismatch. |
-| Character graphs | `character-cache:<tenantId>:<characterId>` | **Versioned** | Backed by character graph rows with explicit versioning; invalidated on writes or relevant domain events. |
 | Dynamic world aggregates | `world-dynamic:<tenantId>:<aggregateId>` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
-| Room topology snapshots | `room:<tenantId>:<roomId>` | **Versioned** | Cached room topology/state snapshots; validated against room/world topology versions to avoid serving stale layouts. |
 | Room LOOK views | `view:room-look:<tenantId>:<roomId>` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
 | Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
 

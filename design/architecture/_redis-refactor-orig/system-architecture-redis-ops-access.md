@@ -1,6 +1,6 @@
 # Coordination Redis Ops Access & Tooling
 
-This document expands on the access control and operational guardrails described in `system-architecture-redis.md`. It focuses on how human operators and maintenance tooling are allowed to interact with **coordination prefixes** and how those tools participate in the [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model).
+This document expands on the access control and operational guardrails described in `system-architecture-redis.md`. It focuses on how human operators and maintenance tooling are allowed to interact with **coordination prefixes** and how those tools participate in the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model).
 
 **Default operator surface in this doc**
 
@@ -135,7 +135,7 @@ To keep operational scripts aligned with application code:
   - Ops scripts contain raw `EVAL`/`EVALSHA` against coordination deployments.
   - Scripts construct `tick:*`, `timer:*`, `retry:*`, `remote:*`, or `session:*` keys by hand instead of calling shared helpers.
   - Scripts hard-code Redis host/port or URLs instead of using the shared `RedisCoordConfig` / `RedisCacheConfig` helpers and role-specific environment variables.
-  - Cache/rate-limit scripts introduce Redis prefixes that are not listed in the Cache/Rate-Limit Redis key catalog maintained in the Redis cache design docs (Redis cheat sheet plus `system-architecture-redis-cache.md`), or misuse those prefixes against the wrong Redis role.
+  - Cache/rate-limit scripts introduce Redis prefixes that are not listed in the **Cache/Rate-Limit Redis Key Catalog** in `system-architecture-redis.md`, or misuse those prefixes against the wrong Redis role.
   - Automation-related Lua or tooling scripts reference both `automation:*` and `tick:*` prefixes in a single operation, violating the automation cluster slotting rules in `system-architecture-redis-lua-patterns.md` and the Automation & Scripting service design.
 
 Maintenance scripts that genuinely need to work with coordination keys must:

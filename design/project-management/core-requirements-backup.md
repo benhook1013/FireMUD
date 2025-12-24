@@ -2,8 +2,6 @@
 
 ## 1. Introduction
 
-For a one-page overview, see `core-requirements-summary.md`.
-
 ### 1.1 Purpose
 
 The MUD Game Platform is a **multi-tenant system** that enables users to **create, host, and run multiple independent MUD games**. The platform provides a **scalable, modular, and extensible architecture**, supporting **game world management, player interactions, scripting, automation, and real-time networking**.

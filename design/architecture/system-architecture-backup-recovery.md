@@ -75,7 +75,7 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
 - Redis stores only **transient state**:
   - Coordination Redis stores volatile coordination state (ticks, locks, timers, sessions) and uses AOF for crash recovery while the cluster is running.
   - Cache/Rate-Limit Redis stores best-effort caches and rate-limit counters and is not treated as durable.
-- Redis is **not restored** from backup during a cold start. If Coordination Redis starts empty (for example after a reset), treat it as a coordination reset event and follow the Coordination Reset Model rather than attempting to “restore Redis”. See [Failover vs Cold Start vs Reset](./system-architecture-redis.md#failover-vs-cold-start-vs-reset) for what “rebuild from PostgreSQL” does and does not mean.
+- Redis is **not restored** from backup during a cold start. If Coordination Redis starts empty (for example after a reset), treat it as a coordination reset event and follow the Coordination Reset Model rather than attempting to “restore Redis”. See [Failover vs Cold Start vs Reset](./system-architecture-redis-reset-and-recovery.md#failover-vs-cold-start-vs-reset) for what “rebuild from PostgreSQL” does and does not mean.
   In development a `redis-coord-data` volume can persist the Coordination Redis AOF between container restarts. Treat AOF restore as a debugging tool: restore into an isolated, throwaway Redis instance for inspection, and only restore into a live dev stack when services and Lua scripts match the AOF’s originating version.
 
 ### Redis AOF Reset on Deployment
@@ -94,7 +94,7 @@ Redis is treated as a **transient coordination layer** in terms of data authorit
     - All volatile tick state, timers, and queues to be discarded.
     - Games to restart from authoritative PostgreSQL state on next login.
   - Any workflow that resets Redis in staging/production must be documented as a runbook with clear player‑impact notes; it is not part of the default CI/CD pipeline.
-  - The **scope** of any reset (single region, single tenant, or entire cluster) must follow the guidelines in the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model) so that player impact and recovery behavior are predictable.
+  - The **scope** of any reset (single region, single tenant, or entire cluster) must follow the guidelines in the [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model) so that player impact and recovery behavior are predictable.
 
 This behavior is distinct from **failover**:
 
@@ -105,12 +105,36 @@ This behavior is distinct from **failover**:
 ## Kubernetes Production
 
 - **Velero** backs up Deployments, StatefulSets, ConfigMaps, and Secrets (but not volume snapshots).
-  - Restoration process:
-    1. Restore the latest `pg_dump` file onto the PostgreSQL volume.
-    2. Use Velero to restore Kubernetes manifests.
-    3. Restart the affected pods. If Redis PVCs are intact, Redis recovers via AOF/replication; if Redis starts empty, treat it as a cold start and follow the coordination reset model.
-    4. Operators can run `dev-tools/restores/restore-cluster.sh <backup-name>` to automate these steps in production.
-       Set `FIREMUD_K8S_NAMESPACE` if restoring to a different namespace.
+  - Restoration process (scripted):
+    1. Use `dev-tools/restores/restore-cluster.sh <backup-name>` to restore the latest `pg_dump` and Kubernetes manifests and restart services.
+    2. Set `FIREMUD_K8S_NAMESPACE` if restoring to a non-default namespace.
+  - Restoration process (manual):
+    1. Copy the desired dump out of the PostgreSQL pod:
+
+       ```bash
+       kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
+       ```
+
+    2. Restore it into the target PostgreSQL pod:
+
+       ```bash
+       gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
+       ```
+
+    3. Restart services so they pick up the restored database:
+
+       ```bash
+       kubectl rollout restart deployment -n firemud
+       kubectl rollout restart statefulset -n firemud
+       ```
+
+    4. If dumps live in `PG_DUMP_BUCKET`, download them first with:
+
+       ```bash
+       aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz
+       ```
+
+       Add `--endpoint-url` for MinIO-backed buckets as needed.
 
 ## Local Development
 
@@ -155,7 +179,7 @@ Redis always uses AOF for crash recovery during runtime but is **never** restore
 For **diagnostic purposes**, operators may take ad hoc copies of Coordination Redis AOF files or RDB exports and load them into **isolated, throwaway Redis instances** to inspect keys and coordination history during incident analysis. These diagnostic snapshots are strictly read-only tools:
 
 - They must **not** be restored into live Coordination Redis clusters or used to overwrite existing AOF/volumes.
-- They are never treated as rollback images for gameplay; recovery for player-visible environments always follows the pattern above (restore PostgreSQL, restart services so Redis recovers via AOF or starts empty, and, when needed, apply the [Coordination Reset Model](./system-architecture-redis.md#coordination-reset-model)). Severe logical bugs that corrupt coordination state are remediated via scoped coordination resets, not by rolling Redis back to older snapshots.
+- They are never treated as rollback images for gameplay; recovery for player-visible environments always follows the pattern above (restore PostgreSQL, restart services so Redis recovers via AOF or starts empty, and, when needed, apply the [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model)). Severe logical bugs that corrupt coordination state are remediated via scoped coordination resets, not by rolling Redis back to older snapshots.
 
 ## Related Documentation
 
