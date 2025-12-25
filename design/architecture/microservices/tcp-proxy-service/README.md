@@ -25,6 +25,7 @@ the **Implementation Status** section below.
 | Proxy → Gateway WebSocket mTLS | Telnet → Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). | Not yet fully implemented or deployed; current client may connect without client certificates and rely on default JDK TLS when `wss://` is used. | `design/project-management/task-list-tcp-proxy-service.md` (mTLS task). |
 | MCP negotiation and Telnet heuristics | MCP 2.1 negotiation, extended Telnet abuse heuristics, and advanced connection throttling are enforced at the proxy edge while keeping MCP payloads intact. | Partially implemented; some heuristics and MCP handling are still being hardened. | `design/project-management/task-list-tcp-proxy-service.md` (MCP and abuse/heuristics tasks). |
 | Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and malformed-envelope budgets protect the DMZ boundary, with metrics such as `tcpproxy.connections.limit.exceeded`. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/task-list-tcp-proxy-service.md` (connection management and security sections). |
+| Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy (for example HAProxy) that forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port, so the proxy can recover the real client IP and set `X-Proxy-Client-IP` on its WebSocket hop to Spring Cloud Gateway. | Deployment pattern and trust model are documented across the Security, Protocol Bridging, Gateway, and Deployment Environments docs; code-level PROXY protocol parsing on the dedicated listener (see `TCP_PROXY_PROXY_PROTOCOL_PORT`) and the associated observability metrics remain TODO. | `design/project-management/task-list-tcp-proxy-service.md` (PROXY protocol task). |
 
 ### Responsibilities
 
@@ -58,11 +59,27 @@ the **Implementation Status** section below.
 - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
+### Canonical Specs Quick Links
+
+The following sections are the canonical references for proxy behaviour; other docs intentionally summarize and defer to them:
+
+- [Telnet Session Envelope & Event Metrics](#telnet-session-envelope--event-metrics)
+- [Service Interactions – NotifyDisconnect](#service-interactions)
+- [Connection Limits and Abuse Protection](#connection-limits-and-abuse-protection)
+- [Telnet Command Handling](#telnet-command-handling)
+- [Metrics Summary](#metrics-summary)
+- [TLS & Trust Surfaces (Summary)](#tls--trust-surfaces-summary)
+- [Environment Variables](#environment-variables)
+
 ### Redis Role and Prefixes
 
 - The TCP Proxy Service does **not** access Coordination Redis and never depends on Redis for correctness or session recovery.
-- The proxy may use Cache/Rate-Limit Redis for **optional, non-authoritative caches** or throttling decisions. When enabled, this must use the Cache/Rate-Limit Redis deployment (not Coordination Redis) and must degrade safely when Redis is unavailable.
-- These caches do **not** change the proxy’s fundamental design as a stateless edge: any derived entries may be dropped, cold, or unavailable at any time without affecting correctness. Authoritative gameplay and session state remain exclusively in the Game Session Service and Redis as described in the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Redis Architecture](../../system-architecture-redis.md).
+- The proxy currently uses **no Redis keys**. All gameplay and session state live in the Game Session Service and Redis as described in the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Redis Architecture](../../system-architecture-redis.md); proxy buffers are purely in-memory and connection-local.
+- Future enhancements may use Cache/Rate-Limit Redis only for **optional, non-authoritative caches** or throttling decisions. When introduced, such keys must:
+  - Use the Cache/Rate-Limit Redis deployment (never Coordination Redis).
+  - Follow a dedicated prefix family such as `tcpproxy:rate:*` or `tcpproxy:cache:*` with TTLs and reset semantics declared in the Redis cache design.
+  - Degrade safely when Redis is unavailable (treat cache misses/failures as “no cache”, never as an availability blocker).
+- These caches must not change the proxy’s fundamental design as a stateless edge: any derived entries may be dropped, cold, or unavailable at any time without affecting correctness.
 
 ### Reconnection Behaviour at the Proxy Layer
 
@@ -102,12 +119,16 @@ behaviour regardless of which classes or frameworks the service uses internally.
   - A per-client-IP cap (for example `TCP_PROXY_MAX_CONNECTIONS_PER_IP`) guards
     against a single address consuming the entire connection budget. This cap is
     only as accurate as the observed client IP: in Kubernetes deployments, it is
-    expected that either source IP preservation or PROXY protocol is enabled so
+    expected that either source-IP preservation or PROXY protocol is enabled so
     `X-Proxy-Client-IP` reflects the real client as described in
     [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls)
     and [Deployment Environments](../../infrastructure/deployment-environments.md). When those
-    mechanisms are not in place, treat per-IP limits as best-effort heuristics rather
-    than strict fairness guarantees.
+    mechanisms are not in place, treat per-IP limits as **best-effort heuristics** rather
+    than strict fairness guarantees. In clusters where client IPs are not reliably
+    preserved, operators should rely primarily on the global `TCP_PROXY_MAX_CONNECTIONS`
+    cap and higher-layer rate limits, and either leave `TCP_PROXY_MAX_CONNECTIONS_PER_IP=0`
+    (no ceiling) or set it to a generous guardrail value rather than a strict fairness
+    control.
 - **Slow/abusive client handling**
   - Read idle timeouts and maximum connection lifetimes close connections that
     send no data or linger indefinitely, limiting exposure to slowloris-style attacks. Idle closes are tracked via the `tcpproxy.idleClose` timer and connection lifecycle metrics.
@@ -399,6 +420,8 @@ Supported Telnet commands/options are intentionally minimal but cover the needs 
 | `DONT` | `254` | Negotiation: client requests that the server disable an option. |
 
 Options outside this subset (for example NAWS, terminal type, or arbitrary experimental options) are silently discarded by the sanitization layer. This keeps the implementation small and hardened while still allowing widely used MUD clients to connect. MCP control lines (`#$#...`) and their payloads are treated as **text** on top of this Telnet layer and are not affected by the low-level command whitelist.
+
+For Telnet subnegotiation (`IAC SB ... IAC SE`), the proxy treats unsupported or unknown options as transport-only noise: the Telnet pipeline **consumes the entire subnegotiation block up to the matching `SE`** and does not surface any of its bytes as gameplay text. Well-formed `SB`/`SE` sequences for unsupported options are ignored cleanly; malformed or truncated subnegotiations may increment diagnostic counters but must not inject partial control bytes into the line-based command stream.
 
 #### Compatibility Notes
 

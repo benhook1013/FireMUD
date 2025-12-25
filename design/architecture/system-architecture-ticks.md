@@ -13,11 +13,11 @@ Cross-service operations triggered by ticks rely on Redis scripts and gRPC; saga
 The tick system serves multiple audiences. Use these companion docs to jump directly to the level of detail you need:
 
 - **Concepts & invariants** – high-level mental model, fairness, locks, and idempotency rules.  
-  See: `design/architecture/tick-concepts-and-invariants.md`.
+  See: `design/architecture/system-architecture-tick-concepts-and-invariants.md`.
 - **Execution flows** – per-command phases, staging/commit, and cross-region flows.  
-  See: `design/architecture/tick-execution-flows.md`.
+  See: `design/architecture/system-architecture-tick-execution-flows.md`.
 - **Failures & operations** – crash recovery, replay rules, stuck entries, and design checklists.  
-  See: `design/architecture/tick-failures-and-operations.md`.
+  See: `design/architecture/system-architecture-tick-failures-and-operations.md`.
 
 This file provides a **condensed overview and anchor headings** so other docs can deep-link into specific topics. Detailed narrative and worked examples now live primarily in the audience-focused documents.
 
@@ -31,7 +31,7 @@ FireMUD uses a **hybrid tick model** to balance real-time responsiveness with de
 - At each tick, the region executor pulls at most one action per entity and resolves them in a fair order.
 - State changes are applied as an atomic “tick transaction” per region.
 
-See `tick-concepts-and-invariants.md` for the full description of fairness guarantees and queueing rules.
+See `system-architecture-tick-concepts-and-invariants.md` for the full description of fairness guarantees and queueing rules.
 
 ---
 
@@ -42,7 +42,7 @@ Two related concepts:
 - **Tick execution** – the authoritative per-region loop inside the Game Session Service.
 - **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) exposing `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
 
-Tick execution never depends on external buses; external services consume the heartbeat stream only. See `tick-concepts-and-invariants.md` and `scripting-dsl-and-lifecycle.md` for details.
+Tick execution never depends on external buses; external services consume the heartbeat stream only. See `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md` for details.
 
 ---
 
@@ -54,7 +54,7 @@ For each `<tenantId, regionId>` there is exactly one active tick executor (Game 
 - Holds the region lease in Redis.
 - Drives staging and commit for that region’s ticks.
 
-Other workers may be running but do not process ticks for that region while the lease is held. See `tick-concepts-and-invariants.md` for the full authority and lease model.
+Other workers may be running but do not process ticks for that region while the lease is held. See `system-architecture-tick-concepts-and-invariants.md` for the full authority and lease model.
 
 ---
 
@@ -65,7 +65,7 @@ Tick execution uses **per-entity locks** in Redis to coordinate concurrent actio
 - Are acquired in deterministic order to avoid deadlocks.
 - Are scoped to a single region; cross-region flows never share locks.
 
-The detailed lock naming, TTL rules, and examples live in `tick-concepts-and-invariants.md`.
+The detailed lock naming, TTL rules, and examples live in `system-architecture-tick-concepts-and-invariants.md`.
 
 ---
 
@@ -77,7 +77,7 @@ When lock acquisition fails or conflicts arise, the tick engine:
 - Schedules retries under bounded budgets.
 - Uses conflict metadata to avoid livelock between competing commands.
 
-See `tick-concepts-and-invariants.md` for conflict categories and retry patterns.
+See `system-architecture-tick-concepts-and-invariants.md` for conflict categories and retry patterns.
 
 ---
 
@@ -89,7 +89,7 @@ Tick work is partitioned into **regions** so that:
 - Failures are isolated to a region.
 - Horizontal scaling is possible by assigning regions to different workers.
 
-Region sizing and sharding strategies are documented in `tick-concepts-and-invariants.md`.
+Region sizing and sharding strategies are documented in `system-architecture-tick-concepts-and-invariants.md`.
 
 ---
 
@@ -100,7 +100,7 @@ Region boundaries are chosen to:
 - Minimize cross-region traffic for common player flows.
 - Keep per-region tick load within safe bounds.
 
-Ownership changes (moving a region between executors) follow the lease rules. See `tick-concepts-and-invariants.md` for guidance and examples.
+Ownership changes (moving a region between executors) follow the lease rules. See `system-architecture-tick-concepts-and-invariants.md` for guidance and examples.
 
 ---
 
@@ -113,7 +113,7 @@ Tick-driven commands typically follow phased execution:
 3. Apply effects in domain services with idempotent handlers.
 4. Finalize and clean up staging metadata.
 
-The full phase breakdown and examples (such as cross-region lifesteal) live in `tick-execution-flows.md`.
+The full phase breakdown and examples (such as cross-region lifesteal) live in `system-architecture-tick-execution-flows.md`.
 
 ---
 
@@ -125,7 +125,7 @@ At each tick for a region, the executor:
 - Applies fairness rules (one action per entity, per tick).
 - Drives staging and commit for all selected actions.
 
-See `tick-execution-flows.md` for the detailed algorithm, including how timers and retries are folded into the per-tick worklist.
+See `system-architecture-tick-execution-flows.md` for the detailed algorithm, including how timers and retries are folded into the per-tick worklist.
 
 ---
 
@@ -136,7 +136,7 @@ Tick execution uses a **staging/commit pattern**:
 - Stage: compute intended effects and write them into Redis (`tick:{tenantRegionTag}:pending`) via Lua under the region lease.
 - Commit: call into domain services, which apply changes using `tickId` and effect guards to ensure idempotency.
 
-Full commit-pattern details are in `tick-execution-flows.md` and the Redis docs.
+Full commit-pattern details are in `system-architecture-tick-execution-flows.md` and the Redis docs.
 
 ---
 
@@ -147,7 +147,7 @@ Tick execution is bounded by timeouts and fairness rules so that:
 - Long-running commands do not starve other entities.
 - Regions that approach unsafe tick durations are treated as degraded and surfaced via metrics.
 
-See `tick-concepts-and-invariants.md` and the Entity Management design docs for the exact policies and operational thresholds.
+See `system-architecture-tick-concepts-and-invariants.md` and the Entity Management design docs for the exact policies and operational thresholds.
 
 ---
 
@@ -158,7 +158,7 @@ Isolation and replay guarantees rely on:
 - Per-region leases and locks in Redis.
 - Domain-level idempotency rules keyed by `tickId` and effect identifiers.
 
-Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. See `tick-failures-and-operations.md` for the detailed story.
+Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. See `system-architecture-tick-failures-and-operations.md` for the detailed story.
 
 ---
 
@@ -170,7 +170,7 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 - Aligned with the tick heartbeat and tick cadence.
 - Subject to time-scaling rules that speed up or slow down perceived time while preserving ordering.
 
-Details of timer key shapes and scaling strategies live in `tick-concepts-and-invariants.md` and `scripting-dsl-and-lifecycle.md`.
+Details of timer key shapes and scaling strategies live in `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md`.
 
 ---
 
@@ -182,7 +182,7 @@ On executor crash or failover, a new worker:
 - Inspects staged tick metadata and timers.
 - Replays or resumes work based only on persisted state (`tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and domain idempotency tables).
 
-See `tick-failures-and-operations.md` for the full crash-recovery algorithm and failure modes.
+See `system-architecture-tick-failures-and-operations.md` for the full crash-recovery algorithm and failure modes.
 
 ---
 
@@ -200,7 +200,7 @@ Effect identity and idempotency rules are defined jointly by:
 - The `tickId` carried on tick-driven calls.
 - A stable `effectId` or `effectKey` derived from the command payload.
 
-For the complete contract and examples, see `tick-failures-and-operations.md` and `system-architecture-transactions.md`.
+For the complete contract and examples, see `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
 
 ---
 
@@ -212,7 +212,7 @@ Redis provides:
 - Staging keys for tick effects.
 - Locks and retry metadata.
 
-Tick execution relies on a canonical “commit pattern” implemented via Lua and described in `tick-execution-flows.md` and the Redis architecture docs.
+Tick execution relies on a canonical “commit pattern” implemented via Lua and described in `system-architecture-tick-execution-flows.md` and the Redis architecture docs.
 
 ---
 
@@ -224,7 +224,7 @@ Cross-region actions (for example, one player affecting another in a different r
 - The target region drains and executes those follow-ups under its own lease.
 - Results are relayed back to the origin region or player session.
 
-See `tick-execution-flows.md` for the detailed cross-region flow, budgets, and backpressure rules.
+See `system-architecture-tick-execution-flows.md` for the detailed cross-region flow, budgets, and backpressure rules.
 
 ---
 
@@ -250,7 +250,7 @@ The tick model is designed to provide:
 - Fair scheduling across entities.
 - Clear boundaries between coordination state (Redis) and authoritative state (PostgreSQL).
 
-See the introduction of `tick-concepts-and-invariants.md` for a more narrative discussion of these benefits.
+See the introduction of `system-architecture-tick-concepts-and-invariants.md` for a more narrative discussion of these benefits.
 
 ---
 
@@ -261,4 +261,3 @@ See the introduction of `tick-concepts-and-invariants.md` for a more narrative d
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Scripting & Automation](./system-architecture-scripting.md)
 - [Redis Incident Runbook](./system-architecture-redis-incident-runbook.md)
-

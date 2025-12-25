@@ -19,7 +19,7 @@
 - [x] Buffer Telnet input in memory while connected and discard on disconnect
 - [x] Initialize `TcpProxyServiceApplication` with Netty server (implement connection pipeline)
 - [x] Enforce Telnet protocol command whitelist and input sanitization
-- [ ] Support PROXY protocol from a Telnet edge proxy (HAProxy) so the TCP Proxy Service can recover the real client IP address in Kubernetes SNAT scenarios and set `X-Proxy-Client-IP` on its internal WebSocket hop accordingly (Spring Cloud Gateway then sets canonical `X-Client-IP`)
+- [ ] Support PROXY protocol from a Telnet edge proxy (HAProxy) so the TCP Proxy Service can recover the real client IP address in Kubernetes SNAT scenarios and set `X-Proxy-Client-IP` on its internal WebSocket hop accordingly (Spring Cloud Gateway then sets canonical `X-Client-IP`). This task is complete when the dedicated PROXY-protocol listener (see `TCP_PROXY_PROXY_PROTOCOL_PORT` in the TCP Proxy design) parses PROXY headers, the recovered client IP is consistently propagated via `X-Proxy-Client-IP`, appropriate metrics are emitted, and the Implementation Status row “Telnet client IP preservation via PROXY protocol” in the TCP Proxy design can be updated to reflect full implementation.
 - [ ] Implement connection throttling and rate limits
 - [ ] Integrate `NotifyDisconnect` with the Reconnection Strategy as a best-effort, idempotent hint to support session resumption, matching the invariants described in the TCP Proxy and Reconnection design docs
 

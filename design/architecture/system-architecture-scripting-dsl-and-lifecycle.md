@@ -5,8 +5,8 @@ This document focuses on **how scripts are represented and executed** in FireMUD
 It is a companion to:
 
 - `design/architecture/system-architecture-scripting.md` – high-level hub for scripting and automation.
-- `design/architecture/scripting-examples-and-patterns.md` – worked examples and common behaviors.
-- `design/architecture/scripting-quotas-and-operations.md` – sandboxing, quotas, and operational guidance.
+- `design/architecture/system-architecture-scripting-examples-and-patterns.md` – worked examples and common behaviors.
+- `design/architecture/system-architecture-scripting-quotas-and-operations.md` – sandboxing, quotas, and operational guidance.
 
 For service-level implementation details, also see:
 
@@ -38,7 +38,7 @@ For service-level implementation details, also see:
 
 - **Game designers and content authors**
   - Use this document to understand what scripts can express, how events and timers are modeled, and how publish and hot-reload behave conceptually.
-  - Pair with `design/architecture/scripting-examples-and-patterns.md` for concrete patterns.
+  - Pair with `design/architecture/system-architecture-scripting-examples-and-patterns.md` for concrete patterns.
   - For the scripting editor UX and how graphs are created and managed, see:
     - `design/architecture/microservices/game-design-service/web-visual-interface.md`
     - `design/architecture/microservices/game-design-service/world-editing-tools.md`
@@ -226,7 +226,7 @@ From a game designer’s perspective, debugging a script centers on **what the e
 
 - **Where to look when debugging**
   - For **editor-time issues**, fix the graph based on the validation errors in the Game Design Service UI and re-run validation before publishing.
-  - For **runtime issues**, start from the script’s recent entries in `script_event_audit` and the associated metrics in the quotas and operations doc (`design/architecture/scripting-quotas-and-operations.md`), then adjust quotas or disable/throttle the script using the operational flows described there.
+  - For **runtime issues**, start from the script’s recent entries in `script_event_audit` and the associated metrics in the quotas and operations doc (`design/architecture/system-architecture-scripting-quotas-and-operations.md`), then adjust quotas or disable/throttle the script using the operational flows described there.
 
 ---
 
@@ -256,6 +256,14 @@ Under these rules, the combination of `<tenantId, regionId, scriptId, scriptEven
 
 Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, produces a set of commands annotated with `scriptEventId`, and hands those commands to the tick system. Tick-level crash recovery and retries reapply those commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
 
+Script executions are treated as **at-most-once per trigger** at the scheduler level, but the resulting commands participate in the same **idempotent replay model** as other tick actions:
+
+- Script-generated commands must be **idempotent with respect to `tickId` and `scriptEventId`**. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried.
+- When commands cause database writes or cross-service calls, domain services should treat `<tenantId, regionId, tickId, scriptEventId>` as an idempotency token, either directly or via a stable `effectId` derived from it, following the patterns in `design/architecture/system-architecture-transactions.md` and the tick idempotency rules described in `design/architecture/system-architecture-ticks.md#domain-idempotency-rules-tickid-in-postgresql`.
+- Conceptually, `scriptEventId` plays the same role for script-originated work that `effectKey` plays in tick-driven effects:
+  - For purely tick-driven logic, idempotency guards are keyed by `(tenantId, regionId, tickId, effectKey)`.
+  - For script-originated logic, guards may instead use `(tenantId, regionId, tickId, scriptEventId)` or `(tenantId, regionId, tickId, effectKey)` where `effectKey` is derived from `scriptEventId` plus additional context (for example, target entity or aggregate).
+
 ---
 
 ## Integration with Game Logic & Tick System
@@ -265,6 +273,17 @@ Crucially, **script handlers are not re-executed during tick replay or recovery*
 - Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
 - Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
+
+### Ordering Between Player and Script Commands
+
+- Each entity has a **single authoritative command queue** in Redis (for example, `tick:{tenantRegionTag}:queue:<entityId>`) that contains both player-originated commands and script-generated commands.
+- Commands are appended to this queue in the order they are accepted by the Game Session Service and the Automation & Scripting Service. Within a given entity’s queue, commands are therefore processed in **FIFO order**, regardless of whether they came from a player or a script.
+- During tick processing, the Game Session Service:
+  - Reads at most one command per entity per tick from this combined queue.
+  - Applies its existing fairness and conflict-resolution rules (as described in the tick architecture) when deciding which entities to service on a given tick.
+- Script-generated commands carry `scriptEventId`, `scriptId`, and (when applicable) upstream ordering tokens such as `tickId` from custom events. Combined with the per-entity FIFO queue and the monotonic `tickId` stream, this ensures that:
+  - The order in which commands affect an entity is deterministic for a given event stream and configuration.
+  - Automation ticks cannot “jump ahead of” or reorder already-queued player commands for the same entity; they simply contribute additional commands into the same ordered queue that ticks consume.
 
 ### Redis Key Summary for Scripting
 
@@ -345,8 +364,14 @@ Detailed behavior, data models, and service-specific responsibilities for these 
   - loads the new definitions and validates them,
   - updates bindings and metadata, and
   - transitions scripts through reload states (for example, `reloadState=RELOADING`) to avoid partial visibility.
-- During reloads, triggers may be temporarily paused or skipped with outcomes such as `skipped_reloading` if the active version for a tenant is not yet available. These decisions are surfaced through `script_event_audit` and metrics.
-- On success, the new `scriptPatchVersion` becomes active for future triggers; on failure, the tenant remains pinned to the previous known-good version, and triggers referencing the failed version follow the `version_unavailable` behavior described in the quotas and operations doc.
+- During reloads, triggers are **paused or skipped** while in-flight runs drain under existing concurrency settings:
+  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs are skipped and recorded in `script_event_audit` with outcomes such as `skipped_reloading`, and they are reflected in metrics.
+  - In-flight runs remain bounded by each script’s configured `maxConcurrent` and `concurrencyPolicy` (for example, `queue_until_free`); any short per-script waiting queues are allowed to drain, but no new entries are added while `reloadState=RELOADING`.
+  - Pending timer-based triggers that became due during reload remain in the scheduler’s timer indexes and resume after reload with recalculated `nextTick` / `nextRunAt` so cadences remain coherent.
+- On success, the new `scriptPatchVersion` becomes active for future triggers; on failure:
+  - `activePatchVersion` remains unchanged and continues to govern live execution.
+  - `pendingPatchVersion` is marked failed along with an error reason, and leaders discard any partially loaded state for that patch and resume scheduling using the existing `activePatchVersion`.
+  - Triggers referencing a failed or unknown patch are rejected explicitly with audit outcomes such as `skipped_version_unavailable` and metrics like `automation_script_triggers_dropped_total{reason="version_unavailable"}` rather than silently falling back to an older patch.
 
 - **Timer-based triggers** such as `onInterval` and `onTimerExpire` always execute against the **currently pinned `scriptPatchVersion`** for the game at the moment they are evaluated; they do not continue running older definitions after a patch is promoted.
 - **Older script versions** remain in the Automation & Scripting Service database for auditing and potential rollback, but only the **pinned active version** is used for live execution.
@@ -355,7 +380,7 @@ Detailed behavior, data models, and service-specific responsibilities for these 
 
 ## Failure Modes and Error Handling
 
-Script executions are treated as **at-most-once per trigger**. Combined with quotas and circuit breakers (covered in `design/architecture/scripting-quotas-and-operations.md`), this ensures that misbehaving scripts cannot hot-loop or consume unbounded resources.
+Script executions are treated as **at-most-once per trigger**. Combined with quotas and circuit breakers (covered in `design/architecture/system-architecture-scripting-quotas-and-operations.md`), this ensures that misbehaving scripts cannot hot-loop or consume unbounded resources.
 
 Common outcome classes include:
 

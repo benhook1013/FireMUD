@@ -6,8 +6,8 @@ It is intended as the main reference for operators, SREs, and platform engineers
 
 Companion docs:
 
-- `design/architecture/scripting-dsl-and-lifecycle.md` – terminology, DSL semantics, event lifecycle, determinism.
-- `design/architecture/scripting-examples-and-patterns.md` – worked examples (for example, `onEnterRegion`, periodic patrol).
+- `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` – terminology, DSL semantics, event lifecycle, determinism.
+- `design/architecture/system-architecture-scripting-examples-and-patterns.md` – worked examples (for example, `onEnterRegion`, periodic patrol).
 - `design/architecture/system-architecture-scripting.md` – high-level hub and TL;DR flow.
 
 ## Table of Contents
@@ -192,6 +192,15 @@ Use the following patterns to answer common operational questions:
 
 - **“Are reloads or version issues causing skips?”**
   - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}` and `automation_script_triggers_dropped_total{reason="version_unavailable"}` (paired with audit outcomes `version_unavailable` / `skipped_version_unavailable`) to distinguish reload pauses from missing or failed script versions.
+
+### Tuning Playbook: Misbehaving Scripts
+
+When a script or tenant consumes too many resources, adjust settings in this order:
+
+1. **Per-script cadence and concurrency** – Start with the script’s own knobs in [Per-Script Scheduling Policies](#per-script-scheduling-policies): increase `intervalTicks`, reduce `maxConcurrent`, or switch `concurrencyPolicy` from `queue_until_free` to `drop_new` so the script enqueues less often and runs fewer overlapping instances.
+2. **Per-script quota window** – If the script still runs too frequently, tighten `SCRIPT_QUOTA_LIMIT` / `SCRIPT_QUOTA_WINDOWSECONDS` for that script (see [Fairness & Abuse Prevention](#fairness--abuse-prevention) and [Quota & Budget Summary](#quota--budget-summary)) so abusive patterns are capped before they hit the tick queues.
+3. **Per-tenant tier budgets** – When one tenant’s background work threatens others, adjust that tenant’s budgets per tier (for example, reduce `background` capacity) using the controls described under [Resource Isolation and Multi-Level Budgets](#resource-isolation-and-multi-level-budgets), watching `automation_script_skips_total{reason="tenant_budget_exceeded"}`.
+4. **Cluster-wide ceilings and capacity** – Only after tuning the above should you raise or lower global ceilings such as `AUTOMATION_TICK_MAX_EVENTS` or cluster CPU budgets. Use the metrics in [Quota & Budget Summary](#quota--budget-summary) and [Auditability & Metrics](#auditability--metrics) to confirm whether you are cluster-bound or script/tenant-bound.
 
 ### Worked Example: Noisy Background Script vs High-Priority Script
 

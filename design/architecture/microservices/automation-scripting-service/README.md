@@ -14,8 +14,8 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 For details on how scripts are authored, how standard and custom events are modeled, and how they execute safely, see:
 
 - [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#tldr-flow) for the high-level flow and service interactions.
-- [Scripting DSL & Event Lifecycle](../../scripting-dsl-and-lifecycle.md#supported-script-events) for event types and lifecycle.
-- [Custom and Service-Specific Events](../../scripting-dsl-and-lifecycle.md#custom-and-service-specific-events) for how non-standard events are versioned and ordered.
+- [Scripting DSL & Event Lifecycle](../../system-architecture-scripting-dsl-and-lifecycle.md#supported-script-events) for event types and lifecycle.
+- [Custom and Service-Specific Events](../../system-architecture-scripting-dsl-and-lifecycle.md#custom-and-service-specific-events) for how non-standard events are versioned and ordered.
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 

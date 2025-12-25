@@ -23,9 +23,9 @@ For the most accurate, fine-grained status, refer to the [Automation & Scripting
 - **Planned or partially implemented**
   - Copying published version data into the Automation & Scripting Service schema via Saga, and broader script-driven world generation flows (runtime generation requests via isolated ticks, generation seed persistence, and script-driven population triggers).
   - Expansion of the PvE encounter library, biome-specific events, and world generation features called out in the Automation & Scripting Service and world generation task lists.
-  - Scheduler leadership leases and per-region tick-stream consumption for `script-leader:{<tenantId>}` are implemented; sharded leases, `automation:timer:{tenantRegionTag}` indexing, and long-term audit-retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/scripting-dsl-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
+- Scheduler leadership leases and per-region tick-stream consumption for `script-leader:{<tenantId>}` are implemented; sharded leases, `automation:timer:{tenantRegionTag}` indexing, and long-term audit-retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
 
-Operators looking for **runtime knobs and environment variables** should now primarily consult `design/architecture/scripting-quotas-and-operations.md` and the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`), which are the authoritative sources for current settings and defaults.
+Operators looking for **runtime knobs and environment variables** should now primarily consult `design/architecture/system-architecture-scripting-quotas-and-operations.md` and the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`), which are the authoritative sources for current settings and defaults.
 
 Maintainers should update this section whenever major scripting features land or significant architecture pieces change so it remains a reliable guide to what is live versus aspirational.
 
@@ -56,22 +56,22 @@ The table below summarizes the high-level implementation status of major areas i
 
 - **Game designers and content authors**
   - Focus on: [Goals](#goals), [TL;DR Flow](#tldr-flow), and the **DSL & examples** references:
-    - `design/architecture/scripting-dsl-and-lifecycle.md` (especially **Game Design vs Automation & Scripting Responsibilities**, **Scripting DSL**, **Supported Script Events**, and **Advanced NPC Behavior Modules**).
-    - `design/architecture/scripting-examples-and-patterns.md` (for worked examples like `onEnterRegion` and periodic patrol).
+    - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` (especially **Game Design vs Automation & Scripting Responsibilities**, **Scripting DSL**, **Supported Script Events**, and **Advanced NPC Behavior Modules**).
+    - `design/architecture/system-architecture-scripting-examples-and-patterns.md` (for worked examples like `onEnterRegion` and periodic patrol).
     - For the web-based editor UX and world editing tools, see:
       - `design/architecture/microservices/game-design-service/web-visual-interface.md`
       - `design/architecture/microservices/game-design-service/world-editing-tools.md`
 
 - **Implementers and backend developers**
   - Focus on: [TL;DR Flow](#tldr-flow) and:
-    - `design/architecture/scripting-dsl-and-lifecycle.md` for terminology, DSL semantics, determinism, timers, event lifecycle, **deployment & versioning behavior**, and advanced NPC modules; in particular, see **Determinism & Allowed Non-Determinism**, **Integration with Game Logic & Tick System**, **Script Timers vs Tick Timers**, and **Scheduler Leadership & Coordination**.
-    - `design/architecture/scripting-quotas-and-operations.md` for **Per-Script Scheduling Policies**, **Resource Isolation and Multi-Level Budgets**, and outcome-to-metric mapping.
+    - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` for terminology, DSL semantics, determinism, timers, event lifecycle, **deployment & versioning behavior**, and advanced NPC modules; in particular, see **Determinism & Allowed Non-Determinism**, **Integration with Game Logic & Tick System**, **Script Timers vs Tick Timers**, and **Scheduler Leadership & Coordination**.
+    - `design/architecture/system-architecture-scripting-quotas-and-operations.md` for **Per-Script Scheduling Policies**, **Resource Isolation and Multi-Level Budgets**, and outcome-to-metric mapping.
     - `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for cross-cutting concerns.
 
 - **Operators, SREs, and platform engineers**
   - Focus on:
-    - `design/architecture/scripting-quotas-and-operations.md` for quotas, budgets, sandboxing, environment variables, and operational cookbook.
-    - `design/architecture/scripting-dsl-and-lifecycle.md` → **Failure Modes and Error Handling** and **`scriptEventId` Lifecycle and Deduplication** for outcome taxonomy, retry behavior, and at-most-once semantics.
+    - `design/architecture/system-architecture-scripting-quotas-and-operations.md` for quotas, budgets, sandboxing, environment variables, and operational cookbook.
+    - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` → **Failure Modes and Error Handling** and **`scriptEventId` Lifecycle and Deduplication** for outcome taxonomy, retry behavior, and at-most-once semantics.
     - `design/architecture/system-architecture-logging-monitoring.md` and `design/architecture/system-architecture-redis.md` for metrics, logging, and Redis behavior.
   - Use this hub primarily as an overview and routing guide.
 
@@ -123,20 +123,20 @@ sequenceDiagram
 This hub intentionally keeps only high-level flows and routing; detailed topics live in focused documents:
 
 - **DSL semantics, terminology, lifecycle, determinism**
-  - `design/architecture/scripting-dsl-and-lifecycle.md`
+  - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`
 
 - **Deployment & versioning for scripts**
-  - `design/architecture/scripting-dsl-and-lifecycle.md` (see **Deployment & Versioning** and **Hot Reload & Resume Behavior**)
+  - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` (see **Deployment & Versioning** and **Hot Reload & Resume Behavior**)
   - `design/architecture/system-architecture-versioning-runtime.md` (see **Script-only patch versions**)
 
 - **Examples and common patterns**
-  - `design/architecture/scripting-examples-and-patterns.md`
+  - `design/architecture/system-architecture-scripting-examples-and-patterns.md`
 
 - **Sandboxing, quotas, budgets, and operations**
-  - `design/architecture/scripting-quotas-and-operations.md`
+  - `design/architecture/system-architecture-scripting-quotas-and-operations.md`
 
 - **Developer tools and helper scripts**
-  - See **Developer Tools** in `design/architecture/scripting-quotas-and-operations.md` for CLI and docs-generation helpers.
+  - See **Developer Tools** in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for CLI and docs-generation helpers.
 
 - **Service-level implementation**
   - `design/architecture/microservices/automation-scripting-service/README.md`

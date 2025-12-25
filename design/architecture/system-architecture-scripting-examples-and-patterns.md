@@ -4,8 +4,8 @@ This document provides **worked examples and design patterns** for common script
 
 Companion docs:
 
-- `design/architecture/scripting-dsl-and-lifecycle.md` – terminology, DSL semantics, event and timer lifecycle, determinism.
-- `design/architecture/scripting-quotas-and-operations.md` – sandboxing, quotas/budgets, operational flows.
+- `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` – terminology, DSL semantics, event and timer lifecycle, determinism.
+- `design/architecture/system-architecture-scripting-quotas-and-operations.md` – sandboxing, quotas/budgets, operational flows.
 - `design/architecture/system-architecture-scripting.md` – high-level hub and TL;DR flow.
 
 ## Table of Contents
@@ -24,7 +24,7 @@ Companion docs:
 
 - **Implementers and backend developers**
   - Use the examples to understand how events, quotas, and automation queues interact across services.
-  - Refer back to `design/architecture/scripting-dsl-and-lifecycle.md` for definitions and lifecycle details.
+  - Refer back to `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` for definitions and lifecycle details.
 
 ---
 
@@ -46,7 +46,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 3. **Bindings and quotas**
    - The Automation & Scripting Service looks up all scripts bound to `onEnterRegion` for the target entity and tenant, using the version metadata provided by the Game Session Service to resolve the correct script definitions.
-   - Per-script quotas and tenant budgets are applied before execution (see `design/architecture/scripting-quotas-and-operations.md` for details). Scripts that fail quota checks are skipped and logged; others proceed to sandboxed execution.
+   - Per-script quotas and tenant budgets are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Scripts that fail quota checks are skipped and logged; others proceed to sandboxed execution.
 
 4. **Sandboxed DSL execution**
    - For each allowed script, the Automation & Scripting Service executes the `onEnterRegion` handler inside the sandboxed DSL runtime, walking the graph of condition, timer, and action nodes for the current event payload.
@@ -67,13 +67,13 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow.
    - An audit record is written to `script_event_audit` with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, plus an `outcome` / `reason` pair, enabling replay and troubleshooting.
 
-If the `scriptPatchVersion` pinned by the Game Session Service for a given game is later marked failed or unknown for that tenant, subsequent `onEnterRegion` triggers referencing it follow the reload failure behavior described in `design/architecture/scripting-quotas-and-operations.md` instead of the happy-path flow.
+If the `scriptPatchVersion` pinned by the Game Session Service for a given game is later marked failed or unknown for that tenant, subsequent `onEnterRegion` triggers referencing it follow the reload failure behavior described in `design/architecture/system-architecture-scripting-quotas-and-operations.md` instead of the happy-path flow.
 
 ---
 
 ## Example: Periodic Patrol via `onInterval`
 
-This example shows how a script that runs on a fixed cadence (for example, an NPC patrol) moves through the pipeline using `onInterval`. For the underlying timer and failover internals (including `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`), see **End-to-End `onInterval` Timer Lifecycle** in `design/architecture/scripting-dsl-and-lifecycle.md`.
+This example shows how a script that runs on a fixed cadence (for example, an NPC patrol) moves through the pipeline using `onInterval`. For the underlying timer and failover internals (including `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`), see **End-to-End `onInterval` Timer Lifecycle** in `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`.
 
 1. **Script configuration and publish**
    - A designer configures an NPC patrol script in the Game Design Service, binding an `onInterval` handler with a chosen cadence (for example, every N ticks or seconds) and a sequence of waypoints.
@@ -84,7 +84,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - Leaders track these interval entries alongside other automation timers, using bounded scans and the automation tick budget (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each automation tick.
 
 3. **Firing `onInterval` and enforcing budgets**
-   - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/scripting-quotas-and-operations.md`.
+   - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
    - If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed.
    - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution and updates the interval entry with a new `nextTick` or `nextRunAt`, ensuring the cadence remains stable even if some intervals are occasionally delayed by load.
 
