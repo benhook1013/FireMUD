@@ -42,7 +42,23 @@ Two related concepts:
 - **Tick execution** – the authoritative per-region loop inside the Game Session Service.
 - **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) exposing `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
 
-Tick execution never depends on external buses; external services consume the heartbeat stream only. See `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md` for details.
+In addition to the gRPC heartbeat, the Game Session Service exposes a **tick event stream** for schedulers and observers:
+
+- Events are keyed by `<tenantId, regionId>` and include:
+  - `tickId` (monotonic per region).
+  - `regionId` / shard metadata.
+  - The timestamp when the tick began.
+  - The `activeVersionId` pinned for that tick.
+- Consumers (for example, schedulers or reconnection logic) typically:
+  - Acquire a small lease such as `tick-events-lease:{tenantRegionTag}` to avoid duplicate processing.
+  - Persist their last-processed offset in Redis so they can resume from the correct `tickId` after restarts.
+- The stream may be implemented via Redis Streams or pub/sub as long as:
+  - Per-region ordering is preserved.
+  - Consumers can replay from the stored offset.
+
+This event stream powers “every N ticks” scheduling in Automation & Scripting, reconnection timer replay hints, and other out-of-band reporting. Tick execution itself never depends on these observers.
+
+Tick execution never depends on external buses; external services consume the heartbeat stream and/or tick event stream only. See `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md` for details.
 
 ---
 
@@ -122,10 +138,11 @@ The full phase breakdown and examples (such as cross-region lifesteal) live in `
 At each tick for a region, the executor:
 
 - Dequeues eligible commands from per-entity queues.
+- Pulls a bounded number of due timers and retries into the worklist.
 - Applies fairness rules (one action per entity, per tick).
-- Drives staging and commit for all selected actions.
+- Drives staging and commit for all selected actions under the region lease.
 
-See `system-architecture-tick-execution-flows.md` for the detailed algorithm, including how timers and retries are folded into the per-tick worklist.
+See `system-architecture-tick-execution-flows.md` for the detailed algorithm, including how timers, retries, and remote follow-ups are folded into the per-tick worklist.
 
 ---
 
@@ -137,6 +154,13 @@ Tick execution uses a **staging/commit pattern**:
 - Commit: call into domain services, which apply changes using `tickId` and effect guards to ensure idempotency.
 
 Full commit-pattern details are in `system-architecture-tick-execution-flows.md` and the Redis docs.
+
+Some commands (for example, heavy runtime procedural generation) declare `requiresSoloTick: true`. For these commands:
+
+- The scheduler runs the command alone in its own tick so it does not compete with other player actions.
+- The tick may be allowed a larger execution budget (for example, up to a few hundred milliseconds) while still respecting the region’s lease and TTL rules.
+
+This keeps expensive operations predictable without introducing special-case fallbacks in the tick engine.
 
 ---
 
