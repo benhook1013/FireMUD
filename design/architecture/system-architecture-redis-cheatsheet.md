@@ -2,6 +2,12 @@
 
 This cheat sheet is the **front door** for Redis-related design and operations. It summarizes key prefixes, roles, and docs so contributors can quickly find the right reference.
 
+Treat it as a **routing map and curated subset**:
+
+- Canonical coordination/reset details (including reset-tolerance classes) live in the reset policy matrix and any extended catalogs in `system-architecture-redis-reset-and-recovery.md`.
+- Canonical cache/rate-limit prefix details (including correctness class and reset behavior) live in the Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md`.
+- When adding new prefixes, always update the canonical catalog first, then reflect representative entries here as needed for discoverability.
+
 > 🔗 Canonical details live in:
 > - [System Architecture: Redis](./system-architecture-redis.md)
 > - [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md)

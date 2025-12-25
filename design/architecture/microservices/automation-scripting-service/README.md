@@ -11,7 +11,11 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 - Stores persistent NPC memory and automation queues
 - Integrates with Game Session and World Management services for real-time updates
 
-For details on how scripts are authored, how standard and custom events are modeled, and how they execute safely, see [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and the subsection on [Custom and Service-Specific Events](../../system-architecture-scripting.md#custom-and-service-specific-events).
+For details on how scripts are authored, how standard and custom events are modeled, and how they execute safely, see:
+
+- [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#tldr-flow) for the high-level flow and service interactions.
+- [Scripting DSL & Event Lifecycle](../../scripting-dsl-and-lifecycle.md#supported-script-events) for event types and lifecycle.
+- [Custom and Service-Specific Events](../../scripting-dsl-and-lifecycle.md#custom-and-service-specific-events) for how non-standard events are versioned and ordered.
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
@@ -49,6 +53,11 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - **Cache/Rate-Limit Redis usage**
   - Stores script quota counters and similar best-effort aggregates in **Cache/Rate-Limit Redis** using prefixes such as `automation:quota:<tenantId>:<scriptId>` and `automation:queue:<tenantId>:*`, following the cache key naming and isolation rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state. Quota and queue-oriented prefixes are treated as **best-effort TTL-only caches** unless explicitly documented as strongly validated caches with versioned payloads and stricter invalidation semantics.
+
+The central reset policies and cache behavior for these prefixes are defined in:
+
+- [Redis Reset & Recovery – Reset Policy Matrix](../../system-architecture-redis-reset-and-recovery.md#reset-policy-matrix-prefix-summary)
+- [Redis Cache & Rate Limiting – Cache/Rate-Limit Key Catalog](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog)
 
 Ownership and durability expectations for Automation & Scripting–related prefixes:
 

@@ -22,7 +22,9 @@ For service-level implementation details, also see:
 - [Script Execution Lifecycle (Terminology)](#script-execution-lifecycle-terminology)
 - [`scriptEventId` Lifecycle and Deduplication](#scripteventid-lifecycle-and-deduplication)
 - [Supported Script Events](#supported-script-events)
+- [Custom and Service-Specific Events](#custom-and-service-specific-events)
 - [Scripting DSL](#scripting-dsl)
+- [Deployment & Versioning](#deployment--versioning)
 - [Determinism & Allowed Non-Determinism](#determinism--allowed-non-determinism)
 - [Integration with Game Logic & Tick System](#integration-with-game-logic--tick-system)
 - [Script Timers vs Tick Timers](#script-timers-vs-tick-timers)
@@ -37,6 +39,9 @@ For service-level implementation details, also see:
 - **Game designers and content authors**
   - Use this document to understand what scripts can express, how events and timers are modeled, and how publish and hot-reload behave conceptually.
   - Pair with `design/architecture/scripting-examples-and-patterns.md` for concrete patterns.
+  - For the scripting editor UX and how graphs are created and managed, see:
+    - `design/architecture/microservices/game-design-service/web-visual-interface.md`
+    - `design/architecture/microservices/game-design-service/world-editing-tools.md`
 
 - **Implementers and backend developers**
   - Use this document as the reference for terminology, event lifecycles, DSL semantics, determinism rules, and scheduler behavior.
@@ -97,6 +102,7 @@ Two services collaborate to deliver scripting and automation:
   - Implements **hot reload and failure handling** for script patches, including `activePatchVersion`, `pendingPatchVersion`, and `reloadState` as described in [Hot Reload & Resume Behavior](#hot-reload--resume-behavior).
 
 This split lets the Game Design Service focus on ergonomics and version lifecycle, while the Automation & Scripting Service focuses on safe, deterministic execution, quotas, and operational guarantees.
+Because script definitions are stored in the Automation & Scripting Service database and loaded via `scriptPatchVersion`, designers can roll out script-only updates without redeploying the service binary; the service reloads definitions in place using its versioning and hot-reload flow.
 
 ### `scriptEventId` Lifecycle and Deduplication
 
@@ -119,7 +125,10 @@ This split lets the Game Design Service focus on ergonomics and version lifecycl
 
 Scripts are bound to **standard lifecycle events** and **custom service events**. Examples include:
 
-- `onSpawn` – when an entity (player or NPC) spawns into the world.
+- `onLoad` – script-level lifecycle event that runs once per `<tenantId, scriptId, versionId>` when a script becomes active for a tenant.
+- `onSpawn` – when the associated entity enters the world.
+- `onDeath` – when the entity dies.
+- `onDestroy` – when the entity is permanently removed.
 - `onEnterRegion` – when the entity moves into a new region.
 - `onLeaveRegion` – when the entity leaves a region.
 - `onCommand` – when the player issues a game command (for example, interaction or dialogue).
@@ -128,6 +137,25 @@ Scripts are bound to **standard lifecycle events** and **custom service events**
 - Domain-specific events such as `inventory.item_added`, `combat.round_started`, or world-generation hooks as defined by domain services.
 
 Scripts should use the most specific event available rather than polling general state. Per-entity initialization is typically done via `onSpawn`, `onEnterRegion`, or related lifecycle events instead of relying on ad-hoc `onLoad`-style handlers.
+
+### `onLoad` Semantics
+
+`onLoad` is a **script-level lifecycle event**, not an entity-level event. It is designed for initializing script-global state (for example, loading lookups, seeding script-local caches, writing initial audit markers) rather than per-entity setup, which belongs in `onSpawn` or other entity-scoped events.
+
+- **When it fires**
+  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, versionId>` after a script becomes active for that tenant. In practice this means:
+    - When a script first becomes part of the tenant’s active script set under a given `scriptPatchVersion`, and
+    - After a successful hot reload that changes `activePatchVersion` for that tenant, `onLoad` fires once for each script in the newly active patch.
+  - If a reload fails and `activePatchVersion` remains unchanged, no additional `onLoad` events are generated.
+
+- **Per-script vs per-entity**
+  - `onLoad` runs **without an entity context**; it executes once per script definition and active version for a tenant, not once per NPC or player.
+  - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
+
+- **Interaction with reloads and recovery**
+  - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, versionId>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose current version is already active.
+  - `onLoad` triggers are enqueued only after leaders have switched `activePatchVersion` and `reloadState` has returned to `IDLE`. Scripts never run `onLoad` against a `pendingPatchVersion` that is still being validated or has failed reload.
+  - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, the effective `versionId` or `scriptPatchVersion`, and a canonical `outcome` / `reason` pair so operators can verify that initialization ran for a given script and version.
 
 ### Event Fan-Out and Handler Ordering
 
@@ -138,6 +166,24 @@ When an event fires, the Automation & Scripting Service evaluates bound handlers
 Failures are **isolated per script** by default. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure and continues to the next handler unless the binding is explicitly marked as requiring exclusive handling. Designers can opt into **exclusive handling** on a per-binding basis (for example, `requiresExclusiveEvent=true`) so that a terminal outcome for one handler short-circuits remaining handlers for that event. Quota checks (`ScriptQuotaService`) remain **per script** either way.
 
 ---
+
+## Custom and Service-Specific Events
+
+Beyond the standard lifecycle events, FireMUD supports **extensible event types** so games and services can introduce new triggers without changing the core scheduler:
+
+- Each event is identified by a stable **event type key** (for example, `inventory.item_added`, `social.guild_rank_changed`) and an associated **versioned schema** defined in shared DTOs owned by the platform. Schemas live in a shared protobuf/DTO package referenced by participating services and follow the same compatibility rules as other platform contracts.
+- The Game Design Service controls which event types are **enabled per game/tenant**. A game may opt into additional event types while another game ignores them, but the meaning of a given `{eventTypeKey, version}` pair is global and deterministic.
+- The visual DSL exposes **event source nodes** for any event types enabled for the current game. Designers bind scripts to these nodes in the same way they do for `onSpawn` or `onCommand`; under the hood, bindings are stored as `<tenantId, eventTypeKey, eventSchemaVersion, scriptId>`.
+- When an upstream service emits a custom event, it must include:
+  - the event type key and schema version, and
+  - a **canonical ordering token** that the scheduler can use for deterministic replay. For tick-originated events this is the region’s `tickId`. For other events it is a globally monotonic `{shardKey, sequenceId}` pair defined in the shared DTO/proto schema for that event type.
+  The Automation & Scripting Service uses this metadata to:
+  - deterministically route the event to matching script handlers, and
+  - enqueue resulting commands into the same per-entity queues used for standard events, preserving tick-based ordering and replay guarantees. See [Determinism & Allowed Non-Determinism](#determinism--allowed-non-determinism) for how `<tenantId, regionId, scriptId, scriptEventId, tickId, scriptPatchVersion>` and event ordering tokens combine to make script behavior replayable, and refer to the shared event DTO/proto definitions for the exact `sequenceId` / `shardKey` fields required per event family.
+
+New event types and their schemas are introduced via the normal design and review process for shared contracts: changes land in the shared DTO/proto package, are reviewed by platform maintainers, and are then surfaced in the Game Design Service as new event type options. Individual games cannot unilaterally mint conflicting event type keys or schemas; additions go through this centralized “event catalog” so producers, consumers, and scripting bindings stay aligned.
+
+New event types therefore extend **what** can trigger scripts without changing **how** triggers are scheduled or executed. They participate in the same quota, budgeting, and determinism rules as the built-in lifecycle events described above.
 
 ## Scripting DSL
 
@@ -181,6 +227,17 @@ From a game designer’s perspective, debugging a script centers on **what the e
 - **Where to look when debugging**
   - For **editor-time issues**, fix the graph based on the validation errors in the Game Design Service UI and re-run validation before publishing.
   - For **runtime issues**, start from the script’s recent entries in `script_event_audit` and the associated metrics in the quotas and operations doc (`design/architecture/scripting-quotas-and-operations.md`), then adjust quotas or disable/throttle the script using the operational flows described there.
+
+---
+
+## Deployment & Versioning
+
+- Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is supported.
+- Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
+- Script-only patches create a `scriptPatchVersion` (the logical/API name) tied to a `baseVersionId` so new behaviors can be loaded on the fly. In the Game Session Service database this is persisted as `script_patch_version`. See [System Architecture: Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
+- The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to reload updated scripts via its versioning and hot-reload flow without downtime.
+- Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
+- Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
 ---
 
@@ -264,6 +321,7 @@ This section summarizes how a single `onInterval` timer behaves across normal op
 - Scheduler instances coordinate via tenant-scoped leadership leases such as `script-leader:{<tenantId>}` and region-scoped timer indexes.
 - At any given time, a single scheduler instance per tenant owns the right to fire timers and intervals for that tenant’s automation workload.
 - Leadership leases and timer indexes are designed to be shard-local and replayable so that leader failover does not cause duplicate script execution; at-most-once-per-`scriptEventId` behavior is preserved.
+- Larger or sharded deployments may introduce additional scheduler leases such as `script-leader:{<tenantId>:<shardId>}` so multiple leaders can coordinate independent subsets of a tenant’s scripts; the mapping from `<tenantId, regionId>` to `<tenantId, shardId>` is defined in configuration and documented alongside the multi-tenancy design (`design/architecture/system-architecture-multi-tenancy.md`).
 
 ---
 
@@ -308,6 +366,7 @@ Common outcome classes include:
 - `disabled_due_to_errors` – failure-rate circuit breaker opened for the script.
 - `version_unavailable` / `skipped_version_unavailable` – trigger referenced a script patch version that failed reload or is unknown.
 - `infrastructure_error` – transient infrastructure issues such as gRPC `UNAVAILABLE` or Redis timeouts.
+- `disabled_unsafe_component` – script was refused because it depends on a DSL component version marked `UNSAFE`.
 
 Retry behavior:
 

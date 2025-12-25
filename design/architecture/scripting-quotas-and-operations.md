@@ -141,7 +141,7 @@ The canonical `script_event_audit` schema includes:
   - Timestamps and duration fields.
   - Optional actor principal for administrative actions (disable/enable/throttle).
 
-Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README.
+Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
 
 Metrics such as:
 
@@ -153,6 +153,13 @@ Metrics such as:
 - `automation_tick_events_enqueued_total`
 
 are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance.
+
+Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:
+
+- `automation_queue_orphaned_entries_total` – counts work items that have remained in `automation:queue:<tenantId>:<entityId>` beyond a bounded age window (for example, N ticks or seconds) without corresponding staging in `automation:tick:{tenantScriptTag}:...` or entries in the tick effect ledger.
+- `automation_queue_oldest_entry_age_seconds` – records the age of the oldest sampled queue item per tenant/script so operators can see when automation queues are falling behind.
+
+A small, bounded inspector loop in `ScriptTickService` periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between automation and tick processing for investigation.
 
 ### Outcome-to-Metric Mapping
 
@@ -261,7 +268,7 @@ The **authoritative, up-to-date list of environment variables and defaults** liv
 - **Quota knobs** – control per-script and per-tenant quota windows and budgets used by `ScriptQuotaService` and the multi-level budgeting model (for example, limits on how many triggers a script or tenant may execute per window).
 - **Tick batch knobs** – bound how much automation work `ScriptTickService` performs per automation tick, including batch sizes, per-tick budgets, and cluster-wide ceilings on automation events.
 - **Timer and scheduling knobs** – influence `onInterval` / `onTimerExpire` behavior, including cadence, maximum timers per tenant or region, and any backoff or delay settings applied when regions are degraded.
-- **Audit and retention knobs** – govern how long `script_event_audit` and related records remain available for troubleshooting, and how large those tables are allowed to grow before automated cleanup.
+- **Audit and retention knobs** – govern how long `script_event_audit` and related records remain available for troubleshooting, and how large those tables are allowed to grow before automated cleanup; retention is typically controlled via `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS`, with exact defaults and semantics documented in the Automation & Scripting Service README.
 
 For the exact variable names, defaults, and any future additions, always refer to the Automation & Scripting Service README rather than this document.
 

@@ -2,6 +2,8 @@
 
 Redis is already used for transient coordination (ticks, sessions, locks). This document describes how **Cache/Rate-Limit Redis** backs selected read-side caches and rate limiting as a performance optimization. It focuses on design principles and cross-service patterns; per-service design docs describe target behavior as if fully implemented.
 
+The **Cache/Rate-Limit Key Catalog** in this file is the canonical catalog for cache and rate-limit prefixes: new prefixes must be registered there (and referenced from service docs) so their role, reset behavior, and correctness class stay in sync with the global reset policy matrix in `system-architecture-redis-reset-and-recovery.md`.
+
 > ℹ️ **Implementation status**
 >
 > - Spring Cloud Gateway’s rate limiting is wired to Cache/Rate-Limit Redis today using the patterns in this document.
@@ -267,22 +269,22 @@ Expectations:
 
 ### Cache/Rate-Limit Key Catalog
 
-Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination log and may be evicted under pressure. Designs and CI treat this table as the authoritative catalog for non-coordination Redis keys; new cache/rate-limit prefixes must be added here and labelled with their role.
+Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination log and may be evicted under pressure. Designs and CI treat this table as the canonical catalog for non-coordination Redis keys; new cache/rate-limit prefixes must be added here, labelled with their role, correctness class, and reset behavior, and then referenced from per-service design docs and the reset policy matrix.
 
-| Prefix | Role | Owner / Semantics |
-| --- | --- | --- |
-| `inventory:<tenantId>:<containerId>` | Cache | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. |
-| `character-cache:<tenantId>:<characterId>` | Cache | Entity Management – cached character graphs for hot reads. |
-| `world-dynamic:<tenantId>:<aggregateId>` | Cache | World Management – cached dynamic world aggregates (for example, room dynamic state). |
-| `room:<tenantId>:<roomId>` | Cache | World Management – cached room snapshots/topology slices for LOOK and navigation. |
-| `view:room-look:<tenantId>:<roomId>` | Cache | Game Session / Game Logic – cached rendered or pre-assembled room views for LOOK and similar commands. |
-| `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | Spring Cloud Gateway – rate-limit buckets and optional sharded buckets as described in the Redis cache & rate-limiting design. |
-| `automation:queue:<tenantId>:*` | Cache | Automation & Scripting – queued automation work items awaiting staging into automation ticks. |
-| `automation:quota:<tenantId>:<scriptId>` | Cache | Automation & Scripting – per-script quota counters and fairness budgets. |
-| `chat:say:<tenantId>:<playerId>` | Cache | Social & Groups – short-lived chat history for “say” messages. |
-| `chat:tell:<tenantId>:<conversationId>` | Cache | Social & Groups – short-lived direct-message history per conversation. |
-| `chat:guild:<tenantId>:<guildId>` | Cache | Social & Groups – short-lived guild chat history. |
-| `chat:account:<tenantId>:<accountId>` | Cache | Social & Groups – short-lived account-to-account message history. |
+| Prefix | Role | Correctness Class | Reset Tolerance | Owner / Semantics |
+| --- | --- | --- | --- | --- |
+| `inventory:<tenantId>:<containerId>` | Cache | **Versioned** | **Reset-tolerant** | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. Dropping entries flushes cached views; values are recomputed from PostgreSQL. |
+| `character-cache:<tenantId>:<characterId>` | Cache | **Versioned** | **Reset-tolerant** | Entity Management – cached character graphs for hot reads. Loss clears caches only; character state persists in PostgreSQL. |
+| `world-dynamic:<tenantId>:<aggregateId>` | Cache | **Versioned** | **Reset-tolerant** | World Management – cached dynamic world aggregates (for example, room dynamic state). Resets discard snapshots; aggregates are rebuilt from authoritative state. |
+| `room:<tenantId>:<roomId>` | Cache | **Versioned** | **Reset-tolerant** | World Management – cached room snapshots/topology slices for LOOK and navigation. Safe to drop; topology is reloaded from PostgreSQL. |
+| `view:room-look:<tenantId>:<roomId>` | Cache | **TTL-only** | **Reset-tolerant** | Game Session / Game Logic – cached rendered or pre-assembled room views for LOOK and similar commands. Dropping keys invalidates views; they are recomputed on demand. |
+| `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | **TTL-only** | **Reset-tolerant** | Spring Cloud Gateway – rate-limit buckets and optional sharded buckets as described in the Redis cache & rate-limiting design. Resets clear buckets; future requests rebuild counters. |
+| `automation:queue:<tenantId>:*` | Cache | **TTL-only** | **Reset-tolerant** | Automation & Scripting – queued automation work items awaiting staging into automation ticks. Dropping queued work is acceptable; automation re-enqueues from durable triggers where required. |
+| `automation:quota:<tenantId>:<scriptId>` | Cache | **TTL-only** | **Reset-tolerant** | Automation & Scripting – per-script quota counters and fairness budgets. Resets clear quota state; budgets are re-established from configuration and durable state. |
+| `chat:say:<tenantId>:<playerId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived chat history for “say” messages. Resets drop recent chat buffers only; authoritative history (where needed) lives in PostgreSQL. |
+| `chat:tell:<tenantId>:<conversationId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived direct-message history per conversation. Safe to drop; core chat flows remain backed by durable storage where required. |
+| `chat:guild:<tenantId>:<guildId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived guild chat history. Resets clear recent guild messages only. |
+| `chat:account:<tenantId>:<accountId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived account-to-account message history. Dropping keys removes cached windows only. |
 
 CI and code review checks are expected to:
 
@@ -291,7 +293,7 @@ CI and code review checks are expected to:
 
 ### Cache Invalidation Policy Table
 
-To keep cache usage reviewable and consistent across services, common aggregate types follow standard invalidation policies:
+To keep cache usage reviewable and consistent across services, common aggregate types follow standard invalidation policies. This table mirrors the correctness classes captured in the cache key catalog above:
 
 | Prefix / Aggregate | Example Key | Policy | Notes |
 | --- | --- | --- | --- |
@@ -302,7 +304,7 @@ To keep cache usage reviewable and consistent across services, common aggregate 
 | Room LOOK views | `view:room-look:<tenantId>:<roomId>` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
 | Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
 
-Service design docs may introduce additional cache aggregates, but each new prefix must declare whether it is **versioned** or **TTL-only** and explain why that choice is appropriate.
+Service design docs may introduce additional cache aggregates, but each new prefix must declare whether it is **versioned** or **TTL-only**, specify its reset tolerance in terms of the reset policy matrix, and explain why that choice is appropriate.
 
 ### Cache Size and Complexity Budgets
 

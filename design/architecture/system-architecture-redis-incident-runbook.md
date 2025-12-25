@@ -5,7 +5,7 @@ This runbook summarizes operator actions for **Redis-related incidents**, includ
 For the full design and invariants, see:
 
 - `design/architecture/system-architecture-redis.md`
-- `design/architecture/system-architecture-redis-operations.md`
+- `design/architecture/system-architecture-redis-operations.md` (including the Redis Metrics Catalog section for metric names and alerting guidance)
 
 ## Incident Types
 

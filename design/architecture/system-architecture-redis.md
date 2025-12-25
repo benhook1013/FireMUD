@@ -150,6 +150,25 @@ Key properties:
 
 Session design assumes **reasonably synchronized clocks** on Game Session nodes (for example, via NTP); large clock skew is treated as an infrastructure misconfiguration, not a normal edge case of the session protocol. The combination of JWT expiry, derived session TTL, and Redis TTL defines the maximum reconnection window; TTL acts as garbage collection, while logical expiry governs gameplay semantics.
 
+### Operational Trade-Offs for Session TTL vs JWT Lifetime
+
+The coupling between `session_expiration_ms` and JWT lifetime is intentional:
+
+- It avoids drift between “how long a JWT is valid” and “how long a Redis session can be resumed”.
+- It keeps the reconnection window easy to reason about for both operators and game designers.
+
+When changing authentication settings, keep these trade-offs in mind:
+
+- **Shorter JWT lifetime, shorter reconnect window**
+  - Reducing `FIREMUD_AUTH_JWT_EXPIRATION_MS` directly shrinks both authentication TTL and reconnection TTL.
+  - Use this when you want stricter auth/security guarantees and are comfortable with players needing to re-authenticate more often after disconnects.
+- **Longer reconnect window**
+  - To lengthen the reconnection window without materially weakening JWT lifetime, prefer increasing `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in small, documented increments rather than introducing a separate “session TTL” knob.
+  - Document any non-default safety margin in environment docs so operators understand that reconnects can remain valid slightly past JWT expiry, but always within a bounded, intentional window.
+- **Unsupported combinations**
+  - Do not add independent per-environment or per-tenant “session TTL” controls that diverge from `session_expiration_ms`; they make reconnection semantics harder to reason about and are considered out of scope for this design.
+  - If requirements emerge that truly need a different model (for example, long-lived reconnect windows with very short JWTs), they should be captured as a dedicated design change that revisits the coupling in this section rather than as ad-hoc overrides.
+
 For full details on how session keys integrate with reconnect and takeover flows, see:
 
 - Authentication & Authorization (`system-architecture-authentication.md`)
@@ -236,10 +255,13 @@ Key principles:
 - **Coordination vs cache prefixes**
   - Coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`) live **only** on Coordination Redis.
   - Cache and rate‑limit prefixes (for example `inventory:*`, `view:room-look:*`, `ratelimit:*`) live **only** on Cache/Rate‑Limit Redis.
-  - New prefixes must be registered with a clear statement of:
-    - Role (Coordination vs Cache/Rate‑Limit),
-    - Tail‑loss and reset behavior, and
-    - Expected owners and usage patterns.
+  - New prefixes must be registered in the canonical catalogs:
+    - Coordination prefixes and their reset policies belong in the reset policy matrix and any extended catalogs in `system-architecture-redis-reset-and-recovery.md`.
+    - Cache/rate-limit prefixes belong in the Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md`, including their correctness class and reset tolerance.
+  - For each new or changed prefix, designs must record:
+    - Role (Coordination vs Cache/Rate‑Limit).
+    - Tail‑loss and reset behavior (reset‑tolerant, reset‑sensitive, or reset‑forbidden).
+    - Expected owners and usage patterns, and links to the relevant service README sections.
 
 The **Redis Cheat Sheet** maintains a representative prefix → role/owner mapping. The **Redis Design Checklist** includes concrete checks to run before adding or changing any prefix.
 

@@ -7,7 +7,7 @@ The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp
 This service exposes an **internal-only gRPC health check** (`Ping`) for operators and tooling, and it uses an **internal-only gRPC client** to call the Game Session Service’s `NotifyDisconnect` event sink when Telnet connections close; neither surface is ever published through Spring Cloud Gateway.
 
 > **Canonical specs:** This document is the authoritative reference for:
-> - `SESSION` + `LOGIN` semantics and header propagation (see **Telnet Session Envelope & Event Metrics**).
+> - Telnet `SESSION` envelope semantics and header propagation (see **Telnet Session Envelope & Event Metrics**). `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc.
 > - `NotifyDisconnect` event semantics and layering guarantees.
 > - Proxy metrics naming and label cardinality rules (see **Metrics Summary**).
 > Other docs (Reconnection Strategy, Protocol Bridging, Gateway Architecture, and user journeys) intentionally summarize behaviour and link back here instead of redefining these protocols.
@@ -61,8 +61,8 @@ the **Implementation Status** section below.
 ### Redis Role and Prefixes
 
 - The TCP Proxy Service does **not** access Coordination Redis and never depends on Redis for correctness or session recovery.
-- The proxy may use Cache/Rate-Limit Redis for **optional, non-authoritative caches** (for example, a short-lived Telnet `LOOK` cache to reduce perceived latency immediately after login). When enabled, this must use the Cache/Rate-Limit Redis deployment (not Coordination Redis) and must degrade safely when Redis is unavailable.
-- These caches do **not** change the proxy’s fundamental design as a stateless edge: any derived entries may be dropped, cold, or unavailable at any time without affecting correctness. Authoritative gameplay and session state remains exclusively in the Game Session Service and Redis as described in the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Redis Architecture](../../system-architecture-redis.md).
+- The proxy may use Cache/Rate-Limit Redis for **optional, non-authoritative caches** or throttling decisions. When enabled, this must use the Cache/Rate-Limit Redis deployment (not Coordination Redis) and must degrade safely when Redis is unavailable.
+- These caches do **not** change the proxy’s fundamental design as a stateless edge: any derived entries may be dropped, cold, or unavailable at any time without affecting correctness. Authoritative gameplay and session state remain exclusively in the Game Session Service and Redis as described in the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Redis Architecture](../../system-architecture-redis.md).
 
 ### Reconnection Behaviour at the Proxy Layer
 
@@ -228,6 +228,14 @@ are cleared as soon as the TCP session closes. The `NotifyDisconnect` event is
 therefore a **best-effort, at-least-once** lifecycle signal keyed by
 `{proxyConnectionId, disconnectSequence}` rather than a request to re-run gameplay commands.
 
+When a `NotifyDisconnect` call fails, the proxy retries it with a short, bounded
+exponential backoff window. Implementations should treat this as an advisory
+hint rather than a durability channel: by default the proxy retries delivery for
+up to a few seconds after the Telnet socket closes (for example 2–5 seconds of
+total backoff), then gives up and relies on Game Session’s own liveness
+detection and Redis timeouts. This keeps retry behaviour simple while still
+surfacing most transient gRPC failures without risking long-lived retry storms.
+
 The proxy generates `proxyConnectionId` when the Telnet socket is accepted and propagates it to the gateway hop as a WebSocket handshake header (`X-Proxy-Connection-Id`). Spring Cloud Gateway strips this header from public ingress and forwards it only when it has authenticated the TCP Proxy identity; Game Session captures this identifier during login/session binding so it can associate disconnect events with the correct authenticated session even when the client did not provide a `SESSION` envelope.
 
 When a valid `SESSION <sessionId> <tenantId>` envelope is captured, the proxy forwards those identifiers as WebSocket handshake headers (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id`). Spring Cloud Gateway strips these from public ingress and may forward canonical `X-Session-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These values remain advisory context, not trusted facts: Game Session validates them against Redis-backed session ownership and tenant authorization.
@@ -253,10 +261,13 @@ Their definitions live in
 
 ### Telnet Session Envelope & Event Metrics
 
-This section is the canonical reference for the TCP Proxy Service’s `SESSION` +
-`LOGIN` semantics. Other documents (such as the Reconnection Strategy, Protocol
-Bridging, and user-journey flows) intentionally summarize the behaviour at a
-higher level and should link back here rather than redefining the protocol.
+This section is the canonical reference for the TCP Proxy Service’s Telnet
+`SESSION` envelope semantics and related event/metric behaviour. Other documents
+(such as the Reconnection Strategy, Protocol Bridging, and user-journey flows)
+intentionally summarize the behaviour at a higher level and should link back
+here rather than redefining the protocol. The core `LOGIN` / `LOGON` command
+semantics are defined in the Authentication & Authorization doc and shared by
+both Telnet and WebSocket clients.
 
 The `SESSION` envelope is an optional optimization used by first-party and other
 advanced Telnet clients to attach to an existing session before `LOGIN`. Normal
@@ -486,7 +497,7 @@ Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to valida
 When `TCP_PROXY_DEV_ISOLATED=true`, the proxy runs with an in-process Telnet echo handler:
 
 1. Start the proxy in dev-isolated mode: `./gradlew :tcp-proxy-service:bootRunDevIsolated`. This sets `spring.profiles.active=dev` and `TCP_PROXY_DEV_ISOLATED=true`.
-2. The proxy no longer opens a WebSocket connection to the gateway. It echoes subsequent commands directly back over the Telnet session while still allowing advanced clients to send an optional `SESSION <sessionId> <tenantId>` envelope if they want to exercise the attach-to-session path.
+2. The proxy no longer opens a WebSocket connection to the gateway. It echoes subsequent commands directly back over the Telnet session while still allowing advanced clients to send an optional `SESSION <sessionId> <tenantId>` envelope. In this mode, `SESSION` parsing exercises only the envelope capture and logging behaviour; it does **not** perform real attach-to-session or Redis-backed resume flows.
 3. Connect from a Telnet/MUD client: `telnet localhost 2323`.
 4. Send a few commands (for example `LOOK`, `SAY hello`). Watch the Telnet output to verify that input is sanitized and echoed without requiring Spring Cloud Gateway, Game Session, or any other services. Do not use real credentials in this echo mode, and do not log raw input unless it is explicitly enabled and credential-redacted.
 
@@ -609,6 +620,12 @@ service exports OpenTelemetry spans to the collector defined by
 The connection and envelope limits exposed via `TCP_PROXY_MAX_CONNECTIONS`,
 `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, and `TCP_PROXY_MAX_MALFORMED_ENVELOPES`
 are intended to be tuned per environment.
+
+The WebSocket bridge reconnect window and buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected Spring Cloud Gateway blips and typical player command rates:
+
+- Shorter reconnect windows (for example `1000`–`3000` ms) minimise how long Telnet sockets wait when the Gateway is unavailable but will drop clients more aggressively during longer deploys or outages. Longer windows reduce disconnects but increase the amount of buffered input held at the DMZ edge.
+- `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` should reflect how many recent commands you are willing to buffer during a brief Gateway restart (for example 32–128 lines), balanced against memory usage and the expectation that the proxy never replays commands after a disconnect. If the buffer fills before the Gateway link recovers, the proxy closes the Telnet connection and increments `tcpproxy.telnet.discarded`.
+- When tuning these values, watch `tcpproxy.websocket.reconnects`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.telnet.discarded` over a few releases to ensure you are not either buffering too aggressively or dropping legitimate players too often during normal deploy cycles.
 
 **Recommended dev defaults**
 

@@ -45,6 +45,56 @@ These targets are enforced via a small set of metrics and dashboards:
 
 Operators should wire alerts directly to these metrics (for example, warn when AOF size crosses the soft limit, or when restart duration and growth remain above targets for several days) rather than relying on ad-hoc `INFO` calls.
 
+---
+
+## Redis Metrics Catalog
+
+This section summarizes the **canonical Redis-related metrics** that other docs reference (Redis hub, reset model, incident runbook, and service designs). It is not exhaustive, but changes here should remain consistent with metric names used elsewhere.
+
+### Coordination Redis – Core Metrics
+
+These metrics support AOF targets, tail-loss SLOs, and basic coordination health:
+
+- **AOF size and growth**
+  - `redis_aof_current_size_bytes` (or platform-equivalent): per-node AOF size for Coordination Redis.
+  - `redis_coordination_aof_growth_bytes_total` (custom): derived daily growth estimate based on sampled AOF sizes.
+  - `redis_coordinator_restart_duration_seconds` (custom): restart duration for planned maintenance or scripted restarts.
+- **Tail-loss and replay**
+  - Tail-loss gauges/counters as defined in [Tail-Loss SLO Observability](#tail-loss-slo-observability), tagged by `<tenantId, regionId>`.
+  - Error metrics from Lua scripts that signal replay or lease/lock issues (for example, `STALE_LEASE`, `STALE_LOCK`), as described in `system-architecture-redis-lua-patterns.md`.
+- **Coordination key health**
+  - Size and count metrics for core prefixes such as `tick:{tenantRegionTag}:pending`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `session:game:<tenantId>:<sessionId>`, used to enforce the size and complexity budgets later in this file.
+  - Oversize/over-budget counters referenced in the **Coordination Size and Complexity Budgets** section (for example, `redis.tick.pending_oversized_total`, `redis.tick.pending_effects_over_budget_total`, `redis.tick.command_queue_overflow_total`, `redis.tick.timers_over_budget_total`, `redis.session.payload_oversized_total`).
+
+### Session Schema and Cleanup Metrics
+
+The session schema and TTL cleanup flows in `system-architecture-redis-incident-runbook.md` and the session design in `system-architecture-redis.md` rely on:
+
+- `session.cas_unsupported_schema_total` – counts CAS attempts against session keys with unsupported `schemaVersion` values.
+- Cleanup job metrics:
+  - `session.cleanup_scanned_total`
+  - `session.cleanup_deleted_total`
+  - `session.cleanup_duration_seconds`
+
+These metrics help decide when to run schema/TTL cleanup jobs and to verify that cleanup has converged.
+
+### Cache / Rate-Limit Redis Metrics
+
+Cache and rate-limit metrics complement the cache design in `system-architecture-redis-cache.md`:
+
+- Basic Redis metrics from `INFO` or exporters:
+  - `used_memory`, `maxmemory`, eviction counters, `keyspace_hits`, `keyspace_misses`, and `blocked_clients` per cache deployment.
+- Prefix- or tenant-scoped cache metrics:
+  - Approximate key counts and bytes per cache prefix (for example, `inventory:*`, `world-dynamic:*`, `view:room-look:*`, `chat:*`) so noisy cache prefixes can be identified when Cache Redis is under pressure.
+- Rate-limiting:
+  - Total active `ratelimit:*` keys per tenant.
+  - Hit/miss or allow/deny counters per bucket/time window, aligned with the `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]` patterns.
+
+Service and environment docs that introduce new Redis metrics should either:
+
+- Reuse the names and patterns above, or
+- Extend this catalog with new entries so the naming and semantics remain consistent across the Redis hub, incident runbook, and per-service designs.
+
 Recommended AOF configuration profiles tie these targets back to concrete Redis settings:
 
 | Profile | Use Case | Persistence Settings (example) | Notes |

@@ -28,6 +28,12 @@ Redis participates in several layers of the test strategy:
   - Testcontainers typically start a `redis-coord` and `redis-cache` pair, mirroring the role separation from `docker-compose` and Helm.
   - Tests treat coordination state as reset-tolerant within the suite: they rely on the tick replay and session recovery rules described in [System Architecture: Redis](./system-architecture-redis.md), but do not assume persistence across independent test runs.
 
+In all of these test layers, coordination Redis behaves like the **“single-node without AOF (ephemeral coordination)”** profile from [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md):
+
+- Coordination Redis instances used by tests are disposable and fully reset-tolerant; they do **not** validate tail-loss SLOs, AOF replay guarantees, or long-lived coordination logs.
+- Cache/Rate-Limit Redis in tests mirrors the production role separation (dedicated cache instance) but is likewise treated as ephemeral and safe to reset between suites.
+- Staging and production environments remain responsible for validating AOF behavior, tail-loss envelopes, and reset runbooks; tests focus on correctness of flows under idealized, fresh coordination state rather than persistence characteristics.
+
 When adding new Redis-dependent tests:
 
 - Prefer existing helper builders and key helpers from `firemud-common` so prefixes and hash-tag rules stay consistent with production.

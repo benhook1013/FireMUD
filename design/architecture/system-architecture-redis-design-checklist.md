@@ -11,8 +11,43 @@ Use this checklist during design and review whenever you:
 
 ---
 
+## Redis Design Change Workflow
+
+Before applying the detailed checklists below, follow this high‑level workflow whenever you change Redis usage:
+
+1. **Clarify intent and scope**
+   - Identify whether the change affects coordination prefixes, cache/rate‑limit prefixes, Lua scripts, Redis profiles/topology/reset behavior, or some combination.
+   - Decide which tenants/regions or services are in scope for the change and how it interacts with reset tolerance classes (reset‑tolerant, reset‑sensitive, reset‑forbidden) from `system-architecture-redis-reset-and-recovery.md`.
+2. **Update canonical catalogs and routing docs**
+   - For **coordination prefixes**:
+     - Update the reset policy matrix in `system-architecture-redis-reset-and-recovery.md` (prefix naming, role, reset tolerance).
+     - Ensure any new or changed prefixes appear in the **Redis Cheat Sheet** (`system-architecture-redis-cheatsheet.md`) as a routed, documented example.
+   - For **cache/rate‑limit prefixes**:
+     - Update the cache key catalog in `system-architecture-redis-cache.md` (prefix, role, owner, correctness class, reset tolerance).
+     - Ensure the cheat sheet remains consistent with the cache catalog for any representative entries it lists.
+3. **Update service‑specific docs and shared libraries**
+   - Document prefix ownership, reset behavior, and Redis role (Coordination vs Cache/Rate‑Limit) in the relevant service README(s) under their Redis sections (for example, Game Session, Automation & Scripting, Game Logic, Gateway).
+   - For coordination changes, update the Lua Script Registry descriptors and key‑builder helpers in `firemud-common` so services and ops tooling share the same key shapes and hash‑tag rules.
+4. **Apply the detailed checklists**
+   - Run through the relevant sections below:
+     - **Coordination Prefix Checklist** for any coordination prefix changes.
+     - **Cache / Rate‑Limit Prefix Checklist** for caches or rate limits.
+     - **Lua Script Checklist** for any script changes.
+     - **Profile / Topology / Reset Checklist** when changing profiles, reset behavior, or environment mappings.
+5. **Align reset and incident runbooks**
+   - Confirm that `system-architecture-redis-reset-and-recovery.md` describes safe reset scopes for any affected prefixes.
+   - Update or validate the corresponding runbooks in `system-architecture-redis-operations.md` and the Redis incident runbook so operators have a clear path for resets, repairs, and “accept loss” decisions.
+6. **Wire observability and metrics**
+   - Ensure required metrics and alerts for AOF size/growth, tail‑loss, prefix key counts, and script outcomes are covered or updated in the Redis metrics catalog in `system-architecture-redis-operations.md`.
+   - Verify that dashboards and alerts referenced in service docs and the incident runbook line up with the new or changed prefixes/scripts.
+
+Only after these workflow steps are accounted for should a change be considered “ready” to leave design review and move into implementation.
+
+---
+
 ## Table of Contents
 
+- [Redis Design Change Workflow](#redis-design-change-workflow)
 - [Coordination Prefix Checklist](#coordination-prefix-checklist)
 - [Cache / Rate-Limit Prefix Checklist](#cache--rate-limit-prefix-checklist)
 - [Lua Script Checklist](#lua-script-checklist)
@@ -175,4 +210,3 @@ Use this when changing Redis profiles, topologies, or reset behavior.
 - [ ] Metrics and alerts:
   - [ ] Reflect any changes in restart times, AOF growth, or memory usage.
   - [ ] Surface tail‑loss violations and coordination health for the affected flows.
-
