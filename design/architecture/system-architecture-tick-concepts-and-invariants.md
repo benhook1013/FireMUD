@@ -7,6 +7,7 @@ This document summarizes the **core concepts and invariants** of the FireMUD tic
 - Hybrid tick model and player/AI fairness.
 - Region authority, leadership, and locking.
 - High-level retry, isolation, and idempotency rules.
+- Region health, stalled-region detection, and tick pacing (including idle/background ticks and global fan-out).
 
 ## Key Sections in the Main Tick Doc
 
@@ -38,6 +39,17 @@ When designing new tick-driven features, keep these invariants in mind:
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
 
 Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, regionId, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions.
+
+### Isolation Within a Tick
+
+Per-tick isolation is defined explicitly so replay and fairness remain deterministic:
+
+- Actions may only see staged state from the **current** tick for their `<tenantId, regionId>`.
+- Changes from other tick regions or from **future** ticks in the same region are invisible while a tick is in progress.
+- Changes staged earlier in the same tick are composable: later actions in that tick may observe them when computing their own outcomes.
+- When required state is missing or inconsistent, the action must fail and retry under the normal retry/backoff rules rather than speculatively mixing cross-tick or cross-region reads.
+
+These rules ensure clean, replayable ticks and keep visual or scripting shortcuts from leaking inconsistent state across ticks.
 
 ## Locking and Multi-Entity Commands (Conceptual)
 
@@ -101,6 +113,20 @@ At runtime, observed tick durations are compared against lock TTLs using histogr
 
 Region health transitions (`HEALTHY` → `DEGRADED` → `HALTED`) and the exact thresholds are defined in `system-architecture-redis.md` under Redis availability and safety guarantees. This document captures only the conceptual relationship between tick budgets, TTLs, and region health.
 
+In addition to timing-based health, Game Session tracks **forward progress** for each `<tenantId, regionId>`:
+
+- A simple progress record includes:
+  - The tickId or timestamp of the last successful commit.
+  - A counter of consecutive failed ticks due to downstream errors or timeouts (not mere lock contention).
+- A region is treated as **stalled** when it still holds `tick-executor-lease:{tenantRegionTag}` but has not committed successfully for several multiples of `tick_interval_ms` or has exceeded a threshold of consecutive failures.
+
+Conceptually:
+
+- Lease ownership indicates **who** is allowed to coordinate work for a region.
+- Progress signals indicate whether that owner is actually advancing game state.
+
+Downstream behavior for stalled regions (rejecting new commands, marking instances unhealthy, and so on) is described in the failures and operations doc; this section captures only the invariants that distinguish “lease held but stalled” from both healthy and fully halted regions.
+
 ## Retry and Backoff Invariants
 
 Lock contention and transient failures are handled by a bounded retry and backoff policy that preserves fairness:
@@ -112,3 +138,35 @@ Lock contention and transient failures are handled by a bounded retry and backof
 - Metrics such as `tick_conflict_hotspot_detected_total` and `tick_retry_queue_depth` surface regions where contention is persistent so operators can adjust region layout, tick budgets, or feature design.
 
 These invariants ensure that contention is handled predictably: retries remain bounded, hot entities cannot monopolize the loop indefinitely, and operators have clear signals when configuration or design changes are required.
+
+At the configuration level:
+
+- Lua staging scripts enforce hard per-tick caps on how many commands or events move from queues into `pending`, using keys such as:
+  - `game.tick-max-commands`
+  - `automation.tick-max-events`
+- These caps exist so no single player or script can monopolize the tick loop, even if they enqueue many actions; excess work spills into subsequent ticks according to the same fairness rules.
+
+Runtime health is also expressed via ratios such as `tick.execution_time_ms_p95` or `tick.execution_time_ms_p99` over `lock_ttl_ms`:
+
+- **Healthy** – p99 execution time well below `lock_ttl_ms` (for example, < 0.5 × `lock_ttl_ms`).
+- **Degraded / Unsafe** – p99 execution time approaching or exceeding `lock_ttl_ms` over a sustained window; affected regions surface warnings and may be slowed or temporarily halted until configuration or workloads are adjusted.
+
+The precise thresholds and recommended operator actions are defined in the Redis operations and incident runbook docs; this section records that tick fairness and safety are enforced both through bounded per-tick work and through these timing-based health checks.
+
+## Tick Regions, Global Effects, and Idle Background Ticks
+
+Tick work is scoped to **regions** so that:
+
+- Regions advance independently and can be assigned to different executors.
+- Failures and stalls are isolated to a region rather than the whole game.
+
+Two additional behaviors complete the mental model:
+
+- **Global or multi-region effects use fan-out**:
+  - World-wide or multi-region events are implemented by Game Session injecting commands into each affected region and forcing a tick there.
+  - This ensures the effect is applied even if a region would otherwise be idle; the work still runs under that region’s normal lease, locks, and fairness rules.
+- **Idle regions still advance time via lightweight ticks**:
+  - Regions continue to run a lightweight “background tick” (for example, roughly once per second) even when no players are present.
+  - Timers, cooldowns, and delayed events therefore continue to progress in idle areas, using the same bounded per-tick work limits described above.
+
+The underlying Redis key layout and shard-locality rules for these behaviors are documented in the Redis architecture; this section captures the conceptual guarantees for designers and implementers.

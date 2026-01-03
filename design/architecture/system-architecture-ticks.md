@@ -110,7 +110,7 @@ Tick work is partitioned into **regions** so that:
 - Failures are isolated to a region.
 - Horizontal scaling is possible by assigning regions to different workers.
 
-Region sizing and sharding strategies are documented in `system-architecture-tick-concepts-and-invariants.md`.
+ Region sizing, sharding strategies, and how global effects and idle/background ticks behave are documented in `system-architecture-tick-concepts-and-invariants.md`.
 
 ---
 
@@ -121,7 +121,20 @@ Region boundaries are chosen to:
 - Minimize cross-region traffic for common player flows.
 - Keep per-region tick load within safe bounds.
 
-Ownership changes (moving a region between executors) follow the lease rules. See `system-architecture-tick-concepts-and-invariants.md` for guidance and examples.
+ Ownership changes (moving a region between executors) follow the lease rules:
+
+- A scheduler or consistent-hash layer maps `<tenantId, regionId>` to Game Session instances.
+- To rebalance load, the current executor:
+  - Stops renewing the region lease for selected regions.
+  - Drains in-flight work to a safe boundary (for example, after the current `pending` tick is committed or recovered).
+- Another instance then acquires the lease and continues tick processing from the existing Redis and PostgreSQL state for that region.
+
+World Management owns region topology (layout and `<regionId>` assignments) and may, over time, support “drain and split” or “merge” flows:
+
+- Split flows mark a region for split, allow existing ticks to complete, and then move entities plus queues under new `<tenantId, regionId>` prefixes before ticks resume.
+- Merge flows consolidate lightly used regions into a single region to reduce overhead.
+
+See `system-architecture-tick-concepts-and-invariants.md` and the World Management service docs for detailed topology guidance and operational runbooks.
 
 ---
 
@@ -227,9 +240,9 @@ Domain services must ensure that tick-driven effects are **idempotent** with res
 Effect identity and idempotency rules are defined jointly by:
 
 - The `tickId` carried on tick-driven calls.
-- A stable `effectId` or `effectKey` derived from the command payload.
+- A stable, structured effect identity (for example including `tenantId`, `tickId`, `effectKey`, aggregate type, and aggregate id) derived deterministically from the command payload and tick context.
 
-For the complete contract and examples, see `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
+For the complete contract, ledger schema, and endpoint semantics, see `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
 
 ---
 

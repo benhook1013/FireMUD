@@ -70,6 +70,14 @@ At each tick for a `<tenantId, regionId>`, the executor:
    - Invokes domain services to apply effects under idempotent rules.
    - Runs a final Lua commit/cleanup script to reconcile Redis state, clear `pending`, and release locks.
 
+The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant:
+
+- A region is considered busy while `tick:{tenantRegionTag}:pending` exists for its current `tickId`.
+- The scheduler does not start a new tick for that `<tenantId, regionId>` until the `pending` entry has been cleared as part of a successful commit or explicitly handled during crash recovery.
+- Additional work enqueued for the same region while a tick is in flight is modeled as retries or follow-up work for a later `tickId`, not as a second concurrent tick.
+
+If FireMUD later introduces limited intra-region parallelism (for example by sharding a single region into buckets of entities), this model will evolve to use **per-bucket pending keys** such as `tick:{tenantRegionTag}:bucket:<bucketId>:pending` plus matching idempotency and locking rules. Until such a change is explicitly designed, the invariant remains one `pending` entry and one in-flight tick per `<tenantId, regionId>`.
+
 Commands that cannot complete inside the configured tick budget are deferred via retry queues rather than blocking the current tick.
 
 Retry queues store, for each action, a retry counter and `next-eligible-tick` so that:
@@ -110,3 +118,39 @@ Some effects (for example, explosions, chained spells, scripted traps) spawn fol
   - A warning is logged so designers can adjust the feature or its tuning, and the player may receive a message indicating the chain was halted.
 
 Because chained effects still respect the “one action per entity per tick” rule, this depth guard is primarily a protection against runaway re-entrancy and unbounded script-driven chain reactions.
+
+## Worked Example: Cross-Region Lifesteal Command
+
+To illustrate how cross-region flows compose from the phases above, consider a **lifesteal spell** where a caster in region A damages a target in region B and heals based on the actual damage dealt:
+
+1. **Enqueue (origin region)**
+   - The caster issues a `LIFESTEAL <target>` command from a room in `<tenantId, regionA>`.
+   - Game Session enqueues the command under the caster’s per-entity queue key in Redis.
+2. **Target Resolution (origin region, read-only)**
+   - During the next tick for `<tenantId, regionA>`, the executor:
+     - Resolves which remote entity in `<tenantId, regionB>` is the intended target.
+     - Validates that a cross-region action is allowed (line of sight, range, permissions) using the pinned snapshot and metadata.
+   - No HP or inventory state is changed yet; this phase only determines the target and target region.
+3. **Damage Leg (target region)**
+   - The origin region records durable follow-up work for the target entity in PostgreSQL (tick effect ledger / follow-up tables), attributed to `<tenantId, regionB>` and keyed by a stable effect identity.
+   - It may also write a best-effort hint marker such as `remote:<tenantId>:<targetEntityId>` to reduce latency, but correctness does not depend on that marker.
+   - In the next tick for `<tenantId, regionB>`, the target region’s executor:
+     - Computes the damage amount as a percentage of the target’s authoritative current HP.
+     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<targetEntityId>`) and applies damage via Entity Management using the normal `(tenantId, regionId, tickId, effectKey)` idempotency rules.
+     - Emits a result back to region A containing `casterEntityId` and the actual `damageApplied`.
+4. **Heal Leg (origin region)**
+   - When region A receives the lifesteal result, it enqueues a local “apply lifesteal heal” command for the caster.
+   - In a subsequent tick for `<tenantId, regionA>`, the executor:
+     - Acquires the caster’s lock.
+     - Applies a heal up to `damageApplied` (subject to HP rules) using Entity Management and tick idempotency.
+5. **Player Feedback and Optional Coordination**
+   - The origin region may:
+     - Immediately show “You cast Lifesteal…” once the initial command is accepted.
+     - Show damage and heal messages as the remote and local legs complete.
+   - If stricter “all-or-nothing” semantics are required, the origin region can track whether both damage and heal legs have reported success and apply a final status (success, partial, failed), but most combat flows rely on the default eventual consistency.
+
+Throughout this sequence:
+
+- Each leg is idempotent and keyed by `tickId` and effect identity in the domain services.
+- Region executors never hold cross-region locks; they coordinate via queued commands, durable follow-up records, and result messages.
+- Retries due to lock contention or transient failures are handled by the standard retry queues and idempotent handlers in each region without breaking the overall experience.

@@ -33,6 +33,44 @@ Tick recovery is driven by Redis coordination state plus domain-level idempotenc
 - Redis is treated as a volatile coordination layer with **at-least-once** semantics; network retries, executor failover, and AOF replay can all cause the same logical effect to be attempted more than once.
 - Domain services rely on `tickId` and effect guards to ensure that replays do not double-apply logical effects even when Redis state is partially lost.
 
+### Tick Effect Ledger and Replay Guarantees
+
+To make replays observable and bounded, Game Session maintains a **tick effect ledger** in PostgreSQL. Conceptually:
+
+- Every tick effect that can be staged in `tick:{tenantRegionTag}:pending` or in retry/timer queues is mirrored into a Game Session–owned ledger table (for example `tick_effects`) with columns such as:
+  - `tenant_id`, `region_id`, `tick_id`
+  - `effect_key` (stable, human-readable descriptor passed through from staging)
+  - `command_id`
+  - `status` ∈ {`SCHEDULED`, `APPLIED`, `ABANDONED`}
+  - `reason` / `outcome`
+  - `created_at`, `updated_at`
+- For any `(tenant_id, region_id, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
+  - `status = APPLIED` – effect successfully committed to domain state.
+  - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
+- Rows must not remain in `SCHEDULED` beyond a configured grace window; stuck rows are treated as operational smells and surfaced via metrics and alerts.
+
+Replay of a tick is driven from ledger state:
+
+- When reprocessing a tick, the executor loads ledger rows for that `<tenantId, regionId, tickId>` with `status = SCHEDULED` and:
+  - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then marks those rows `APPLIED`.
+  - Marks effects `ABANDONED` with a precise reason when replay determines they are no longer valid (expired session, entity gone, descheduled tick, and so on).
+  - Marks effects `APPLIED` and skips domain calls when it determines the effect has already been applied idempotently.
+- Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
+
+The ledger makes replay visible operationally via metrics such as:
+
+- `tick.effects_pending_total`
+- `tick.effects_applied_total`
+- `tick.effects_abandoned_total{reason}`
+- `tick.effects_replayed_total`
+
+Alerts fire when:
+
+- Pending (`SCHEDULED`) counts remain above thresholds for longer than a tick window, or
+- The abandoned ratio grows unexpectedly for a region or effect type.
+
+These metrics complement the Redis- and lock-level health metrics described in the Redis architecture and operations docs.
+
 Common scenarios and invariants:
 
 - **Primary crash, AOF fully up to date**
@@ -130,6 +168,50 @@ Operationally:
 - Every tick-driven write path must use either the per-aggregate `last_tick_id` pattern or the operation-level guard pattern.
 - Domain handlers treat Redis locks and leases as opaque; they never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` directly.
 - Operations that cannot be made idempotent or compensatable at the domain layer—for example payments, emails, or webhooks into third-party systems—must not be executed directly inside tick-driven handlers. Those flows must use the saga/outbox patterns in `system-architecture-transactions.md` so they can tolerate retries and partial failures independently of tick replay.
+
+### Effect Identity, Endpoint Semantics, and Outcome Metrics
+
+Tick-driven domain calls use a **canonical effect identity** and a shared contract for retries:
+
+- Effect identity is derived deterministically from tick context and target aggregate identity; conceptually it includes:
+  - `tenantId`
+  - `tickId` (region-scoped)
+  - `effectKey` (stable descriptor such as `damage:entity:<id>:command:<commandId>`)
+  - `targetAggregateType` (for example `ENTITY`, `INVENTORY`, `ROOM_STATE`, `QUEST`, `ACHIEVEMENT`)
+  - `targetAggregateId`
+  - Optional `domainScope` when needed to avoid collisions across independently owned domains.
+- Game Session derives this identity while computing tick outcomes and passes it to each tick-invoked handler; handlers must not generate fresh random IDs for idempotency in tick paths.
+
+Every gRPC endpoint that can be invoked from tick execution must document and implement:
+
+- **Duplicate handling** – repeated calls with the same effect identity must return OK / “already applied” semantics (for example, no new HP or inventory changes) instead of logical errors that drive infinite retries.
+- **Already-in-desired-state handling** – if the target state already reflects the intended outcome, the endpoint returns OK and does not emit additional side effects.
+- **Retry classification** – errors must be classified as retryable (transient infrastructure issues) vs terminal (invalid inputs, missing aggregates). Terminal errors must move the corresponding ledger/guard entry into a terminal state (for example `ABANDONED`) instead of leaving work stuck in a retry loop.
+
+Endpoints participating in tick-driven effects should also emit a small, standardized metric:
+
+- `tick.effect_outcome_total{service, effect_type, outcome}`
+  - `service` – owning microservice (for example `entity-management-service`).
+  - `effect_type` – low-cardinality side-effect category (for example `entity_state`, `inventory`, `quest`, `room_state`), **not** the full effect identity.
+  - `outcome` – `first_apply`, `replay_ok`, or `guard_error` (for unexpected failures at the idempotency boundary).
+
+This metric provides a cross-service view of how often replay paths are exercised and highlights handlers that are not honoring the canonical idempotency contract.
+
+### Side-Effect Categories and Idempotency Strategies
+
+Different side-effect categories may use different persistence primitives, but each must be explicitly tied back to tick-driven effect identity:
+
+- **Award-once side effects** (items, currency, XP):
+  - Use a durable “effect applied” ledger keyed by the effect identity (or a unique equivalent) with insert-if-absent semantics.
+  - On uniqueness conflict, treat the call as an idempotent replay and return OK without applying additional changes.
+- **Monotonic state changes** (achievements, unlocks):
+  - Use monotonic fields or unique constraints such as `(tenantId, playerId, achievementId)` plus a mapping to effect identity when they trigger additional rewards or notifications.
+- **Notifications and events**:
+  - Use transactional outbox entries keyed by effect identity (often `eventId == effectId`) so producers deduplicate sends; consumers may still apply defensive deduplication.
+- **Versioned aggregates and CAS-style updates**:
+  - Compare-and-set/version checks must treat replay-stale writes as OK/no-op outcomes instead of “conflict” errors that cause unbounded retries.
+
+Together with the tick effect ledger, these patterns ensure that Redis coordination and replay logic remain simple while each domain service guarantees that its persistent mutations and outward side effects are safe to attempt multiple times.
 
 ## Remote Hint Markers and Resets
 
