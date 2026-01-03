@@ -9,8 +9,6 @@ Gradle project paths do **not** include the `services:` prefix even though the m
 
 When running heavier Gradle tasks/tests locally, prefer executing them inside WSL to avoid Windows file-locking issues. Run `./gradlew <task>` from a WSL shell in this repository directory (for example `/mnt/c/.../FireMUD`).
 
-Before editing, run `dev-tools/print-lines-with-numbers.ps1 <file>` (optionally with `-StartLine`, `-Count`, and `-EndLine`) to view numbered ranges and pinpoint the slice you need without extra tooling.
-
 Do not manually wrap lines. Let lines flow naturally so content displays cleanly on GitHub and in
 editors.
 

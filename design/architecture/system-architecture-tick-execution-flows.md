@@ -72,6 +72,12 @@ At each tick for a `<tenantId, regionId>`, the executor:
 
 Commands that cannot complete inside the configured tick budget are deferred via retry queues rather than blocking the current tick.
 
+Retry queues store, for each action, a retry counter and `next-eligible-tick` so that:
+
+- Retries are scheduled for future ticks using an exponential backoff in ticks (for example, `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`).
+- Retries are appended to the originating entity’s queue, preserving per-entity FIFO ordering.
+- After a bounded number of attempts (for example `MAX_RETRIES`), the action is marked permanently failed and surfaced via metrics and player-visible errors rather than retried indefinitely.
+
 ## Remote Follow-Up Drain (Cross-Region Budgets)
 
 Remote follow-ups (work created in one region but owned by entities in another) are treated as first-class tick work in the target region:

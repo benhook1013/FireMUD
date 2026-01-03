@@ -58,6 +58,11 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
 
 This event stream powers “every N ticks” scheduling in Automation & Scripting, reconnection timer replay hints, and other out-of-band reporting. Tick execution itself never depends on these observers.
 
+Automation & Scripting Service instances typically:
+
+- Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
+- Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) so they can compute which “every N ticks” boundaries have elapsed and enqueue `onInterval` and other tick-derived triggers under the same tick timeline.
+
 Tick execution never depends on external buses; external services consume the heartbeat stream and/or tick event stream only. See `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md` for details.
 
 ---
