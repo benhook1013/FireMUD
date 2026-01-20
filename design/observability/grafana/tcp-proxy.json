@@ -68,7 +68,30 @@
         }
       ],
       "id": 5
+    },
+    {
+      "type": "graph",
+      "title": "NotifyDisconnect Failures (rate)",
+      "targets": [
+        {
+          "expr": "rate(tcpproxy_disconnect_notify_failure[5m])",
+          "legendFormat": "notify_failure",
+          "refId": "A"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "graph",
+      "title": "gRPC App Errors by Code",
+      "targets": [
+        {
+          "expr": "sum by (code) (rate(grpc_app_error[5m]))",
+          "legendFormat": "{{code}}",
+          "refId": "A"
+        }
+      ],
+      "id": 7
     }
   ]
 }
-

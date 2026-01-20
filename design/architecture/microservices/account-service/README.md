@@ -45,9 +45,9 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 - **Coordination Redis**
   - The Account Service does **not** participate in tick or gameplay coordination and never touches `tick:*`, `timer:*`, `retry:*`, or other tick-related prefixes on Coordination Redis; those responsibilities remain with the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
-  - It does, however, use the tenant-scoped auth/session keys documented under “Tenant-scoped session/auth keys” in [Redis Architecture – Key Slotting Cheat Sheet](../../system-architecture-redis.md#key-slotting-cheat-sheet):
+  - It does, however, use tenant-scoped auth/session keys as documented in [Authentication](../../system-architecture-authentication.md):
     - `session:auth:<tenantId>:<tokenHash>` – Account/JWT bindings for internal auth.
-  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions, and they are treated as short-lived, reset-tolerant state.
+  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions. They are short-lived but **reset-sensitive**: coordination resets that drop `session:*` force re-authentication and token re-issuance for affected tenants.
 - **Cache/Rate-Limit Redis**
   - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
   - When introducing new Redis usage here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so auth/session keys, roles, and observability remain consistent with the global design.
@@ -184,9 +184,9 @@ The gRPC schemas for this service live in
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Sign Up](../../user-journeys.md#1-sign-up)
-- [User Journeys](../../user-journeys.md#11-purchases-and-subscriptions) – payment and subscription workflow.
-- [User Journeys – Account Data Export & Deletion](../../user-journeys.md#18-account-data-export--deletion)
+- [User Journeys – Sign Up](../../user-journeys-players.md#1-sign-up)
+- [User Journeys – Purchases and Subscriptions](../../user-journeys-players.md#5-purchases-and-subscriptions)
+- [User Journeys – Account Data Export & Deletion](../../user-journeys-players.md#8-account-data-export--deletion)
 - [Redis Architecture](../../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)

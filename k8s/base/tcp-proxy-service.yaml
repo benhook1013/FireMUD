@@ -48,13 +48,15 @@ spec:
               mountPath: /tls
               readOnly: true
           readinessProbe:
-            tcpSocket:
-              port: 2323
+            httpGet:
+              path: /actuator/health
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            tcpSocket:
-              port: 2323
+            httpGet:
+              path: /actuator/health
+              port: 8080
             initialDelaySeconds: 15
             periodSeconds: 20
         - name: fluent-bit

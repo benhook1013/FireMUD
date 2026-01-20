@@ -1,4 +1,4 @@
-# FireMUD Scripting DSL & Event Lifecycle (Hub)
+# FireMUD System Architecture: Scripting DSL & Event Lifecycle
 
 This document is a **short hub** for the scripting DSL and event lifecycle. It explains, at a high level, what the scripting DSL is and points different audiences to the detailed documents they should read.
 
@@ -7,6 +7,10 @@ It is a companion to:
 - `design/architecture/system-architecture-scripting.md` – high-level hub for scripting and automation.
 - `design/architecture/system-architecture-scripting-examples-and-patterns.md` – worked examples and common behaviors.
 - `design/architecture/system-architecture-scripting-quotas-and-operations.md` – sandboxing, quotas, and operational guidance.
+
+If you are new to scripting and automation overall, start with:
+
+- `design/architecture/system-architecture-scripting.md` – especially **Who Should Read What** and **Where to Find Details**, which describe how this DSL-focused set of docs fits into the wider scripting & automation framework.
 
 For service-level implementation details, also see:
 
@@ -83,4 +87,3 @@ as the canonical **spec** for:
 - Failure modes, error handling, and idempotent integration with downstream services.
 
 When implementing or changing behavior in the Automation & Scripting Service, Tick System, or domain services that interact with scripts, **treat that reference document as the source of truth** for scripting semantics and contracts.
-

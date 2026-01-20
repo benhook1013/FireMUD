@@ -131,6 +131,7 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
 - **Cache/Rate-Limit Redis**
   - Uses **Cache/Rate-Limit Redis** exclusively for rate limiting and any future gateway-local caches, connecting via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` as documented in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) and [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - Rate-limit buckets and related keys follow the `ratelimit:<tenantId>:<bucket>:<timeWindow>` patterns and hash-based bucketing strategies described in [Rate-Limit Bucket Design](../../system-architecture-redis-cache.md#rate-limit-bucket-design). When present, tenant markers are included in keys for **isolation and observability only**; limit values and policy decisions remain global and are not derived at Spring Cloud Gateway from tenant identity. These rate-limit structures are treated as **best-effort TTL-only caches** of counters; correctness comes from the gateway’s rate-limit policy and enforcement logic, not from Redis acting as a durable store.
+  - Spring Cloud Gateway does not read or write gameplay chat caches (`chat:*`) or other service-owned cache prefixes; it treats those as internal to their owning services and interacts with them only via upstream APIs.
 - Changes to rate-limiting strategy or cache usage in Spring Cloud Gateway should be reviewed using the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) to confirm prefix registration, role separation, and monitoring coverage. Any additional gateway-local caches must explicitly declare whether they are strongly validated (version-based) or best-effort TTL-only and be registered in the Cache/Rate-Limit Redis key catalog maintained in the Redis cache design docs (Redis cheat sheet plus `system-architecture-redis-cache.md`).
 
 > If you change Redis usage for this service, you must read and apply:
@@ -163,7 +164,7 @@ health RPCs (such as `Ping`) used by operators and tooling.
 - [Security Architecture](../../system-architecture-security.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Player Login and Gameplay](../../user-journeys.md#7-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../../user-journeys-players.md#3-player-login-and-gameplay)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
 - [Testing Strategy](../../system-architecture-testing.md)

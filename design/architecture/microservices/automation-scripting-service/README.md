@@ -79,6 +79,7 @@ Any new Automation & Scripting–specific prefixes must be added to this table a
 > - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
 
 - Quota and queue-related caches are treated as **best-effort TTL-only caches** unless this README states otherwise; any future strongly validated caches must document their version fields and invalidation strategy explicitly, in line with the Redis cache design.
+  In particular, `automation:queue:*` must never be the sole source of truth for whether work has been enqueued or processed; exactly-once or at-least-once semantics are provided by durable trigger tables and idempotent domain logic, not by Redis queue contents.
 
 #### Redis Cluster Slotting Rules for Automation
 
@@ -226,7 +227,7 @@ stubs.
 - [Redis Architecture](../../system-architecture-redis.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Add Automation & Scripting](../../user-journeys.md#4-add-automation--scripting)
+- [User Journeys – Add Automation & Scripting](../../user-journeys-creators.md#3-add-automation--scripting)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)

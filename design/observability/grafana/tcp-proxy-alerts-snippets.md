@@ -78,6 +78,34 @@ groups:
             The Telnet WebSocket bridge is reconnecting to Spring Cloud Gateway more
             than once per second on average over 5 minutes.
             Verify GATEWAY_WS_URL, TLS/mTLS configuration, and Gateway health.
+
+      - alert: TcpProxyNotifyDisconnectFailures
+        expr: rate(tcpproxy_disconnect_notify_failure[5m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: tcp-proxy-service
+        annotations:
+          summary: "TCP Proxy NotifyDisconnect failures observed"
+          description: |
+            The TCP Proxy is seeing sustained failures when calling the Game Session
+            Service NotifyDisconnect event sink. Inspect grpc.app_error{code=...}
+            and Game Session logs to distinguish transient transport issues from
+            contract or authorization errors.
+
+      - alert: TcpProxyGrpcAppErrorSpike
+        expr: sum by (code) (rate(grpc_app_error[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: tcp-proxy-service
+        annotations:
+          summary: "Spike in gRPC app errors on TCP Proxy paths"
+          description: |
+            Application-level gRPC errors are elevated for one or more codes on
+            TCP Proxy related RPCs (such as NotifyDisconnect). Use the TCP Proxy
+            dashboard grpc_app_error panel and correlated Game Session logs to
+            identify misconfigurations or schema/contract issues.
 ```
 
-These expressions assume that Micrometer has exported the TCP Proxy meters using the default naming conventions (e.g., `tcpproxy.connections.active` → `tcpproxy_connections_active`). Adjust names if your Prometheus setup uses different naming rules or additional labels.
+These expressions assume that Micrometer has exported the TCP Proxy meters using the default naming conventions (e.g., `tcpproxy.connections.active` → `tcpproxy_connections_active`, `tcpproxy.disconnect.notify.failure` → `tcpproxy_disconnect_notify_failure`, `grpc.app_error` → `grpc_app_error`). Adjust names if your Prometheus setup uses different naming rules or additional labels.

@@ -68,7 +68,9 @@ Orchestrates live game sessions, including tick execution, player input validati
     - They contain rendered room “view” payloads derived from World Management and Entity Management; PostgreSQL remains authoritative for world/entity state.
     - TTLs are configured to be short and bounded so stale views are naturally refreshed; occasional staleness is acceptable because gameplay correctness (combat resolution, movement, visibility rules) is enforced by tick logic and authoritative reads, not by the cache.
     - Updates to underlying world or entity state do not require synchronous invalidation of `view:room-look:*` keys; cache misses and TTL expiry trigger recomputation via fresh calls to World/Entity services.
+    - Correctness-critical flows (combat, movement, visibility decisions) never read from `view:room-look:*`; they always rely on World Management and Entity Management APIs (and their own Class A caches) as the source of truth.
   - Game Session must not write cache prefixes to Coordination Redis or coordination prefixes to Cache/Rate-Limit Redis. Any new cache prefixes must be registered in the central cache catalog and documented here (including correctness class and invalidation strategy) before use.
+  - Game Session does not read or write Social & Groups chat history caches (`chat:say:*`, `chat:tell:*`, `chat:guild:*`, `chat:account:*`) directly; those prefixes are owned and interpreted by the Social & Groups Service. Game Session interacts with chat history only via Social & Groups APIs.
 - Changes to Redis usage in this service must follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so prefixes, roles, slotting, and SLOs stay consistent.
 
 #### Key Prefix Summary
@@ -512,8 +514,8 @@ Session shutdown therefore cleans up **session** keys, but **does not** implicit
 - [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Publish and Start a Game Instance](../../user-journeys.md#5-publish-and-start-a-game-instance)
-- [User Journeys – Player Login and Gameplay](../../user-journeys.md#7-player-login-and-gameplay)
+- [User Journeys – Publish and Start a Game Instance](../../user-journeys-creators.md#4-publish-and-start-a-game-instance)
+- [User Journeys – Player Login and Gameplay](../../user-journeys-players.md#3-player-login-and-gameplay)
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

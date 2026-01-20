@@ -174,4 +174,4 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 - [Reconnection Strategy](./system-architecture-reconnection.md)
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Tick System and Runtime Design](./system-architecture-ticks.md)
-- [User Journeys – Sign Up](./user-journeys.md#1-sign-up)
+- [User Journeys – Sign Up](./user-journeys-players.md#1-sign-up)

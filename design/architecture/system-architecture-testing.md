@@ -100,4 +100,4 @@ OWASP ZAP crawls the web client and Gateway endpoints during CI to surface commo
 
 - [CI/CD Pipeline](./system-architecture-cicd.md)
 - [System Architecture Overview](./system-architecture-overview.md)
-- [User Journeys – Testing & Continuous Delivery](./user-journeys.md#17-testing--continuous-delivery)
+- [User Journeys – Testing & Continuous Delivery](./user-journeys-operators.md#3-testing--continuous-delivery)

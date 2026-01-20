@@ -78,6 +78,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
     - `chat:account:<tenantId>:<accountId>`
   - These lists mirror persisted history in PostgreSQL for quick retrieval and are subject to TTL and max-message limits configured via `FIREMUD_CHAT_*` variables, following the cache key and TTL guidance in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md). They are treated as **best-effort TTL-only caches**: correctness comes from PostgreSQL, while Redis provides short-lived history windows bounded by the configured TTLs and message counts.
 - New chat/cache prefixes or changes to Redis usage should be validated against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so they remain aligned with the global key catalog and SLOs, and should be added to the Cache/Rate-Limit Redis key catalog maintained in the Redis cache design docs (Redis cheat sheet plus `system-architecture-redis-cache.md`) with documented size/complexity budgets.
+  - Concrete TTL and max-message budgets for these prefixes (for example `FIREMUD_CHAT_SAYS_TTL_SECONDS` / `FIREMUD_CHAT_SAYS_MAX_MESSAGES`) are documented in this README’s Environment Variables section and must remain aligned with the size/complexity envelopes described in `system-architecture-redis-cache.md`.
 
 > If you change Redis usage for this service, you must read and apply:
 >
@@ -166,7 +167,7 @@ files change.
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Social Interaction](../../user-journeys.md#8-social-interaction)
+- [User Journeys – Social Interaction](../../user-journeys-players.md#4-social-interaction)
 - [Redis Architecture](../../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)

@@ -21,4 +21,4 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 
 - [Game Design Service Architecture](README.md)
 - [System Architecture – Transactions](../../system-architecture-transactions.md)
-- [User Journeys – World and Entity Design](../../user-journeys.md#3-world-and-entity-design)
+- [User Journeys – World and Entity Design](../../user-journeys-creators.md#2-world-and-entity-design)

@@ -29,7 +29,7 @@ Plugin bundles are uploaded through the Game Design Service and stored in the sa
 
 - [Automation & Scripting Service](../automation-scripting-service/README.md)
 - [Game Design Service Architecture](README.md)
-- [User Journeys – Extensibility & External Tools](../../user-journeys.md#21-extensibility--external-tools)
+- [User Journeys – Extensibility & External Tools](../../user-journeys-creators.md#8-extensibility--external-tools)
 - [System Architecture – Scripting & Automation](../../system-architecture-scripting.md)
 - [Asset Storage Setup](asset-storage.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)

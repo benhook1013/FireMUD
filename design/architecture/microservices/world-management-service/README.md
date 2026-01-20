@@ -51,6 +51,7 @@ The World Management Service stores and manages game world topology and content 
   - For simpler read-mostly slices or derived aggregates that are safe to recompute, World Management may use **TTL-only** caching (Class B) as long as:
     - TTLs remain short and bounded (for example, `WORLD_ROOM_CACHE_TTL_SECONDS`), and
     - The design explicitly states that occasional staleness is acceptable for the affected views and that authoritative reads go back to PostgreSQL when correctness is required.
+    - TTL-only world caches use **distinct prefixes** from `world-dynamic:*` / `room:*` and are added to the central Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md` with their own Class B entries; `world-dynamic:*` and `room:*` remain reserved for versioned, Class A aggregates.
   - Room/world cache invalidation follows the Redis cache design:
     - Domain events for room changes, region version activations, or world updates drive explicit deletion or refresh of affected `room:*` / `world-dynamic:*` keys.
     - TTL acts as a safety valve and memory control, not the primary correctness mechanism for Class A caches.
@@ -197,7 +198,7 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 - [Redis Architecture](../../system-architecture-redis.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – World and Entity Design](../../user-journeys.md#3-world-and-entity-design)
+- [User Journeys – World and Entity Design](../../user-journeys-creators.md#2-world-and-entity-design)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
 - [Database Migrations](../../system-architecture-database-migrations.md)

@@ -53,6 +53,16 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
     - Implementations must document which APIs expose the version/`lastModified` fields used for these caches and keep them aligned with the central `inventory:*` entry in `system-architecture-redis-cache.md`.
 - Any change to Redis usage in this service should be reviewed against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) to confirm prefix registration, role selection, slotting, and observability updates.
 
+#### Version Sources for Entity Caches
+
+Entity Management is the **invalidator of record** for `character-cache:*` and `inventory:*`:
+
+- Authoritative versions or `lastModified` values for characters and containers are stored alongside the corresponding aggregates in PostgreSQL and surfaced via Entity Management’s gRPC APIs.
+- Cache payloads for `character-cache:<tenantId>:<characterId>` and `inventory:<tenantId>:<containerId>` must embed those same version fields so readers can compare cached vs authoritative versions before reuse.
+- When schema or API fields that act as “the” version for these aggregates change, this section and the central cache catalog (`system-architecture-redis-cache.md`) must be updated together so reviewers can see exactly which columns/fields drive Class A cache correctness.
+
+Testing expectations for these caches follow the “Class A (versioned, correctness-critical) caches” guidance in `system-architecture-redis-cache.md`: unit/integration tests should cover version mismatches, event-driven invalidation, and repopulation after a Redis reset.
+
 > If you change Redis usage for this service, you must read and apply:
 >
 > - [Redis Architecture](../../system-architecture-redis.md)
@@ -156,7 +166,7 @@ proto files, run `./gradlew generateProto` to update generated sources.
 - [Redis Architecture](../../system-architecture-redis.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – World and Entity Design](../../user-journeys.md#3-world-and-entity-design)
+- [User Journeys – World and Entity Design](../../user-journeys-creators.md#2-world-and-entity-design)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
 - [Database Migrations](../../system-architecture-database-migrations.md)

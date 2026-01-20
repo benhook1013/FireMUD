@@ -70,9 +70,11 @@ Character definitions and selection are scoped per game (tenant) using the [Enti
 Players connect using either a web client or a traditional Telnet client:
 
 - **Web Client** – Connects via WebSocket and HTTP through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
-- **MUD/Telnet Client** – Connects over TCP to the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md), which upgrades traffic to WebSocket for the Gateway. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md).
+- **MUD/Telnet Client** – Connects over TCP to the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md), which upgrades traffic to WebSocket for the Gateway. Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. Normal Telnet clients never need to send a `SESSION` envelope and instead issue `LOGIN` just like WebSocket clients do; `SESSION` is reserved for advanced attach-to-session tools.
 
-Gameplay sessions are managed by the [Game Session Service](./microservices/game-session-service/README.md), which coordinates ticks, sessions, and reconnect behavior. Authentication is delegated to the [Account Service](./microservices/account-service/README.md) as described in [Authentication & Authorization](./system-architecture-authentication.md).
+Gameplay sessions are managed by the [Game Session Service](./microservices/game-session-service/README.md), which coordinates ticks, sessions, and reconnect behavior. Session state and short-lived auth tokens are stored in Redis as described in [Redis Architecture](./system-architecture-redis.md), allowing the Game Session Service to rebind sessions when players reconnect. Authentication is delegated to the [Account Service](./microservices/account-service/README.md) as described in [Authentication & Authorization](./system-architecture-authentication.md).
+
+Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
 
 ```plaintext
 Player → TCP Proxy / Gateway → Game Session Service → Backend Services
@@ -149,4 +151,3 @@ Player → Account Service → Logging & Admin Service (audit)
 - [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md)
 - [System Architecture Overview](./system-architecture-overview.md)
 - [System Context Diagram](./system-context-diagram.md)
-

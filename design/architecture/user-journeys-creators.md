@@ -69,6 +69,10 @@ Creators refine the world and its inhabitants using several services:
 - [Game Customization Options](./game-customization-options.md) covers themes and branding tweaks.
 - **World Editing Tools** – Use the [World Editing & Customization Tools](./microservices/game-design-service/world-editing-tools.md) for room and region editing.
 - **Ability & Action Tools** – Build combat mechanics with the [Ability & Action Design Tools](./microservices/game-design-service/ability-action-tools.md).
+- **Item & Equipment Balancing** – Tune gear progression in the [Item & Equipment Balancing Tools](./microservices/game-design-service/item-equipment-balancing.md).
+- **Visual Interface** – A [web-based visual editor](./microservices/game-design-service/web-visual-interface.md) provides drag-and-drop editing.
+- **Asset Storage** – Upload icons and sound effects via the [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
+- **Version Control & Templates** – [Version Control](./microservices/game-design-service/version-control.md) and [Game Templates](./microservices/game-design-service/game-templates.md) streamline collaboration and new projects.
 
 World and entity changes are versioned so creators can iterate safely and roll back as needed. See [Game Templates](./microservices/game-design-service/game-templates.md) for starting points.
 
@@ -110,6 +114,20 @@ Game Design Service (publish) → Game Session Service (start instance)
 ```plaintext
 Game Design Service (publish) → Game Session Service (restart)
 ```
+
+### Example Hotfix DSL
+
+```yaml
+- action: hotfix_script
+  version: "v42"
+  patchVersion: "v42-script.3"
+  scripts:
+    - "npc-barkeep"
+    - "docks-rat-encounter"
+  reason: "Live AI bug fix during event"
+```
+
+Hotfixes follow the steps in the [Hotfix Procedure](./system-architecture-runbooks.md#-hotfix-procedure) to ensure minimal downtime.
 
 Hotfix procedures and runtime rollout steps are shared with operators; see [Testing & Continuous Delivery](./user-journeys-operators.md#testing--continuous-delivery) and [Platform Service Updates](./user-journeys-operators.md#platform-service-updates) for CI/CD details.
 

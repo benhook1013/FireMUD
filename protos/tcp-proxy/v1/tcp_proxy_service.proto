@@ -9,10 +9,14 @@ import "shared/v1/errors.proto";
 
 // TcpProxyService defines internal-only gRPC endpoints used by the TCP Proxy and Game Session services.
 //
-// Directionality:
-// - Ping is implemented by the TCP Proxy Service for operator tooling and tests.
-// - NotifyDisconnect is implemented by the Game Session Service as an event sink that the TCP Proxy calls
-//   when Telnet connections close.
+// Directionality and ownership:
+// - Ping is implemented and served by the TCP Proxy Service itself for operator tooling and tests.
+// - NotifyDisconnect is implemented and served by the Game Session Service as an internal-only event sink
+//   that the TCP Proxy calls when Telnet connections close.
+//
+// Even though both RPCs live on the same logical TcpProxyService definition for schema/versioning purposes,
+// they are hosted by different microservices. Callers must treat Ping and NotifyDisconnect as separate
+// deployment targets following the ownership rules described in the TCP Proxy and Game Session design docs.
 //
 // These RPCs are not exposed through Spring Cloud Gateway and are intended for use by backend services and tooling only.
 service TcpProxyService {
