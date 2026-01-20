@@ -10,7 +10,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("com.fasterxml.jackson.core:jackson-databind:2.20.1")
+        classpath("com.fasterxml.jackson.core:jackson-databind:2.21.0")
         classpath("org.flywaydb:flyway-database-postgresql:11.20.1")
         classpath("org.postgresql:postgresql:42.7.9")
     }
