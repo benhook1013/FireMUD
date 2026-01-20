@@ -444,6 +444,31 @@ For Telnet subnegotiation (`IAC SB ... IAC SE`), the proxy treats unsupported or
 - Clients that depend on advanced Telnet options (for example dynamic window sizing or terminal-type negotiation) should treat those features as best-effort: unsupported options are ignored rather than causing the connection to fail.
 - MCP-aware clients should assume that MCP negotiation and messages are the primary extensibility mechanism. Telnet options remain deliberately constrained to reduce the attack surface at the DMZ edge.
 
+### MCP Resource Limits & Abuse Budgets
+
+To keep MCP traffic from overwhelming the Telnet edge while still being friendly to well-behaved tools, the TCP Proxy Service enforces **MCP-specific budgets** in addition to the generic Telnet connection and line limits:
+
+- Each connection has a bounded number of **active cords** and **concurrent `_data-tag` continuations**. Once these limits are exceeded, new MCP control lines are discarded and counted in `tcpproxy.telnet.discarded` with a low-cardinality `reason` label (for example `reason="mcp_budget"`), but the Telnet connection itself may remain open as long as other safety limits are respected.
+- MCP control-line volume is also subject to a per-connection **MCP control-line rate** budget. When a client sends MCP control lines significantly faster than expected (for example due to a misbehaving script), excess lines are dropped rather than forwarded, again contributing to `tcpproxy.telnet.discarded{reason="mcp_budget"}` instead of being treated as immediate hard-close abuse.
+- MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits, but **MCP parsing failures do not count towards the `TCP_PROXY_MAX_MALFORMED_ENVELOPES` budget**, which is reserved for Telnet `SESSION` envelope errors as described in **Telnet Session Envelope & Event Metrics**.
+
+The exact thresholds for these MCP budgets are environment-specific and may evolve over time. Implementations typically configure them alongside other proxy limits (for example in `application.yml` or via future `TCP_PROXY_MCP_*` knobs) rather than exposing them as primary operator-facing settings. Treat them as guardrails that keep obviously misbehaving MCP clients from overwhelming the proxy while remaining generous enough that normal tools never hit them in practice.
+
+Metrics and diagnostics for these budgets integrate with the existing observability surface:
+
+- `tcpproxy.telnet.discarded{reason="mcp_budget"}` increments whenever MCP control lines are dropped due to active-cord, continuation, or control-line-rate budgets.
+- A small set of MCP-focused meters provide additional visibility without adding high-cardinality labels:
+  - `tcpproxy.mcp.control_lines` – counter for MCP control lines processed per connection.
+  - `tcpproxy.mcp.discarded` – counter for MCP control lines discarded before reaching the gateway (mirrors the `mcp_budget` subset of `tcpproxy.telnet.discarded` in some deployments).
+  - `tcpproxy.mcp.active_cords` – gauge for the number of active MCP cords per connection.
+
+Operators should treat sustained increases in MCP-related discard signals as a prompt to either:
+
+- Adjust client behaviour (for example reduce cord churn or update frequency), or
+- Tighten MCP-specific budgets and, if necessary, block or rate-limit obviously abusive sources at the network or gateway layer.
+
+Normal Telnet abuse detection remains focused on Telnet control bytes, malformed `SESSION` envelopes, connection churn, and generic line-size limits. MCP parsing errors and unknown MCP packages are **diagnostic-only** by design; they must not, on their own, cause connections to be hard-closed.
+
 ## Dependencies
 
 - **Internal:** Spring Cloud Gateway, Game Session Service.
@@ -520,6 +545,25 @@ the Grafana snippets as reference queries over them.
 Labels on these metrics are intentionally low-cardinality (for example `type`, and occasionally `tenantId`)
 to keep Prometheus usage aligned with the global guidelines. Detailed context such as client IP, `sessionId`,
 and error details is captured in structured logs and tracing spans rather than metric labels.
+
+### Operational Runbook Hooks
+
+When wiring alerts and runbooks for the TCP Proxy Service, focus on a small set of edge-centric indicators and interpret them alongside Gateway and Game Session signals:
+
+- **Capacity and churn**
+  - Alert when `tcpproxy.connections.limit.exceeded` sustains non-zero values, especially if `tcpproxy.connections.active` or `tcpproxy.connections.total` are close to expected capacity; this usually indicates either insufficient proxy replicas or an overly aggressive per-IP cap.
+  - Watch `tcpproxy.connections.active` and `tcpproxy.connection.duration` distributions for sudden drops in median lifetime or spikes in very short-lived connections, which can indicate abusive clients or misconfigured health checks hammering the Telnet port.
+- **Abuse and discard behaviour**
+  - Track `tcpproxy.telnet.discarded` and its low-cardinality `reason` label (for example `reason="line_size"`, `reason="malformed_envelope"`, `reason="mcp_budget"`). A sharp increase in any one reason should trigger investigation into either client behaviour (for example buggy scripts) or limit misconfiguration.
+  - Combine discard alerts with application-layer metrics (for example Game Session per-tenant quotas and Gateway rate limits) to decide whether to add capacity, tighten limits, or block specific sources.
+- **Gateway and TLS health**
+  - Alert on sustained `tcpproxy.gateway.handshake.failures{reason!="timeout"}` and on long tails in `tcpproxy.websocket.reconnect.delay`; together these often indicate certificate, DNS, or listener misconfigurations between the proxy and Spring Cloud Gateway.
+  - Cross-check these alerts with Gateway health and TLS/mTLS metrics from the Security and Logging & Monitoring docs so incidents are triaged at the correct layer (proxy vs gateway vs cluster networking).
+- **NotifyDisconnect health**
+  - Monitor `tcpproxy.disconnect.notify.failure` and the associated `grpc.app_error{code="<code>"}` meter for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`, which may indicate Game Session outages or network issues on the internal gRPC path.
+  - Treat sustained increases in permanent error codes (for example `INVALID_ARGUMENT`, `PERMISSION_DENIED`) as configuration or contract issues rather than transient incidents; runbooks should direct operators to inspect Game Session logs and configuration when this happens.
+
+Runbooks should always pair these TCP Proxy metrics with corresponding Spring Cloud Gateway and Game Session dashboards. Edge symptoms such as elevated discard counts or connection churn often originate from higher-layer changes (for example new rate limits or authentication flows), and resolving them in isolation at the proxy can mask the real cause.
 
 ### Local development and echo loop
 
@@ -660,6 +704,21 @@ example `wss://spring-cloud-gateway-mtls.<namespace>.svc.cluster.local:8443/ws/g
 Metrics are exposed at `/actuator/prometheus` and scraped by Prometheus. The
 service exports OpenTelemetry spans to the collector defined by
 `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)) so traces appear in Jaeger.
+
+### Connection Limits and Abuse Protection
+
+Edge protection at the TCP Proxy layer combines several types of limits:
+
+- **Connection ceilings** – `TCP_PROXY_MAX_CONNECTIONS` caps total Telnet sockets on a pod, and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` caps the number of concurrent connections per client IP. In NAT-heavy environments it is acceptable to keep the per-IP cap relatively high or unset, but only when Spring Cloud Gateway rate limiting and Game Session per-IP/per-session quotas are enabled and monitored; do not run with both proxy per-IP limits and higher-layer quotas effectively disabled.
+- **Line and envelope limits** – `TCP_PROXY_MAX_LINE_BYTES`, `TCP_PROXY_MAX_OVERSIZE_LINES`, and `TCP_PROXY_MAX_MALFORMED_ENVELOPES` bound the impact of oversized commands and repeated malformed `SESSION` envelopes. Once these budgets are exhausted, the connection is treated as abusive and hard-closed.
+- **MCP-specific budgets** – additional per-connection limits on MCP active cords, continuations, and control-line rates sit on top of the Telnet limits, as described in **MCP Resource Limits & Abuse Budgets**. Exceeding these budgets drops MCP control lines and contributes to `tcpproxy.telnet.discarded{reason="mcp_budget"}` while generally keeping the underlying Telnet connection open.
+
+These controls are designed to be layered with, not a replacement for, higher-level protections:
+
+- Spring Cloud Gateway still owns HTTP/WebSocket rate limiting and global abuse filters.
+- Game Session Service still owns per-account, per-session, and per-tenant quotas.
+
+Use the **Tuning TCP Proxy for Different Environments** section below for recommended starting values and adjust over time based on observed metrics such as `tcpproxy.connections.limit.exceeded`, `tcpproxy.telnet.discarded`, and MCP-related discard reasons.
 
 ### Tuning TCP Proxy for Different Environments
 

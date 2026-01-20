@@ -37,6 +37,43 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
     - A **Cache/Rate-Limit Redis** deployment dedicated to read-side caches and gateway rate limits.
   - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys.
 
+## Cache Adoption Checklist
+
+When introducing or changing a cache/rate-limit prefix, designs must answer the following questions before implementation and CI should enforce that the answers are reflected in this doc and the owning service README:
+
+- **Prefix and ownership**
+  - Prefix pattern (for example `inventory:<tenantId>:<containerId>`).
+  - Owning service(s) and their design docs/sections.
+- **Role and correctness class**
+  - Redis role: **Cache/Rate-Limit Redis only** (never Coordination).
+  - Correctness class:
+    - **Class A – versioned/cache-for-correctness**, or
+    - **Class B – TTL-only/best-effort**.
+- **Authoritative version and invalidation**
+  - For Class A caches:
+    - Name and location of the authoritative version or `lastModified` field (DB column or API field).
+    - Invalidation mechanism: domain events, version checks on read, or both.
+  - For Class B caches:
+    - Why occasional staleness is acceptable for this aggregate.
+    - Which views fall back to authoritative reads when correctness matters.
+- **TTL and budget**
+  - Expected TTL range per environment profile (`dev_local`, `hobby_self_hosted`, `production_clustered`).
+  - Size and key-count budgets, including:
+    - Expected keys per tenant.
+    - Any per-key cardinality limits (for example list lengths).
+- **Metrics and observability**
+  - Planned cache metrics (hits, misses, evictions, oversize/over-budget counters).
+  - Any per-prefix gauges or key-count metrics that feed the “cache under pressure” dashboards.
+- **Reset behavior**
+  - Confirmation that the prefix is reset-tolerant and appears in the reset policy matrix with consistent semantics.
+  - Any additional service-specific behavior after a reset (for example, lazy repopulation, optional warm-up).
+
+New prefixes should not be considered “accepted” until this checklist is reflected in:
+
+- The **Cache/Rate-Limit Key Catalog** in this file.
+- The owning service README (under its Redis section).
+- Any relevant testing/observability sections for that service.
+
 ## Candidate Cacheable Object Types
 
 This section catalogs the primary categories of objects that services cache in (or plan to cache in) Cache/Rate-Limit Redis. Concrete adoption per service is driven by profiling data and cross-service load metrics, but key shapes and invalidation strategies follow this design.
@@ -258,6 +295,55 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 - `world-dynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
 - `room:<tenantId>:<roomId>` – cached room snapshots/topology slices used for LOOK/navigation.
 - `view:room-look:<tenantId>:<roomId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
+
+### Worked Example – Inventory Cache (`inventory:*`, Class A)
+
+This section shows how the general patterns apply to a specific correctness-critical cache: per-container inventories owned by the Entity Management Service.
+
+- **Prefix and ownership**
+  - Prefix: `inventory:<tenantId>:<containerId>`.
+  - Owner: Entity Management Service (see its Redis section for details).
+- **Authoritative state**
+  - Source of truth: PostgreSQL tables for entities/items/containment.
+  - Each logical container (including room-ground containers) exposes a stable version or `lastModified` value via Entity Management APIs.
+- **Redis value shape (conceptual)**
+  - Key: `inventory:<tenantId>:<containerId>`.
+  - Value: serialized structure containing:
+    - `containerId`, `tenantId`.
+    - `version` (or `lastModified`).
+    - A list of item records (item IDs and relevant display fields).
+  - TTL: short/medium (for example 30–120 seconds) to bound memory use; precise values are environment-specific and documented in the Entity Management README.
+- **Read path**
+  1. Given `<tenantId, containerId>`, the caller:
+     - Attempts to read `inventory:<tenantId>:<containerId>` from Cache/Rate-Limit Redis.
+     - If present, inspects the cached `version`.
+  2. Fetches the current authoritative `version`/`lastModified` from Entity Management (either as a cheap header call or as part of a full fetch).
+  3. Behavior:
+     - If the key is missing or versions do not match:
+       - Fetch the inventory from PostgreSQL via Entity Management.
+       - Rebuild the serialized payload with the current `version`.
+       - Write it back to Redis with TTL in a **single atomic operation** (value + TTL).
+       - Return the fresh inventory to the caller.
+     - If the cached version matches:
+       - Return the cached payload directly.
+- **Invalidation**
+  - Entity Management emits domain events for operations that change containers:
+    - Item added/removed.
+    - Item moved between containers.
+    - Container destroyed/emptied.
+  - A small listener (owned by Entity Management or a shared cache module) reacts to those events by:
+    - Deleting the corresponding `inventory:<tenantId>:<containerId>` key, or
+    - Refreshing it immediately with an updated payload and version.
+  - TTL remains a backup: if a key is missed by event-based invalidation, it will eventually expire and be recomputed on the next access.
+- **Reset and tail-loss behavior**
+  - The prefix is reset-tolerant: coordination or cache resets may drop all `inventory:*` keys without affecting authoritative inventories in PostgreSQL.
+  - After a reset, caches repopulate lazily on demand using the read path above.
+- **Metrics**
+  - Cache clients and/or Entity Management expose:
+    - `cache.inventory_hits_total` / `cache.inventory_misses_total`.
+    - Optional gauges for `cache.inventory_keys` and payload sizes.
+    - Oversize counters for cases where inventory payloads exceed configured thresholds.
+  - These metrics tie into the general cache SLOs and “cache under pressure” dashboards described in the Redis operations doc.
 
 Expectations:
 

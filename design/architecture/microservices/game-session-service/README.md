@@ -60,10 +60,15 @@ Orchestrates live game sessions, including tick execution, player input validati
     - `tick-executor-lease:{tenantRegionTag}`
     - `remote:<tenantId>:<entityId>` and other coordination keys listed in the prefix tables in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md).
   - All multi-key coordination operations (ticks, timers, retries, locks, region leadership, and tick recovery flows) use registered Lua scripts that follow the determinism and idempotency rules in [FireMUD Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
+  - Coordination prefixes are treated as **reset-tolerant** in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md): incident runbooks may clear them per region/tenant/cluster without affecting authoritative PostgreSQL state, and designs must remain safe under the documented tail-loss envelope.
 - **Cache/Rate-Limit Redis usage**
   - Does not use Cache/Rate-Limit Redis for gameplay-critical coordination; session state, tick queues, locks, timers, and retry metadata always live on Coordination Redis so they share the same AOF and reset semantics described in [Redis Architecture – Redis Availability, Consistency, and Safety Guarantees](../../system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees).
-  - Any future Game Session–local caches must use **Cache/Rate-Limit Redis** and the key naming/TTL rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), and must not overlap with coordination prefixes.
-  - When such caches are introduced, this README must declare, for each cached aggregate, whether it is a **strongly validated cache** (version-based) or a **best-effort TTL-only cache**, and which events or signals act as the invalidator of record, following the cache classes described in the Redis cache design.
+  - Uses **Cache/Rate-Limit Redis** for read-side caches that help serve hot-path session views, most notably pre-rendered room LOOK aggregates under `view:room-look:<tenantId>:<roomId>` as defined in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog).
+  - `view:room-look:*` entries are treated as **Class B, TTL-only caches**:
+    - They contain rendered room “view” payloads derived from World Management and Entity Management; PostgreSQL remains authoritative for world/entity state.
+    - TTLs are configured to be short and bounded so stale views are naturally refreshed; occasional staleness is acceptable because gameplay correctness (combat resolution, movement, visibility rules) is enforced by tick logic and authoritative reads, not by the cache.
+    - Updates to underlying world or entity state do not require synchronous invalidation of `view:room-look:*` keys; cache misses and TTL expiry trigger recomputation via fresh calls to World/Entity services.
+  - Game Session must not write cache prefixes to Coordination Redis or coordination prefixes to Cache/Rate-Limit Redis. Any new cache prefixes must be registered in the central cache catalog and documented here (including correctness class and invalidation strategy) before use.
 - Changes to Redis usage in this service must follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so prefixes, roles, slotting, and SLOs stay consistent.
 
 #### Key Prefix Summary
