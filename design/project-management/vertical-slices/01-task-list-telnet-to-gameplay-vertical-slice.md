@@ -1,5 +1,9 @@
 # Telnet to Gameplay Vertical Slice Task List
 
+## Goal and Status
+
+Goal: describe the end-to-end Telnet → Gateway → Game Session pipeline as a playable, testable slice, including echo paths, envelopes, reconnection, and a minimal text command protocol. Status: parts of this slice are implemented and under active refinement; where behavior is not yet live, this document still describes the target-state flow, with implementation details tracked in the relevant service design docs and tests.
+
 This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session path into a playable, testable vertical slice. Each task is intentionally scoped so it can be handed to Codex (or a developer) as a single, self-contained chunk of work.
 
 ## 1. Dev Echo Path and Local Telnet Loop

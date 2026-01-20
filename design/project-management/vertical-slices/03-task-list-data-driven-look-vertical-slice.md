@@ -1,5 +1,9 @@
 # Data-Driven LOOK Vertical Slice Task List
 
+## Goal and Status
+
+Goal: replace the original hard-coded `LOOK` path with a data-driven flow that uses World and Entity services via Game Logic, producing canonical text output and observability for both WebSocket and Telnet clients. Status: the main LOOK flow and several regression tests are implemented; this document continues to describe the target-state behaviour, with implementation details and current coverage reflected in service design docs and test suites.
+
 This checklist builds on the **Telnet to Gameplay** and **Login and Session** slices by replacing the hard-coded `LOOK` behavior in Game Session with a fully data-driven implementation that pulls room descriptions, exits, and visible entities from the World, Entity, and Game Logic services. Each task is intentionally scoped so it can be handed to Codex (or a developer) as a single, self-contained chunk of work.
 
 ## 1. Protocol, UX, and Design Alignment for LOOK

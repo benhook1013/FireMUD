@@ -35,12 +35,7 @@
 
 ## Reusable Microservice Checklist
 
-These tasks apply to every FireMUD service unless noted otherwise. Gateway and
-TCP Proxy skip the **database** items but still expose health checks and
-internal gRPC endpoints; the proxy acts as an events-only gRPC server and does
-not initiate outbound gameplay gRPC calls to other services.
-
----
+These tasks apply to every FireMUD service unless noted otherwise. For the shared checklist, see `design/project-management/reusable-microservice-checklist.md`. TCP Proxy still follows those conventions for health checks and gRPC wiring but skips the database items and does not initiate outbound gameplay gRPC calls to other services.
 
 ## Project Setup & CI
 

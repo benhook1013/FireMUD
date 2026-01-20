@@ -44,8 +44,16 @@ The World Management Service stores and manages game world topology and content 
   - Does not own tick or session coordination prefixes; tick queues, locks, timers, and region leases remain owned by the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md#redis-coordination-invariants).
   - Interacts with Coordination Redis only indirectly via Game Session and Automation & Scripting APIs; it does not issue coordination writes itself.
 - **Cache/Rate-Limit Redis usage**
-  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` (or equivalent `world-dynamic:<tenantId>:<aggregateId>` shapes), consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
-  - Cached rooms and world aggregates are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata). When version fields are available on the underlying aggregates, these caches are treated as **strongly validated caches** (version-checked before reuse); simpler, read-mostly slices may use best-effort TTL-only caching as long as correctness is preserved by database reads. Updates are propagated via explicit invalidation or TTL-based expiry.
+  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` and `world-dynamic:<tenantId>:<aggregateId>`, consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
+  - These caches are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata) and are treated as **versioned, Class A caches** where version fields exist:
+    - World records expose stable version or `lastModified` fields (for example per-room revision) that are surfaced through World Management’s gRPC APIs.
+    - Cache entries store both the payload and the version; consumers compare versions to the authoritative value before reuse and recompute/overwrite on mismatch.
+  - For simpler read-mostly slices or derived aggregates that are safe to recompute, World Management may use **TTL-only** caching (Class B) as long as:
+    - TTLs remain short and bounded (for example, `WORLD_ROOM_CACHE_TTL_SECONDS`), and
+    - The design explicitly states that occasional staleness is acceptable for the affected views and that authoritative reads go back to PostgreSQL when correctness is required.
+  - Room/world cache invalidation follows the Redis cache design:
+    - Domain events for room changes, region version activations, or world updates drive explicit deletion or refresh of affected `room:*` / `world-dynamic:*` keys.
+    - TTL acts as a safety valve and memory control, not the primary correctness mechanism for Class A caches.
 - When changing Redis usage or adding new prefixes here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) to ensure correct role, slotting, and SLO coverage.
 
 > If you change Redis usage for this service, you must read and apply:

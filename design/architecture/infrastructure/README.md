@@ -37,7 +37,7 @@ The log aggregation pipeline is summarized in [Logging & Monitoring](../system-a
 
 ## Usage
 
-All service-level design documents should refer to this directory for shared infrastructure context, rather than duplicating gateway, deployment, or protocol behavior.
+All service-level design documents should refer to this directory for shared infrastructure context, rather than duplicating gateway, deployment, or protocol behavior. Environment variable definitions and configuration semantics are centralized in [Environment & Secrets Management](./environment-and-secrets.md); prefer linking there instead of redefining per-service env var tables.
 
 ## Related Documentation
 

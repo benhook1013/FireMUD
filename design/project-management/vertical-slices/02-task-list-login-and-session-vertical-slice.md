@@ -1,5 +1,9 @@
 # Login and Session Vertical Slice Task List
 
+## Goal and Status
+
+Goal: define a cohesive login and session-management slice that layers authenticated flows, reconnection behaviour, and cross-service tests on top of the Telnet to gameplay pipeline. Status: core flows and several tests are implemented; this document captures the target-state behaviour, while individual task checkboxes and design docs indicate what is currently live vs. stubbed or deferred.
+
 This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` text command end-to-end through Game Session and Account services, enforcing authenticated sessions for gameplay commands, and exercising basic session resumption behaviour. As before, each task should be small enough to hand to Codex (or a developer) as a single, self-contained chunk of work.
 
 ## 1. Minimal LOGIN Protocol Behaviour and Docs

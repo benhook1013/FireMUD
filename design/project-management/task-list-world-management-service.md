@@ -40,11 +40,7 @@
 
 ## Reusable Microservice Checklist
 
-These tasks apply to every FireMUD service unless noted otherwise. Gateway and
-TCP Proxy skip the gRPC and database items but still expose health checks and
-participate in CI.
-
----
+These tasks apply to every FireMUD service unless noted otherwise. For the shared checklist, see `design/project-management/reusable-microservice-checklist.md`.
 
 ## Project Setup & CI
 

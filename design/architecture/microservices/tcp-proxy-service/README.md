@@ -498,6 +498,11 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
   - `unexpected_close` – connection closed during handshake/reconnect.
   - `unknown` – fallback bucket for unexpected failures.
 - `tcpproxy.telnet.discarded` and related `tcpproxy.disconnect.notify.failure` counters for abuse and error visibility.
+  - `tcpproxy.disconnect.notify.failure` increments whenever a `NotifyDisconnect` attempt fails with a non-OK gRPC status. At a minimum:
+    - Transient network or availability errors (for example `UNAVAILABLE`, `DEADLINE_EXCEEDED`) are retried within the configured `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` window and counted once per failed attempt.
+    - Permanent contract or caller errors (for example `INVALID_ARGUMENT`, `FAILED_PRECONDITION`, `PERMISSION_DENIED`) increment the counter but must **not** be retried beyond an initial attempt; the proxy treats these as misconfiguration or consumer bugs rather than transient conditions.
+    - The generic `UNKNOWN` status is treated conservatively as transient for the purposes of retry, but is logged with enough context to investigate whether it masks a permanent failure.
+  - In addition, a bounded-label `grpc.app_error{code="<code>"}` meter records the final gRPC status observed by the proxy when invoking `NotifyDisconnect`, so operators can distinguish transient transport issues from contract-level failures. Consumers should rely on this small, documented code set rather than interpreting arbitrary gRPC status strings.
 
 In Prometheus these Micrometer meters appear with the expected naming
 translation, for example:
@@ -586,6 +591,7 @@ The full variable list is:
 | `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line (including MCP control lines and continuation lines) in bytes before rejection/closure | `4096` |
 | `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
+| `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total time after Telnet socket close during which the proxy retries failed `NotifyDisconnect` calls before giving up | `5000` |
 | `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to keep a Telnet socket open while reconnecting the Proxy → Gateway WebSocket bridge | `5000` |
 | `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines while the Proxy → Gateway WebSocket bridge is reconnecting | `64` |
 | `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy → Gateway WebSocket mTLS | `certs/client.crt` |

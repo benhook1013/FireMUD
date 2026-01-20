@@ -38,14 +38,19 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 
 ### Redis Role and Prefixes
 
-### Redis Role and Prefixes
-
 - **Coordination Redis participation**
   - Acquires tick locks via shared helpers using keys of the form `tick:{tenantRegionTag}:lock:<entityId>` so locks share a hash tag with tick queues and pending state as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples).
   - Treats lock TTLs and other coordination parameters as opaque values derived by the Game Session Service and shared helpers; it does not define its own coordination-specific configuration.
 - **Cache/Rate-Limit Redis usage**
   - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
-  - These caches for character graphs and similar aggregates are treated as **strongly validated caches**: payloads include version or `lastModified` markers from the authoritative tables, and readers validate those versions before reusing cached data. PostgreSQL remains the authoritative store for entity state and inventories.
+  - These character graph caches are treated as **Class A, versioned caches**:
+    - Cached payloads include a stable version or `lastModified` value derived from the authoritative character tables.
+    - Readers validate versions against PostgreSQL (or version fields surfaced via gRPC) before reusing cached data; on mismatch they recompute the graph and overwrite the cache atomically (value + TTL).
+    - TTLs (for example, `FIREMUD_CHARACTER_CACHE_TTL_SECONDS`) act as a safety valve for memory and stale entries, not as the primary correctness mechanism.
+  - Future inventory/containment caches use the `inventory:<tenantId>:<containerId>` prefix from the Redis cache catalog:
+    - Inventories and containers (including room-ground containers) are also treated as **Class A**: authoritative state and versions live in PostgreSQL, and cache entries must be invalidated via events or version checks when items move.
+    - Event-based invalidation is driven by Entity Management’s own domain events (inventory changed, item moved, container destroyed); listeners delete or refresh affected `inventory:*` keys.
+    - Implementations must document which APIs expose the version/`lastModified` fields used for these caches and keep them aligned with the central `inventory:*` entry in `system-architecture-redis-cache.md`.
 - Any change to Redis usage in this service should be reviewed against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) to confirm prefix registration, role selection, slotting, and observability updates.
 
 > If you change Redis usage for this service, you must read and apply:
