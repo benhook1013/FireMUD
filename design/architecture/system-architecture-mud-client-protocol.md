@@ -65,6 +65,16 @@ These primitives let stateful conversations—such as dedicated chat tabs, map v
 
 MCP control lines (`#$#...`) and their payloads are treated as application‑level text on top of the sanitized Telnet transport. Abuse detection at the TCP Proxy layer operates on Telnet control bytes, envelope handling, connection churn, and similar signals; unknown MCP packages or malformed MCP messages are not treated as abuse by default. Implementations may log or surface MCP parsing issues for diagnostics, but they must not close connections purely because a client sends an unrecognised MCP package.
 
+### MCP resource limits & abuse budgets
+
+To keep MCP traffic from overwhelming the Telnet edge while still being friendly to well-behaved tools, the TCP Proxy Service enforces a set of **MCP-specific budgets** on top of the generic Telnet limits described in the TCP Proxy design:
+
+- Each connection has a bounded number of **active cords** and **concurrent `_data-tag` continuations**; once these limits are exceeded, new MCP control lines are discarded and counted in `tcpproxy.telnet.discarded` with a low-cardinality `reason` label (for example `reason="mcp_budget"`), but the connection may remain open as long as other safety limits are respected.
+- MCP message volume is subject to a per-connection **MCP control-line rate** budget. When a client sends MCP control lines significantly faster than expected (for example due to a misbehaving script), excess lines are dropped rather than forwarded, again contributing to `tcpproxy.telnet.discarded` rather than being treated as immediate hard-close abuse.
+- MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits, but **MCP parsing failures do not count towards the `TCP_PROXY_MAX_MALFORMED_ENVELOPES` budget**, which is reserved for Telnet `SESSION` envelope errors as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
+
+The exact counter and timer names for these budgets live in the TCP Proxy Service design’s **Metrics Summary** and **Connection Limits and Abuse Protection** sections; this document describes only their high-level intent. As with other safety controls, operators should treat sustained increases in MCP-related discard reasons as a signal to either adjust client behaviour (for example cord usage or update frequency) or tighten limits for obviously abusive sources.
+
 ### Implementation Status and Client Expectations
 
 MCP support is being rolled out incrementally:

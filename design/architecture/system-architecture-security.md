@@ -120,6 +120,25 @@ This section is the authoritative reference for plaintext Telnet security invari
   - Include the transport context in `/auth/login` calls to the Account Service so deployment-wide rules such as `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags can be enforced consistently.
 - Client IP headers on Telnet-derived traffic follow the trust model described in [Protocol Bridging](./system-architecture-protocol-bridging.md#bridging-to-the-backend): the TCP Proxy Service supplies `X-Proxy-Client-IP` on its internal WebSocket hop and Spring Cloud Gateway sets the canonical `X-Client-IP` header after stripping spoofable headers from public ingress and authenticating the TCP Proxy identity. In production, the preferred deployment places a Telnet edge proxy (HAProxy) in front of the TCP Proxy Service and enables PROXY protocol so the TCP Proxy can recover the true client IP even when Kubernetes would otherwise SNAT the TCP peer address. When PROXY protocol is not enabled (or source IP is not preserved), per-IP limits and throttles should be treated as best-effort.
 
+### Plaintext Telnet safety matrix (design-time expectations)
+
+`FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and the per-account “allow plaintext Telnet login” flag combine to gate which accounts may authenticate over raw Telnet. The intended matrix is:
+
+| Env toggle `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | Per-account “allow plaintext Telnet login” | 2FA on account? | Plaintext Telnet login allowed? | Intended use |
+| --- | --- | --- | --- | --- |
+| `true` (default) | `false` | either | ❌ | Safe default; plaintext logins are disabled for this account. |
+| `true` (default) | `true` | `false` | ❌ | Misconfigured account; UI should prevent enabling this combination. |
+| `true` (default) | `true` | `true` | ✅ | Only this combination is permitted for plaintext Telnet in production. |
+| `false` (override) | `false` | either | ❌ | Telnet plaintext remains disabled for this account even if the env guard is relaxed. |
+| `false` (override) | `true` | `true` | ✅ | Permitted but less strict; acceptable only in tightly controlled or non-production environments. |
+| `false` (override) | `true` | `false` | ❌ (design intent) | Implementations should continue to reject this combination to avoid silently weakening the 2FA requirement. |
+
+In other words:
+
+- The **per-account flag is always required** for plaintext Telnet, regardless of the environment toggle.
+- The **environment toggle controls whether 2FA is mandatory** for plaintext Telnet (`true` = required; `false` = may be relaxed only in non-prod, but the recommended implementation still enforces 2FA where possible).
+- Production deployments should keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true` and rely on the per-account flag plus 2FA to gate plaintext Telnet, treating any other combination as misconfiguration.
+
 ---
 
 ## Admin Interface Access Model
