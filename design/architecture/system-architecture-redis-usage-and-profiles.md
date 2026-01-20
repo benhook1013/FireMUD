@@ -63,7 +63,7 @@ The **Redis Cheat Sheet** keeps a representative mapping from prefixes to roles 
 
 ### Redis Usage by Service
 
-The following table summarizes how core services interact with Coordination Redis and Cache/Rate‑Limit Redis. Per‑service design docs expand on these responsibilities.
+The following table summarizes how core services interact with Coordination Redis and Cache/Rate‑Limit Redis. Per‑service design docs expand on these responsibilities and describe any participation in coordination via shared helpers (for example, tick locks or auth/session keys) even when a service does not own coordination prefixes itself.
 
 | Service | Redis Usage |
 | --- | --- |

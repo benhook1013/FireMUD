@@ -165,7 +165,10 @@ behaviour regardless of which classes or frameworks the service uses internally.
   - When tuning thresholds, operators should treat the proxy as the first line
     of defence against obvious connection floods while ensuring that normal
     player behaviour is primarily shaped by Gateway and Game Session limits
-    rather than repeated proxy disconnects.
+    rather than repeated proxy disconnects. A practical workflow is:
+    1) Check `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded` for hard edge ceilings being hit,
+    2) Then inspect Gateway rate-limit metrics and logs for throttling on the `/ws/game/**` route, and
+    3) Finally review Game Session per-IP/per-session quotas and Redis-backed limits if gameplay commands are being rejected despite healthy edge and gateway metrics.
 
 ## Key Features
 
@@ -252,13 +255,13 @@ are cleared as soon as the TCP session closes. The `NotifyDisconnect` event is
 therefore a **best-effort, at-least-once** lifecycle signal keyed by
 `{proxyConnectionId, disconnectSequence}` rather than a request to re-run gameplay commands.
 
-When a `NotifyDisconnect` call fails, the proxy retries it with a short, bounded
-exponential backoff window. Implementations should treat this as an advisory
-hint rather than a durability channel. The target-state contract is:
+When a `NotifyDisconnect` call fails with a **transport-level** error (for example an unavailable channel, deadline exceeded, or TLS failure), the proxy retries it with a short, bounded exponential backoff window. Implementations should treat this as an advisory hint rather than a durability channel. The contract is:
 
-- A dedicated configuration knob (for example `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`) bounds the **total retry window** after Telnet socket close (recommended default `3000`–`5000` ms).
+- A dedicated configuration knob (`TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`) bounds the **total retry window** after Telnet socket close (recommended default `3000`–`5000` ms).
 - Within that window, the proxy applies exponential backoff between attempts and gives up permanently once the total elapsed time since Telnet socket close exceeds `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`.
 - After the window elapses, the proxy relies entirely on Game Session’s own liveness detection and Redis-backed timeouts; no further retries are attempted for that `{proxyConnectionId, disconnectSequence}`.
+
+When the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error` field is populated, the proxy **does not retry**: these are treated as logical, contract-level failures (for example “unknown session”) that Game Session has already decided how to handle. The proxy logs these errors, increments `grpc.app_error{code="..."}` and `tcpproxy.disconnect.notify.failure` with a bounded error-code label, and moves on without further attempts for that event.
 
 This keeps retry behaviour simple while still surfacing most transient gRPC failures without risking long-lived retry storms.
 

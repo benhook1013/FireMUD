@@ -176,6 +176,8 @@ For full details on how session keys integrate with reconnect and takeover flows
 - Reconnection Strategy (`system-architecture-reconnection.md`)
 - Game Session Service Redis keys (`microservices/game-session-service/README.md#redis-keys`)
 
+Tenant-scoped authentication/session allowlist entries (`session:auth:<tenantId>:<tokenHash>`) share the same TTL derivation and reset expectations as gameplay sessions, but are documented in detail in `system-architecture-authentication.md` and the Account Service design; they live on Coordination Redis so resets can force re-authentication in a controlled way.
+
 ---
 
 ## Redis Profiles

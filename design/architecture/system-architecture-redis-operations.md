@@ -53,6 +53,17 @@ This section centralizes the **normative targets** for Redis behavior that other
 
 Alerts and dashboards should reference these SLOs explicitly (for example, “tail_loss_ms > 2000 for region X” or “coordination used_memory / maxmemory > 0.4 for Y minutes”) so incidents are tied directly to the agreed budgets.
 
+### Cache SLOs & Alerting
+
+While Cache/Rate-Limit Redis is non-authoritative, its behavior under reset and eviction still impacts player experience and database load. Operators should track at least:
+
+- Per-prefix hit/miss ratios – especially for `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, and `view:room-look:*` – with alerts when miss rates spike for sustained periods after a reset or configuration change.
+- Database/service load – simple gauges or rate metrics for backing PostgreSQL queries (for example, inventory/world snapshot reads) so resets or eviction storms that materially increase DB load are visible and can be correlated with cache behavior.
+- Chat cache health – keycount and eviction trends for `chat:*` prefixes so misconfigured TTLs or buffer lengths show up before they crowd out other caches.
+- Automation cache usage – basic keycount and enqueue/drop metrics for `automation:queue:*` / `automation:quota:*`, mainly to detect drift from their documented best-effort semantics.
+
+These cache SLOs complement the coordination SLOs without treating Cache/Rate-Limit Redis as a correctness boundary: alerts should drive tuning (TTL, payload size, “what we cache”) or capacity changes rather than attempts to diagnose correctness issues inside Redis itself.
+
 ## AOF Size and Restart Budget
 
 **Goal:** Keep Coordination Redis restart behavior predictable and avoid unbounded AOF growth.
