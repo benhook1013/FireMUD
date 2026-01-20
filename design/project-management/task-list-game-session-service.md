@@ -35,6 +35,11 @@
 - [ ] Fan out global events across tick regions
 - [ ] Implement cross-region command relay using `remote:<tenantId>:<entityId>` hint markers (durable follow-ups live in PostgreSQL)
 
+## Caching & Redis Roles
+
+- [ ] Implement `view:room-look:<tenantId>:<roomId>` as a Class B, TTL-only cache on Cache/Rate-Limit Redis (rendered LOOK views, short/bounded TTLs, no gameplay-critical decisions depending on cache correctness) as described in `system-architecture-redis-cache.md` and the Game Session service README.
+- [ ] Add cache metrics for `view:room-look:*` (hit/miss counters, key-count gauge) and tests showing that cache loss/reset only triggers recomputation from authoritative world/entity services and does not affect game correctness.
+
 ## Analytics & Coordination
 
 - [x] Manage runtime feature flags and expose toggle API via Logging & Admin Service ([Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))

@@ -139,11 +139,12 @@ behaviour regardless of which classes or frameworks the service uses internally.
     exceeded.
 - **Input size and shape limits**
   - Maximum line and envelope length constraints, configured via
-    `TCP_PROXY_MAX_LINE_BYTES`, reject oversized lines without forwarding partial input. The proxy should send a clear, user-facing warning so clients are not confused about what reached the game engine. If the session has negotiated ANSI/color support, the warning may use that formatting, but it must remain readable on plain Telnet clients. Oversized-line violations are tracked per connection and the proxy hard-closes once the count exceeds `TCP_PROXY_MAX_OVERSIZE_LINES` (default `10`) so accidental oversizes are tolerated without enabling unbounded memory or CPU abuse. Implementations must also enforce an in-memory buffer ceiling for per-connection input so that once the buffer is full the connection is closed and `tcpproxy.telnet.discarded` is incremented, even if `TCP_PROXY_MAX_LINE_BYTES` is not hit. The specific buffer constant and handler class are implementation details; the behavioural guarantee is that buffered input is always bounded and abusive clients are closed rather than being allowed to grow unbounded buffers.
+    `TCP_PROXY_MAX_LINE_BYTES`, reject oversized lines without forwarding partial input. When a line is rejected for size, the proxy sends a clear, user-facing warning such as `Line too long; command not processed.` so clients are not confused about what reached the game engine. If the session has negotiated ANSI/color support, the warning may use that formatting, but it must remain readable on plain Telnet clients. Oversized-line violations are tracked per connection and the proxy hard-closes once the count exceeds `TCP_PROXY_MAX_OVERSIZE_LINES` (default `10`) so accidental oversizes are tolerated without enabling unbounded memory or CPU abuse. Implementations must also enforce an in-memory buffer ceiling for per-connection input so that once the buffer is full the connection is closed and `tcpproxy.telnet.discarded` is incremented, even if `TCP_PROXY_MAX_LINE_BYTES` is not hit. The specific buffer constant and handler class are implementation details; the behavioural guarantee is that buffered input is always bounded and abusive clients are closed rather than being allowed to grow unbounded buffers.
   - Malformed `SESSION` envelopes increment a dedicated counter. When the number
     of malformed envelopes on a single connection exceeds
     `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection with a
-    hard close and emits the corresponding abuse/close metrics.
+    hard close and emits the corresponding abuse/close metrics. Before closure,
+    clients may receive a short warning such as `Repeated malformed SESSION envelope; connection closing.` so advanced tools can surface configuration issues.
     Clients that choose to use `SESSION` should treat this as a per-connection
     budget for mistakes and either send a correct envelope or continue with
     `LOGIN` only after repeated failures.
@@ -183,7 +184,7 @@ behaviour regardless of which classes or frameworks the service uses internally.
 - **Advanced client (attach/resume with `SESSION` + `LOGIN`)**
   - Obtain a `sessionId` and `tenantId` from the Game Session Service (for example via `POST /sessions`) or another first-party API.
   - Connect to the TCP Proxy Service.
-  - Immediately send a `SESSION <sessionId> <tenantId>` (or `SESSION <sessionId>:<tenantId>`) envelope as the first line on the connection.
+  - Immediately send a `SESSION <sessionId> <tenantId>` envelope as the first line on the connection. The space-separated form is canonical; the compact `SESSION <sessionId>:<tenantId>` form remains accepted only for backwards compatibility and may be removed after callers are updated.
   - Send a `LOGIN` command over the same connection.
   - Continue with gameplay commands as normal.
   - Game Session evaluates the combination of `SESSION` and `LOGIN` against Redis-backed session state and the authentication rules described in the [Authentication & Authorization](../../system-architecture-authentication.md) and [Reconnection Strategy](../../system-architecture-reconnection.md) documents to decide whether to resume a prior session or start a fresh one.
@@ -310,9 +311,15 @@ the Game Session Service create or bind the session exactly as WebSocket
 clients do.
 
 When used, the envelope is a plain-text line that starts with `SESSION`
-(case-insensitive) followed by either `SESSION <sessionId> <tenantId>` or the
-more compact `SESSION <sessionId>:<tenantId>`. Both `sessionId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. The
-`TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
+(case-insensitive) followed by the **canonical form**:
+
+```text
+SESSION <sessionId> <tenantId>
+```
+
+Both `sessionId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. For backwards compatibility with early tools and tests, the proxy still accepts the historical compact form `SESSION <sessionId>:<tenantId>` on the wire, but all new clients and examples should use the space-separated form above and treat the colon form as deprecated and subject to removal once remaining callers are migrated.
+
+The `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
 missing either identifier. Once captured, `sessionId` and `tenantId` are
 propagated over the WebSocket bridge (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id` handshake headers, which Spring Cloud Gateway may promote to canonical `X-Session-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity) and also drive the event and metric generation below.

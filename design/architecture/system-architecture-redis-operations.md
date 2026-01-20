@@ -121,6 +121,24 @@ Cache and rate-limit metrics complement the cache design in `system-architecture
   - Total active `ratelimit:*` keys per tenant.
   - Hit/miss or allow/deny counters per bucket/time window, aligned with the `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]` patterns.
 
+In addition, cache-aware services should expose per-prefix hit/miss counters and simple gauges:
+
+- Example cache metrics:
+  - `cache.character_cache_hits_total` / `cache.character_cache_misses_total`
+  - `cache.inventory_hits_total` / `cache.inventory_misses_total`
+  - `cache.room_hits_total` / `cache.room_misses_total`
+  - `cache.view_room_look_hits_total` / `cache.view_room_look_misses_total`
+- Example gauges and guards:
+  - `cache.inventory_keys` (approximate number of active `inventory:*` keys).
+  - `cache.room_keys`, `cache.world_dynamic_keys`, `cache.view_room_look_keys`.
+  - Oversize counters such as `cache.inventory_oversized_payload_total` when payloads exceed configured size bounds.
+
+Exact names may vary, but designs introducing new cache prefixes must:
+
+- Declare at least one hit/miss counter pair for that prefix family.
+- Document any key-count gauges or oversize counters that enforce the size/complexity budgets defined in the cache design.
+- Describe how these metrics appear in dashboards/alerts so operators can see when a cache is ineffective (low hit rate) or under- or over-sized (runaway key counts, frequent oversize payloads).
+
 Service and environment docs that introduce new Redis metrics should either:
 
 - Reuse the names and patterns above, or

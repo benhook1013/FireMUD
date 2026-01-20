@@ -19,6 +19,9 @@
 
 - [x] Implement entity graph caching for fast lookups
 - [ ] Copy published version data into entity schema via Saga
+- [ ] Implement `character-cache:<tenantId>:<characterId>` as a Class A, versioned cache using the patterns in `system-architecture-redis-cache.md` (version field, version-checked reads, atomic set+TTL writes).
+- [ ] Implement `inventory:<tenantId>:<containerId>` cache as described in the worked example in `system-architecture-redis-cache.md` (authoritative version from PostgreSQL, version-checked reads, event-driven invalidation, reset-tolerant lazy repopulation).
+- [ ] Add cache metrics and tests for character and inventory caches (hit/miss counters, key-count gauges, oversize guards) consistent with the Redis operations and cache testing sections.
 
 ## Security & Operations
 

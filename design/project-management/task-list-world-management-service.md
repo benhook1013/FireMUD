@@ -32,6 +32,8 @@
 - [ ] Copy published version data into world schema via Saga
 - [ ] Publish gRPC notifications when world state changes
 - [ ] Track character locations and instance occupancy
+- [ ] Implement `room:<tenantId>:<roomId>` and `world-dynamic:<tenantId>:<aggregateId>` caches as Class A, versioned caches (room/world version fields, version-checked reads, atomic set+TTL writes) consistent with `system-architecture-redis-cache.md`.
+- [ ] Wire world/room change events and version activations to invalidate or refresh `room:*` and `world-dynamic:*` keys, and add cache metrics/tests (hit/miss, key counts, reset behavior) for these prefixes.
 
 ## Administration & Backup
 

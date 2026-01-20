@@ -443,6 +443,29 @@ This section captures remaining design work; it is intentionally **short-lived**
 
 These tasks should be completed **before** enabling broad, non-gateway use of Cache/Rate-Limit Redis in production-like environments so that caches do not accumulate organically without clear ownership and correctness stories.
 
+## Testing Caches
+
+Cache behavior must be covered by tests appropriate to its correctness class. This section describes expectations for new prefixes:
+
+- **Class A (versioned, correctness-critical) caches**
+  - Unit and/or integration tests should cover:
+    - Cache miss → authoritative fetch → populate → subsequent hit with matching version.
+    - Version change in the authoritative store:
+      - Cached entry with old version is detected as stale.
+      - Reader triggers a refresh that updates both value and version.
+    - Event-driven invalidation:
+      - Simulate domain events (for example, inventory changed, room updated) and assert that affected keys are deleted or refreshed.
+    - Behavior after reset:
+      - With an empty Cache/Rate-Limit Redis, reads correctly repopulate from PostgreSQL without relying on any prior cache state.
+  - Tests must assert that stale cache entries **do not** cause incorrect game-visible state (for example, duplicate or missing items); authoritative reads remain decisive.
+- **Class B (TTL-only, best-effort) caches**
+  - Tests should demonstrate:
+    - Simple hit/miss behavior and that TTL expiry leads to recomputation from authoritative services.
+    - That losing cache entries (for example via reset or eviction) degrades to extra DB/service calls rather than incorrect gameplay behavior.
+  - For presentation-oriented caches such as `view:room-look:*`, tests may focus on performance and freshness characteristics rather than strict correctness, as long as underlying world/entity correctness is covered elsewhere.
+
+Per-service testing docs can add more detail, but new cache prefixes must describe where these scenarios are tested (unit vs integration) and how failures surface in observability (metrics and logs) when cache behavior regresses.
+
 ## Related Documentation
 
 - [System Architecture: Redis](./system-architecture-redis.md)
