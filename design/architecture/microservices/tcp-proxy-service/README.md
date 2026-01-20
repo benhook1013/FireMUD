@@ -6,6 +6,8 @@ Bridges legacy Telnet clients into the platform by converting raw TCP traffic in
 The OpenAPI specification for the `/ping` health endpoint lives in `services/tcp-proxy-service/src/main/resources/openapi.yaml`.
 This service exposes an **internal-only gRPC health check** (`Ping`) for operators and tooling, and it uses an **internal-only gRPC client** to call the Game Session Service’s `NotifyDisconnect` event sink when Telnet connections close; neither surface is ever published through Spring Cloud Gateway.
 
+For TCP Proxy’s position in the overall system (DMZ, Telnet edge, and WebSocket bridge to Spring Cloud Gateway), see the [System Architecture Diagram](../../system-architecture-diagram.md) and [System Context Diagram](../../system-context-diagram.md); those diagrams show the Telnet edge proxy → PROXY protocol → TCP Proxy → Spring Cloud Gateway flow described in this document.
+
 > **Canonical specs:** This document is the authoritative reference for:
 > - Telnet `SESSION` envelope semantics and header propagation (see **Telnet Session Envelope & Event Metrics**). `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc.
 > - `NotifyDisconnect` event semantics and layering guarantees.
@@ -17,7 +19,7 @@ This service exposes an **internal-only gRPC health check** (`Ping`) for operato
 This document describes the behaviour of the TCP Proxy Service in its target architecture.
 Where implementation is still catching up, treat the design below as the source
 of truth and reconcile code/tests accordingly; any known gaps are called out in
-the **Implementation Status** section below.
+the **Implementation Status** section below. The table here is descriptive and intentionally high-level; the authoritative, fine-grained task status for this service lives in `design/project-management/task-list-tcp-proxy-service.md` and should be treated as the source of truth when in doubt.
 
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
@@ -25,7 +27,7 @@ the **Implementation Status** section below.
 | Proxy → Gateway WebSocket mTLS | Telnet → Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). | Not yet fully implemented or deployed; current client may connect without client certificates and rely on default JDK TLS when `wss://` is used. | `design/project-management/task-list-tcp-proxy-service.md` (mTLS task). |
 | MCP negotiation and Telnet heuristics | MCP 2.1 negotiation, extended Telnet abuse heuristics, and advanced connection throttling are enforced at the proxy edge while keeping MCP payloads intact. | Partially implemented; some heuristics and MCP handling are still being hardened. | `design/project-management/task-list-tcp-proxy-service.md` (MCP and abuse/heuristics tasks). |
 | Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and malformed-envelope budgets protect the DMZ boundary, with metrics such as `tcpproxy.connections.limit.exceeded`. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/task-list-tcp-proxy-service.md` (connection management and security sections). |
-| Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy (for example HAProxy) that forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port, so the proxy can recover the real client IP and set `X-Proxy-Client-IP` on its WebSocket hop to Spring Cloud Gateway. | Deployment pattern and trust model are documented across the Security, Protocol Bridging, Gateway, and Deployment Environments docs; code-level PROXY protocol parsing on the dedicated listener (see `TCP_PROXY_PROXY_PROTOCOL_PORT`) and the associated observability metrics remain TODO. | `design/project-management/task-list-tcp-proxy-service.md` (PROXY protocol task). |
+| Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy (for example HAProxy) that forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port, so the proxy can recover the real client IP and set `X-Proxy-Client-IP` on its WebSocket hop to Spring Cloud Gateway. | Deployment pattern and trust model are documented across the Security, Protocol Bridging, Gateway, and Deployment Environments docs; code-level PROXY protocol parsing on the dedicated listener (see `TCP_PROXY_PROXY_PROTOCOL_PORT`) and the associated observability metrics remain TODO. In production, the preferred and supported pattern is to place a Telnet edge proxy in front of TCP Proxy and enable PROXY protocol on an internal-only listener; exposing the TCP Proxy’s raw Telnet port directly to the Internet is reserved for dev/test-only environments. | `design/project-management/task-list-tcp-proxy-service.md` (PROXY protocol task). |
 
 ### Responsibilities
 
@@ -303,6 +305,7 @@ more compact `SESSION <sessionId>:<tenantId>`. Both `sessionId` and `tenantId` a
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
 missing either identifier. Once captured, `sessionId` and `tenantId` are
 propagated over the WebSocket bridge (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id` handshake headers, which Spring Cloud Gateway may promote to canonical `X-Session-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity) and also drive the event and metric generation below.
+Malformed or partially specified envelopes are treated as best-effort hints only: they are logged and counted against the malformed envelope budgets described below but do not block the Telnet connection or change reconnection/session semantics, which always fall back to the normal `LOGIN`-driven pipeline shared with WebSocket clients.
 
 #### Where `sessionId` and `tenantId` come from
 
@@ -538,18 +541,20 @@ but the proxy does not use PostgreSQL. If Redis-backed proxy caches are enabled,
 - The proxy’s **internal gRPC server mTLS** uses [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
 - The **Proxy → Gateway WebSocket mTLS** hop uses `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, and `FIREMUD_GATEWAY_WS_CA_CERT_PATH` so operators can provision and rotate this identity independently from gRPC.
 
-Additional variables control the proxy runtime behaviour. TLS‑related settings are grouped by surface:
+Additional variables control the proxy runtime behaviour. TLS‑related settings are grouped by surface, and it is helpful to think of them in terms of **local development shortcuts** versus **production‑critical settings**:
 
 - **Telnet listener TLS (client ↔ proxy)**:
   - `TCP_PROXY_TLS_ENABLED` – enable Telnet‑over‑TLS termination.
   - `TCP_PROXY_TLS_PORT` – TCP port for the Telnet‑over‑TLS listener.
   - `TCP_PROXY_TLS_CERT` – path to the Telnet listener TLS certificate.
   - `TCP_PROXY_TLS_KEY` – path to the Telnet listener TLS private key.
+  - In local development it is acceptable to expose only a plaintext Telnet port for convenience; in shared or production environments, Telnet‑over‑TLS should be offered and plaintext Telnet must follow the hardening and policy rules in `design/architecture/system-architecture-security.md#telnet-command-handling-and-controls` (2FA requirements, per‑account opt‑in, and landing‑menu warnings).
 - **Proxy → Gateway WebSocket mTLS (proxy ↔ Spring Cloud Gateway)**:
   - `GATEWAY_WS_URL` – WebSocket URL for forwarding to the gateway (for example `ws://spring-cloud-gateway:8080/ws/game` or `wss://...`).
   - `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` – client certificate chain path used by the WebSocket client in target‑state mTLS configurations.
   - `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` – client private key path used by the WebSocket client in target‑state mTLS configurations.
   - `FIREMUD_GATEWAY_WS_CA_CERT_PATH` – CA bundle path for verifying the gateway certificate.
+  - In development and CI it is fine to use `ws://` targets without mTLS; in production and other shared environments, `GATEWAY_WS_URL` must point at the Gateway’s internal‑only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) and the `FIREMUD_GATEWAY_WS_*` paths must be configured so the proxy can authenticate the Gateway identity and present its own client certificate. See also the SAN and handshake‑failure details in [Protocol Bridging](../../system-architecture-protocol-bridging.md#websocket-bridge-configuration) and the `tcpproxy.gateway.handshake.failures{reason=\"cert_validation\"}` metric.
 - **Internal gRPC server mTLS (other services ↔ proxy gRPC)**:
   - The same `FIREMUD_GRPC_*` variables are reused by the proxy’s gRPC server for mutual TLS on internal-only diagnostics RPCs such as `Ping`.
 

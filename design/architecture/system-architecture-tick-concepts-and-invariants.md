@@ -58,6 +58,9 @@ Distributed locking in the tick system is designed to avoid deadlocks and keep L
 - **Default: one entity lock per script**
   - Tick Lua scripts are written, by default, to acquire at most one `tick:{tenantRegionTag}:lock:<entityId>` per invocation.
   - Multi-entity commands decompose into per-entity legs keyed by a shared `tickId` and effect identifiers; cross-entity consistency is enforced at the PostgreSQL layer via idempotency guards and coordinator records rather than by holding multiple Redis locks at once.
+- **Registry-backed lock and lease management only**
+  - Tick and lease keys such as `tick:{tenantRegionTag}:lock:<entityId>` and `tick-executor-lease:{tenantRegionTag}` are created, renewed, and released exclusively via Lua scripts registered in the shared Lua Script Registry.
+  - Ad-hoc Redis commands (for example `SET NX PX` or direct deletes) must not be used to manipulate these coordination keys; all flows go through the registry helpers so lock tokens and lease epochs are validated and updated consistently across services.
 - **Strict limits on multi-lock scripts**
   - Commands that truly cannot be decomposed and must lock multiple entities inside a single script must:
     - Acquire locks in a global, deterministic order (for example, sort all `entityId` values and acquire in ascending order).

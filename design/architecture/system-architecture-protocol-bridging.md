@@ -34,10 +34,12 @@ Despite their differences, both protocols are normalized into the same internal 
 
 ## Telnet / TCP Client Flow (Legacy Clients)
 
+> Note: This section intentionally summarizes the Telnet flow at a high level for system context. The canonical, detailed semantics for the Telnet `SESSION` envelope, header propagation, and related metrics live in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section; treat that document as the source of truth when protocol details and edge cases matter.
+
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
 - The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
-- Normal Telnet clients never need to send a `SESSION` envelope. They connect, issue `LOGIN`, and let the Game Session Service create or bind the session exactly as WebSocket clients do; `SESSION` is an **optional optimization** for advanced tools. For exact envelope and header semantics, see the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section.
+- Normal Telnet clients never need to send a `SESSION` envelope. They connect, issue `LOGIN`, and let the Game Session Service create or bind the session exactly as WebSocket clients do; `SESSION` is an **optional optimization** for advanced tools. For exact envelope and header semantics, including how malformed or partial envelopes are ignored and reconnection falls back to the standard `LOGIN` pipeline, see the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section.
 
 ### Protocol handling and security
 
@@ -50,7 +52,7 @@ Despite their differences, both protocols are normalized into the same internal 
 ### Bridging to the backend
 
 - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
-- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client. In the **target-state** design this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway); see the TCP Proxy Service design’s **Implementation Status** table and WebSocket mTLS section for the current deployed behaviour.
+- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client. In the **target-state** design this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway); see the TCP Proxy Service design’s **Implementation Status** table and WebSocket mTLS section for the current deployed behaviour. Treat those two documents (`system-architecture-security.md` and the TCP Proxy design) as the authoritative references for rollout status and certificate wiring.
 - Forwards client identity to the backend using a gateway canonicalization model. The TCP Proxy Service supplies `X-Proxy-Client-IP` (derived from PROXY protocol when a Telnet edge proxy is enabled, or best-effort from the TCP peer address otherwise) and Spring Cloud Gateway sets the canonical `X-Client-IP` header after authenticating the TCP Proxy identity. Spring Cloud Gateway strips any `X-Client-IP`, `X-Session-Id`, `X-Tenant-Id`, and `X-Proxy-*` headers arriving directly from public clients, and only promotes proxy-supplied inputs when the connection is known to have traversed the TCP Proxy → Gateway path; in the target-state this is enforced by mTLS identity on the TCP Proxy → Gateway hop. Downstream services treat `X-Client-IP` as authoritative only because the gateway produced it.
 - Proxies I/O between the TCP client and Spring Cloud Gateway.
 
@@ -59,7 +61,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Buffers active input while the client remains connected and discards it if the TCP connection drops; the proxy never replays Telnet commands after a disconnect.
 - Telnet clients keep a sticky connection to the TCP Proxy Service; reconnection and session recovery are handled as described in [Reconnection Strategy](./system-architecture-reconnection.md).
 - Disconnect handling is **layered**: the proxy cleans up Telnet sessions, Spring Cloud Gateway automatically recreates WebSocket backends, and the Game Session Service reloads state from Redis-backed session and command queues.
-- The proxy defines a `NotifyDisconnect` gRPC event so the Game Session Service can react quickly when Telnet clients drop. This stream is best-effort and **at-least-once**, and Game Session treats it as an idempotent, advisory hint rather than a source of truth for session liveness. For the full canonical `NotifyDisconnect` contract (keys, retry window, and envelope context), see the TCP Proxy Service design’s **Service Interactions** section.
+- The proxy defines a `NotifyDisconnect` gRPC event so the Game Session Service can react quickly when Telnet clients drop. This stream is best-effort and **at-least-once**, and Game Session treats it as an idempotent, advisory hint rather than a source of truth for session liveness. Consumers key handling off `{proxyConnectionId, disconnectSequence}` so late or duplicate events are safe to ignore. For the full canonical `NotifyDisconnect` contract (keys, retry window, and envelope context), see the TCP Proxy Service design’s **Service Interactions** section.
 - Metrics are exported at `/actuator/prometheus` and tracing data is sent to the collector configured by `OTEL_ENDPOINT`. See [Logging & Monitoring](./system-architecture-logging-monitoring.md).
 - Environment-specific tuning guidance for the TCP Proxy Service (connection caps, envelope budgets, and production hardening) is documented in the TCP Proxy Service design under **Tuning TCP Proxy for Different Environments**.
 
