@@ -101,6 +101,17 @@ Common scenarios and invariants:
 
 These scenarios assume the Redis AOF is configured as described in `system-architecture-redis.md`. If AOF or replication settings differ, the same idempotency rules still apply, but the tail window for potential tick loss may change.
 
+## Stalled Regions and Downstream Behavior
+
+Stalled regions are those that still hold `tick-executor-lease:{tenantRegionTag}` but have not made forward progress (for example, no successful commits or too many consecutive failures) for several multiples of `tick_interval_ms`, as defined in the concepts doc. Once a region is classified as stalled:
+
+- The scheduler stops scheduling new ticks for that `<tenantId, regionId>` until progress recovers or operators intervene.
+- New gameplay commands targeting that region are rejected with a clear “region unavailable”–style error instead of being accepted and queued behind a non-advancing executor.
+- The existing executor continues renewing the lease for a short grace period so no other instance takes over and attempts the same failing work against unhealthy dependencies.
+- If a large number of regions on the same instance become stalled, that instance’s readiness/liveness may be marked unhealthy so orchestration can restart it once downstream services (for example PostgreSQL, other gRPC services) are healthy again.
+
+Lease expiry and failover remain about coordination safety (avoiding split-brain on Redis state). Stalled-region handling layers a progress watchdog on top: leases describe who owns a region’s coordination keys, while stalled/healthy state describes whether that owner is actually advancing game state.
+
 ## Stuck Pending Entries and Recovery
 
 In rare cases, a `tick:{tenantRegionTag}:pending` entry may remain present even though repeated replays cannot complete successfully (for example, due to a persistent domain bug). A small recovery subsystem handles these **stuck ticks**:
