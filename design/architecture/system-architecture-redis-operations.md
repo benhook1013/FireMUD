@@ -14,6 +14,7 @@ Other procedures and tuning advice here are **advanced** and should not be expan
 ## Table of Contents
 
 - [FireMUD Redis Operations & Migrations](#firemud-redis-operations--migrations)
+  - [Redis SLOs & Budgets](#redis-slos--budgets)
   - [AOF Size and Restart Budget](#aof-size-and-restart-budget)
   - [Lua Compatibility Registry & Script Upgrades](#lua-compatibility-registry--script-upgrades)
   - [Replica Promotion and Missed Writes](#replica-promotion-and-missed-writes)
@@ -21,6 +22,36 @@ Other procedures and tuning advice here are **advanced** and should not be expan
   - [Normalization and Hash-Tag Migration](#normalization-and-hash-tag-migration)
 
 ---
+
+## Redis SLOs & Budgets
+
+This section centralizes the **normative targets** for Redis behavior that other docs reference. Individual environments may tune these values, but changes should be treated as **deliberate SLO updates**, not silent drift.
+
+### Coordination Redis – Core Targets
+
+- **Tail-loss window**
+  - Production-like profiles (`hobby_self_hosted`, `production_clustered`) target a tail-loss envelope of **~1–2 seconds** of coordination activity per `<tenantId, regionId>`, or roughly **≤ 2 × `tick_interval_ms`** where that is larger.
+  - Ephemeral profiles (`dev_local`, certain CI stacks) may accept wider or unbounded tail-loss, but must be clearly labelled as such and **must not** be used to validate tail-loss SLOs.
+- **Restart time**
+  - For `hobby_self_hosted` and `production_clustered` Coordination Redis nodes, planned restarts (including AOF/RDB replay) should typically complete within **30–60 seconds**.
+  - Restarts that routinely exceed this window are treated as signals to adjust AOF size, hardware, or topology rather than “just slower maintenance”.
+- **Script runtime**
+  - Tick- and session-related Lua scripts are expected to complete well within tick latency targets: **< 10–20 ms** per invocation under normal load.
+  - The Lua Script Registry records a `max_execution_ms` hint per script; observability tracks percentiles and flags scripts that consistently approach or exceed their budget.
+- **Coordination memory share**
+  - Coordination Redis uses `maxmemory-policy noeviction` and is sized so that **coordination prefixes** (`tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`, etc.) normally occupy **≤ 30–40 %** of `maxmemory`.
+  - Sustained usage above this fraction is treated as either a sizing problem or a misuse of Coordination Redis (for example, cache-like data being stored on the coordination role).
+
+### Cache/Rate-Limit Redis – Core Targets
+
+- **Eviction posture**
+  - Cache/Rate-Limit Redis is allowed to evict keys, but sustained high eviction rates while `used_memory` is near `maxmemory` indicate the cache is mis-sized or mis-designed.
+  - Operators should treat “eviction under pressure” as a prompt to adjust cache budgets or reduce what is cached, not as a steady-state behavior.
+- **Keycount envelopes**
+  - Rate-limit prefixes (`ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`) should stay within a **few thousand active keys per tenant** across all live windows for small/self-hosted deployments; larger clusters may raise this envelope with explicit review.
+  - Chat and similar TTL-only caches should remain within a modest, documented number of keys per tenant; sustained growth beyond those envelopes should trigger investigation for missing TTLs or mis-keyed prefixes.
+
+Alerts and dashboards should reference these SLOs explicitly (for example, “tail_loss_ms > 2000 for region X” or “coordination used_memory / maxmemory > 0.4 for Y minutes”) so incidents are tied directly to the agreed budgets.
 
 ## AOF Size and Restart Budget
 
@@ -273,6 +304,21 @@ When runbooks call for explicit cleanup (for example, after a major schema chang
   - Cleanup and maintenance tooling must respect the same per-region/tenant boundaries as production scripts, log every key or prefix they modify (with `tenantId` / `regionId` context), and expose a dry-run mode so operators can preview the impact before making changes.
 
 Default runbooks should prefer **fixing deployments** (aligning scripts and writers) and relying on TTL over running aggressive cleanup jobs. Session cleanup tools remain available for exceptional cases where operators explicitly choose to trade short-lived overhead for faster convergence of session keyspace to a new schema.
+
+### Maintenance Job Coordination
+
+Several Redis maintenance flows (session cleanup, scoped coordination resets, normalization migrations, unknown-prefix scanning, and split-brain recovery) can place non-trivial load on Coordination Redis. To keep their behavior predictable:
+
+- **Single maintenance actor per deployment**
+  - The Logging & Admin Service (or an equivalent control-plane component) is the single orchestrator for Redis-heavy maintenance Jobs.
+  - Ad-hoc scripts must not start independent cleanup or reset loops; they should delegate to the versioned maintenance CLI and its entrypoints.
+- **Cross-job coordination**
+  - Each job type uses its own fine-grained locks (`session-cleanup-lock:<tenantId>`, `coord-reset:{tenantRegionTag}`, etc.), but the control plane additionally enforces that **only one Redis-intensive maintenance job** runs at a time per deployment.
+  - When a job is active, dashboards and health endpoints should expose a simple “maintenance in progress” signal so operators know not to schedule another heavy task.
+- **Backoff on elevated load**
+  - All maintenance jobs (including scanners) must monitor basic Redis health (latency, `used_cpu_sys`, `used_memory`, and error rates) and pause or abort early when the node is already under pressure.
+
+Docs that introduce new maintenance flows must reference this section and describe how their jobs participate in the shared coordination model.
 
 ### Runbook: Explicit Coordination Reset
 
@@ -541,6 +587,23 @@ Operational risks and tradeoffs:
 - Maintaining a per-region “key index set” to make deletes exact is intentionally not part of the baseline design: it adds continuous write amplification and creates another correctness-critical structure that itself would need reset semantics.
 
 Tenant- and cluster-scoped resets follow the same principles but target broader sets of prefixes and possibly multiple `{tenantRegionTag}` values. For all scopes, reset tooling should rely on the central reset policy matrix (`system-architecture-redis-reset-and-recovery.md`) and shared key builders rather than ad-hoc key name patterns.
+
+### Unknown-Prefix Detection and Hygiene
+
+Scoped reset tooling intentionally operates over **known prefix families** only; it does not attempt to discover arbitrary keys. To catch mis-keyed or unexpected prefixes before they cause problems:
+
+- A lightweight **unknown-prefix scanner** periodically:
+  - Uses `SCAN` with conservative `COUNT` values over the Coordination Redis keyspace.
+  - Compares discovered key prefixes against the canonical catalogs:
+    - Reset policy matrix and coordination catalogs in `system-architecture-redis-reset-and-recovery.md`.
+    - Cache/Rate-Limit key catalog in `system-architecture-redis-cache.md`.
+  - Emits metrics (for example, `redis.unknown_prefix_keys_total` tagged with the raw prefix) and logs samples of unknown keys.
+- The scanner must:
+  - Run at most one worker per deployment and treat itself as a low-priority **maintenance job** with strict runtime and rate limits similar to session cleanup.
+  - Never mutate keys; it is purely observational.
+  - Be wired into incident runbooks so repeated unknown-prefix growth prompts design review and, where appropriate, a targeted reset or one-off migration Job.
+
+This detector does not replace the canonical catalogs; it acts as a guardrail that surfaces drift between implementation and design.
 
 ## Dual-Leader Detection & Coordination Reset
 

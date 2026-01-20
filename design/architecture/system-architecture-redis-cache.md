@@ -290,6 +290,9 @@ CI and code review checks are expected to:
 
 - Fail when new Redis prefixes are introduced in cache/rate-limit contexts without being added to this catalog.
 - Ensure that cache/rate-limit tooling and scripts explicitly bind to the Cache/Rate-Limit Redis role, not Coordination Redis, when using these prefixes.
+ - Treat `automation:queue:*` and related automation caches as **best-effort only**:
+   - Automation workflows must be designed so that losing queued items or quota counters does not violate correctness; durable triggers and domain state remain the source of truth.
+   - Non-idempotent or “exactly-once” automation contracts must store their authoritative state outside Redis and use these prefixes only as advisory buffers.
 
 ### Cache Invalidation Policy Table
 
@@ -335,12 +338,24 @@ New cache prefixes must document their budgets in the owning service’s design 
 
 ## Future Work / TODO
 
-This section captures design intent only; concrete decisions are explicitly deferred. Before caching is implemented broadly, we need to:
+This section captures remaining design work; it is intentionally **short-lived** and should be cleared as part of early cache adoption, not deferred indefinitely. Near-term priorities:
 
-- Decide which aggregates (if any) are actually cached for each service (Entity Management, World Management, Game Session, Game Logic, and others).
-- Decide which aggregates receive a dedicated version or `lastModified` field for cache validation and how those fields are surfaced in their APIs.
-- Define the domain events required to drive event-based invalidation (including payload shape, routing, and delivery guarantees).
-- Add concrete examples, diagrams, and per-service subsections that show exactly how the chosen aggregates use Redis (key shapes, TTLs, version semantics, and listeners) once profiling and production telemetry justify their introduction.
+- **Entity Management**
+  - Finalize the initial set of caches for `inventory:*` and `character-cache:*`:
+    - Confirm versions or `lastModified` fields in the Entity Management APIs that back these prefixes.
+    - Document event-based invalidation flows (for example, “inventory changed”, “character graph changed”) and reference them from the Entity Management service design.
+- **World Management**
+  - Specify the first `world-dynamic:*` and `room:*` aggregates to cache:
+    - Define which room/topology fields participate in versioned caches versus TTL-only views.
+    - Document the domain events that invalidate or refresh these caches (for example, room layout/persisted state changes).
+- **Game Session / Game Logic**
+  - Decide how `view:room-look:*` caches map onto room views and how they consume world/entity events to stay correct for Class A flows (combat, visibility) vs Class B flows (pure UI/analytics views).
+- **Cross-service documentation**
+  - For each of the prefixes listed above, add or update the corresponding sections in the owning service docs (Entity Management, World Management, Game Session, Game Logic) to:
+    - Declare the cache’s correctness class (A vs B), versioning or TTL strategy, and reset tolerance.
+    - Show example key shapes, TTL ranges, and event listeners/invalidation paths.
+
+These tasks should be completed **before** enabling broad, non-gateway use of Cache/Rate-Limit Redis in production-like environments so that caches do not accumulate organically without clear ownership and correctness stories.
 
 ## Related Documentation
 

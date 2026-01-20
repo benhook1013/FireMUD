@@ -253,13 +253,15 @@ therefore a **best-effort, at-least-once** lifecycle signal keyed by
 
 When a `NotifyDisconnect` call fails, the proxy retries it with a short, bounded
 exponential backoff window. Implementations should treat this as an advisory
-hint rather than a durability channel: by default the proxy retries delivery for
-up to a few seconds after the Telnet socket closes (for example 2–5 seconds of
-total backoff), then gives up and relies on Game Session’s own liveness
-detection and Redis timeouts. This keeps retry behaviour simple while still
-surfacing most transient gRPC failures without risking long-lived retry storms.
+hint rather than a durability channel. The target-state contract is:
 
-The proxy generates `proxyConnectionId` when the Telnet socket is accepted and propagates it to the gateway hop as a WebSocket handshake header (`X-Proxy-Connection-Id`). Spring Cloud Gateway strips this header from public ingress and forwards it only when it has authenticated the TCP Proxy identity; Game Session captures this identifier during login/session binding so it can associate disconnect events with the correct authenticated session even when the client did not provide a `SESSION` envelope.
+- A dedicated configuration knob (for example `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`) bounds the **total retry window** after Telnet socket close (recommended default `3000`–`5000` ms).
+- Within that window, the proxy applies exponential backoff between attempts and gives up permanently once the total elapsed time since Telnet socket close exceeds `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`.
+- After the window elapses, the proxy relies entirely on Game Session’s own liveness detection and Redis-backed timeouts; no further retries are attempted for that `{proxyConnectionId, disconnectSequence}`.
+
+This keeps retry behaviour simple while still surfacing most transient gRPC failures without risking long-lived retry storms.
+
+The proxy generates `proxyConnectionId` when the Telnet socket is accepted and uses a **single, stable** identifier for the entire lifetime of that TCP connection. Every WebSocket bridge handshake initiated on behalf of that Telnet connection – including reconnects during a Gateway blip – re-sends the same `proxyConnectionId` as a WebSocket handshake header (`X-Proxy-Connection-Id`). Spring Cloud Gateway strips this header from public ingress and forwards it only when it has authenticated the TCP Proxy identity; Game Session captures this identifier during login/session binding so it can associate disconnect events with the correct authenticated session even when the client did not provide a `SESSION` envelope.
 
 When a valid `SESSION <sessionId> <tenantId>` envelope is captured, the proxy forwards those identifiers as WebSocket handshake headers (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id`). Spring Cloud Gateway strips these from public ingress and may forward canonical `X-Session-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These values remain advisory context, not trusted facts: Game Session validates them against Redis-backed session ownership and tenant authorization.
 
@@ -391,23 +393,24 @@ against malformed negotiation sequences and other legacy edge cases.
 Mud Client Protocol (MCP) 2.1 negotiation and messages are carried over the
 line-based text channel (for example `#$#` control lines) and are not affected
 by the low-level Telnet command whitelist. Unsupported Telnet options outside
-the `ALLOWED_COMMANDS` set are discarded, but MCP control lines and payloads
+the allowed-command set are discarded, but MCP control lines and payloads
 are forwarded verbatim to the gateway as sanitized text. MCP-capable clients
 should therefore expect their standard MCP exchanges to arrive intact while not
 relying on arbitrary Telnet option negotiation beyond the documented command
 subset.
 
-Example filtering logic from the Telnet sanitization layer (currently implemented by `TelnetServerHandler`):
+At the protocol level, the proxy treats Telnet control bytes as follows:
 
-```java
-private static final byte IAC = (byte) 255;
-private static final Set<Byte> ALLOWED_COMMANDS =
-    Set.of((byte) 240, (byte) 241, (byte) 249, (byte) 251, (byte) 252, (byte) 253, (byte) 254);
-```
-
-Commands outside this list are discarded and only sanitized printable characters are forwarded to the gateway.
-
-Supported Telnet commands/options are intentionally minimal but cover the needs of common MUD clients. The proxy’s abuse heuristics treat some signals as **hard abuse** that may close connections, and others as **diagnostic-only**:
+- A fixed set of Telnet commands are allowed and understood:
+  - `SE` (End of subnegotiation parameters) – byte `240`
+  - `NOP` (No operation) – byte `241`
+  - `GA` (Go ahead) – byte `249`
+  - `WILL` – byte `251`
+  - `WONT` – byte `252`
+  - `DO` – byte `253`
+  - `DONT` – byte `254`
+- Commands outside this set are discarded and only sanitized printable characters are forwarded to the gateway.
+- For Telnet subnegotiation (`IAC SB ... IAC SE`), the proxy consumes the entire subnegotiation block up to the matching `SE` and does not surface any of its bytes as gameplay text when the option is unsupported. Well-formed `SB`/`SE` sequences for unsupported options are ignored cleanly; malformed or truncated subnegotiations may increment diagnostic counters but must not inject partial control bytes into the line-based command stream.
 
 - Hard abuse signals include:
   - Line-length floods or repeated lines exceeding `TCP_PROXY_MAX_LINE_BYTES`.

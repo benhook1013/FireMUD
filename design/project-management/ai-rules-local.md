@@ -61,6 +61,22 @@ Monetization:
 
 ---
 
+## Java Service Conventions (Quick Reference)
+
+- **Controllers**
+  - Handle HTTP requests only, annotated with `@RestController` and `@RequestMapping`.
+  - Return `ResponseEntity<ApiResponse<...>>` and rely on `GlobalExceptionHandler` for error mapping.
+- **Services**
+  - Expose behavior via interfaces with `*ServiceImpl` implementations annotated with `@Service` and `@RequiredArgsConstructor`.
+  - Use repositories for all DB access and mark multi-step operations as `@Transactional`.
+- **Repositories**
+  - Extend `JpaRepository<Entity, ID>` with `@Repository`, prefer JPQL in `@Query`, and use `@EntityGraph` for eager graphs.
+- **Entities and DTOs**
+  - Entities are internal (`@Entity`, `@Table`, `@Data`, lazy relationships) and never exposed directly.
+  - DTOs are primarily `record` types with validation in the canonical constructor and MapStruct mappings.
+
+---
+
 ## Application Logic Design
 
 - Controllers handle all HTTP requests.

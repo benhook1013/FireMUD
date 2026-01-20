@@ -203,6 +203,12 @@ Use this when changing Redis profiles, topologies, or reset behavior.
   - [ ] Which reset scopes are safe (region, tenant, cluster).
   - [ ] Whether repair, reset, or accept‑loss is the expected response to problems.
 - [ ] Runbooks in `system-architecture-redis-operations.md` are updated or confirmed to cover new/reset behaviors.
+- [ ] For workloads that are **reset-sensitive** rather than reset-tolerant:
+  - [ ] The impact of a reset is documented (player-facing effects, operational steps).
+  - [ ] The design justifies why Coordination Redis is still appropriate and why a more durable store (for example PostgreSQL or Kafka) is not required.
+- [ ] Workloads classified as **reset-forbidden** are **not** placed on Coordination Redis:
+  - [ ] Either they use a different store as primary, with Redis in a purely cache/index role, or
+  - [ ] They introduce their own explicit deployment and runbooks outside the general Coordination Redis reset tooling.
 
 **Observability and SLOs**
 

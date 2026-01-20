@@ -32,6 +32,7 @@ This document is the **conceptual hub** for Redis in FireMUD. It explains the me
 - [Atomicity and Concurrency Control](#atomicity-and-concurrency-control)
 - [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)
 - [Topology Compatibility Overview](#topology-compatibility-overview)
+ - [External Invariants Redis Depends On](#external-invariants-redis-depends-on)
 - [Related Documentation](#related-documentation)
 
 ---
@@ -285,6 +286,7 @@ Region‑scoped coordination keys share the same `{tenantRegionTag}` hash tag an
 ---
 
 ## Topology Compatibility Overview
+## Topology Compatibility Overview
 
 Redis features and assumptions in FireMUD must work across both single‑instance and clustered deployments. This table summarizes what is supported; operational details and exact configuration live in **Redis Usage & Profiles** and **Redis Operations & Migrations**.
 
@@ -299,6 +301,28 @@ In all topologies:
 - Coordination Redis and Cache/Rate‑Limit Redis are **separate deployments** (distinct processes/containers) even when they share the same host or Kubernetes node.
 - Application and tooling configuration **must not** point `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` to the same endpoint in any non‑ephemeral environment.
 - Shared configuration helpers should perform a best‑effort check (for example, comparing host/port pairs) and emit a clear log/health warning when both roles resolve to the same target.
+
+---
+
+## External Invariants Redis Depends On
+
+Redis designs in FireMUD assume several invariants that are defined and enforced in other parts of the system. This section summarizes the most important ones so Redis reviews do not have to repeatedly re-derive them:
+
+- **Region epoch and single-writer guarantees**
+  - The tick system maintains a `region_epoch` per `<tenantId, regionId>` in PostgreSQL (see `system-architecture-tick-concepts-and-invariants.md` and related docs).
+  - At any time, at most one executor is allowed to hold the active epoch for a region; Lua scripts validate epoch and lease tokens against this metadata.
+  - Redis designs may assume that “single writer per region + epoch” is upheld by the tick control plane and database, and must treat violations (for example, split-brain) as incidents that trigger resets, not normal control flow.
+- **Idempotent domain effects**
+  - Domain-level effects (damage application, currency transfers, quest progress, etc.) are recorded via idempotent identifiers or transaction rows in PostgreSQL (see `system-architecture-transactions.md`).
+  - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply domain effects even if Redis state is replayed or partially lost within the tail-loss envelope.
+- **Transactional boundaries**
+  - Services that participate in ticks and coordination flows encapsulate their durable writes in transactions with clear boundaries and conflict detection (for example, optimistic locking or explicit version checks).
+  - Redis designs may assume that “commit vs rollback” is visible in domain state and must not introduce coordination patterns that require peeking into in-flight, uncommitted work.
+- **Authentication and session semantics**
+  - Session TTLs and reconnect windows follow the authentication settings described in `system-architecture-authentication.md` and `system-architecture-reconnection.md`.
+  - Session-related Redis keys (`session:game:*`) are expected to enforce those logical expiry rules; Redis designs must not introduce independent notions of “session lifetime” that diverge from the documented auth contracts.
+
+When changing any of these external invariants, update this section and the referenced docs together so Redis designs and reset/runbook assumptions remain aligned.
 
 ---
 

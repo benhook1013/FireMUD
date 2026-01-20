@@ -2,6 +2,24 @@
 
 This document outlines how FireMUD is deployed across different environments, focusing on **Docker Compose** for local development and **Kubernetes** for production. It includes discovery mechanisms, health check strategies, and environment-specific configurations.
 
+## Table of Contents
+
+- [Local Development: Docker Compose](#local-development-docker-compose)
+- [Production: Kubernetes](#production-kubernetes)
+- [Telnet Edge Deployment](#telnet-edge-deployment)
+- [Monitoring & Logging](#monitoring--logging)
+- [Spring Profile Configuration](#spring-profile-configuration)
+- [Staging Environment for Playtesting](#staging-environment-for-playtesting)
+- [Related Documentation](#related-documentation)
+
+---
+
+## Quick Environment Decision Guide
+
+- Use **Docker Compose** when developing locally or running short-lived preview stacks from pull requests.
+- Use **Kubernetes (dev/stage/prod clusters)** for any shared or player-facing environment where autoscaling, high availability, and full observability are required.
+- Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes.
+
 ---
 
 ## Local Development: Docker Compose
@@ -56,9 +74,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
 - Route URIs in Spring Cloud Gateway use service names configured in the `prod`
   profile of `application.yml`.
 - Internal microservices communicate directly over gRPC, bypassing the Spring Cloud Gateway.
-- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly.
-- The external load balancer exposes only the Gateway and TCP Proxy Service, forming a DMZ that shields internal services.
-- **Client IP preservation for Telnet** – Kubernetes load balancing commonly SNATs raw TCP traffic, so the TCP Proxy Service may not see the true client address on the TCP socket. The preferred production deployment is to expose a small **Telnet edge proxy** (HAProxy) as the public `LoadBalancer` for port `2323` and forward to the TCP Proxy Service with **PROXY protocol** enabled. Enable PROXY protocol parsing only on a dedicated, internal-only TCP Proxy listener/port (see `TCP_PROXY_PROXY_PROTOCOL_PORT` in the TCP Proxy design) that is reachable solely from HAProxy (separate `Service` + `NetworkPolicy`), and keep the public Telnet listener PROXY-disabled to prevent client-IP spoofing. The TCP Proxy Service parses the PROXY header to recover the real client IP and sends it to Spring Cloud Gateway as `X-Proxy-Client-IP`; Spring Cloud Gateway then sets the canonical `X-Client-IP` header for downstream services. If PROXY protocol is not enabled (or source IP is not preserved), per-IP limits should be treated as best-effort and sized conservatively.
+- The **TCP Proxy Service** and **Spring Cloud Gateway** are typically exposed using Kubernetes `LoadBalancer` Services so external clients can connect directly. See [Telnet Edge Deployment](#telnet-edge-deployment) for details on client IP preservation and PROXY protocol.
 - See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain (browser/Telnet clients → load balancer → Spring Cloud Gateway → backend services) and DMZ boundary details; this document avoids duplicating those rules.
 - Sample `NetworkPolicy` manifests to restrict internal traffic are provided in
   [`k8s/network-policies`](../../../k8s/network-policies) and can be applied after
@@ -90,6 +106,20 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - Restarts failing pods based on probe failures
   - Scales services up/down via deployments or Horizontal Pod Autoscalers (HPA). An example manifest is provided in `k8s/base/hpa-example.yaml` and serves as the default configuration.
 - Pod restarts are transparent to players; see [Reconnection Strategy](../system-architecture-reconnection.md) for cross-environment behavior.
+
+---
+
+## Telnet Edge Deployment
+
+Kubernetes load balancing commonly SNATs raw TCP traffic, so the TCP Proxy Service may not see the true client address on the TCP socket. To preserve client IPs and keep the DMZ boundary explicit:
+
+- Expose a small **Telnet edge proxy** (for example, HAProxy) as the public `LoadBalancer` for port `2323`.
+- Forward Telnet traffic from the edge proxy to the TCP Proxy Service using **PROXY protocol** on a dedicated, internal-only TCP Proxy listener/port (see `TCP_PROXY_PROXY_PROTOCOL_PORT` in the TCP Proxy design).
+- Restrict that PROXY-enabled listener so it is reachable only from the edge proxy (separate `Service` + `NetworkPolicy`).
+- Keep the public Telnet listener PROXY-disabled to prevent client-IP spoofing attempts.
+- Have the TCP Proxy Service parse the PROXY header, forward the recovered client IP to Spring Cloud Gateway as `X-Proxy-Client-IP`, and let the gateway standardize it as `X-Client-IP` for downstream services.
+
+If PROXY protocol is not enabled (or source IP is not preserved), treat per-IP limits as best-effort and size them conservatively. See [Security Architecture](../system-architecture-security.md#tls-termination-for-gateway) and [Gateway Architecture](../system-architecture-gateway.md#tls-termination-for-gateway) for the full TLS termination chain.
 
 ---
 

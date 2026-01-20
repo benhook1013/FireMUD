@@ -2,6 +2,12 @@
 
 This document lists recurring problem domains and testing focus areas for FireMUD. As the project grows and new bugs appear, extend these sections with concrete scenarios, links to tests, and regression checks.
 
+## How to Use This Document
+
+- Treat each numbered section as a **living catalog** of risks and regression scenarios.
+- When fixing a bug, add a short note under the relevant section with links to the tests that cover it.
+- Link cross-service regression suites (for example, LOOK and SAY flows) from here rather than duplicating full transcripts or Gradle invocation details.
+
 ## 1. Authentication, Authorization, and Session Management
 
 - Login flow: correct handling of valid/invalid credentials, lockouts, and error messages.
@@ -34,11 +40,7 @@ This document lists recurring problem domains and testing focus areas for FireMU
 - Integration flows: end-to-end tests for login, character selection, entering the world, and simple commands across multiple services.
 - Timeouts and retries: reasonable client timeouts and retry strategies that do not cause thundering herds or duplicate side effects.
 - Error propagation: errors from downstream services (Account, Game Session, DB, Redis) are converted to clear, safe messages for clients.
-- LOOK command traces: cross-service regression tests that start Game Session, Game Logic, World Management, and Entity Management together and replay the `LOGIN` + `LOOK` flow over WebSocket and Telnet so we can verify the new data-driven output and error codes end-to-end.
-- Refer to `design/project-management/look-cross-service-tests.md` for the detailed test plan, transcripts, and Gradle task once the automation is implemented.
-- Look-instrumentation test notes: the plan now includes stub wiring and observability assertions described in `design/project-management/look-cross-service-tests.md` so metrics/log captures stay aligned with the documented transcripts.
-- Look instrumentation: the new `design/project-management/look-instrumentation.md` summarizes the metrics/logs to monitor during the `LOOK` path.
-- SAY command traces: the new WebSocket/Telnet cross-service flows source the canonical `OK SAY` transcript, exercise the Social/Groups stub, and emit the `gamesession.command.say.*` metrics documented in `design/project-management/vertical-slices/04-task-list-chat-and-social-vertical-slice.md`. Run them through `./gradlew crossServiceTest` (which now aggregates Game Session and TCP proxy cross-service suites) so both transports stay aligned.
+- LOOK and SAY cross-service regressions: see `design/project-management/look-and-say-regressions.md` for the detailed test plan, transcripts, metrics, and Gradle tasks that exercise WebSocket and Telnet flows in lockstep.
 - Version skew: older services can interact safely with newer ones during incremental rollouts.
 
 ## 5. Command Parsing, Input Validation, and Game Logic

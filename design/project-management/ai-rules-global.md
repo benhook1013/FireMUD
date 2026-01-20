@@ -1,5 +1,27 @@
 # All-Project AI Rules
 
+## Table of Contents
+
+- [1. General Code Rules](#1-general-code-rules)
+- [2. Style and Formatting](#2-style-and-formatting)
+- [3. Validation and Error Handling](#3-validation-and-error-handling)
+- [4. Comments and Explanation](#4-comments-and-explanation)
+- [5. Performance and Security](#5-performance-and-security)
+- [6. Refactoring and Review](#6-refactoring-and-review)
+- [7. Multi-file Contexts](#7-multi-file-contexts)
+- [8. Project Structure](#8-project-structure)
+- [9. Architecture & Documentation Behavior](#9-architecture--documentation-behavior)
+- [10. Testing & Observability](#10-testing--observability)
+- [11. Tooling Available to AI](#11-tooling-available-to-ai)
+
+---
+
+For quick reference in day-to-day work, most edits will rely on:
+
+- Section 2 (**Style and Formatting**) for formatting and structure
+- Section 6 (**Refactoring and Review**) when adjusting existing code
+- Section 10 (**Testing & Observability**) when adding or changing behavior
+
 ## 1. General Code Rules
 
 - Provide complete, functional code unless code-only is requested

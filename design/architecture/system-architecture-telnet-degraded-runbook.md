@@ -27,6 +27,7 @@ For the design of the Telnet and protocol-bridging path, see:
      - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, or repeated malformed `SESSION` envelopes.
      - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated reconnection attempts to Spring Cloud Gateway.
      - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
+     - If Telnet client IP preservation relies on PROXY protocol, verify that `tcpproxy.telnet.discarded{reason="proxy_protocol"}` is not elevated; sustained `proxy_protocol` discard reasons often indicate a misconfigured Telnet edge proxy (for example PROXY headers sent to the wrong listener or malformed headers).
 4. **Compare Telnet vs WebSocket flows**
    - Pick a specific `{sessionId, tenantId}` (or user) and:
      - Use Logging & Admin Service / Kibana to find the Telnet-side logs (from the TCP Proxy) and confirm that `LOGIN`/`LOOK` commands are received, with credentials redacted.
@@ -46,6 +47,10 @@ For the design of the Telnet and protocol-bridging path, see:
      - Confirm `GATEWAY_WS_URL` points to a hostname that matches the Gateway certificate SANs.
      - Verify `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` are valid and mounted in the proxy deployment.
      - If needed, roll back recent TLS or gateway changes and reapply them with correct hostnames and certificate bundles.
+   - If Telnet client IP-related behaviour looks incorrect (for example, per-IP limits clearly not matching real client IPs, or logs showing node/LoadBalancer IPs as the client address), validate the PROXY protocol deployment:
+     - Confirm that the public Telnet `LoadBalancer` fronts a dedicated Telnet edge proxy (for example HAProxy) and that it forwards to the TCP Proxy Service using PROXY protocol on the internal-only listener/port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`.
+     - Ensure the raw Telnet listener (`TCP_PROXY_PORT`) is not PROXY-enabled and is not exposed directly on the Internet in production; accepting PROXY headers from public clients allows client-IP spoofing.
+     - When PROXY protocol is not enabled (or source IP is not preserved), treat `TCP_PROXY_MAX_CONNECTIONS_PER_IP` as a best-effort heuristic and rely primarily on global `TCP_PROXY_MAX_CONNECTIONS` and higher-layer rate limits, as described in the TCP Proxy design and Deployment Environments docs.
 3. **Run Telnet smoke tests**
    - Use the Telnet smoke script described in the TCP Proxy README (or the `dev-echo-loop.sh` flow) to:
      - Connect to the proxy with `telnet` or a test client.

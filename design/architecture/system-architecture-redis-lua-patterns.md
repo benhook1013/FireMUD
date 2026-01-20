@@ -148,6 +148,11 @@ CI must reject automation Lua scripts that:
 - Reference both `automation:*` and `tick:*` keys in their registry descriptors, or
 - Construct `tick:*` keys by hand instead of using shared key builders.
 
+From a correctness perspective, `automation:queue:*` and related automation caches are always treated as **best-effort buffers**:
+
+- Scripts and callers must assume that queued items can be lost, duplicated, or reordered within the bounds described in the Redis hub doc.
+- Any automation contract that requires “exactly once” semantics or durable ordering must record its authoritative state in PostgreSQL or another durable store and use `automation:queue:*` only as a convenience layer for scheduling, not as the sole record of work.
+
 ### Script Complexity and Runtime Limits
 
 To prevent Redis from stalling, tick-related scripts are bounded in keys touched and execution time:

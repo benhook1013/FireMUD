@@ -1,6 +1,6 @@
 # LOOK Cross-Service Test Plan
 
-This plan documents how the cross-service WebSocket and Telnet tests exercise the data-driven `LOOK` path end-to-end.
+This plan documents how the cross-service WebSocket and Telnet tests exercise the data-driven `LOOK` path end-to-end. See `design/project-management/look-and-say-regressions.md` for the shared LOOK/SAY regression catalog and metrics notes.
 
 ## Goals
 
