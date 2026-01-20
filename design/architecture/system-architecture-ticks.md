@@ -28,8 +28,10 @@ This file provides a **condensed overview and anchor headings** so other docs ca
 FireMUD uses a **hybrid tick model** to balance real-time responsiveness with deterministic action resolution:
 
 - Actions are queued per entity (players, NPCs, scripted automation).
-- At each tick, the region executor pulls at most one action per entity and resolves them in a fair order.
+- At each tick, the region executor pulls at most one action per entity and resolves them in a fair order so player commands, AI, and automation are treated equivalently.
 - State changes are applied as an atomic “tick transaction” per region.
+
+Conceptually, FireMUD treats time as **localized pulses** rather than a single global clock: each tick is a self-contained transaction for its region that composes safely with others.
 
 See `system-architecture-tick-concepts-and-invariants.md` for the full description of fairness guarantees and queueing rules.
 
@@ -86,6 +88,8 @@ Tick execution uses **per-entity locks** in Redis to coordinate concurrent actio
 - Are acquired in deterministic order to avoid deadlocks.
 - Are scoped to a single region; cross-region flows never share locks.
 
+Region executors rely on **lock-on-demand** rather than fixed thread ownership: no region or room is permanently bound to a single worker thread; instead, workers acquire and release Redis-backed locks and leases as they process tick work.
+
 The detailed lock naming, TTL rules, and examples live in `system-architecture-tick-concepts-and-invariants.md`.
 
 ---
@@ -121,13 +125,15 @@ Region boundaries are chosen to:
 - Minimize cross-region traffic for common player flows.
 - Keep per-region tick load within safe bounds.
 
- Ownership changes (moving a region between executors) follow the lease rules:
+Ownership changes (moving a region between executors) follow the lease rules:
 
 - A scheduler or consistent-hash layer maps `<tenantId, regionId>` to Game Session instances.
 - To rebalance load, the current executor:
   - Stops renewing the region lease for selected regions.
   - Drains in-flight work to a safe boundary (for example, after the current `pending` tick is committed or recovered).
 - Another instance then acquires the lease and continues tick processing from the existing Redis and PostgreSQL state for that region.
+
+For most deployments, region topology changes (splits, merges, or reassignments between executors) are applied between game instances or during maintenance windows so active sessions are not disrupted.
 
 World Management owns region topology (layout and `<regionId>` assignments) and may, over time, support “drain and split” or “merge” flows:
 
@@ -290,9 +296,11 @@ Each service’s detailed responsibilities and invariants are captured in its ow
 The tick model is designed to provide:
 
 - Parallel, fault-isolated tick execution per region.
+- Lock-on-demand using Redis instead of fixed thread ownership, allowing regions to move between workers without changing the programming model.
 - Deterministic recovery via idempotent replays.
 - Fair scheduling across entities.
 - Clear boundaries between coordination state (Redis) and authoritative state (PostgreSQL).
+- No long-lived, in-service volatile tick state: tick coordination and session/timer state can be rebuilt from Redis and authoritative domain stores after failures.
 
 See the introduction of `system-architecture-tick-concepts-and-invariants.md` for a more narrative discussion of these benefits.
 
