@@ -115,34 +115,44 @@ Reset tooling and runbooks are expected to consume this catalog to enforce reset
 
 ## Reset vs Repair vs Accept Loss
 
-When coordination state appears incorrect or unhealthy, operators and designers choose between three strategies:
+When coordination state appears incorrect or unhealthy, operators and designers choose between three strategies. Think of this as the **minimal decision tree** for a single‑admin operator:
 
-- **Repair**
-  - Attempt to fix specific keys or structures **without** clearing the entire scope.
-  - Examples:
-    - Removing a single stuck lock.
-    - Cleaning up a small number of malformed entries in a pending set.
-  - Rules:
-    - Repairs must use the shared key builders and Lua registry helpers.
-    - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant.
+1. **Can you safely accept the loss?**
+   - Choose **Accept loss** when:
+     - Metrics show tail‑loss stayed within the documented SLO window, and
+     - Invariants (no double‑apply of critical effects, no cross‑tenant leaks, no broken financial flows) remain intact.
+   - Behavior:
+     - Acknowledge that some coordination state (timers, pending effects, non‑critical queues) has been lost within the tail‑loss envelope and **do nothing** beyond monitoring.
+   - Examples:
+     - Short Redis outage where `tail_loss_ms` and tick metrics confirm only the last 1–2 seconds of activity were affected.
+     - Eviction of cache‑like coordination hints that are inherently best‑effort.
 
-- **Reset**
-  - Intentionally clear coordination keys for a scope and allow services to rebuild from durable domain state.
-  - Examples:
-    - Region‑scoped reset after mis‑keyed `tick:*` data.
-    - Tenant‑scoped reset after unrecoverable script bugs affecting multiple regions.
-  - Rules:
-    - Performed through the versioned coordination maintenance CLI.
-    - Always accompanied by post‑reset health checks (ticks can be scheduled, sessions can be created/resumed, automation works).
+2. **If not acceptable, is the issue clearly localized and small?**
+   - Choose **Repair** only when:
+     - The blast radius is well understood (for example, one or two keys or a small set of known entities), and
+     - You can express the fix using existing key builders and Lua helpers without inventing new patterns.
+   - Behavior:
+     - Attempt to fix specific keys or structures **without** clearing the entire scope.
+   - Examples:
+     - Removing a single stuck lock for a known entity.
+     - Cleaning up a small number of malformed entries in a pending set after a known bug.
+   - Rules:
+     - Repairs must use the shared key builders and Lua registry helpers.
+     - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant and must be recorded as an incident.
 
-- **Accept loss**
-  - Acknowledge that some coordination state (timers, pending effects, non‑critical queues) has been lost within the tail‑loss envelope and **do nothing** beyond monitoring.
-  - Examples:
-    - Short Redis outage where metrics confirm tail‑loss stayed within the SLO.
-    - Eviction of cache‑like coordination hints that are inherently best‑effort.
-  - Rules:
-    - Only acceptable when invariants (no double‑apply of critical effects, no cross‑tenant leaks, no broken financial flows) remain intact.
-    - Should be backed by metrics confirming that tail‑loss stayed within documented bounds.
+3. **Otherwise, reset at the smallest safe scope**
+   - Choose **Reset** when:
+     - The data corruption or bug is not safely repairable in place, or
+     - You cannot confidently bound the impact to a handful of keys.
+   - Behavior:
+     - Intentionally clear coordination keys for a scope and allow services to rebuild from durable domain state.
+   - Examples:
+     - Region‑scoped reset after mis‑keyed `tick:*` data affecting many entities.
+     - Tenant‑scoped reset after unrecoverable script bugs affecting multiple regions.
+   - Rules:
+     - Performed through the versioned coordination maintenance CLI.
+     - Always accompanied by post‑reset health checks (ticks can be scheduled, sessions can be created/resumed, automation works).
+     - Region‑ and tenant‑scoped resets should prefer **smaller scopes first**; cluster‑scoped reset is reserved for catastrophic or planned migration scenarios where finer scopes are ineffective.
 
 Design reviews should explicitly state which of these strategies is expected to be safe for each coordination structure.
 

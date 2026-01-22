@@ -206,9 +206,10 @@ See `system-architecture-tick-concepts-and-invariants.md` and the Entity Managem
 Isolation and replay guarantees rely on:
 
 - Per-region leases and locks in Redis.
+- A shared coordination timeline `(region_epoch, tickId)` per `<tenantId, regionId>` as described in the Redis architecture docs.
 - Domain-level idempotency rules keyed by `tickId` and effect identifiers.
 
-Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. See `system-architecture-tick-failures-and-operations.md` for the detailed story.
+Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, regionId, region_epoch, tickId, effectKey)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
 
 ---
 

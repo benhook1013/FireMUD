@@ -224,6 +224,55 @@ Different side-effect categories may use different persistence primitives, but e
 
 Together with the tick effect ledger, these patterns ensure that Redis coordination and replay logic remain simple while each domain service guarantees that its persistent mutations and outward side effects are safe to attempt multiple times.
 
+## Tick-Aware Reset Scenarios
+
+Coordination resets are expressed in terms of Redis scopes (region, tenant, cluster) in `system-architecture-redis-reset-and-recovery.md`. From the tick system’s perspective, they also have **timeline and ledger effects**:
+
+- **Region-scoped reset**
+  - Timeline impact:
+    - For the affected `<tenantId, regionId>`, all coordination keys for the current `region_epoch` are dropped.
+    - A new `region_epoch` is established; subsequent ticks for that region advance from `(region_epoch+1, tickId=0)` on the coordination timeline described in `system-architecture-redis.md`.
+  - Ledger behavior:
+    - Tick effect ledger rows with `status=SCHEDULED` for the affected `<tenantId, regionId, region_epoch>` must not remain indefinitely pending.
+    - Reset tooling and/or the Game Session control plane either:
+      - Re-schedule eligible SCHEDULED effects under the new epoch, or
+      - Mark them `ABANDONED` with a reset reason (for example `RESET_REGION_SCOPED`) so operators can see exactly which work was discarded.
+  - Player impact:
+    - In-flight actions within the tail-loss envelope may be dropped or replayed, but authoritative domain state remains consistent due to idempotency guards.
+    - Players may observe “lost” commands around the reset boundary; game UX should frame this as a brief rollback or hiccup, not silent corruption.
+
+- **Tenant-scoped reset**
+  - Timeline impact:
+    - All regions for a given `tenantId` have their coordination keys cleared and `region_epoch` bumped.
+    - Cross-region flows (for example follow-ups) resume only under the new epochs; stale follow-ups from previous epochs are ignored or reconciled.
+  - Ledger behavior:
+    - Tick effect ledger rows for the tenant with `status=SCHEDULED` are either:
+      - Re-scheduled in a controlled way if the feature design requires it, or
+      - Bulk-marked `ABANDONED` with a tenant-scoped reset reason.
+  - Player impact:
+    - The tenant experiences a “clean slate” for coordination: timers, retries, and queued commands are cleared.
+    - Long-lived domain state (characters, inventory, world) is preserved; tick-driven features must be designed so players can naturally continue from durable state.
+
+- **Cluster-scoped reset**
+  - Timeline impact:
+    - All `<tenantId, regionId>` pairs on the deployment lose coordination keys and receive new epochs.
+    - This is effectively a deliberate, unbounded tail-loss event for all regions and must be treated as a rare, planned operation.
+  - Ledger behavior:
+    - SCHEDULED ledger rows for all affected regions are either:
+      - Reconciled and re-driven in batches, or
+      - Bulk-marked `ABANDONED` with a cluster reset reason.
+    - Design docs for features that rely on tick-driven effects should state which approach they expect.
+  - Player impact:
+    - All active regions experience at least a brief pause while epochs are re-established and ticks resume under the new coordination state.
+    - UX and communications for planned cluster resets should set expectations (maintenance windows, possible brief rollbacks).
+
+In all three cases, the **goal is convergence**:
+
+- For each `(tenantId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one terminal ledger state (`APPLIED` or `ABANDONED`), regardless of resets.
+- Reset tooling and Game Session control flows must ensure that no tick remains forever “half-applied” in the ledger (for example, perpetually `SCHEDULED` with no chance of replay).
+
+These expectations should be reflected in the coordination reset tooling described in `system-architecture-redis-operations.md` and the reset policy matrix in `system-architecture-redis-reset-and-recovery.md`.
+
 ## Remote Hint Markers and Resets
 
 Cross-region flows may use best-effort Redis hint markers such as `remote:<tenantId>:<entityId>` or `remote:<tenantId>:<targetEntityId>` to reduce latency when draining remote follow-ups. Operationally:

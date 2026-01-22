@@ -65,6 +65,15 @@ For quick answers about prefixes and which doc to open next, use the **Redis Che
 
 FireMUD uses Redis as a **transient, high‑performance coordination layer**, not as a primary source of truth. The following invariants apply to all coordination designs:
 
+- **Coordination timeline = `(regionEpoch, tickId)`**
+  - For each `<tenantId, regionId>` the canonical coordination timeline is the pair `(region_epoch, tickId)`:
+    - `region_epoch` lives in PostgreSQL and is advanced by the tick control plane when region authority changes or a scoped coordination reset occurs.
+    - `tickId` is monotonic per `<tenantId, regionId>` within a given `region_epoch` and is carried on all tick‑driven calls and ledger entries.
+  - All tick coordination keys in Redis (for example `tick:{tenantRegionTag}:*`, timers, retries, leases) and all corresponding PostgreSQL tick ledger rows conceptually belong to exactly one `(region_epoch, tickId)` on this timeline.
+  - Split‑brain detection, replay, and reset handling treat this timeline as the arbiter of “which work is valid”:
+    - If multiple executors attempt to own the same `<tenantId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
+    - After a region‑ or tenant‑scoped reset, a new `region_epoch` is created and any surviving coordination state from older epochs is ignored or explicitly cleaned up by reset tooling.
+
 - **Non‑authoritative for game data**
   - Canonical game state (accounts, entities, items, rooms, instances) lives in PostgreSQL and domain services.
   - Redis holds **volatile coordination state**: tick queues and locks, timers, session bindings, automation hints, retry metadata, and similar.
@@ -75,6 +84,9 @@ FireMUD uses Redis as a **transient, high‑performance coordination layer**, no
   - Designs must tolerate the loss of a few ticks’ worth of:
     - Commands, staged effects, timers, and retry markers, and
     - Session liveness hints and other advisory metadata.
+  - In terms of the coordination timeline:
+    - A normal failover or bounded tail‑loss event may drop or replay the last `N` ticks on the timeline for a `<tenantId, regionId>`, where `N` corresponds to roughly **≤ 2 × `tick_interval_ms`** and the configured tail‑loss SLOs in `system-architecture-redis-operations.md`.
+    - Tick effect ledger behavior and domain idempotency rules (see `system-architecture-tick-failures-and-operations.md`) must guarantee that those dropped/replayed ticks converge to a final state where each `(tenantId, regionId, region_epoch, tickId, effectKey)` is either durably applied or durably abandoned, never left indefinitely “half‑applied”.
   - Flows that **cannot** tolerate this tail‑loss (for example, real‑money purchases, cross‑tenant transfers, or unique external side effects) must use durable domain mechanisms and may only use Redis for optional coordination.
 
 - **Idempotent replay and monotonic guards**
@@ -314,6 +326,9 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
   - The tick system maintains a `region_epoch` per `<tenantId, regionId>` in PostgreSQL (see `system-architecture-tick-concepts-and-invariants.md` and related docs).
   - At any time, at most one executor is allowed to hold the active epoch for a region; Lua scripts validate epoch and lease tokens against this metadata.
   - Redis designs may assume that “single writer per region + epoch” is upheld by the tick control plane and database, and must treat violations (for example, split-brain) as incidents that trigger resets, not normal control flow.
+  - Scoped coordination resets are expected to interact with `region_epoch` as follows:
+    - Region- or tenant-scoped resets normally bump `region_epoch` for the affected `<tenantId, regionId>` pairs and invalidate any pre-reset executor leases.
+    - Cluster-scoped resets are accompanied by a coordinated epoch bump for all affected regions so that new executors cannot accidentally reuse stale coordination state.
 - **Idempotent domain effects**
   - Domain-level effects (damage application, currency transfers, quest progress, etc.) are recorded via idempotent identifiers or transaction rows in PostgreSQL (see `system-architecture-transactions.md`).
   - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply domain effects even if Redis state is replayed or partially lost within the tail-loss envelope.

@@ -35,6 +35,39 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 - For Coordination/Cache Redis outages, AOF problems, tail-loss SLO breaches, mis-sharded keys, and automation queue schema issues, see:
   - `design/architecture/system-architecture-redis-incident-runbook.md#redis-incident-scenarios`
 
+### Minimal Coordination & Tick Operator Mental Model
+
+For a single-admin operator, most “what do I do now?” coordination/tick questions reduce to three named operations and a small set of dashboards/metrics:
+
+- **Dashboards / metrics to watch**
+  - Tick health:
+    - `tick.execution_time_ms_p95` / `tick.execution_time_ms_p99` vs `lock_ttl_ms`.
+    - Per-region tick status (RUNNING/PAUSED/STALLED) and last-committed `tickId`.
+    - Queue depths and retry counts (for example `tick_retry_queue_depth`).
+  - Redis tail-loss and memory:
+    - Tail-loss SLO metrics as described in `system-architecture-redis-operations.md` (for example `tail_loss_ms` per `<tenantId, regionId>`).
+    - Coordination Redis memory and key counts (coordination prefixes vs total).
+  - Tick effect ledger:
+    - `tick.effects_pending_total`, `tick.effects_applied_total`, `tick.effects_abandoned_total{reason}`.
+  - Cluster health:
+    - Redis primary/replica health, split-brain/sentinel alerts.
+
+- **Named operations**
+  - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases) for a single `<tenantId, regionId>` and allow ticks to rebuild from PostgreSQL and the tick effect ledger.
+  - **Per-tenant reset** – clear coordination state (all regions and sessions) for a single tenant and treat it as a tenant-scoped maintenance/reset event.
+  - **Cluster reset** – clear coordination state for all tenants/regions on a Coordination Redis deployment; reserved for catastrophic incidents or planned migrations.
+
+- **How to choose**
+  - If metrics show a brief blip but tail-loss and tick health have already recovered and invariants are intact → **Accept loss and monitor** (no active operation).
+  - If a problem is clearly confined to one region (for example, mis-keyed `tick:*` data or a stuck `pending` entry) → run a **per-region reset**.
+  - If multiple regions for the same tenant are polluted or broken in similar ways → run a **per-tenant reset**.
+  - Only when corruption or topology changes are broad and cannot be addressed region/tenant by tenant (for example, AOF directory corruption, cluster-wide hash-tag mistakes) should you plan a **cluster reset**, ideally during a maintenance window.
+
+Detailed step-by-step commands for these operations live in:
+
+- `design/architecture/system-architecture-redis-reset-and-recovery.md`
+- `design/architecture/system-architecture-redis-operations.md`
+
 ## Asset Store
 
 Operational guidance for the asset store used by the Game Design Service, including health checks and incident handling.

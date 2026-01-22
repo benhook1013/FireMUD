@@ -21,13 +21,24 @@ Where implementation is still catching up, treat the design below as the source
 of truth and reconcile code/tests accordingly; any known gaps are called out in
 the **Implementation Status** section below. The table here is descriptive and intentionally high-level; the authoritative, fine-grained task status for this service lives in `design/project-management/task-list-tcp-proxy-service.md` and should be treated as the source of truth when in doubt.
 
+> When you encounter discrepancies between this design and the implementation, align behaviour with this document and the canonical cross-service docs (for example Authentication & Authorization for `LOGIN` semantics) rather than changing the protocol, unless there is an explicit design update.
+
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
-| Telnet login-first flow (without `SESSION`) | All Telnet clients issue `LOGIN` and may optionally send a `SESSION` envelope for advanced attach-to-session flows; `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. | Behaviour is implemented as described; some older tests and smoke scripts may still assume `SESSION` is required. | Align any remaining flows with this doc when you encounter discrepancies rather than changing the protocol. |
+| Telnet login-first flow (without `SESSION`) | All Telnet clients issue `LOGIN` and may optionally send a `SESSION` envelope for advanced attach-to-session flows; `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc; this row only describes how Telnet traffic is forwarded into that flow. | Behaviour is implemented as described; some older tests and smoke scripts may still assume `SESSION` is required. | `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md` |
 | Proxy → Gateway WebSocket mTLS | Telnet → Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). The detailed mTLS contract (required listener, SAN/hostname expectations, and certificate paths) is defined in this document’s **WebSocket mTLS to Spring Cloud Gateway** section and should be treated as canonical; other docs intentionally refer back to that section instead of re-describing wiring. | Not yet fully implemented or deployed; current client may connect without client certificates and rely on default JDK TLS when `wss://` is used. | `design/project-management/task-list-tcp-proxy-service.md` (mTLS task). |
 | MCP negotiation and Telnet heuristics | MCP 2.1 negotiation, extended Telnet abuse heuristics, and advanced connection throttling are enforced at the proxy edge while keeping MCP payloads intact. MCP-specific budgets (for example limits on active cords, concurrent `_data-tag`s, and MCP messages per second) and how they feed metrics such as `tcpproxy.telnet.discarded` are described in the **MCP Resource Limits & Abuse Budgets** section. | Partially implemented; some heuristics, budgets, and MCP handling are still being hardened. When in doubt, treat this document’s MCP sections as target-state behaviour and reconcile code/tests accordingly. | `design/project-management/task-list-tcp-proxy-service.md` (MCP and abuse/heuristics tasks). |
 | Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and malformed-envelope budgets protect the DMZ boundary, with metrics such as `tcpproxy.connections.limit.exceeded`. Recommended per-environment defaults, including guidance for NAT-heavy deployments, are defined in **Tuning TCP Proxy for Different Environments**. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/task-list-tcp-proxy-service.md` (connection management and security sections). |
 | Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy (for example HAProxy) that forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port, so the proxy can recover the real client IP and set `X-Proxy-Client-IP` on its WebSocket hop to Spring Cloud Gateway. On the PROXY-protocol listener, malformed or truncated PROXY headers are treated as a hard failure: the proxy closes the connection, increments the appropriate `tcpproxy.telnet.discarded{reason="proxy_protocol"}` counter, and never silently falls back to using the TCP peer IP. | Deployment pattern and trust model are documented across the Security, Protocol Bridging, Gateway, and Deployment Environments docs; code-level PROXY protocol parsing on the dedicated listener (see `TCP_PROXY_PROXY_PROTOCOL_PORT`) and the associated observability metrics remain TODO. In production, the preferred and supported pattern is to place a Telnet edge proxy in front of TCP Proxy and enable PROXY protocol on an internal-only listener; exposing the TCP Proxy’s raw Telnet port directly to the Internet is reserved for dev/test-only environments. | `design/project-management/task-list-tcp-proxy-service.md` (PROXY protocol task). |
+
+### Minimal Production Configuration Checklist
+
+For any shared or player-facing environment, operators should ensure at least:
+
+- `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`) as described in **WebSocket mTLS to Spring Cloud Gateway**, with `FIREMUD_GATEWAY_WS_*` variables configured so the proxy both authenticates the gateway and presents its own client certificate.
+- `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns, following the guidance in **Tuning TCP Proxy for Different Environments**; the `0` defaults are reserved for local/dev and CI.
+- Telnet is fronted by a Telnet edge proxy with PROXY protocol enabled into `TCP_PROXY_PROXY_PROTOCOL_PORT`, or source IPs are otherwise preserved; in all cases, the PROXY-protocol listener remains internal-only and is never exposed directly as a public `LoadBalancer` port.
+- Plaintext Telnet on `TCP_PROXY_PORT` is treated as a legacy channel governed by the Telnet hardening rules in the Security Architecture (2FA requirements, per-account “allow plaintext Telnet login” flag, and landing-menu warning), and TLS Telnet plus the web client are preferred for general use.
 
 ### Responsibilities
 
@@ -43,8 +54,8 @@ the **Implementation Status** section below. The table here is descriptive and i
     TCP session drops. Buffers are strictly connection-local and are not replayed
     across reconnects; session recovery and any command replay are handled by the
     Game Session Service using Redis-backed state.
-- Handles Telnet negotiation and character encoding quirks.
-- Negotiates the Mud Client Protocol (MCP) when supported. See [Mud Client Protocol (MCP) Support](../../system-architecture-mud-client-protocol.md).
+- Implements baseline Telnet negotiation and character encoding handling; advanced heuristics and option handling follow the Security and MCP sections in this document and their **Implementation Status** notes.
+- Defines Mud Client Protocol (MCP) 2.1 negotiation and resource limits. See [Mud Client Protocol (MCP) Support](../../system-architecture-mud-client-protocol.md) and the **MCP Resource Limits & Abuse Budgets** section for target-state behaviour, and refer to the **Implementation Status** table for the current implementation state.
 - Integrates with the [Reconnection Strategy](../../system-architecture-reconnection.md) so backend session state can be resumed when clients reconnect and send `LOGIN` again; Telnet clients always reconnect and reauthenticate after any disconnect.
 - Can optionally terminate Telnet-over-TLS while always supporting raw Telnet
   on the configured TCP port for classic clients (for example the Windows
@@ -60,6 +71,8 @@ the **Implementation Status** section below. The table here is descriptive and i
 - When PROXY protocol is enabled for IP preservation, it should be enabled only on a dedicated, internal-only listener/port that is reachable solely from the Telnet edge proxy (HAProxy). Do not enable PROXY parsing on the public Telnet listener, since accepting PROXY headers directly from the Internet would allow client-IP spoofing.
 - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+
+> **Implementation notes:** MCP negotiation, Telnet abuse heuristics, and PROXY protocol parsing on the dedicated listener are partially implemented at the time of writing; treat the corresponding sections in this document as target-state behaviour and consult the **Implementation Status** table and `design/project-management/task-list-tcp-proxy-service.md` for current rollout details.
 
 ### Canonical Specs Quick Links
 
@@ -178,6 +191,8 @@ behaviour regardless of which classes or frameworks the service uses internally.
 - **Graceful Disconnects** — informs the Game Session Service when a client drops.
 
 ### Recommended Telnet Client Flows
+
+These flows describe how Telnet traffic is forwarded into the shared login/session pipeline; `LOGIN` / `LOGON` semantics and multi-client takeover behaviour remain canonical in the [Authentication & Authorization](../../system-architecture-authentication.md) document.
 
 - **Minimal / legacy client (no `SESSION`)**
   - Connect to the TCP Proxy Service.
@@ -456,7 +471,7 @@ For Telnet subnegotiation (`IAC SB ... IAC SE`), the proxy treats unsupported or
 
 ### MCP Resource Limits & Abuse Budgets
 
-To keep MCP traffic from overwhelming the Telnet edge while still being friendly to well-behaved tools, the TCP Proxy Service enforces **MCP-specific budgets** in addition to the generic Telnet connection and line limits:
+To keep MCP traffic from overwhelming the Telnet edge while still being friendly to well-behaved tools, the TCP Proxy Service enforces **MCP-specific budgets** in addition to the generic Telnet connection and line limits. **Status:** some of these limits and their observability hooks are still being hardened; see the **Implementation Status** table and `design/project-management/task-list-tcp-proxy-service.md` for the current implementation state.
 
 - Each connection has a bounded number of **active cords** and **concurrent `_data-tag` continuations**. Once these limits are exceeded, new MCP control lines are discarded and counted in `tcpproxy.telnet.discarded` with a low-cardinality `reason` label (for example `reason="mcp_budget"`), but the Telnet connection itself may remain open as long as other safety limits are respected.
 - MCP control-line volume is also subject to a per-connection **MCP control-line rate** budget. When a client sends MCP control lines significantly faster than expected (for example due to a misbehaving script), excess lines are dropped rather than forwarded, again contributing to `tcpproxy.telnet.discarded{reason="mcp_budget"}` instead of being treated as immediate hard-close abuse.
@@ -495,6 +510,8 @@ The TCP Proxy Service participates in three distinct TLS / trust boundaries:
 | Internal gRPC mTLS | Game Session Service (and other internal clients) ↔ TCP Proxy Service | Internal‑only gRPC endpoints such as `Ping` and the `NotifyDisconnect` event sink; no player traffic flows directly here. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`. |
 
 Telnet‑over‑TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production. See [Security Architecture](../../system-architecture-security.md#tls-termination-for-gateway) for the cluster‑wide TLS topology and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for how these surfaces fit into the end‑to‑end Telnet/WebSocket flow.
+
+> **Certificate reuse guidance:** The default environment variable paths for WebSocket mTLS (`FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`) and internal gRPC mTLS (`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`) may point at the same files in local or hobby deployments. In production and other shared environments, operators should provision **separate certificates and keys per surface** and override these defaults accordingly so a compromise in one trust surface does not automatically extend to the others.
 
 ### Data Model
 
@@ -660,8 +677,6 @@ These certificate and observability variables are shared with other services; se
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)
 for full details.
 
-**Production invariant:** Set `GATEWAY_WS_URL` to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`). Do not deploy the Proxy → Gateway hop with the default `ws://` URL in player-facing environments.
-
 The proxy may expose both a raw Telnet listener (`TCP_PROXY_PORT`) and a TLS-wrapped Telnet listener (`TCP_PROXY_TLS_PORT`) at the same time (when `TCP_PROXY_TLS_ENABLED=true`). In production, exposing the raw Telnet port directly on the public internet is treated as a **legacy, plaintext channel**: credentials and gameplay traffic may be observed in transit, so additional safeguards apply. When
 `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins
 over this plaintext Telnet port are only permitted for accounts that both:
@@ -678,6 +693,12 @@ additional restriction.
 When PROXY protocol is enabled in production, expose `TCP_PROXY_PROXY_PROTOCOL_PORT` only on an internal-only surface behind the Telnet edge proxy. Do not publish the PROXY-protocol listener directly as a public `LoadBalancer` port.
 
 The gRPC server listens on port `6565` by default as configured in `src/main/resources/application.yml`.
+
+**Production invariants (summary):**
+
+- Set `GATEWAY_WS_URL` to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) in any shared/player-facing environment; do not deploy the Proxy → Gateway hop with the default `ws://` URL in production.
+- Override `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` to non-zero values in shared/player-facing environments, sized to expected load as described in **Tuning TCP Proxy for Different Environments**; the `0` defaults are for local/dev and CI only.
+- Treat the raw Telnet listener (`TCP_PROXY_PORT`) as a legacy, plaintext channel even when exposed, and prefer either Telnet-over-TLS (`TCP_PROXY_TLS_PORT`) or the web client for general use. When using PROXY protocol, expose `TCP_PROXY_PROXY_PROTOCOL_PORT` only on an internal-only surface behind the Telnet edge proxy and never as a public `LoadBalancer` port.
 
 ### WebSocket mTLS to Spring Cloud Gateway *(Target-state; see Implementation Status)*
 

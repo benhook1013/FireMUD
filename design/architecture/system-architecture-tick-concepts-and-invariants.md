@@ -36,9 +36,27 @@ When designing new tick-driven features, keep these invariants in mind:
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – tick IDs and effect guards must be used so that replays after failure do not double-apply mutations.
 
+The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
+
+- `tickId` is monotonic and uniquely identifies each committed tick for that region.
+- All coordination keys in Redis for that region (for example `tick:{tenantRegionTag}:*`, timers, retries, leases) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
+- When region authority moves or a scoped coordination reset occurs, the tick control plane bumps `region_epoch` and ensures that subsequent work is scheduled only on the new timeline; survivors from older epochs are treated as stale and either ignored or explicitly reconciled.
+
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
 
-Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, regionId, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions.
+Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, regionId, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
+
+### Tail-Loss and Tick Replay Window
+
+Redis coordination state is subject to a bounded tail-loss envelope (see `system-architecture-redis.md` and `system-architecture-redis-operations.md`). From the tick system’s perspective:
+
+- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, regionId>`, where `N` corresponds roughly to **≤ 2 × `tick_interval_ms`** in production-like profiles.
+- Tick-driven designs must tolerate:
+  - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
+  - Region leases being briefly lost and re-acquired under the same or a new `region_epoch`.
+- The tick effect ledger (`system-architecture-tick-failures-and-operations.md`) and domain idempotency guards must ensure that, even with these drop/replay patterns:
+  - Each `(tenantId, regionId, region_epoch, tickId, effectKey)` ends in a single terminal ledger state (`APPLIED` or `ABANDONED`).
+  - Players may observe brief rollbacks or duplicated feedback around the failover boundary, but never permanent double-application of critical effects or silent corruption of authoritative state.
 
 ### Isolation Within a Tick
 

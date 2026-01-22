@@ -1,290 +1,125 @@
 # Environment Variables & Secrets Management
 
-This document explains how configuration values and sensitive secrets are supplied to FireMUD services in both development and production.
+This document is the **hub/entry point** for environment variables and secrets in FireMUD. It explains where to start, and then points you to:
+
+- `environment-and-secrets-overview.md` – conceptual overview and operator quick reference.
+- `environment-and-secrets-catalog.md` – detailed environment variable catalog and rotation notes.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Operator & Architecture Overview](#operator--architecture-overview)
+- [Environment Variable Catalog](#environment-variable-catalog)
 
 ---
 
-## Operator Quick Reference
+## Overview
 
-This section summarizes the **most important environment variables and rotation behaviors** for on‑call operators. Refer to the detailed sections below for full context.
+FireMUD relies on environment variables and Kubernetes Secrets to configure services across local development, CI, and production. This hub document is intentionally short; it exists to route readers to the right level of detail:
 
-### Core Profiles
+- Use the **overview** document for conceptual understanding and on-call triage.
+- Use the **catalog** document when you need exact variable names, defaults, and rotation behavior.
 
-| Variable | Purpose | Notes |
-| -------- | ------- | ----- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | Must be set explicitly in all environments. |
-
-### PostgreSQL (Authoritative Data)
-
-| Variable | Purpose | Rotation / Safety Notes |
-| -------- | ------- | ----------------------- |
-| `FIREMUD_POSTGRES_HOST` / `FIREMUD_POSTGRES_PORT` | PostgreSQL endpoint | Backed by Kubernetes `Service` / DNS; changes should be coordinated with DB migrations and failover runbooks. |
-| `FIREMUD_POSTGRES_DB` | Database name | Typically `firemud` for all environments. |
-| `FIREMUD_POSTGRES_USER` / `FIREMUD_POSTGRES_PASSWORD` | DB credentials | Stored in Kubernetes `Secret`; rotate via secret updates and allow pods to restart or reload as needed. |
-
-### Redis (Coordination vs Cache/Rate‑Limit)
-
-| Variable | Purpose | Rotation / Safety Notes |
-| -------- | ------- | ----------------------- |
-| `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT` | Coordination Redis (ticks, sessions, locks) | **Must point to a deployment isolated from caches.** Changing host/port is a coordinated operation; follow Redis runbooks for resets and failover. |
-| `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis | May be scaled or replaced more aggressively; still must remain separate from Coordination Redis. |
-
-Key rules:
-
-- **Never** point Coordination Redis and Cache/Rate‑Limit Redis at the same instance, even in development.
-- Player‑facing environments must use **distinct logical Redis deployments** for coordination and cache/rate‑limit roles.
-
-### Secrets & Certificates
-
-- All sensitive values (DB passwords, JWT signing keys, TLS certificates) live in Kubernetes `Secret` objects.
-- TLS certificates and JWT signing keys are rotated automatically by **cert‑manager** and related jobs.
-- Services reload TLS and JWT material via shared utilities:
-  - `TlsCertificateWatcher`
-  - `JwtSecretWatcher`
-  - `GrpcServerTlsReloader`
-
-Operator actions:
-
-- For manual secret rotation, update the relevant Kubernetes `Secret` and confirm:
-  - Pods reload configuration (via watcher) or are restarted according to the runbook.
-  - gRPC clients/servers establish new mTLS sessions without errors.
-
-For full descriptions, see the sections below.
+Existing links to sections like “gRPC TLS Certificates” and “Authentication” still resolve here, but the detailed tables now live in the catalog. Each section below includes a short summary and links to the appropriate document.
 
 ---
 
-## Local Development
+## Operator & Architecture Overview
 
-- Environment variables are loaded from a `.env` file when running `./gradlew devUp`.
-- The sample file `.env.sample` lists the variables described below with default credentials for PostgreSQL and Redis. Copy this file to `.env` and adjust values as needed; `.env` is git‑ignored so real credentials remain local.
-- Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
-- Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
+For a narrative explanation of how configuration and secrets flow through FireMUD, start with `environment-and-secrets-overview.md`. That document covers:
 
-## Production
+- The Operator Quick Reference for core PostgreSQL, Redis, and TLS/JWT variables.
+- How `.env` is used in local development.
+- How Kubernetes `ConfigMap` and `Secret` objects are used in production.
+- The distinction between configuration and secrets.
+- How cert-manager, Kubernetes Secrets, and watchers like `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` fit together.
 
-- Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
-- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. TLS certificates are issued by **cert-manager** and rotated automatically; JWT signing keys are rotated in the same manner.
-- The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
-- All secrets, including database passwords and JWT keys, are rotated automatically using cert-manager sync jobs.
-- Services reload TLS certificates for gRPC client and server channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the shared library.
-- **Kubernetes Secrets** is the chosen mechanism for storing all sensitive
-  credentials. External secret stores like Vault are out of scope at this
-  stage.
+### Operator Quick Reference
 
-## Variable Prefixes
+The full operator quick reference (including tables for `SPRING_PROFILES_ACTIVE`, PostgreSQL, Redis, and secret rotation notes) now lives in `environment-and-secrets-overview.md` under “Operator Quick Reference”. This section is preserved as an anchor for existing links.
 
-Shared libraries support overriding default settings with environment variables using the `FIREMUD_` prefix (for example `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_PORT`). Each service merges these variables with its own `application.yml` profile.
+---
+
+## Environment Variable Catalog
+
+For the exhaustive list of environment variables, their defaults, and rotation notes, open `environment-and-secrets-catalog.md`. That document groups variables by subsystem (PostgreSQL, Redis, TLS, Authentication, Service Discovery, Observability, Asset Storage, Backup & Restore) and keeps detailed explanations close to their tables.
+
+The subsections below are short stubs maintained to keep existing anchors working. Each one summarizes the topic and points to the catalog (and, where useful, the overview).
 
 ### Common Application Settings
 
-The following variable is used by all Spring Boot services to select the
-appropriate configuration profile. Typically only `dev` and `prod` are used.
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
+Common application settings, including the `SPRING_PROFILES_ACTIVE` profile selector, are documented in `environment-and-secrets-catalog.md#common-application-settings`. See the overview’s Operator Quick Reference for a high-level reminder that `SPRING_PROFILES_ACTIVE` must be set explicitly in all environments.
 
 ### PostgreSQL Credentials
 
-Services connect to the shared PostgreSQL database using the following variables.
-These values are typically provided via Kubernetes Secrets in production.
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `FIREMUD_POSTGRES_HOST` | Database host | `postgres` |
-| `FIREMUD_POSTGRES_PORT` | Database port | `5432` |
-| `FIREMUD_POSTGRES_DB` | Database name | `firemud` |
-| `FIREMUD_POSTGRES_USER` | Username | `firemud` |
-| `FIREMUD_POSTGRES_PASSWORD` | Password | `firemud` |
+The PostgreSQL environment variables (host, port, database name, user, password) are described in detail in `environment-and-secrets-catalog.md#postgresql-credentials`. Operators can cross-check high-level expectations in the overview’s PostgreSQL quick-reference table.
 
 ### Redis Connection
 
-Redis stores transient queues and caches. All environments, including local development, use **separate Redis deployments** for:
+Redis coordination and cache/rate‑limit variables, along with the precedence and safety rules that enforce separate roles, are documented in `environment-and-secrets-catalog.md#redis-coordination--cache`. Conceptual guidance on Coordination vs Cache/Rate‑Limit Redis lives in:
 
-- **Coordination Redis** – tick locks, timers, sessions, and other
-  gameplay‑critical coordination keys.
-- **Cache/Rate‑Limit Redis** – gateway rate limiting and best‑effort read‑side
-  caches.
-
-Coordination Redis (ticks, locks, timers, sessions):
-
-| Variable | Purpose |
-| -------- | ------- |
-| `FIREMUD_REDIS_COORD_HOST` | Coordination Redis host |
-| `FIREMUD_REDIS_COORD_PORT` | Coordination Redis port |
-
-Cache/Rate‑Limit Redis (gateway rate limiting, caches):
-
-| Variable | Purpose |
-| -------- | ------- |
-| `FIREMUD_REDIS_CACHE_HOST` | Cache/Rate‑Limit Redis host |
-| `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis port |
-
-Precedence and safety rules:
-
-- All Spring profiles (dev and non‑dev) **must** configure explicit, **distinct** endpoints for coordination and cache/rate-limit traffic:
-  - Coordination clients resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
-  - Cache/rate‑limit clients resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
-- Services **fail fast at startup** if:
-  - They require Coordination Redis but lack `FIREMUD_REDIS_COORD_*`, or
-  - They require Cache/Rate‑Limit Redis but lack `FIREMUD_REDIS_CACHE_*`.
-- It is **not supported** to point `FIREMUD_REDIS_COORD_HOST:PORT` and `FIREMUD_REDIS_CACHE_HOST:PORT` at the same Redis instance in any environment, including local development. Coordination and cache/rate‑limit roles must always run on separate Redis deployments (for example, two containers on the same developer machine).
-
-Player‑facing environments (production, staging, QA, and any environment used to
-validate performance or correctness) **must** configure Coordination Redis and
-Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the
-same host/port for both is considered non‑compliant with the Redis architecture
-because it reintroduces eviction and latency coupling between coordination keys
-and cache/rate‑limit traffic. Any ad-hoc “single Redis for all roles” topology
-is treated as an unsupported experiment and must not be used for shared or
-player-facing environments or for any cluster that runs coordination reset
-tooling.
+- `environment-and-secrets-overview.md#operator-quick-reference`
+- `../system-architecture-redis.md`
+- `../system-architecture-redis-usage-and-profiles.md`
 
 ### gRPC TLS Certificates
 
-Mutual TLS protects all internal service-to-service traffic. Certificates are
-normally provisioned by **cert-manager** and mounted from Kubernetes Secrets.
-These certificates secure:
+Environment variables that configure gRPC TLS certificate paths and the TCP Proxy → Gateway WebSocket mTLS hop are documented in `environment-and-secrets-catalog.md#tls--certificates`. Conceptual TLS and rotation behavior is covered in:
 
-- All gRPC calls between services
-- Any internal WebSocket bridges that require mTLS (for example, the TCP Proxy
-  Service connecting to Spring Cloud Gateway over `wss://`)
-
-A sample `Certificate` manifest is provided at `k8s/base/firemud-grpc-certificate.yaml`.
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `FIREMUD_GRPC_CERT_CHAIN_PATH` | Filesystem path to the certificate chain for this service | `certs/client.crt` |
-| `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the certificate chain | `certs/client.key` |
-| `FIREMUD_GRPC_CA_CERT_PATH` | Filesystem path to the CA bundle used to verify peer services | `certs/ca.crt` |
-
-For the **TCP Proxy Service → Spring Cloud Gateway WebSocket mTLS hop**, the following variables configure the dedicated client identity and trust bundle used by the proxy’s WebSocket bridge:
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `GATEWAY_WS_URL` | WebSocket URL for the proxy’s bridge to Spring Cloud Gateway (for example `ws://spring-cloud-gateway:8080/dev/echo` in dev or `wss://spring-cloud-gateway-mtls:8443/ws/game` in production) | *(none)* |
-| `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Filesystem path to the client certificate chain presented by the TCP Proxy when connecting to the Gateway’s mTLS WebSocket listener | `certs/client.crt` |
-| `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the WebSocket client certificate chain | `certs/client.key` |
-| `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | Filesystem path to the CA bundle used to validate the Gateway’s mTLS WebSocket listener certificate | `certs/ca.crt` |
-
-In development and CI environments it is acceptable to point `GATEWAY_WS_URL` at a `ws://` endpoint without configuring the `FIREMUD_GATEWAY_WS_*` variables. In any player-facing environment (staging, QA, production), `GATEWAY_WS_URL` must target the Gateway’s internal-only mTLS WebSocket listener and the `FIREMUD_GATEWAY_WS_*` paths must be set so the proxy can both authenticate the Gateway and present its own client certificate, as described in [System Architecture: Security](../system-architecture-security.md#tls-termination-for-gateway) and the [TCP Proxy Service design](../microservices/tcp-proxy-service/README.md#websocket-mtls-to-spring-cloud-gateway-target-state-see-implementation-status).
-
-During local development these values are generated automatically, so the
-variables may be omitted.
-
-Docker Compose mounts `dev-tools/certs` into each service container at `/app/certs`
-so the default paths above resolve correctly.
-
-In Kubernetes deployments the certificates are mounted at `/tls`, and the
-environment variables point to that directory (for example,
-`FIREMUD_GRPC_CERT_CHAIN_PATH=/tls/client.crt`). Services watch these files for
-changes so new certificates are loaded without restarts via `TlsCertificateWatcher`. Certificate reload for
-gRPC servers use `GrpcServerTlsReloader` to hot reload certificates when Secrets change.
-See [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation)
-for details on the hot reload mechanism.
-
-> **Note**: Certificate files should be loaded from the filesystem rather than
-> packaged inside the application. Avoid `classpath:` URIs so that TLS materials
-> can be mounted securely via volumes or Secrets.
+- `environment-and-secrets-overview.md#certificate-management--watchers`
+- `../system-architecture-security.md#tls-termination-for-gateway`
+- `../system-architecture-security.md#key-and-certificate-rotation`
 
 ### Authentication
 
-JWT tokens secure internal service calls. Production keys are provided via
-environment variables while development instances generate random secrets.
-When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for
-changes using `JwtSecretWatcher` so keys can be rotated without restarts. Certificate and secret watching
-is described in [System Architecture: Security](../system-architecture-security.md#key-and-certificate-rotation).
+JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, and `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP`, are documented in `environment-and-secrets-catalog.md#authentication--jwt`. The authentication architecture and Telnet 2FA/plaintext rules are described in:
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload | *(none)* |
-| `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
-| `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | When `true`, logins over **plaintext Telnet** (raw TCP via the TCP Proxy) are allowed only for accounts that have 2FA enabled and explicitly opt in to plaintext Telnet login; other accounts must use TLS or the web client | `true` |
+- `../system-architecture-authentication.md`
+- `../system-architecture-security.md`
 
-Server-side gameplay sessions use a **derived lifetime** instead of a separately tuned TTL knob:
-
-- `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
-
-This value defines the maximum window during which a disconnected gameplay session can be resumed. The Game Session Service uses the derived value both for its in-memory/session bookkeeping and as the TTL for `session:game:<tenantId>:<sessionId>` keys in Redis (see [Redis Architecture](../system-architecture-redis.md#session-keys-and-gameplay-binding)). After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
-
-FireMUD deliberately avoids introducing a second, independent “session TTL” configuration knob. The JWT lifetime (plus the safety margin) is the single control surface for the reconnection window; additional per-session TTL tuning is considered out of scope for this hobby/self-hosted deployment model.
-
-Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:game:<tenantId>:<sessionId>` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:game:<tenantId>:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`. For player-facing environments, prefer using the scoped session cleanup Job described in [Operational Runbooks](../system-architecture-runbooks.md#redis-session-schema-and-ttl-cleanup) over ad-hoc `DEL` usage so cleanup remains repeatable and observable.
-
-For **local development and hobby setups**, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any environment that hosts real players (staging, QA, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client.
+The catalog’s Authentication section also documents how the JWT expiration and session safety margin combine into a single derived session TTL, including operational guidance for tightening or relaxing this window.
 
 ### Service Discovery
 
-The shared configuration library resolves other services using environment
-variables prefixed with `FIREMUD_SERVICES_`. Each variable holds a `host:port`
-pair for a target service. When undefined, Kubernetes DNS is used instead.
-These overrides are consumed by the `ServiceEndpointsProperties` class so gRPC
-clients can dynamically point to different hosts. Spring Cloud Gateway also reads
-these overrides to route requests during tests or failover scenarios.
-
-Each variable is suffixed with `_SERVICE` to match the Spring configuration
-keys. Examples:
-
-```bash
-FIREMUD_SERVICES_GAME_LOGIC_SERVICE=game-logic-service:6565
-FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE=logging-admin-service:6565
-```
+Service discovery overrides based on the `FIREMUD_SERVICES_*` environment variables are documented in `environment-and-secrets-catalog.md#service-discovery`. This section explains how `ServiceEndpointsProperties` and Spring Cloud Gateway consume these overrides.
 
 ### Observability
 
-All services export OpenTelemetry spans. The collector endpoint can be
-overridden with the `OTEL_ENDPOINT` environment variable (mapped to the
-Spring property `otel.endpoint`):
+Observability-related environment variables, including `OTEL_ENDPOINT` and Fluent Bit / Elasticsearch configuration, are documented in `environment-and-secrets-catalog.md#observability`. Additional details on tracing and logging live in:
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
-| `FLUENT_ELASTICSEARCH_HOST` | Hostname of the log storage backend | `elasticsearch` |
-| `FLUENT_ELASTICSEARCH_PORT` | Port for the log storage backend | `9200` |
-
-Service design documents reference this table for the OpenTelemetry endpoint configuration.
+- `../system-architecture-logging-monitoring.md`
+- `../system-architecture-tracing.md`
 
 ### Asset Storage
 
-Published game assets are uploaded to an S3-compatible bucket. The following
-variables configure the S3 client used by services:
+Asset storage environment variables (for example `ASSET_STORE_ENDPOINT`, `ASSET_STORE_BUCKET`, `ASSET_STORE_REGION`, and access keys) are documented in `environment-and-secrets-catalog.md#asset-storage`. For operational runbooks related to asset storage, see:
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `ASSET_STORE_ENDPOINT` | URL of the S3-compatible service | *(none)* |
-| `ASSET_STORE_BUCKET` | Bucket name for published assets | *(none)* |
-| `ASSET_STORE_REGION` | Region for the S3 client | `ap-southeast-2` |
-| `ASSET_STORE_ACCESS_KEY` | Access key credential | *(none)* |
-| `ASSET_STORE_SECRET_KEY` | Secret key credential | *(none)* |
+- `../system-architecture-asset-store-runbook.md`
 
 ### Backup & Restore Variables
 
-Operational scripts and CronJobs rely on the following variables when uploading or restoring database dumps.
+Variables used by backup and restore tooling (such as `PG_DUMP_BUCKET`, `PG_DUMP_ENDPOINT`, and `FIREMUD_K8S_NAMESPACE`) are documented in `environment-and-secrets-catalog.md#backup--restore-variables`. Backup schedules and retention policies are covered in:
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `PG_DUMP_BUCKET` | Object storage bucket for pg_dump files | *(none)* |
-| `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
-| `FIREMUD_K8S_NAMESPACE` | Target namespace for restore scripts | `firemud` |
-
-See [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) for schedules and retention policies.
+- `../system-architecture-backup-recovery.md`
 
 ### Additional Notes
 
-Service-specific settings such as SMTP credentials for the Account Service or `GAME_TICK_DURATION_MS` for the Game Session Service are documented in each service's design README. See the "Environment Variables" sections in
-[Account Service Design](../microservices/account-service/README.md#environment-variables) and
-[Game Session Service Design](../microservices/game-session-service/README.md#environment-variables)
-for concrete examples. This document covers only shared configuration keys.
+Service-specific environment variables (such as SMTP credentials for the Account Service or `GAME_TICK_DURATION_MS` for the Game Session Service) remain documented in each microservice’s design README, for example:
 
-Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional
-`FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults
-to `firemud` when unset.
+- `../microservices/account-service/README.md#environment-variables`
+- `../microservices/game-session-service/README.md#environment-variables`
+
+Shared keys and patterns that apply across services are summarized in the catalog; per-service specifics stay close to their owning service docs.
+
+---
 
 ## Related Documentation
 
-- [Deployment Environments](./deployment-environments.md)
-- [System Architecture: Security](../system-architecture-security.md)
-- [Backup & Disaster Recovery](../system-architecture-backup-recovery.md)
-- [Operational Runbooks](../system-architecture-runbooks.md)
+- `environment-and-secrets-overview.md` – Conceptual overview and operator quick reference for environment variables and secrets.
+- `environment-and-secrets-catalog.md` – Detailed environment variable catalog and rotation notes.
+- `deployment-environments.md` – How dev/staging/production environments are structured.
+- `../system-architecture-security.md` – Security and TLS architecture, including key and certificate rotation.
+- `../system-architecture-redis.md` – Redis architecture hub.
+- `../system-architecture-authentication.md` – Authentication and authorization flows.
+- `../system-architecture-redis-usage-and-profiles.md` – How Redis roles and profiles are wired in different environments.
+- `../system-architecture-runbooks.md` – Operational runbooks, including Redis session cleanup and rotation jobs.

@@ -198,6 +198,35 @@ The session schema and TTL cleanup flows in `system-architecture-redis-incident-
 
 These metrics help decide when to run schema/TTL cleanup jobs and to verify that cleanup has converged.
 
+### Coordination & Tick Metrics Catalog
+
+To make coordination and tick health observable in a consistent way across services, new features should reuse (or extend) the following metric names and tags:
+
+- **Coordination Redis / tail-loss**
+  - `redis.coordination_tail_loss_ms{tenantId,regionId}` – observed tail-loss per `<tenantId, regionId>` compared to the SLO envelope.
+  - `redis.coordination_used_memory_bytes{role="coordination"}` – memory used by Coordination Redis.
+  - `redis.coordination_keys_total{role="coordination",prefix}` – approximate key counts per coordination prefix family (for example `tick`, `timer`, `retry`, `session`, `tick-executor-lease`).
+- **Tick execution**
+  - `tick.execution_time_ms` – histogram of tick execution time per `<tenantId, regionId>`.
+  - `tick.status{tenantId,regionId}` – gauge or state metric indicating `RUNNING`, `PAUSED`, or `STALLED`.
+  - `tick.retry_queue_depth{tenantId,regionId}` – current depth of retry queues.
+  - `tick.command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
+- **Tick effect ledger**
+  - `tick.effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
+  - `tick.effects_applied_total{tenantId,regionId}` – cumulative applied effects.
+  - `tick.effects_abandoned_total{tenantId,regionId,reason}` – cumulative abandoned effects by reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, `RESET_CLUSTER_SCOPED`, `EXPIRED`, `INVALID_TARGET`).
+- **Split-brain / dual-leader detection**
+  - `redis.coordination_dual_leader_detected_total{tenantId,regionId}` – count of detected dual-leader events for a region.
+  - `redis.coordination_reset_total{scope}` – count of coordination resets by scope (`region`, `tenant`, `cluster`).
+
+All these metrics should, where cardinality allows, include tags such as:
+
+- `tenantId`, `regionId`
+- `redis_role` (for example `coordination`, `cache`)
+- `region_epoch` (where appropriate)
+
+This catalog does not preclude additional, service-specific metrics, but it provides a shared vocabulary for dashboards and alerts that tie together Redis, ticks, and ledger behavior.
+
 ### Cache / Rate-Limit Redis Metrics
 
 Cache and rate-limit metrics complement the cache design in `system-architecture-redis-cache.md`:

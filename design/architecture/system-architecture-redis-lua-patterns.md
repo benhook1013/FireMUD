@@ -10,7 +10,12 @@ re-invocation behavior for tick-related scripts.
 **Default author/reviewer expectations in this doc**
 
 - New or changed scripts must fit one of the existing **script categories** and satisfy the idempotency, determinism, and `schemaVersion` rules described here.
-- Compatibility decisions (`compatible` vs `breaking_requires_reset`) and rollout plans are made via the **Lua Script Registry**, not by introducing per-script operational knobs.
+- Compatibility decisions (for example `compatible`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and rollout plans are made via the **Lua Script Registry**, not by introducing per-script operational knobs.
+- The registry is the **single source of truth** for script metadata, including:
+  - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
+  - Allowed prefixes and hash-tag assumptions.
+  - The Redis role (`redis_role`) the script is allowed to talk to (for coordination scripts this is always `coordination`).
+  - Reset and tail-loss behavior (`reset_sensitivity`, `tail_loss_behavior`) describing how the script’s keys behave under region/tenant/cluster resets and within the tail-loss envelope described in `system-architecture-redis.md` and `system-architecture-redis-reset-and-recovery.md`.
 
 Any proposal that relies on special per-script runtime flags or bespoke operational handling should be treated as **advanced** and pushed back toward these shared patterns and the central registry.
 
@@ -35,6 +40,8 @@ Before authoring or reviewing a new script, use this quick checklist:
   - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
   - Allowed prefixes and hash-tag assumptions.
   - The script category and whether it is single-key or shard-local multi-key.
+  - The Redis role it is permitted to touch (`redis_role=coordination` for tick/session scripts).
+  - Reset behavior (`reset_sensitivity` such as `safe_replay_after_reset`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and tail-loss behavior (`tail_loss_behavior` such as “duplicate enqueues possible but domain-idempotent”, “pure lease op, safe to lose”).
 - Tests cover at least:
   - A fresh run from an initial state.
   - A pure replay with the same `KEYS`/`ARGV` and no intervening changes.
@@ -261,12 +268,20 @@ All coordination-related Lua scripts live in a **Lua Script Registry** in the sh
 - Script identifier and file path.
 - Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).
 - Script category (for example, tick lock, timer queue, session CAS) and reset-tolerance assumptions.
+- The Redis role the script is allowed to target (for coordination scripts this is strictly `coordination`; they must never reference Cache/Rate-Limit prefixes such as `inventory:*`, `view:*`, `ratelimit:*`, or `automation:queue:*`).
+- Reset and tail-loss metadata:
+  - `reset_sensitivity` describing which reset scopes (region, tenant, cluster) must be considered when changing script behavior or key shape.
+  - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the tail-loss envelope (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
 
 CI enforces the following invariants for registered scripts:
 
 - Every Lua file under the coordination scripting path has a corresponding registry entry; unregistered scripts fail CI.
 - Scripts pass determinism checks (no disallowed commands such as `TIME` and no RNG usage) and are covered by idempotency tests similar to the patterns in this document.
 - Registry metadata is validated against tests so that `KEYS`/`ARGV` expectations stay in sync with callers.
+- Registry entries for coordination scripts are rejected if:
+  - They declare a Redis role other than `coordination`, or
+  - They reference prefixes that belong to Cache/Rate-Limit Redis, or
+  - They omit required `reset_sensitivity` / `tail_loss_behavior` metadata.
 
 ## Call-Side Time and Randomness Contract
 
