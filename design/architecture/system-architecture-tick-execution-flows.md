@@ -70,6 +70,26 @@ At each tick for a `<tenantId, regionId>`, the executor:
    - Invokes domain services to apply effects under idempotent rules.
    - Runs a final Lua commit/cleanup script to reconcile Redis state, clear `pending`, and release locks.
 
+### Commit Point and Replay Semantics (Conceptual)
+
+The canonical “commit point” for a tick is defined jointly by Redis coordination state and the tick effect ledger:
+
+1. **Staging complete**
+   - All effects selected for the tick have been written into `tick:{tenantRegionTag}:pending` and mirrored into the ledger with `status = SCHEDULED`.
+2. **Domain application**
+   - Domain services process staged effects under idempotent rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)`, updating authoritative PostgreSQL state and ledger rows to `APPLIED` or `ABANDONED`.
+3. **Cleanup**
+   - A final commit/cleanup script clears `pending` entries for the tick and releases any entity locks for that region.
+
+From the perspective of the `(region_epoch, tickId)` timeline:
+
+- A tick is considered **committed** once:
+  - All ledger rows for that `(tenantId, regionId, region_epoch, tickId)` have reached a terminal state (`APPLIED` or `ABANDONED`), and
+  - There is no remaining `pending` entry for that tick in Redis.
+- Any state before this point is **replayable**:
+  - Executors may crash after staging but before all effects are applied; the next executor replays remaining SCHEDULED entries using ledger and idempotency rules.
+  - AOF replay or tail-loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
+
 The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant:
 
 - A region is considered busy while `tick:{tenantRegionTag}:pending` exists for its current `tickId`.

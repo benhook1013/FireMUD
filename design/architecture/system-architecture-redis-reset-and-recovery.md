@@ -47,6 +47,27 @@ Resets are always executed via **versioned coordination tooling** (for example, 
 
 Concrete commands live in `system-architecture-redis-operations.md`; this document explains when and why to choose each scope.
 
+### Tick Reset Handshake (Timeline View)
+
+Because ticks treat `(region_epoch, tickId)` as the canonical coordination timeline (see `system-architecture-ticks.md` and `system-architecture-tick-concepts-and-invariants.md`), every coordination reset must follow a simple handshake with the tick control plane:
+
+1. **Pause ticks for the chosen scope**
+   - The Game Session control plane (or equivalent admin service) pauses tick scheduling and new command intake for the affected `<tenantId, regionId>` pairs (region/tenant) or all regions (cluster).
+2. **Bump `region_epoch` in PostgreSQL**
+   - For each affected `<tenantId, regionId>`, the control plane updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
+   - This step is authoritative: new executors always treat the highest `region_epoch` as the only valid timeline.
+3. **Run the scoped reset tooling**
+   - Use the versioned coordination maintenance CLI to clear keys in Coordination Redis for the chosen scope, using shared key builders and descriptors.
+   - No ad-hoc `DEL`/`FLUSH*` commands are used; all prefixes and key shapes are driven from the same catalogs used by the Lua Script Registry.
+4. **Reconcile tick effect ledger state**
+   - For the affected scope, SCHEDULED ledger rows tied to the old `region_epoch` converge to terminal outcomes (typically `ABANDONED` with a reset-specific reason) as described in `system-architecture-tick-failures-and-operations.md`.
+   - New executors do not resume old-epoch SCHEDULED rows; any re-drive or migration across epochs is performed by dedicated maintenance tooling.
+5. **Resume ticks on the new epoch**
+   - Once Coordination Redis is clean for the scope and the ledger has no indefinitely SCHEDULED rows for the old epoch, the control plane resumes tick scheduling.
+   - New ticks start from `(region_epoch+1, tickId=0)` for each affected region, and all subsequent coordination state is written under the new epoch.
+
+This handshake ensures that resets move regions forward on the coordination timeline instead of trying to “repair” mixed-epoch state in place.
+
 ### Failover vs Cold Start vs Reset
 
 Do not collapse all Redis events into “Redis repopulates from PostgreSQL.” Failover, cold start, and explicit reset have different safety properties:

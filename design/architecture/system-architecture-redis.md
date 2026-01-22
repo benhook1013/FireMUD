@@ -280,6 +280,21 @@ Key principles:
 
 The **Redis Cheat Sheet** maintains a representative prefix → role/owner mapping. The **Redis Design Checklist** includes concrete checks to run before adding or changing any prefix.
 
+### Shard-Local Design Checklist (Quick Reference)
+
+When designing or reviewing coordination flows, use this shard-local checklist:
+
+- All mutating Lua scripts for coordination prefixes are either:
+  - Single-key operations, or
+  - Shard-local multi-key operations where all `KEYS` share the same `{tenantRegionTag}` hash tag and Redis Cluster slot.
+- Cross-region behavior is implemented via per-region operations and durable follow-up records in PostgreSQL, **not** via cross-region multi-key scripts.
+- Callers always construct keys via shared key helpers (for example, builders in `firemud-common`) so `{tenantRegionTag}`, prefixes, and slots remain consistent; scripts and callers must not hand-roll key strings with embedded hostnames, region names, or ad-hoc hash tags.
+- CI and the Lua Script Registry:
+  - Reject registry entries that claim shard-local multi-key semantics but declare keys that cannot share a hash tag.
+  - Reject coordination scripts that reference cache/rate-limit prefixes or omit required reset/tail-loss metadata.
+
+If a proposed coordination pattern cannot satisfy this checklist, it should be treated as an architectural change and captured first in design docs (Redis + tick) before any implementation work proceeds.
+
 ### Coordination Key Examples
 
 This table lists representative coordination keys and their responsibilities. Full semantics live in service‑specific docs and Lua descriptors, but these examples provide a quick mental model:

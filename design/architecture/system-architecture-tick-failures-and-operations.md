@@ -35,16 +35,16 @@ Tick recovery is driven by Redis coordination state plus domain-level idempotenc
 
 ### Tick Effect Ledger and Replay Guarantees
 
-To make replays observable and bounded, Game Session maintains a **tick effect ledger** in PostgreSQL. Conceptually:
+To make replays observable and bounded, Game Session maintains a **tick effect ledger** in PostgreSQL. Conceptually, the ledger captures the same coordination timeline described in the Redis and tick architecture docs:
 
 - Every tick effect that can be staged in `tick:{tenantRegionTag}:pending` or in retry/timer queues is mirrored into a Game Session–owned ledger table (for example `tick_effects`) with columns such as:
-  - `tenant_id`, `region_id`, `tick_id`
+  - `tenant_id`, `region_id`, `region_epoch`, `tick_id`
   - `effect_key` (stable, human-readable descriptor passed through from staging)
   - `command_id`
   - `status` ∈ {`SCHEDULED`, `APPLIED`, `ABANDONED`}
   - `reason` / `outcome`
   - `created_at`, `updated_at`
-- For any `(tenant_id, region_id, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
+- For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
 - Rows must not remain in `SCHEDULED` beyond a configured grace window; stuck rows are treated as operational smells and surfaced via metrics and alerts.
@@ -233,10 +233,9 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - For the affected `<tenantId, regionId>`, all coordination keys for the current `region_epoch` are dropped.
     - A new `region_epoch` is established; subsequent ticks for that region advance from `(region_epoch+1, tickId=0)` on the coordination timeline described in `system-architecture-redis.md`.
   - Ledger behavior:
-    - Tick effect ledger rows with `status=SCHEDULED` for the affected `<tenantId, regionId, region_epoch>` must not remain indefinitely pending.
-    - Reset tooling and/or the Game Session control plane either:
-      - Re-schedule eligible SCHEDULED effects under the new epoch, or
-      - Mark them `ABANDONED` with a reset reason (for example `RESET_REGION_SCOPED`) so operators can see exactly which work was discarded.
+    - Tick effect ledger rows with `status = SCHEDULED` for the affected `<tenantId, regionId, region_epoch>` must not remain indefinitely pending.
+    - The **default policy** is to mark those rows `ABANDONED` with a reset reason (for example `RESET_REGION_SCOPED`) so operators can see exactly which work was discarded.
+    - Only features that explicitly document alternative behavior may opt into re-scheduling selected SCHEDULED effects under the new epoch, and such behavior must be implemented via dedicated reset tooling, not ad-hoc replay.
   - Player impact:
     - In-flight actions within the tail-loss envelope may be dropped or replayed, but authoritative domain state remains consistent due to idempotency guards.
     - Players may observe “lost” commands around the reset boundary; game UX should frame this as a brief rollback or hiccup, not silent corruption.
@@ -246,9 +245,9 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - All regions for a given `tenantId` have their coordination keys cleared and `region_epoch` bumped.
     - Cross-region flows (for example follow-ups) resume only under the new epochs; stale follow-ups from previous epochs are ignored or reconciled.
   - Ledger behavior:
-    - Tick effect ledger rows for the tenant with `status=SCHEDULED` are either:
-      - Re-scheduled in a controlled way if the feature design requires it, or
-      - Bulk-marked `ABANDONED` with a tenant-scoped reset reason.
+    - Tick effect ledger rows for the tenant with `status = SCHEDULED` follow the same default policy:
+      - Bulk-marked `ABANDONED` with a tenant-scoped reset reason (for example `RESET_TENANT_SCOPED`) so that all affected effects converge to a terminal outcome.
+      - Re-scheduling across epochs is allowed only for features that explicitly document this requirement and provide dedicated tooling.
   - Player impact:
     - The tenant experiences a “clean slate” for coordination: timers, retries, and queued commands are cleared.
     - Long-lived domain state (characters, inventory, world) is preserved; tick-driven features must be designed so players can naturally continue from durable state.
@@ -258,10 +257,8 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - All `<tenantId, regionId>` pairs on the deployment lose coordination keys and receive new epochs.
     - This is effectively a deliberate, unbounded tail-loss event for all regions and must be treated as a rare, planned operation.
   - Ledger behavior:
-    - SCHEDULED ledger rows for all affected regions are either:
-      - Reconciled and re-driven in batches, or
-      - Bulk-marked `ABANDONED` with a cluster reset reason.
-    - Design docs for features that rely on tick-driven effects should state which approach they expect.
+    - `SCHEDULED` ledger rows for all affected regions should normally be bulk-marked `ABANDONED` with a cluster reset reason (for example `RESET_CLUSTER_SCOPED`).
+    - Only in exceptional, explicitly designed cases should migration or batch re-drive tooling attempt to carry work across a cluster reset; such tools must document their expectations and failure modes in the owning feature’s design docs.
   - Player impact:
     - All active regions experience at least a brief pause while epochs are re-established and ticks resume under the new coordination state.
     - UX and communications for planned cluster resets should set expectations (maintenance windows, possible brief rollbacks).

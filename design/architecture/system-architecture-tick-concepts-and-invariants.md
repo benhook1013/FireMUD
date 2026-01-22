@@ -54,9 +54,21 @@ Redis coordination state is subject to a bounded tail-loss envelope (see `system
 - Tick-driven designs must tolerate:
   - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
   - Region leases being briefly lost and re-acquired under the same or a new `region_epoch`.
-- The tick effect ledger (`system-architecture-tick-failures-and-operations.md`) and domain idempotency guards must ensure that, even with these drop/replay patterns:
-  - Each `(tenantId, regionId, region_epoch, tickId, effectKey)` ends in a single terminal ledger state (`APPLIED` or `ABANDONED`).
-  - Players may observe brief rollbacks or duplicated feedback around the failover boundary, but never permanent double-application of critical effects or silent corruption of authoritative state.
+
+**Tick Tail-Loss Contract**
+
+The tick system and Redis tail-loss SLOs combine into a simple contract:
+
+- For each `(tenantId, regionId, region_epoch, tickId, effectKey)` there must eventually be exactly one **terminal** outcome in PostgreSQL (`APPLIED` or `ABANDONED`), even if:
+  - The last few ticks for that region are dropped or replayed within the tail-loss envelope, or
+  - Executors crash and re-acquire leases under the same `region_epoch`.
+- Any work that cannot be safely replayed after Redis loss or tick re-execution must be:
+  - Guarded with idempotency checks that detect and short-circuit replays, or
+  - Intentionally marked `ABANDONED` in the tick effect ledger with a precise reason (for example, reset scopes as described in the failures and operations doc).
+
+Players may observe brief rollbacks or duplicated feedback around failover boundaries, but they must never experience permanent double-application of critical effects or silent corruption of authoritative state.
+
+Redis tail-loss thresholds are defined in `system-architecture-redis-operations.md` under Redis availability and safety guarantees. This section captures only the conceptual relationship between those budgets and the tick invariants they are meant to uphold.
 
 ### Isolation Within a Tick
 

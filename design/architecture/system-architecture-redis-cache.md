@@ -41,6 +41,20 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
   - Automation and scripting structures on Cache/Rate-Limit Redis (for example `automation:queue:*`, `automation:quota:*`) are explicitly documented as best-effort buffers and counters; they cannot act as authoritative logs or effect ledgers.
   - If a new feature appears to need a durable or authoritative log for tick- or session-driven workflows, that log belongs in PostgreSQL (for example as a ledger or follow-up table) or, in rare cases, on Coordination Redis with explicit reset/tail-loss rules—not on Cache/Rate-Limit Redis.
 
+### Forbidden Patterns (Cache/Rate-Limit Redis)
+
+To keep Cache/Rate-Limit Redis clearly separate from coordination concerns:
+
+- Cache and rate-limit keys **must not encode the coordination timeline**:
+  - Key names and core fields must not include `tickId`, `region_epoch`, or other identifiers that participate directly in tick ordering or idempotency invariants.
+  - Any design that requires tick-aligned history or logs belongs in PostgreSQL (ledger/follow-up tables) or, where appropriate, Coordination Redis under the tick prefix families.
+- Tick and domain handlers **must not branch behavior on cache hits**:
+  - Cache presence (for example, an `inventory:*` or `view:*` hit) may affect latency, but may not change “what happens” or “in which order” from the tick engine’s perspective.
+  - Handlers must compute the same logical effects regardless of whether relevant cache entries are present; caches may only short-circuit lookups, not drive different code paths with different outcomes.
+- Cache keys must not be used as soft coordination logs:
+  - `automation:queue:*`, `automation:quota:*`, `chat:*`, and similar prefixes remain best-effort buffers and counters; they cannot become the only record of “which effects were applied” or “which commands ran”.
+  - If evolution of a feature starts to require durable sequencing, migrate that responsibility into a ledger table or explicit coordination structure and update this catalog accordingly.
+
 ## Cache Adoption Checklist
 
 When introducing or changing a cache/rate-limit prefix, designs must answer the following questions before implementation and CI should enforce that the answers are reflected in this doc and the owning service README as the **target state**. When you update or add a prefix:
@@ -529,6 +543,13 @@ Recommended prefix tags:
 - `automation:queue:*` / `automation:quota:*` – `prefix="automation-queue"` / `prefix="automation-quota"`, `script_id=...`.
 
 Services may add more specific metrics (for example per-tenant tags) where cardinality is controlled, but should keep this baseline consistent so global dashboards and alerts can reason about cache health per prefix family.
+
+As an additional guardrail against accidental “soft coordination logs” on Cache/Rate-Limit Redis, observability should make it easy to spot flows that couple cache usage and tick identity too closely. Where practical:
+
+- Dashboards or ad-hoc analyses should highlight request paths where cache prefixes (for example `inventory:*`, `view:*`, `ratelimit:*`) are frequently accessed alongside tick identifiers (`tickId`, `region_epoch`) in the same handler.
+- Such flows should be reviewed to ensure:
+  - Cache presence does not change tick behavior or ordering, and
+  - Any need for durable sequencing is handled by the tick effect ledger or other PostgreSQL-backed structures instead of by cache keys.
 
 ## Related Documentation
 

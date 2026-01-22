@@ -33,6 +33,7 @@ This section centralizes the **normative targets** for Redis behavior that other
 - **Tail-loss window**
   - Production-like profiles (`hobby_self_hosted`, `production_clustered`) target a tail-loss envelope of **~1–2 seconds** of coordination activity per `<tenantId, regionId>`, or roughly **≤ 2 × `tick_interval_ms`** where that is larger.
   - Ephemeral profiles (`dev_local`, certain CI stacks) may accept wider or unbounded tail-loss, but must be clearly labelled as such and **must not** be used to validate tail-loss SLOs.
+  - From the tick system’s perspective (see `system-architecture-tick-concepts-and-invariants.md`), any sustained breach of this envelope is a **tick SLO violation**, not just a Redis metric anomaly: it means the replay and idempotency assumptions for `(tenantId, regionId, region_epoch, tickId, effectKey)` may no longer hold.
 - **Restart time**
   - For `hobby_self_hosted` and `production_clustered` Coordination Redis nodes, planned restarts (including AOF/RDB replay) should typically complete within **30–60 seconds**.
   - Restarts that routinely exceed this window are treated as signals to adjust AOF size, hardware, or topology rather than “just slower maintenance”.
@@ -89,6 +90,50 @@ These targets are enforced via a small set of metrics and dashboards:
 Operators should wire alerts directly to these metrics (for example, warn when AOF size crosses the soft limit, or when restart duration and growth remain above targets for several days) rather than relying on ad-hoc `INFO` calls.
 
 ---
+
+## Lua Script Compatibility Modes and Rollout Matrix
+
+Lua script evolution is coordinated via the Lua Script Registry and must treat running Coordination Redis nodes (and their AOF history) as bounded but non-empty logs. To keep behavior predictable, script changes are classified into a small set of **compatibility modes**:
+
+- `compatible`
+  - Changes are backward- and forward-compatible with existing key shapes and `schemaVersion` ranges.
+  - Examples:
+    - Performance optimizations that do not change script return codes or key layout.
+    - Adding support for a new `schemaVersion` while continuing to handle older versions.
+  - Rollout:
+    - May be deployed without coordination resets; normal rolling deployments are sufficient.
+
+- `requires_region_reset`
+  - Changes are safe only when region-scoped coordination state is cleared (for example, when key shapes change in a way that cannot be interpreted safely by both old and new scripts).
+  - Examples:
+    - Changing the internal structure of `tick:{tenantRegionTag}:pending` in a way that cannot be mapped from old shapes.
+  - Rollout:
+    - For each affected `<tenantId, regionId>`, coordinate:
+      - Pause ticks for that region.
+      - Perform a region-scoped reset as described in `system-architecture-redis-reset-and-recovery.md`.
+      - Deploy the new script version and resume ticks.
+
+- `requires_tenant_reset`
+  - Similar to `requires_region_reset`, but scope is all regions for a tenant.
+  - Examples:
+    - Key shape or semantics changes that span all regions of a tenant and cannot be isolated per region.
+  - Rollout:
+    - Pause ticks for the tenant.
+    - Perform a tenant-scoped reset.
+    - Deploy the new script version for the tenant’s coordination workloads and resume ticks.
+
+- `requires_cluster_reset`
+  - Changes require coordination state to be cleared for all tenants/regions on the Coordination Redis deployment.
+  - Examples:
+    - Fundamental shifts in normalization or hash-tagging that cannot be migrated in place.
+  - Rollout:
+    - Plan a maintenance window.
+    - Follow the cluster-scoped reset runbooks in this file and in `system-architecture-redis-reset-and-recovery.md`.
+
+The Lua Script Registry (see `system-architecture-redis-lua-patterns.md`) records the compatibility mode for each script version. Operationally:
+
+- CI should reject script changes that downgrade from a stricter mode to a looser one without an explicit design update.
+- Script rollout plans must reference the compatibility mode and, where non-`compatible`, link to the corresponding reset runbook section (region, tenant, or cluster).
 
 ## Cache/Rate-Limit Redis Reset
 
