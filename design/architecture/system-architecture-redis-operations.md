@@ -18,6 +18,7 @@ Other procedures and tuning advice here are **advanced** and should not be expan
   - [AOF Size and Restart Budget](#aof-size-and-restart-budget)
   - [Lua Compatibility Registry & Script Upgrades](#lua-compatibility-registry--script-upgrades)
   - [Replica Promotion and Missed Writes](#replica-promotion-and-missed-writes)
+  - [Cache/Rate-Limit Redis Reset](#cacherate-limit-redis-reset)
   - [Key Shape Mistakes and Coordination Resets](#key-shape-mistakes-and-coordination-resets)
   - [Normalization and Hash-Tag Migration](#normalization-and-hash-tag-migration)
 
@@ -88,6 +89,83 @@ These targets are enforced via a small set of metrics and dashboards:
 Operators should wire alerts directly to these metrics (for example, warn when AOF size crosses the soft limit, or when restart duration and growth remain above targets for several days) rather than relying on ad-hoc `INFO` calls.
 
 ---
+
+## Cache/Rate-Limit Redis Reset
+
+**Goal:** Provide a simple, explicit runbook for resetting Cache/Rate-Limit Redis when cache state is corrupted, oversized, or needs to be flushed, without entangling it with Coordination Redis resets.
+
+Cache/Rate-Limit Redis is designed to be **fully reset-tolerant** for the prefixes listed in the Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md` and the reset policy matrix in `system-architecture-redis-reset-and-recovery.md`. A reset:
+
+- Drops cache and rate-limit keys such as:
+  - `inventory:<tenantId>:<containerId>`
+  - `character-cache:<tenantId>:<characterId>`
+  - `world-dynamic:<tenantId>:<aggregateId>`
+  - `room:<tenantId>:<roomId>`
+  - `view:room-look:<tenantId>:<roomId>`
+  - `chat:*` (including `chat:city:*`)
+  - `automation:queue:<tenantId>:*` / `automation:quota:<tenantId>:<scriptId>`
+  - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
+- Does **not** affect Coordination Redis keys (`tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`, etc.).
+- Increases load on backing services and PostgreSQL temporarily, but must not cause loss of authoritative game data.
+
+### When to Reset Cache/Rate-Limit Redis
+
+Typical triggers:
+
+- A mis-keyed cache prefix caused unbounded growth or high eviction pressure that cannot be resolved quickly by configuration changes alone.
+- Cache values are known to be corrupt (for example, a serialization bug that affected a whole environment).
+- Rate-limit buckets need to be cleared as part of an incident response or configuration change (for example, after fixing an overly aggressive rate-limit policy).
+- A one-time maintenance task requires verifying behavior starting from a cold cache (for example, measuring cold-start performance or DB load).
+
+Before resetting:
+
+- Confirm that the issue is confined to Cache/Rate-Limit Redis; Coordination Redis resets follow the scoped reset flows in `system-architecture-redis-reset-and-recovery.md` and **must not** be combined with cache resets by accident.
+- Verify that affected services are prepared for a cold cache:
+  - Entities, inventories, world snapshots, and chat history are durable in PostgreSQL.
+  - Automation and rate-limit logic are designed to tolerate sudden loss of `automation:*` and `ratelimit:*` keys as described in the cache catalog.
+
+### Runbook: Environment-Scoped Cache Reset
+
+1. **Identify the Cache/Rate-Limit deployment**
+   - Determine which Redis instance/cluster is wired via `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` (or `FIREMUD_REDIS_CACHE_URL`) for the target environment.
+   - Double-check that `FIREMUD_REDIS_COORD_*` points to a **different** endpoint; if not, fix the misconfiguration first (see `system-architecture-redis-usage-and-profiles.md`).
+
+2. **Assess impact and communicate**
+   - Estimate which prefixes are used in this environment by consulting:
+     - The Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md`.
+     - Any environment-specific notes in service READMEs (for example, chat TTLs, inventory cache usage).
+   - Communicate expected effects to operators and, if relevant, players:
+     - Temporary increases in DB and service read load (inventory, world snapshots, character graphs, chat history).
+     - Reset of gateway rate-limit buckets and automation quotas (for example, short-term bursts may be allowed until quotas rebuild).
+
+3. **Perform the reset**
+   - For single-node deployments:
+     - Stop Cache/Rate-Limit Redis or disconnect clients.
+     - Use `FLUSHDB` on the cache database (or `FLUSHALL` only if the instance is dedicated exclusively to Cache/Rate-Limit Redis and does not share databases with other workloads).
+     - Restart Redis and allow services to reconnect.
+   - For clustered deployments:
+     - Use a small, prefix-scoped reset tool/script that:
+       - Iterates over the known cache prefix families from the catalog (for example `inventory:*`, `character-cache:*`, `world-dynamic:*`, `room:*`, `view:room-look:*`, `chat:*`, `automation:*`, `ratelimit:*`).
+       - Deletes keys in bounded batches per shard/slot to avoid overwhelming the cluster.
+     - Avoid full keyspace scans where possible; treat this as a maintenance operation with clear start/end times.
+
+4. **Monitor after reset**
+   - Watch:
+     - Cache hit/miss metrics for the affected prefixes (for example `cache.inventory_*`, `cache.character_*`, `cache.world_dynamic_*`, `cache.room_*`, `cache.view_room_look_*`, `cache.chat_*`, and automation cache metrics).
+     - DB and service read load for backing services (Entity Management, World Management, Social & Groups, Automation).
+     - Gateway rate-limit behavior (`ratelimit:*` metrics) to ensure policy behavior returns to expected levels.
+   - Confirm that:
+     - No correctness regressions appear (for example, inventories and world state remain consistent; chat history falls back to PostgreSQL where required).
+     - Cache key counts rebuild within the expected size/complexity budgets documented in `system-architecture-redis-cache.md`.
+
+5. **Follow up**
+   - If the reset was triggered by a mis-keyed prefix or configuration bug:
+     - Fix the underlying design or configuration (for example, key shape, TTL, or payload size).
+     - Update the Cache/Rate-Limit Key Catalog and relevant service README(s) to reflect the corrected prefix, TTL, and budgets.
+   - If resets are becoming frequent for the same prefix family:
+     - Revisit whether that workload is a good fit for Cache/Rate-Limit Redis at all, or whether it should be:
+       - Demoted to in-memory caches inside the service, or
+       - Promoted to a more explicit durable store or a different design.
 
 ## Redis Metrics Catalog
 

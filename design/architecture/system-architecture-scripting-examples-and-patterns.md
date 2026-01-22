@@ -73,7 +73,7 @@ If the `scriptPatchVersion` pinned by the Game Session Service for a given game 
 
 ## Example: Periodic Patrol via `onInterval`
 
-This example shows how a script that runs on a fixed cadence (for example, an NPC patrol) moves through the pipeline using `onInterval`. For the underlying timer and failover internals (including `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`), see **End-to-End `onInterval` Timer Lifecycle** in `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`.
+This example shows how a script that runs on a fixed cadence (for example, an NPC patrol) moves through the pipeline using `onInterval`. For the underlying timer and failover internals (including `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`), see **End-to-End `onInterval` Timer Lifecycle** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
 
 1. **Script configuration and publish**
    - A designer configures an NPC patrol script in the Game Design Service, binding an `onInterval` handler with a chosen cadence (for example, every N ticks or seconds) and a sequence of waypoints.

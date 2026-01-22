@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Redis Cache & Rate Limiting
 
-Redis is already used for transient coordination (ticks, sessions, locks). This document describes how **Cache/Rate-Limit Redis** backs selected read-side caches and rate limiting as a performance optimization. It focuses on design principles and cross-service patterns; per-service design docs describe target behavior as if fully implemented.
+Redis is already used for transient coordination (ticks, sessions, locks). This document describes how **Cache/Rate-Limit Redis** backs selected read-side caches and rate limiting as a performance optimization. It focuses on design principles and cross-service patterns; per-service design docs describe target behavior as if fully implemented and kept in sync with this document.
 
 The **Cache/Rate-Limit Key Catalog** in this file is the canonical catalog for cache and rate-limit prefixes: new prefixes must be registered there (and referenced from service docs) so their role, reset behavior, and correctness class stay in sync with the global reset policy matrix in `system-architecture-redis-reset-and-recovery.md`.
 
@@ -26,7 +26,7 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
 
 ## Core Principles
 
-- Database and domain services remain authoritative. PostgreSQL and the owning microservices define the source of truth for entities, rooms, inventories, and configuration; Redis is a helper, not a primary store.
+- Database and domain services remain authoritative. PostgreSQL and the owning microservices define the source of truth for entities, rooms, inventories, and configuration; Redis is a helper, not a primary store and must never be treated as an independent source of truth for gameplay outcomes or financial transactions.
 - Static/topology vs dynamic/runtime state:
   - Static or topology data (world geometry, room/zone graphs, published templates, configuration) changes infrequently and is a good fit for aggressive caching with long TTLs or manual invalidation.
 - Dynamic runtime state (inventories, room occupants, transient effects, in-progress combat) changes frequently and must use careful invalidation rules and short-lived caches, if cached at all.
@@ -35,11 +35,15 @@ All other controls (for example, per-tenant heuristics, noisy-tenant detection s
   - All environments, including local development and small self-hosted setups, run **at least two Redis roles**:
     - A **Coordination Redis** deployment dedicated to ticks, locks, timers, sessions, and other gameplay-critical coordination state.
     - A **Cache/Rate-Limit Redis** deployment dedicated to read-side caches and gateway rate limits.
-  - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys.
+  - Coordination Redis must not host large, eviction-driven caches under any profile. Even in development and hobby/self-hosted profiles, caches and rate limits are pointed at the separate Cache/Rate-Limit deployment so eviction and OOM behavior cannot silently affect coordination keys. The only supported exceptions are explicitly ephemeral test stacks that opt out of tail-loss and role-separation guarantees; see `system-architecture-redis-usage-and-profiles.md` for environment profiles and mappings.
 
 ## Cache Adoption Checklist
 
-When introducing or changing a cache/rate-limit prefix, designs must answer the following questions before implementation and CI should enforce that the answers are reflected in this doc and the owning service README:
+When introducing or changing a cache/rate-limit prefix, designs must answer the following questions before implementation and CI should enforce that the answers are reflected in this doc and the owning service README as the **target state**. When you update or add a prefix:
+
+- Update the **Cache/Rate-Limit Key Catalog** in this document first.
+- Update the owning service README’s **Redis Role and Prefixes** section.
+- Add a brief note in that README indicating where the cache adoption checklist for its prefixes is documented (either “this section” or this central catalog).
 
 - **Prefix and ownership**
   - Prefix pattern (for example `inventory:<tenantId>:<containerId>`).
@@ -51,7 +55,7 @@ When introducing or changing a cache/rate-limit prefix, designs must answer the 
     - **Class B – TTL-only/best-effort**.
 - **Authoritative version and invalidation**
   - For Class A caches:
-    - Name and location of the authoritative version or `lastModified` field (DB column or API field).
+    - Name and location of the authoritative version or `lastModified` field (DB column or API field). These version sources are part of the canonical contract and must match the owning service design docs (for example, the character and inventory version fields documented in the Entity Management design, and the room/world version fields documented in the World Management design).
     - Invalidation mechanism: domain events, version checks on read, or both.
   - For Class B caches:
     - Why occasional staleness is acceptable for this aggregate.
@@ -295,6 +299,15 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 - `world-dynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
 - `room:<tenantId>:<roomId>` – cached room snapshots/topology slices used for LOOK/navigation.
 - `view:room-look:<tenantId>:<roomId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
+- `chat:city:<tenantId>:<cityId>` – cached short-lived windows of city chat history.
+
+#### Usage Restrictions for `view:room-look:*`
+
+`view:room-look:<tenantId>:<roomId>` is always treated as a **Class B, TTL-only cache** for rendered LOOK-style room views:
+
+- It is never a correctness source for combat, pathfinding/movement, or visibility/line-of-sight decisions.
+- Correctness-critical flows must call World Management and Entity Management APIs (and any Class A caches they own), or use separate, explicitly versioned Class A prefixes registered in this catalog.
+- Helper APIs that expose `view:room-look:*` should be scoped to Game Session’s view pipeline and other presentation-only consumers; Game Logic and similar subsystems should continue to consume authoritative LOOK results via gRPC, not by reading this prefix directly.
 
 ### Worked Example – Inventory Cache (`inventory:*`, Class A)
 
@@ -305,7 +318,7 @@ This section shows how the general patterns apply to a specific correctness-crit
   - Owner: Entity Management Service (see its Redis section for details).
 - **Authoritative state**
   - Source of truth: PostgreSQL tables for entities/items/containment.
-  - Each logical container (including room-ground containers) exposes a stable version or `lastModified` value via Entity Management APIs.
+  - Each logical container (including room-ground containers) exposes a stable version or `lastModified` value via Entity Management APIs. The canonical container version field is defined in the Entity Management design and must match the version carried in these cache payloads.
 - **Redis value shape (conceptual)**
   - Key: `inventory:<tenantId>:<containerId>`.
   - Value: serialized structure containing:
@@ -359,18 +372,21 @@ Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination 
 
 | Prefix | Role | Correctness Class | Reset Tolerance | Owner / Semantics |
 | --- | --- | --- | --- | --- |
-| `inventory:<tenantId>:<containerId>` | Cache | **Versioned** | **Reset-tolerant** | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. Dropping entries flushes cached views; values are recomputed from PostgreSQL. |
-| `character-cache:<tenantId>:<characterId>` | Cache | **Versioned** | **Reset-tolerant** | Entity Management – cached character graphs for hot reads. Loss clears caches only; character state persists in PostgreSQL. |
-| `world-dynamic:<tenantId>:<aggregateId>` | Cache | **Versioned** | **Reset-tolerant** | World Management – cached dynamic world aggregates (for example, room dynamic state). Resets discard snapshots; aggregates are rebuilt from authoritative state. TTL-only world caches must use distinct prefixes that are added to this catalog explicitly. |
-| `room:<tenantId>:<roomId>` | Cache | **Versioned** | **Reset-tolerant** | World Management – cached room snapshots/topology slices for LOOK and navigation. Safe to drop; topology is reloaded from PostgreSQL. TTL-only room views must use distinct prefixes that are added to this catalog explicitly. |
-| `view:room-look:<tenantId>:<roomId>` | Cache | **TTL-only** | **Reset-tolerant** | Game Session / Game Logic – cached rendered or pre-assembled room views for LOOK and similar commands. Dropping keys invalidates views; they are recomputed on demand. This prefix is strictly Class B and is never used as a correctness source for combat, movement, or visibility. |
-| `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | **TTL-only** | **Reset-tolerant** | Spring Cloud Gateway – rate-limit buckets and optional sharded buckets as described in the Redis cache & rate-limiting design. Resets clear buckets; future requests rebuild counters. |
-| `automation:queue:<tenantId>:*` | Cache | **TTL-only** | **Reset-tolerant** | Automation & Scripting – queued automation work items awaiting staging into automation ticks. Dropping queued work is acceptable; automation re-enqueues from durable triggers where required. |
+| `inventory:<tenantId>:<containerId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. Dropping entries flushes cached views; values are recomputed from PostgreSQL. Inventories rely on versioned correctness because stale caches can otherwise produce duplicate or missing items across containers. |
+| `character-cache:<tenantId>:<characterId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | Entity Management – cached character graphs for hot reads. Loss clears caches only; character state persists in PostgreSQL. These caches are Class A because stale graphs can leak incorrect stats, abilities, or equipment into combat and progression flows. |
+| `world-dynamic:<tenantId>:<aggregateId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | World Management – cached dynamic world aggregates (for example, room dynamic state). Resets discard snapshots; aggregates are rebuilt from authoritative state. TTL-only world caches must use distinct prefixes that are added to this catalog explicitly. These aggregates are Class A because pathfinding, movement, and visibility decisions depend on their correctness. |
+| `room:<tenantId>:<roomId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | World Management – cached room snapshots/topology slices for LOOK and navigation. Safe to drop; topology is reloaded from PostgreSQL. TTL-only room views must use distinct prefixes that are added to this catalog explicitly. Room snapshots are Class A because incorrect layouts can create unreachable areas, broken exits, or invalid LOS assumptions. |
+| `view:room-look:<tenantId>:<roomId>` | Cache | **TTL-only (Class B)** | **Reset-tolerant** | Game Session – cached rendered or pre-assembled room views for LOOK and similar commands. Dropping keys invalidates views; they are recomputed on demand. This prefix is strictly Class B and is never used as a correctness source for combat, movement, or visibility; Game Logic consumes authoritative LOOK results only via gRPC, not directly from this prefix. Game Session is the sole writer and direct Redis reader for this prefix. |
+| `chat:say:<tenantId>:<playerId>`, `chat:tell:<tenantId>:<conversationId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, `chat:account:<tenantId>:<accountId>` | Cache | **TTL-only (Class B)** | **Reset-tolerant** | Social & Groups – short-lived chat history buffers. Resets drop recent chat windows only; authoritative history (where needed) lives in PostgreSQL. Clients must tolerate gaps and non-contiguous windows after resets or TTL truncation and rely on persisted history when a complete transcript is required. |
+| `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` | Cache / Rate-Limit | **TTL-only (Class B)** | **Reset-tolerant** | Automation & Scripting – queued automation work items and per-script quota counters. Dropping queued work or quota counters is acceptable; automation re-enqueues from durable triggers where required and quotas are re-established from configuration. Eventual execution is guaranteed by authoritative effect/trigger tables in PostgreSQL, not by these queue keys. |
+| `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | **TTL-only (Class B)** | **Reset-tolerant** | Spring Cloud Gateway – rate-limit buckets and optional sharded buckets as described in the Redis cache & rate-limiting design. Resets clear buckets; future requests rebuild counters. Temporary fairness shifts are acceptable (for example brief post-reset bursts) as long as global abuse and security policies remain enforced by gateway logic rather than Redis persistence. |
+| `automation:queue:<tenantId>:*` | Cache | **TTL-only** | **Reset-tolerant** | Automation & Scripting – queued automation work items awaiting staging into automation ticks. Dropping queued work is acceptable; automation re-enqueues from durable triggers where required; this prefix family is **not** part of the coordination log. |
 | `automation:quota:<tenantId>:<scriptId>` | Cache | **TTL-only** | **Reset-tolerant** | Automation & Scripting – per-script quota counters and fairness budgets. Resets clear quota state; budgets are re-established from configuration and durable state. |
 | `chat:say:<tenantId>:<playerId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived chat history for “say” messages. Resets drop recent chat buffers only; authoritative history (where needed) lives in PostgreSQL. |
 | `chat:tell:<tenantId>:<conversationId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived direct-message history per conversation. Safe to drop; core chat flows remain backed by durable storage where required. |
 | `chat:guild:<tenantId>:<guildId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived guild chat history. Resets clear recent guild messages only. |
 | `chat:account:<tenantId>:<accountId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived account-to-account message history. Dropping keys removes cached windows only. |
+| `chat:city:<tenantId>:<cityId>` | Cache | **TTL-only** | **Reset-tolerant** | Social & Groups – short-lived city chat history buffers. Resets clear recent city chat messages; authoritative moderation logs remain in PostgreSQL. |
 
 CI and code review checks are expected to:
 
@@ -392,7 +408,7 @@ To keep cache usage reviewable and consistent across services, common aggregate 
 | Dynamic world aggregates | `world-dynamic:<tenantId>:<aggregateId>` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
 | Room topology snapshots | `room:<tenantId>:<roomId>` | **Versioned** | Cached room topology/state snapshots; validated against room/world topology versions to avoid serving stale layouts. |
 | Room LOOK views | `view:room-look:<tenantId>:<roomId>` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
-| Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
+| Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
 
 Service design docs may introduce additional cache aggregates, but each new prefix must declare whether it is **versioned** or **TTL-only**, specify its reset tolerance in terms of the reset policy matrix, and explain why that choice is appropriate.
 
@@ -416,8 +432,11 @@ To keep observability consistent, cache clients are expected to expose at least 
 - `character-cache:*` – `cache.character_hits_total`, `cache.character_misses_total`, optional `cache.character_keys`.
 - `world-dynamic:*` / `room:*` – `cache.world_dynamic_hits_total`, `cache.world_dynamic_misses_total`, `cache.room_hits_total`, `cache.room_misses_total`, plus gauges for key counts where available.
 - `view:room-look:*` – `cache.view_room_look_hits_total`, `cache.view_room_look_misses_total`, primarily to watch for pathological miss rates or misuse in correctness-critical paths.
-- `chat:*` – `cache.chat_hits_total`, `cache.chat_misses_total`, and prefix-specific gauges keyed by chat type where helpful (say/tell/guild/account).
-- `automation:queue:*` / `automation:quota:*` – `cache.automation_queue_enqueued_total`, `cache.automation_queue_dropped_total`, and simple gauges for active queue/quota keys, emphasizing their best-effort nature.
+- `chat:*` – `cache.chat_hits_total`, `cache.chat_misses_total`, and prefix-specific gauges keyed by chat type where helpful (say/tell/guild/account/city).
+- `automation:queue:*` / `automation:quota:*` – either:
+  - Generic cache-family metrics such as `cache.automation_queue_enqueued_total`, `cache.automation_queue_dropped_total`, and simple gauges for active queue/quota keys, or
+  - Service-specific metrics that clearly cover the same concerns (for example, the Automation & Scripting metrics `automation_script_queue_delay_seconds`, `automation_tick_events_enqueued_total`, and `script_quota_*` counters).
+  In either case, Automation & Scripting must document in its design which metrics satisfy these visibility requirements.
 
 Service design docs should reference the relevant metrics for the prefixes they own so that dashboards and alerts can be wired consistently.
 
@@ -441,9 +460,9 @@ New cache prefixes must document their budgets in the owning service’s design 
 This section captures remaining design work; it is intentionally **short-lived** and should be cleared as part of early cache adoption, not deferred indefinitely. Near-term priorities:
 
 - **Entity Management**
-  - Finalize the initial set of caches for `inventory:*` and `character-cache:*`:
-    - Confirm versions or `lastModified` fields in the Entity Management APIs that back these prefixes.
-    - Document event-based invalidation flows (for example, “inventory changed”, “character graph changed”) and reference them from the Entity Management service design.
+  - Keep the canonical definitions for `inventory:*` and `character-cache:*` in sync with the Entity Management service design:
+    - Ensure the authoritative `version`/`lastModified` fields referenced in this catalog match the concrete columns and API fields named in the Entity Management README.
+    - Confirm event-based invalidation flows (for example, “inventory changed”, “character graph changed”) remain documented and tested as those APIs evolve.
 - **World Management**
   - Specify the first `world-dynamic:*` and `room:*` aggregates to cache:
     - Define which room/topology fields participate in versioned caches under `world-dynamic:*` / `room:*` and ensure any TTL-only world views use distinct prefixes that are added to this catalog explicitly.
@@ -472,13 +491,40 @@ Cache behavior must be covered by tests appropriate to its correctness class. Th
     - Behavior after reset:
       - With an empty Cache/Rate-Limit Redis, reads correctly repopulate from PostgreSQL without relying on any prior cache state.
   - Tests must assert that stale cache entries **do not** cause incorrect game-visible state (for example, duplicate or missing items); authoritative reads remain decisive.
+  - In practice:
+    - Entity Management should host most tests for `inventory:*` and `character-cache:*` (for example in `InventoryCache*Test` and `CharacterCache*Test` suites).
+    - World Management should host tests for `world-dynamic:*` and `room:*`.
+    - Game Session should host tests for `view:room-look:*` recomputation behavior.
 - **Class B (TTL-only, best-effort) caches**
   - Tests should demonstrate:
     - Simple hit/miss behavior and that TTL expiry leads to recomputation from authoritative services.
     - That losing cache entries (for example via reset or eviction) degrades to extra DB/service calls rather than incorrect gameplay behavior.
   - For presentation-oriented caches such as `view:room-look:*`, tests may focus on performance and freshness characteristics rather than strict correctness, as long as underlying world/entity correctness is covered elsewhere.
+  - For best-effort operational structures such as `ratelimit:*`, `chat:*`, and `automation:queue:*`, tests should capture:
+    - The acceptable impact of resets on fairness or history windows (for example, extra burst capacity after a reset, shorter chat windows).
+    - That invariants enforced by authoritative stores or policy (for example, abuse limits, moderation logs) remain intact regardless of cache loss.
 
-Per-service testing docs can add more detail, but new cache prefixes must describe where these scenarios are tested (unit vs integration) and how failures surface in observability (metrics and logs) when cache behavior regresses.
+Per-service testing docs can add more detail, but new cache prefixes must describe where these scenarios are expected to be tested (unit vs integration vs cross-service tests) and how failures surface in observability (metrics and logs) when cache behavior regresses. See also `system-architecture-testing.md` for guidance on layering these tests.
+
+## Cache Metrics Catalog
+
+To keep observability consistent across services, cache instrumentation should follow a common naming and tagging scheme. At minimum, each prefix family should emit:
+
+- Hit/miss counters (for example `redis_cache_hits_total{prefix=...,service=...}`, `redis_cache_misses_total{prefix=...,service=...}`).
+- Optional TTL and size histograms where appropriate (for example `redis_cache_value_bytes{prefix=...}`).
+
+Recommended prefix tags:
+
+- `inventory:*` – `prefix="inventory"`, `aggregate_type="container"`.
+- `character-cache:*` – `prefix="character-cache"`, `aggregate_type="character"`.
+- `world-dynamic:*` – `prefix="world-dynamic"`, `aggregate_type="world-dynamic"`.
+- `room:*` – `prefix="room"`, `aggregate_type="room-topology"`.
+- `view:room-look:*` – `prefix="view:room-look"`, `aggregate_type="room-view"`.
+- `chat:*` – `prefix="chat"`, `chat_kind="say|tell|guild|city|account"`.
+- `ratelimit:*` – `prefix="ratelimit"`, `bucket_kind="ip|token|tenant"` plus time-window labels.
+- `automation:queue:*` / `automation:quota:*` – `prefix="automation-queue"` / `prefix="automation-quota"`, `script_id=...`.
+
+Services may add more specific metrics (for example per-tenant tags) where cardinality is controlled, but should keep this baseline consistent so global dashboards and alerts can reason about cache health per prefix family.
 
 ## Related Documentation
 

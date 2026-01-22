@@ -78,7 +78,7 @@ These boundaries are part of the **Redis Coordination Invariants** described in 
 
 ## Environment Profiles and Mappings
 
-Redis deployments in FireMUD approximate one of three main profiles. Each environment (local dev, CI, staging, prod) documents which profile it uses.
+Redis deployments in FireMUD approximate one of three main profiles. Each environment (local dev, CI, staging, prod) documents which profile it uses and whether it behaves as an **ephemeral** stack for tail-loss and role-separation guarantees.
 
 ### Profiles
 
@@ -118,26 +118,36 @@ Each environment picks one of these profiles and documents the mapping:
 
 - **Local development**
   - Approximates `dev_local`.
+  - Always runs **two separate Redis deployments** (for example `redis-coord` and `redis-cache` in Docker Compose) so role separation is exercised even on laptops.
   - `docker-compose` and `./gradlew devUp` run:
     - `redis-coord` with AOF and a dedicated volume (Coordination Redis).
     - `redis-cache` without shared volumes (Cache/Rate‑Limit Redis).
+  - This environment is **non‑ephemeral** for role separation: pointing `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` to the same endpoint is treated as a misconfiguration.
 
 - **CI and preview stacks**
   - Typically approximate `dev_local` or use an explicit **ephemeral coordination** profile:
     - Coordination Redis may run with reduced or disabled AOF where tests are fully reset‑tolerant.
     - These stacks are **not** used to validate tail‑loss SLOs or replay guarantees.
+  - In truly ephemeral CI stacks it is acceptable to collapse roles into a single Redis instance **only** when:
+    - Tests are explicitly designed to be reset‑tolerant and do not exercise coordination tail‑loss behavior.
+    - The environment is clearly labelled as “ephemeral / single-Redis” in its documentation and configuration.
+    - Misconfiguration checks and dashboards still surface the fact that roles are sharing an endpoint so it cannot be mistaken for a production-like topology.
 
 - **Staging and production**
   - Approximate `production_clustered`:
     - Coordination Redis with AOF and carefully sized shards.
     - Cache/Rate‑Limit Redis sized and monitored for cache and rate‑limit workloads.
+  - These environments are **non‑ephemeral**:
+    - Coordination and Cache/Rate‑Limit Redis must always be distinct deployments.
+    - Any attempt to point both roles at the same endpoint is treated as a hard failure in configuration checks and health indicators.
   - Environment docs must record:
     - The chosen profile.
     - The concrete AOF, `maxmemory`, and clustering settings for each role.
 
 When adding or modifying an environment, update its documentation to state:
 
-- Which Redis profile it approximates, and
+- Which Redis profile it approximates.
+- Whether it is allowed to behave as an ephemeral/single-Redis stack for tests.
 - How its concrete settings align with the targets above.
 
 ---
@@ -196,8 +206,9 @@ Requirements:
 
 - **Misconfiguration detection**
   - Configuration helpers should:
-    - Detect when `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` resolve to the same endpoint in non‑ephemeral environments.
-    - Emit a clear log warning and health indicator in that case.
+    - Detect when `FIREMUD_REDIS_COORD_*` and `FIREMUD_REDIS_CACHE_*` resolve to the same endpoint.
+    - Emit a clear log warning and a failing health indicator in all **non‑ephemeral** environments (`dev_local`, staging/prod, long‑lived hobby/self‑hosted); services must not treat a single shared Redis instance as a valid topology for those roles.
+    - In explicitly marked ephemeral CI stacks, still log and surface this sharing in metrics so it is visible, but do not fail health checks solely for that reason.
   - Dashboards should include a simple “Redis role endpoints” view showing both roles per environment.
 
 - **Test wiring**

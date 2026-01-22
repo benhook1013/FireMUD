@@ -44,13 +44,15 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 - **Cache/Rate-Limit Redis usage**
   - Uses **Cache/Rate-Limit Redis** to cache frequently accessed character graphs and related aggregates under prefixes such as `character-cache:<tenantId>:<characterId>`, following the key naming and TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - These character graph caches are treated as **Class A, versioned caches**:
-    - Cached payloads include a stable version or `lastModified` value derived from the authoritative character tables.
+    - Cached payloads include a stable version or `lastModified` value derived from the authoritative character tables (for example, the `character.version` or `last_modified` columns exposed via Entity Management APIs).
     - Readers validate versions against PostgreSQL (or version fields surfaced via gRPC) before reusing cached data; on mismatch they recompute the graph and overwrite the cache atomically (value + TTL).
     - TTLs (for example, `FIREMUD_CHARACTER_CACHE_TTL_SECONDS`) act as a safety valve for memory and stale entries, not as the primary correctness mechanism.
   - Future inventory/containment caches use the `inventory:<tenantId>:<containerId>` prefix from the Redis cache catalog:
     - Inventories and containers (including room-ground containers) are also treated as **Class A**: authoritative state and versions live in PostgreSQL, and cache entries must be invalidated via events or version checks when items move.
     - Event-based invalidation is driven by Entity Management’s own domain events (inventory changed, item moved, container destroyed); listeners delete or refresh affected `inventory:*` keys.
-    - Implementations must document which APIs expose the version/`lastModified` fields used for these caches and keep them aligned with the central `inventory:*` entry in `system-architecture-redis-cache.md`.
+    - Implementations must document which APIs expose the version/`lastModified` fields used for these caches (for example, the container `version` column surfaced on inventory read APIs) and keep them aligned with the central `inventory:*` entry in `system-architecture-redis-cache.md` and the reset matrix in `system-architecture-redis-reset-and-recovery.md`.
+  - Cache metrics for `character-cache:*` and `inventory:*` should follow the recommendations in `system-architecture-redis-cache.md` (for example `cache.character_hits_total` / `cache.character_misses_total` and `cache.inventory_hits_total` / `cache.inventory_misses_total`) so hit/miss behavior and key counts are observable.
+  - Tests covering these caches are expected to exercise the Class A scenarios described in `system-architecture-redis-cache.md` (miss → populate → hit, version mismatch and event-driven invalidation, and behavior after a cache reset); see this service’s testing docs for where those tests live.
 - Any change to Redis usage in this service should be reviewed against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) to confirm prefix registration, role selection, slotting, and observability updates.
 
 #### Version Sources for Entity Caches

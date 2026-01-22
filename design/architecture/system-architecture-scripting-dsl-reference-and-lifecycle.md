@@ -22,12 +22,14 @@ For a higher-level routing guide to all scripting and automation docs, see the *
 - [Script Execution Lifecycle](#script-execution-lifecycle)
 - [`scriptEventId` Lifecycle and Deduplication](#scripteventid-lifecycle-and-deduplication)
 - [Supported Script Events](#supported-script-events)
+- [Event Fan-Out and Handler Ordering](#event-fan-out-and-handler-ordering)
 - [Custom and Service-Specific Events](#custom-and-service-specific-events)
 - [Scripting DSL Semantics](#scripting-dsl-semantics)
 - [Deployment & Versioning](#deployment--versioning)
 - [Determinism & Allowed Non-Determinism](#determinism--allowed-non-determinism)
 - [Integration with Game Logic & Tick System](#integration-with-game-logic--tick-system)
 - [Script Timers vs Tick Timers](#script-timers-vs-tick-timers)
+- [End-to-End `onInterval` Timer Lifecycle](#end-to-end-oninterval-timer-lifecycle)
 - [Scheduler Leadership & Coordination](#scheduler-leadership--coordination)
 - [Hot Reload & Resume Behavior](#hot-reload--resume-behavior)
 - [Failure Modes and Error Handling](#failure-modes-and-error-handling)
@@ -99,6 +101,9 @@ Triggers lead to DSL runs, which produce script work items in the automation que
 
 The DSL supports a variety of **built-in lifecycle events** and **custom events**. The exact set of events and their payload schemas are defined in the Automation & Scripting Service and domain service contracts; this section summarizes the main categories and how they behave.
 
+- **Script lifecycle events**
+  - `onLoad` is a **script-level lifecycle event** that runs once per `<tenantId, scriptId, versionId>` when a script becomes active for a tenant. It is designed for initializing script-global state (for example, loading lookups, seeding script-local caches, writing initial audit markers) rather than per-entity setup.
+
 - **Spawn and destruction events**
   - `onSpawn` events fire when an entity (such as an NPC) is created or enters a relevant region.
   - Destruction or despawn events allow scripts to clean up state or schedule follow-up behaviors.
@@ -116,6 +121,37 @@ The DSL supports a variety of **built-in lifecycle events** and **custom events*
   - These events always execute against the script configuration pinned by the active `scriptPatchVersion` when they fire.
 
 See the Automation & Scripting Service README and service protos for the full, up-to-date list of event types and schemas.
+
+---
+
+### `onLoad` Semantics
+
+`onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and executes once per script definition and active version for a tenant, not once per NPC or player.
+
+- **When it fires**
+  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, versionId>` after a script becomes active for that tenant. In practice this means:
+    - When a script first becomes part of the tenant’s active script set under a given `scriptPatchVersion`, and
+    - After a successful hot reload that changes `activePatchVersion` for that tenant, `onLoad` fires once for each script in the newly active patch.
+  - If a reload fails and `activePatchVersion` remains unchanged, no additional `onLoad` events are generated.
+
+- **Per-script vs per-entity**
+  - `onLoad` runs **without an entity context**; it executes once per script definition and active version for a tenant.
+  - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
+
+- **Interaction with reloads and recovery**
+  - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, versionId>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose current version is already active.
+  - `onLoad` triggers are enqueued only after leaders have switched `activePatchVersion` and `reloadState` has returned to `IDLE`. Scripts never run `onLoad` against a `pendingPatchVersion` that is still being validated or has failed reload.
+  - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, the effective `versionId` or `scriptPatchVersion`, and a canonical `outcome` / `reason` pair so operators can verify that initialization ran for a given script and version.
+
+---
+
+## Event Fan-Out and Handler Ordering
+
+An entity may have **multiple scripts bound to the same event** (for example, two `onSpawn` handlers that set patrol routes and apply buffs). The Game Design Service stores these bindings as an ordered list per `{entityId, eventType}`.
+
+When an event fires, the Automation & Scripting Service evaluates bound handlers in a **deterministic order** sorted by `(orderIndex ASC, scriptId ASC)`. This ordering is stable across deployments so that the same set of scripts produces the same sequence of commands for a given event.
+
+Failures are **isolated per script** by default. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure and continues to the next handler unless the binding is explicitly marked as requiring exclusive handling. Designers can opt into **exclusive handling** on a per-binding basis (for example, `requiresExclusiveEvent=true`) so that a terminal outcome for one handler short-circuits remaining handlers for that event. Quota checks (`ScriptQuotaService`) remain **per script** either way.
 
 ---
 
@@ -258,6 +294,8 @@ The main Redis keys used by the Automation & Scripting Service are:
 | `automation:queue:<tenantId>:<entityId>` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work items awaiting automation ticks. | Single-key queue per entity; automation ticks drain these and enqueue commands into tick queues. | Ephemeral backlog; drained continuously by automation ticks. Any TTL is a short safety valve, not long-term storage. |
 | `automation:tick:{tenantScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantScriptTag}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
 | `automation:tick:{tenantScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantScriptTag}` so staging, draining, and metrics are shard-local. | Short-lived staging; drained quickly by automation ticks. |
+| `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). | Hash-tagged on `{tenantRegionTag}` to align with tick-region keys. | Persistent while timers are active; entries are added and removed as timers are created and satisfied. |
+| `script-leader:{<tenantId>}` | Automation & Scripting scheduler | Leadership lease for scheduler coordination per tenant. | Hash-tagged per tenant. | Short-lived lease refreshed by the active scheduler instance. |
 
 For additional details and any new key patterns, see the Automation & Scripting Service README and Redis design docs.
 
@@ -272,6 +310,35 @@ Script timers are layered on top of the core tick model:
 - Scheduler data structures such as `automation:timer:{tenantRegionTag}` (see the service README and tick docs) are used to track when script timers should fire relative to tick progression.
 
 From the tick system’s perspective, script timers are just another source of work that ultimately enqueues commands into tick queues. The determinism rules in this document apply equally to timer-driven triggers.
+
+---
+
+## End-to-End `onInterval` Timer Lifecycle
+
+This section summarizes how a single `onInterval` timer behaves across normal operation, leader changes, and script reloads, and which Redis keys are authoritative at each step.
+
+- **Normal operation**
+  - When an NPC spawns or a script is first loaded, the scheduler creates or updates an interval entry for the `<tenantId, scriptId, entityId>` tuple in the region-scoped timer index under `automation:timer:{tenantRegionTag}`. That entry stores at least the configured cadence (for example, `intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`). If a per-script index is enabled, a corresponding projection entry may be written under `automation:script:{tenantScriptTag}:timer`, but the region index remains authoritative.
+  - Leaders track these interval entries alongside other automation timers, using bounded scans and the automation tick budget (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each automation tick.
+  - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`. If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed; otherwise it is enqueued for sandbox execution and the interval entry’s next due point is advanced.
+
+- **Leader changes**
+  - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and tracking how far they have progressed. In addition to the current heartbeat `tickId`, schedulers maintain a region-scoped checkpoint such as `script-scheduler:{tenantRegionTag}:lastTickId` (see the tick and Redis design docs).
+  - When leadership changes, the new leader:
+    - reads `script-scheduler:{tenantRegionTag}:lastTickId` for each region it owns,
+    - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream, and
+    - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued exactly once before the leader resumes normal scheduling from the latest `tickId`. If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
+  - Because the authoritative timer state lives in Redis (the region index plus the heartbeat checkpoint), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
+
+- **Script reload**
+  - During reload, leaders set `reloadState=RELOADING` for the affected `<tenantId, pendingPatchVersion>` and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` (and any derived per-script projections) remain in Redis but are treated as **pending**.
+  - Once reload succeeds and `activePatchVersion` is switched, the leader:
+    - re-reads its heartbeat checkpoint and the current `tickId`,
+    - updates each interval entry’s next due point (`nextTick` or `nextRunAt`) in the region index as needed so the cadence resumes from the latest tick/time (rather than replaying the paused window), and
+    - resumes normal scheduling for `onInterval` using the updated `activePatchVersion`. No interval runs against a partially loaded script definition.
+  - If reload fails, `activePatchVersion` remains unchanged, `pendingPatchVersion` is marked failed, and the leader resumes using the existing region-index timer entries as-is. Any `onInterval` triggers that fire after a failed reload are still scheduled according to the stored cadence, but always execute under the last known good patch version.
+
+Under this model, `automation:timer:{tenantRegionTag}` and related coordination keys form the authoritative source of interval state, and the combination of tick heartbeat, checkpoints, and script patch versioning preserves both correctness and determinism across failures.
 
 ---
 

@@ -66,7 +66,7 @@ Ownership and durability expectations for Automation & Scripting–related prefi
 | `automation:tick:{tenantScriptTag}:lock` | Coordination | Reset-tolerant; locks are volatile coordination state and can be dropped and reacquired after a coordination reset. |
 | `automation:tick:{tenantScriptTag}:queue` | Coordination | Reset-tolerant; in-flight automation tick queues are rebuilt from PostgreSQL and fresh events. Dropping these keys may cause some automation work to be skipped within the accepted tail-loss envelope. |
 | `automation:tick:{tenantScriptTag}:pending` | Coordination | Reset-tolerant; staged automation effects are coordinated with the main tick system and are replayed or discarded according to the same idempotency rules as tick `pending` entries. |
-| `automation:queue:<tenantId>:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work items. Loss is acceptable; authoritative script triggers and audit trails remain in PostgreSQL. |
+| `automation:queue:<tenantId>:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work items. Loss is acceptable; authoritative script triggers and audit trails remain in PostgreSQL. This prefix family lives only on Cache/Rate-Limit Redis and is not part of the coordination log. |
 | `automation:quota:<tenantId>:<scriptId>` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
 
 Any new Automation & Scripting–specific prefixes must be added to this table and to the central Redis key catalogs, with a clear statement of which Redis role they use and whether they are reset-tolerant, reset-sensitive, or reset-forbidden.
@@ -80,6 +80,7 @@ Any new Automation & Scripting–specific prefixes must be added to this table a
 
 - Quota and queue-related caches are treated as **best-effort TTL-only caches** unless this README states otherwise; any future strongly validated caches must document their version fields and invalidation strategy explicitly, in line with the Redis cache design.
   In particular, `automation:queue:*` must never be the sole source of truth for whether work has been enqueued or processed; exactly-once or at-least-once semantics are provided by durable trigger tables and idempotent domain logic, not by Redis queue contents.
+  Cache metrics for `automation:queue:*` / `automation:quota:*` should either follow the `cache.automation_queue_*` patterns in `system-architecture-redis-cache.md` or be clearly mapped to the Automation & Scripting metrics already defined in this README (for example `automation_script_queue_delay_seconds`, `automation_tick_events_enqueued_total`, and `script_quota_*` counters) so queue and quota behavior are observable.
 
 #### Redis Cluster Slotting Rules for Automation
 

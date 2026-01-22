@@ -63,6 +63,12 @@ Player → Account Service
 
 Character definitions and selection are scoped per game (tenant) using the [Entity Management Service](./microservices/entity-management-service/README.md) and [Game Session Service](./microservices/game-session-service/README.md). Creation flows are coordinated with the [Game Design Service](./microservices/game-design-service/README.md) to ensure race, class, and ability choices match the published game configuration. See [World and Entity Design](./user-journeys-creators.md#world-and-entity-design) for creator-side details on how these options are defined.
 
+Behind the scenes:
+
+- **Account & Character Link** – The [Account Service](./microservices/account-service/README.md) tracks ownership of characters per account.
+- **Character Templates** – Starting attributes come from templates in the [Game Design Service](./microservices/game-design-service/README.md).
+- **Character Storage** – The [Entity Management Service](./microservices/entity-management-service/README.md) persists characters with deferred writes coordinated by the Game Session Service.
+
 ---
 
 ## 3. Player Login and Gameplay
@@ -89,6 +95,9 @@ Players communicate and coordinate through the [Social & Groups Service](./micro
 1. **Chat Channels** – Global, zone, and group chat messages are routed through the Social & Groups Service.
 2. **Friends and Guilds** – Friend lists and guild memberships are scoped per game (`tenantId`), as outlined in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 3. **Moderation Hooks** – Messages and social actions may be subject to moderation and logging via the [Logging & Admin Service](./microservices/logging-admin-service/README.md). See [Monitoring and Moderation](./user-journeys-operators.md#monitoring-and-moderation) for operator flows.
+
+4. **Chat Validation** – In-game chat commands (say, tell, guild chat, mail) are first validated by the [Game Logic Service](./microservices/game-logic-service/README.md) against the [World Management Service](./microservices/world-management-service/README.md) and [Entity Management Service](./microservices/entity-management-service/README.md) to ensure they respect world and entity state.
+5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled.
 
 ```plaintext
 Player → Game Session Service → Social & Groups Service → Logging & Admin Service

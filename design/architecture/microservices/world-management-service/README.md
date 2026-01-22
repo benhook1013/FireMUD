@@ -46,15 +46,17 @@ The World Management Service stores and manages game world topology and content 
 - **Cache/Rate-Limit Redis usage**
   - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` and `world-dynamic:<tenantId>:<aggregateId>`, consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
   - These caches are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata) and are treated as **versioned, Class A caches** where version fields exist:
-    - World records expose stable version or `lastModified` fields (for example per-room revision) that are surfaced through World Management’s gRPC APIs.
+    - World records expose stable version or `lastModified` fields (for example per-room revision columns on `room` or related tables) that are surfaced through World Management’s gRPC APIs.
     - Cache entries store both the payload and the version; consumers compare versions to the authoritative value before reuse and recompute/overwrite on mismatch.
   - For simpler read-mostly slices or derived aggregates that are safe to recompute, World Management may use **TTL-only** caching (Class B) as long as:
     - TTLs remain short and bounded (for example, `WORLD_ROOM_CACHE_TTL_SECONDS`), and
     - The design explicitly states that occasional staleness is acceptable for the affected views and that authoritative reads go back to PostgreSQL when correctness is required.
-    - TTL-only world caches use **distinct prefixes** from `world-dynamic:*` / `room:*` and are added to the central Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md` with their own Class B entries; `world-dynamic:*` and `room:*` remain reserved for versioned, Class A aggregates.
+    - TTL-only world caches use **distinct prefixes** from `world-dynamic:*` / `room:*` and are added to the central Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md` with their own Class B entries; `world-dynamic:*` and `room:*` remain reserved for versioned, Class A aggregates. No TTL-only world prefixes are currently registered; new ones must be added to the catalog and this section before implementation.
   - Room/world cache invalidation follows the Redis cache design:
     - Domain events for room changes, region version activations, or world updates drive explicit deletion or refresh of affected `room:*` / `world-dynamic:*` keys.
     - TTL acts as a safety valve and memory control, not the primary correctness mechanism for Class A caches.
+  - Cache metrics for `world-dynamic:*` and `room:*` should follow the recommendations in `system-architecture-redis-cache.md` (for example `cache.world_dynamic_hits_total` / `cache.world_dynamic_misses_total` and `cache.room_hits_total` / `cache.room_misses_total`), with gauges for key counts where available, so operators can see how these caches behave.
+  - Tests for these caches are expected to exercise the Class A scenarios described in `system-architecture-redis-cache.md`, including version mismatches, event-driven invalidation, and behavior after cache resets; see this service’s testing docs for details.
 - When changing Redis usage or adding new prefixes here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) to ensure correct role, slotting, and SLO coverage.
 
 > If you change Redis usage for this service, you must read and apply:
