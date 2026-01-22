@@ -7,6 +7,9 @@ flowchart TD
         Web[Web Client]
     end
 
+    ExtLB[External Load Balancer / Ingress]
+    TelnetEdge[Telnet Edge Proxy]
+
     subgraph DMZ
         TCPProxy[TCP Proxy Service]
         Gateway[Spring Cloud Gateway]
@@ -42,8 +45,10 @@ flowchart TD
 
     SMTP[Email / SMTP Provider]
 
-    MUD -- TCP --> TCPProxy
-    Web -- wss/HTTP --> Gateway
+    MUD -- TCP --> TelnetEdge
+    TelnetEdge -- TCP/PROXY --> TCPProxy
+    Web -- wss/HTTP --> ExtLB
+    ExtLB -- wss/HTTP --> Gateway
     TCPProxy -- wss --> Gateway
     Gateway -- wss --> Session
 

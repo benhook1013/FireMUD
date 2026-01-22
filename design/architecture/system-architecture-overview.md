@@ -8,7 +8,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
-- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway. This internal link uses mutual TLS on the Proxy → Gateway hop in the target-state design; see [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway) and the TCP Proxy Service design’s **Implementation Status** section for any current rollout notes and certificate wiring details.
+- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway (in production this is typically fronted by a Telnet edge proxy that forwards to the TCP Proxy using PROXY protocol). This internal link uses mutual TLS on the Proxy → Gateway hop in the target-state design; see [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway), [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-edge-proxy-and-proxy-protocol), and the TCP Proxy Service design’s **Implementation Status** section for any current rollout notes and certificate wiring details.
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service
 - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
    > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
@@ -37,7 +37,21 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | Spring Cloud Gateway | Stateless; re-establishes backend connections on reconnect |
 | Game Session Service | Restores gameplay session using Redis |
 
+Certain failures can affect only the Telnet path while web clients remain healthy, such as misconfigured TLS or mTLS on the TCP Proxy → Gateway WebSocket bridge or issues in the Telnet edge proxy/PROXY-protocol chain. When Telnet is degraded but WebSocket remains healthy, operators should consult the [Telnet Path Degraded Runbook](./system-architecture-telnet-degraded-runbook.md) alongside the general [Reconnection Strategy](./system-architecture-reconnection.md).
+
 > 🔗 See [Reconnection Strategy](./system-architecture-reconnection.md) for full details on session resumption, reauthentication, and failure handling.
+
+---
+
+## Redis Roles and Data Ownership
+
+Persistent, authoritative data and transient coordination state are deliberately separated so gameplay remains consistent under load:
+
+- **Authoritative data** (accounts, world topology, entities, chat history, moderation records, and similar) is stored in PostgreSQL by domain-aligned services.
+- **Coordination Redis** holds volatile, gameplay-critical structures (session bindings, tick queues, locks, timers) owned primarily by the Game Session Service and a small number of cooperating services using shared helpers.
+- **Cache/Rate-Limit Redis** is used for best-effort caches and rate limiting by Spring Cloud Gateway, the TCP Proxy Service, and selected backend services; these keys use dedicated prefixes and must not share a deployment with coordination keys in player-facing environments.
+
+See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md) for the detailed key structure and allowed patterns, and the [Service Responsibility Matrix](./service-responsibility-matrix.md) for which services participate in each Redis role.
 
 ---
 
@@ -98,6 +112,18 @@ FireMUD uses a **Hybrid Tick Model** to balance responsiveness and fairness:
 
 ---
 
+## Scaling Model
+
+FireMUD’s gameplay services are designed to scale horizontally:
+
+- **Game Session Service** scales out across nodes and shards work by tick region, using Redis keys and Lua scripts to coordinate region-local ticks without a single authoritative process.
+- **Game Logic Service** is stateless and horizontally scalable; each instance resolves actions deterministically based on the input state it receives from Game Session and Entity Management.
+- Other microservices (Account, Entity, World, Social, Logging & Admin) scale independently behind Kubernetes `Deployment` objects and shared PostgreSQL/Redis infrastructure.
+
+This model avoids single-node bottlenecks for ticks or session handling; see [Tick System and Runtime Design](./system-architecture-ticks.md) and [System Architecture – Scaling Runbook](./system-architecture-scaling-runbook.md) for detailed guidance on region sizing, pod counts, and operational tuning.
+
+---
+
 ## Authentication and Authorization Flow
 
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
@@ -145,6 +171,20 @@ Environment-specific routing is configured via Spring profiles defined in `appli
 🧠 **Why Game Session Service vs Game Logic Service?**
 Game Logic Service is stateless and deterministic.
 Game Session Service governs pacing, conflict handling, and orchestration across distributed tick regions.
+
+### Authoritative Data Ownership (Examples)
+
+The following examples illustrate where key concepts live; the full matrix remains canonical:
+
+| Concept | Owning service | Notes |
+| --- | --- | --- |
+| Accounts, login credentials, JWT issuance | Account Service | Issues and validates JWTs; manages subscriptions and bans. |
+| Characters, NPCs, items, inventories | Entity Management Service | Owns persistent entity state, inventories, and stats. |
+| World topology (rooms, regions, maps) | World Management Service | Stores room graphs, regions, and pathfinding metadata. |
+| Gameplay mechanics (combat, movement, progression) | Game Logic Service | Implements deterministic rules; no persistent ownership. |
+| Live sessions, ticks, command queues | Game Session Service | Owns Redis-backed coordination for active gameplay. |
+| Chat, groups, social graph | Social & Groups Service | Manages chat channels, guilds, friends/blocks. |
+| Moderation events, admin dashboards | Logging & Admin Service | Aggregates logs/metrics/traces and powers moderation tooling. |
 
 ---
 

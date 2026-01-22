@@ -141,7 +141,7 @@ FireMUD deliberately avoids introducing a second, independent “session TTL” 
 
 Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:game:<tenantId>:<sessionId>` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:game:<tenantId>:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`. For player-facing environments, prefer using the scoped session cleanup Job described in `../system-architecture-runbooks.md#redis-session-schema-and-ttl-cleanup` over ad-hoc `DEL` usage so cleanup remains repeatable and observable.
 
-For local development and hobby setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any environment that hosts real players (staging, QA, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client.
+For local development and hobby setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any environment that hosts real players (staging, QA, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client. Recommended Telnet deployment patterns by environment are summarized in `../system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes`.
 
 ---
 
@@ -222,4 +222,3 @@ Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional
 - `../system-architecture-redis.md` – Redis architecture hub.
 - `../system-architecture-authentication.md` – Authentication and authorization flows.
 - `../system-architecture-redis-usage-and-profiles.md` – How Redis roles and profiles are wired in different environments.
-

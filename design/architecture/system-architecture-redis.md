@@ -65,6 +65,14 @@ For quick answers about prefixes and which doc to open next, use the **Redis Che
 
 FireMUD uses Redis as a **transient, high‑performance coordination layer**, not as a primary source of truth. The following invariants apply to all coordination designs:
 
+### Log of Record vs Coordination Buffer
+
+Redis coordination keys form a long-running, tail-loss-bounded **coordination buffer**, not the durable log of record for gameplay effects:
+
+- Durable history for tick-driven outcomes (for example, “which effects were applied or abandoned for a given `(tenantId, regionId, region_epoch, tickId, effectKey)`”) lives in PostgreSQL via the tick effect ledger and domain idempotency tables described in `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
+- Coordination Redis holds volatile structures such as tick queues, `pending` sets, timers, region leases, tick event streams, and scheduler offsets; these structures are expected to be subject to bounded tail-loss and scoped resets as defined in this document and the Redis reset/runbook docs.
+- Application and ops designs must not treat AOF contents or Redis key history as the primary log for audits, analytics, or long-term effect replay; those concerns belong in PostgreSQL-backed ledgers and domain stores.
+
 - **Coordination timeline = `(regionEpoch, tickId)`**
   - For each `<tenantId, regionId>` the canonical coordination timeline is the pair `(region_epoch, tickId)`:
     - `region_epoch` lives in PostgreSQL and is advanced by the tick control plane when region authority changes or a scoped coordination reset occurs.

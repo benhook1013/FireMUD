@@ -11,10 +11,11 @@
 | Room state persistence | | ✔ | | | | | | | | | |
 | Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
 | Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
-| Email and system notifications | | | ✔ | | | | | | | | |
+| Email and system notifications | | | ✔ | | | | | | ✔ | | |
 | Payment, subscriptions, and bans | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
-| WebSocket connection/session lifecycle | | | | ✔ | | | | | | | ✔ |
+| WebSocket transport connection lifecycle (upgrade, routing, DMZ edges) | | | | | | | | | | ✔ | ✔ |
+| Gameplay session lifecycle (login, resume, takeover) | | | | ✔ | | | | | | | |
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis) | | | | ✔ | | | | | | | |

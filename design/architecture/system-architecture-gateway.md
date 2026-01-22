@@ -18,6 +18,9 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
   - Gateway restarts are *transparent* for gameplay sessions: clients reconnect over WebSocket, and the Game Session Service restores gameplay state using Redis as described in [Reconnection Strategy](./system-architecture-reconnection.md).
 - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
 
+> **Implementation status note (Telnet WebSocket mTLS):**
+> The TCP Proxy → Gateway WebSocket mTLS behaviour described in this document reflects the **target-state** production design. The current rollout status and any remaining gaps are tracked in the TCP Proxy Service design’s **Implementation Status** table (`./microservices/tcp-proxy-service/README.md#implementation-status`). When you encounter discrepancies, align implementation with that design and this document rather than weakening mTLS requirements.
+
 > **Important:**
 > Spring Cloud Gateway is responsible for routing **only external client requests**.
 > **Internal microservice-to-microservice communication does not pass through the Gateway**.

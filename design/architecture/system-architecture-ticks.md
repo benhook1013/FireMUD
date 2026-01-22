@@ -53,10 +53,11 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
   - The `activeVersionId` pinned for that tick.
 - Consumers (for example, schedulers or reconnection logic) typically:
   - Acquire a small lease such as `tick-events-lease:{tenantRegionTag}` to avoid duplicate processing.
-  - Persist their last-processed offset in Redis so they can resume from the correct `tickId` after restarts.
-- The stream may be implemented via Redis Streams or pub/sub as long as:
-  - Per-region ordering is preserved.
-  - Consumers can replay from the stored offset.
+  - Persist their last-processed offset in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}` so they can resume from the correct `tickId` after restarts.
+- The stream itself is a **best-effort coordination structure**, not a durable log of record:
+  - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}` using Redis Streams or pub/sub as long as per-region ordering is preserved.
+  - It is classified as **reset-tolerant** in the Redis reset policy matrix: region/tenant/cluster resets may drop both the event stream and any stored offsets without violating correctness.
+  - Consumers must treat missing or truncated history as a signal to re-establish their baseline from the canonical gRPC heartbeat and domain state rather than assuming every past event is available.
 
 This event stream powers “every N ticks” scheduling in Automation & Scripting, reconnection timer replay hints, and other out-of-band reporting. Tick execution itself never depends on these observers.
 
@@ -250,6 +251,8 @@ Effect identity and idempotency rules are defined jointly by:
 
 - The `tickId` carried on tick-driven calls.
 - A stable, structured effect identity (for example including `tenantId`, `tickId`, `effectKey`, aggregate type, and aggregate id) derived deterministically from the command payload and tick context.
+
+Together these form the canonical `EffectId` described in `system-architecture-transactions.md`. Tick coordination keys in Redis, tick effect ledger rows, and domain-level guard tables (for example `tick_effect_guard`) must all use projections of this same `EffectId` rather than introducing ad-hoc idempotency keys.
 
 For the complete contract, ledger schema, and endpoint semantics, see `system-architecture-tick-failures-and-operations.md` and `system-architecture-transactions.md`.
 

@@ -57,6 +57,23 @@ Replay of a tick is driven from ledger state:
   - Marks effects `APPLIED` and skips domain calls when it determines the effect has already been applied idempotently.
 - Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
 
+### EffectId, Ledger Rows, and Guard Keys
+
+The canonical `EffectId` described in `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `tickId`, `effectKey`, and target aggregate identity) is the logical key that ties together:
+
+- Tick coordination in Redis.
+- Tick effect ledger rows in PostgreSQL.
+- Per-aggregate and operation-level idempotency guards in domain schemas.
+
+In schema terms:
+
+- The tick effect ledger’s primary or unique key is a projection of `EffectId`:
+  - At minimum `(tenant_id, region_id, region_epoch, tick_id, effect_key)`, with target aggregate identity either encoded in `effect_key` or captured in separate columns that share the same logical identity.
+  - Additional columns such as `command_id` or aggregate identifiers may exist for queryability, but they do not change the underlying `EffectId`.
+- Guard tables such as `tick_effect_guard` implement the same identity for multi-effect operations:
+  - Their primary key `(tenant_id, region_id, tick_id, effect_key)` is the guard-side projection of `EffectId` for the logical effect being protected.
+  - Handlers must not invent alternative idempotency keys for tick-driven effects; they should derive their guard keys directly from the same components used to compute `EffectId`.
+
 The ledger makes replay visible operationally via metrics such as:
 
 - `tick.effects_pending_total`

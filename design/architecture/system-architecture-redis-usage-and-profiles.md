@@ -25,7 +25,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - Retry metadata and conflict tracking.
     - Automation coordination structures that participate in tick timelines.
   - Characteristics:
-    - Treated as a **long‑lived coordination log** in persistent environments.
+    - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:

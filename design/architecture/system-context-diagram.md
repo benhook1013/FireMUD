@@ -10,6 +10,13 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
                             | HTTP/WebSocket                        | TCP
                             v                                       v
                 +----------------------+                  +-------------------+
+                | External Load        |                  | Telnet Edge Proxy |
+                | Balancer / Ingress   |                  |   (HAProxy, etc.) |
+                +----------------------+                  +-------------------+
+                            |                                       |
+                            | HTTP/WebSocket                        | TCP/PROXY
+                            v                                       v
+                +----------------------+                  +-------------------+
                 | Spring Cloud Gateway | <--------------- | TCP Proxy Service |
                 |         (DMZ)        |  HTTP/WebSocket  |       (DMZ)       |
                 +----------------------+                  +-------------------+
@@ -35,7 +42,8 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
       +-------------------------------------------+          +-------------------------------------------+
       |               Datastore Layer             |--------->|            Observability Stack            |
       |                                           | Metrics/ |                                           |
-      | - PostgreSQL (per service)                | Traces   | - Prometheus (metrics)                    |
+      | - PostgreSQL (shared cluster; per-service | Traces   | - Prometheus (metrics)                    |
+      |   schemas, tenant-scoped tables)          |          |                                           |
       | - Redis (sessions, ticks)                 |          | - OpenTelemetry Collector (traces)        |
       | - Elasticsearch (logs)                    |          | - Jaeger (trace UI)                       |
       | - S3-compatible object storage (assets)   |          | - Grafana (metrics dashboards)            |
@@ -45,6 +53,8 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
 ```
 
 Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks, separate from player-facing HTTP/WebSocket traffic.
+
+Only the Account Service and Logging & Admin Service send email directly to the SMTP provider; other internal services surface email-worthy events through these owners rather than talking to SMTP themselves. This matches the responsibilities defined in the Service Responsibility Matrix.
 
 ## Related Documentation
 

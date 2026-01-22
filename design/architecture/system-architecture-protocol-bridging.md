@@ -41,6 +41,16 @@ Despite their differences, both protocols are normalized into the same internal 
 - The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
 - Normal Telnet clients never need to send a `SESSION` envelope. They connect, issue `LOGIN`, and let the Game Session Service create or bind the session exactly as WebSocket clients do; `SESSION` is an **optional optimization** for advanced tools. This document intentionally does not redefine envelope or header rules; for the canonical `SESSION` envelope behaviour (including malformed/partial handling and header propagation), see the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section.
 
+### Telnet edge proxy and PROXY protocol
+
+In production and any environment where player IP preservation matters, public Telnet is expected to terminate on a dedicated **Telnet edge proxy** (for example HAProxy) that forwards to the TCP Proxy Service using **PROXY protocol** on an internal-only listener. In this topology:
+
+- External clients connect to the Telnet edge proxy on the public `LoadBalancer` / ingress.
+- The edge proxy forwards to the TCP Proxy Service using PROXY protocol on the port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`; this listener is internal-only and must not be exposed directly to the Internet.
+- The raw Telnet listener on `TCP_PROXY_PORT` remains available for local development and tightly controlled hobby/self‑hosted deployments where PROXY protocol is unnecessary; in player-facing environments it should either be disabled or exposed only behind the Telnet edge proxy.
+
+When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP from the PROXY header; Spring Cloud Gateway in turn derives `X-Client-IP` for Telnet sessions from the trusted `X-Proxy-Client-IP` header, as described in the Gateway header trust model. When PROXY protocol is not in use (for example local dev), `TCP_PROXY_MAX_CONNECTIONS_PER_IP` and other per-IP heuristics are best-effort only and should be backed by higher-layer limits in Spring Cloud Gateway and the Game Session Service.
+
 ### Protocol handling and security
 
 - Accepts and parses line-based input from raw TCP clients; Telnet option negotiation is minimal and optional so plain TCP clients with ANSI color codes work without additional configuration.
@@ -74,6 +84,8 @@ they both traverse the same filters, metrics, and downstream `game-session-servi
 
 In production, set `GATEWAY_WS_URL` to the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mutual TLS and the gateway can authenticate the TCP Proxy identity before promoting any `X-Proxy-*` inputs.
 
+`GATEWAY_WS_URL` is the **authoritative endpoint** for the TCP Proxy → Gateway WebSocket bridge; it is configured independently of the `FIREMUD_SERVICES_*` service-discovery overrides that other services and the gateway use for gRPC and HTTP routing. Changing `FIREMUD_SERVICES_SPRING_CLOUD_GATEWAY_SERVICE` or related overrides does **not** automatically update the Telnet bridge; operators must keep `GATEWAY_WS_URL` aligned with the Gateway’s internal WebSocket mTLS listener via their deployment configuration.
+
 Override `GATEWAY_WS_URL` only when the Spring Cloud Gateway hostname or protocol differs from the default; regardless of the value, the URL must point to a gateway route
 whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point. When using `wss://`, the host portion of
 `GATEWAY_WS_URL` must match a name present in the Gateway certificate’s SANs; pointing it at a bare IP or an unrelated hostname causes TLS validation to fail on the TCP
@@ -98,6 +110,20 @@ The [Game Session Service](./microservices/game-session-service/README.md) is th
 - Manages disconnects, reconnections, and session cleanup.
 
 > Whether a client is connected via WebSocket directly or tunneled through the TCP Proxy Service, the backend **treats all sessions the same**.
+
+---
+
+## Recommended Telnet deployment modes
+
+The exact Telnet configuration varies by environment, but recommended defaults are:
+
+| Environment type | Public Telnet transport | Telnet edge proxy | Plaintext Telnet login policy |
+| --- | --- | --- | --- |
+| Local dev / CI | Plaintext to `TCP_PROXY_PORT` | Optional; often omitted | `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` may be `false` while iterating; per-account “allow plaintext Telnet login” flags are still required. |
+| Hobby / self‑hosted (single operator) | Prefer Telnet‑over‑TLS; plaintext permitted for legacy clients | Recommended but not strictly required; can front the TCP Proxy directly if PROXY protocol and per-IP limits are not needed | Keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true` and require both the per-account flag and 2FA for plaintext logins where possible. |
+| Player‑facing staging / production | Prefer Telnet‑over‑TLS via edge proxy; plaintext supported only as a hardened legacy channel | Required: Telnet edge proxy terminates public Telnet and forwards via PROXY protocol to the TCP Proxy Service | `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` **must remain `true`**; plaintext Telnet is allowed only for accounts that have explicitly opted in and enabled 2FA, with all other players using TLS Telnet or the web client. |
+
+These recommendations complement the detailed Telnet controls and 2FA rules in [Security Architecture](./system-architecture-security.md#telnet-command-handling-and-controls) and the authentication flows in [Authentication & Authorization](./system-architecture-authentication.md). When in doubt, treat the Security Architecture and TCP Proxy Service design as canonical sources for Telnet hardening and update the bridge configuration here to match.
 
 ---
 

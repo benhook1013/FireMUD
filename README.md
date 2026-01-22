@@ -131,6 +131,7 @@ The platform is composed of multiple Spring Boot services that communicate over 
 - [System Architecture Overview](design/architecture/system-architecture-overview.md) – narrative explanation of how services interact.
 - [Service Responsibility Matrix](design/architecture/service-responsibility-matrix.md) – which service owns which responsibilities.
 - [System Context Diagram](design/architecture/system-context-diagram.md) – high-level view of clients, DMZ components, and services.
+- [Authentication & Authorization](design/architecture/system-architecture-authentication.md) – how login, JWT issuance, and authorization work; Spring Cloud Gateway forwards tokens and does not own authentication or authorization decisions, which live in the Account Service and other domain services.
 
 ---
 

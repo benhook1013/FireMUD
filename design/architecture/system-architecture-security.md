@@ -139,6 +139,12 @@ In other words:
 - The **environment toggle controls whether 2FA is mandatory** for plaintext Telnet (`true` = required; `false` = may be relaxed only in non-prod, but the recommended implementation still enforces 2FA where possible).
 - Production deployments should keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true` and rely on the per-account flag plus 2FA to gate plaintext Telnet, treating any other combination as misconfiguration.
 
+Putting this together:
+
+- Local dev and single-operator hobby environments may temporarily relax `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` while flows are being built, but should still require the per-account “allow plaintext Telnet login” flag for any plaintext use.
+- Player-facing staging/production environments should treat plaintext Telnet as a hardened legacy channel: keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true`, require both the per-account flag and 2FA for plaintext logins, and prefer Telnet-over-TLS or the web client for normal play.
+- Recommended Telnet deployment modes by environment (including the Telnet edge proxy and PROXY-protocol expectations) are summarized in [Protocol Bridging](./system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes); this section remains the canonical source for the safety invariants that all implementations must enforce.
+
 ---
 
 ## Admin Interface Access Model
