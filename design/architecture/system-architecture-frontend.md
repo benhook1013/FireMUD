@@ -38,6 +38,23 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 - Components dispatch actions and select state using hooks (`useAppDispatch`, `useAppSelector`) from `src/hooks.ts`.
 - RTK Query hooks expose typed endpoints that components call directly.
 
+## Authentication and Session Handling
+
+Frontend flows are split between **player gameplay sessions** and **admin/creator tools** so that gameplay auth remains simple while control-plane operations use JWTs:
+
+- **Player UI (gameplay)**  
+  - Players authenticate to the platform by issuing the `LOGIN` command over the WebSocket gameplay channel, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
+  - The React client does not store or expose internal JWTs; instead it maintains a WebSocket connection to the Game Session Service through the Gateway, and the Game Session Service binds that socket to a gameplay session in Redis.  
+  - On page reload or connectivity loss, the client reconnects the WebSocket and replays the login flow as needed; the Game Session Service uses Redis session bindings to restore gameplay state when allowed by server-side TTLs and revocation rules.
+
+- **Admin and creator UIs**  
+  - Admin/creator interfaces authenticate through the Account Service (for example, via `/auth/login` exposed behind the Gateway). Successful login issues a short-lived JWT for control-plane APIs.  
+  - Admin JWTs are treated as **internal tokens** and should be stored in the browser using HttpOnly cookies or in-memory storage managed by the frontend auth layer; they must not be written to `localStorage` or exposed to third-party origins.  
+  - The frontend attaches the token to meta/control API calls handled by RTK Query. Backend services validate these JWTs with the shared `AuthTokenInterceptor` and enforce tenant access via the Tenant Authorization Contract described in [Authentication & Authorization](./system-architecture-authentication.md#tenant-authorization-contract).  
+  - Logout clears the client-side auth state (cookies or in-memory token) and triggers server-side session revocation so subsequent requests require re-authentication.
+
+All new frontend features that interact with protected APIs should reuse the shared auth utilities and RTK Query base configuration so token handling, logout, and error behavior remain consistent across player, admin, and creator experiences.
+
 ## API Usage Patterns
 
 All API communication is handled by **RTK Query** services defined in `src/api/`. Endpoints like login and character retrieval are implemented in `firemudApi.ts`, and additional APIs follow the same pattern.

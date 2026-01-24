@@ -8,9 +8,11 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
-- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway (in production this is typically fronted by a Telnet edge proxy that forwards to the TCP Proxy using PROXY protocol). This internal link uses mutual TLS on the Proxy → Gateway hop in the target-state design; see [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway), [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-edge-proxy-and-proxy-protocol), and the TCP Proxy Service design’s **Implementation Status** section for any current rollout notes and certificate wiring details.
+- **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway (in production this is typically fronted by a Telnet edge proxy that forwards to the TCP Proxy using PROXY protocol). The Proxy → Gateway hop is secured with mutual TLS; see [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway), [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-edge-proxy-and-proxy-protocol), and the TCP Proxy Service design’s **Implementation Status** section for environment-specific wiring details.
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service
 - **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
+  - Ordering and delivery guarantees for the combined Telnet/WebSocket path (FIFO where delivered, at-most-once semantics, and explicit drop conditions) are documented in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+  - Backpressure and slow-client behavior across the TCP Proxy and WebSocket layers are described in [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
    > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input** but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
@@ -26,6 +28,16 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 > 🔗 See [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md).
 
 ---
+
+## Implementation Status
+
+Unless otherwise noted, this document describes the **target-state architecture** for FireMUD. The Telnet edge chain (Telnet client → Telnet edge proxy with PROXY protocol → TCP Proxy Service → Spring Cloud Gateway with mTLS) and related certificate wiring are being rolled out incrementally.
+
+For current rollout and configuration details, refer to:
+
+- The **Implementation Status** section in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md)
+- The [Telnet Path Degraded Runbook](./system-architecture-telnet-degraded-runbook.md)
+- The relevant sections in [Security Architecture](./system-architecture-security.md) and [Protocol Bridging](./system-architecture-protocol-bridging.md)
 
 ## Reconnection Strategy
 
@@ -62,9 +74,9 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 | **Web Clients** | Modern browser clients using WebSocket or HTTP to access the platform |
 | **MUD Clients** | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS secures the link |
-| **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, auth, monitoring |
-| **[Game Session Service](./microservices/game-session-service/README.md)** | Manages player sessions, tick orchestration, stores runtime flags, input validation |
-| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, login, auth, subscription status; ban workflows are available |
+| **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, and observability; enforces coarse-grained admin access controls but does not own gameplay authentication or authorization decisions |
+| **[Game Session Service](./microservices/game-session-service/README.md)** | Fronts gameplay login commands and session binding, manages player sessions, tick orchestration, runtime flags, and input validation |
+| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, and JWT/JWKS issuance; handles subscriptions and bans |
 | **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all runtime entity data: players, NPCs, items, stats, and all inventories/containment (player inventory/equipment, containers, and items on the ground held in room-ground container entities keyed by room/instance ID) |
 | **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides geometry and static world snapshots (topology and ambient world state only, not live entities/items/inventories) |
 | **[Game Logic Service](./microservices/game-logic-service/README.md)** | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
@@ -95,6 +107,7 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 - **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service
 - **Redis** is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
 - **Tick regions** are shard-aligned in Redis to preserve atomicity
+- **DMZ services (TCP Proxy Service and Spring Cloud Gateway)** remain stateless with respect to PostgreSQL; they may use **Cache/Rate-Limit Redis** and always emit logs/metrics, but do not own persistent domain tables.
 
 > 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -121,6 +134,17 @@ FireMUD’s gameplay services are designed to scale horizontally:
 - Other microservices (Account, Entity, World, Social, Logging & Admin) scale independently behind Kubernetes `Deployment` objects and shared PostgreSQL/Redis infrastructure.
 
 This model avoids single-node bottlenecks for ticks or session handling; see [Tick System and Runtime Design](./system-architecture-ticks.md) and [System Architecture – Scaling Runbook](./system-architecture-scaling-runbook.md) for detailed guidance on region sizing, pod counts, and operational tuning.
+
+### Session Sharding & Routing
+
+Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live sessions is partitioned by `<tenantId, regionId>`:
+
+- A scheduler or consistent-hash layer maps each `<tenantId, regionId>` pair to a specific Game Session instance.
+- That instance holds the region lease in Redis and owns tick execution, command queues, and timers for the region.
+- Spring Cloud Gateway maintains **sticky WebSocket routing** for a given gameplay session to the Game Session shard that currently holds the region lease.
+- On reconnect, Gateway uses the region/session mapping stored in Redis to route the WebSocket connection back to the correct shard before gameplay resumes.
+
+This sharding model aligns with the tick-region ownership and lease rules described in [Tick System and Runtime Design](./system-architecture-ticks.md) and the tick topology guidance in `system-architecture-tick-concepts-and-invariants.md`.
 
 ---
 
@@ -180,7 +204,8 @@ The following examples illustrate where key concepts live; the full matrix remai
 | --- | --- | --- |
 | Accounts, login credentials, JWT issuance | Account Service | Issues and validates JWTs; manages subscriptions and bans. |
 | Characters, NPCs, items, inventories | Entity Management Service | Owns persistent entity state, inventories, and stats. |
-| World topology (rooms, regions, maps) | World Management Service | Stores room graphs, regions, and pathfinding metadata. |
+| World topology (rooms, regions, maps) | World Management Service | Stores published room graphs, regions, and pathfinding metadata; Game Design Service is the design-time authoring tool and publishes topology versions into World Management. |
+| Game assets (published content and exported artifacts) | Game Design Service | Owns game asset publishing to the S3-compatible object store; other services and clients consume published assets via configured URLs rather than writing to the store directly. |
 | Gameplay mechanics (combat, movement, progression) | Game Logic Service | Implements deterministic rules; no persistent ownership. |
 | Live sessions, ticks, command queues | Game Session Service | Owns Redis-backed coordination for active gameplay. |
 | Chat, groups, social graph | Social & Groups Service | Manages chat channels, guilds, friends/blocks. |

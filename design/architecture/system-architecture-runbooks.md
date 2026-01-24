@@ -82,9 +82,9 @@ See: `design/architecture/system-architecture-asset-store-runbook.md`.
 
 ## Telnet Path Degraded or Failing
 
-Operator guidance for incidents affecting the Telnet path through the TCP Proxy Service.
+Operator guidance for incidents affecting the Telnet path through the TCP Proxy Service, including interpretation of TCP Proxy buffer/slow-client metrics and comparisons against the WebSocket path when only Telnet is impacted.
 
-See: `design/architecture/system-architecture-telnet-degraded-runbook.md`.
+See: `design/architecture/system-architecture-telnet-degraded-runbook.md` (which also cross-references the ordering/backpressure contracts in `system-architecture-protocol-bridging.md`).
 
 ## Related Documentation
 

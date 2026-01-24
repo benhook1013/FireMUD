@@ -19,14 +19,11 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 - Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
 - The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
-// Session information is stored in Redis as transient data for quick reconnections.
+- Auth token allowlist entries are stored in Redis as described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
 - Creation events are logged to the Logging & Admin Service via a saga step.
 - Ban and recovery events are logged to the Logging & Admin Service for auditability.
 - Account-to-character relationships allow players to own characters across multiple games.
-- All tables include a `tenantId` column so the same platform account can join
-  multiple games without data leakage. Every query enforces this tenant filter as
-  described in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
-  design.
+- The core `account` record represents a **global platform account** identified by `accountId`. Tables that represent per-game state or billing attach to tenants via a `tenantId` column so the same platform account can join multiple games without data leakage. Every tenant-scoped query enforces this filter as described in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) design.
 - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
   via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
@@ -72,12 +69,11 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 ### Data Model
 
-- `account` table stores username, password hash, email, and status flags.
+- `account` table stores username, password hash, email, and status flags for the global platform account.
 - `profile` table captures optional user details and preferences.
 - An `achievement` table records earned achievements keyed by account and game.
 - `external_account` table links third-party OAuth IDs to platform accounts.
-- `session` keys in Redis map temporary session tokens to account IDs for quick
-  reconnects.
+- Tenant- and billing-related tables such as `subscription` and `payment_transaction` associate `accountId` with `tenantId` for hosted games and hosting plans.
 
 External accounts allow players to log in via Google, Discord, or Steam. Each
 link stores the provider name and external ID so the platform account can be

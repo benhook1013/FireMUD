@@ -55,6 +55,8 @@ Operator → Logging & Admin Service → Observability Stack / Admin UI
 
 Chat and social flows that feed into moderation are described in [Social Interaction](./user-journeys-players.md#4-social-interaction).
 
+Admin and operator access to tenant-scoped tools is governed by the JWT-based role and tenant model. See the [Tenant Authorization Contract](./system-architecture-authentication.md#tenant-authorization-contract) and [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) for how `globalRoles` and `scopedRoles` determine which tenants an operator can act on.
+
 ---
 
 ## 2. Operator Recovery Journeys

@@ -41,11 +41,12 @@
 | Chat and private messaging | | | | | | | | ✔ | | | |
 | Guilds and group discovery | | | | | | | | ✔ | | | |
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |
-| Logging and metrics collection | | | | | | | | | ✔ | | |
+| Centralized observability dashboards and moderation analytics (logs/metrics/traces) | | | | | | | | | ✔ | | |
 | Admin panel and feature flag toggling | | | | | | | | | ✔ | | |
 | Game moderation tools | | | | | | | | | ✔ | | |
 | Game moderation policy definition | | | | | | | | | ✔ | | |
 | Automated tick/coordination remediation (pause/resume/reset) | | | | | | | | | ✔ | | |
+| Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |
 | Telnet → WebSocket bridging | | | | | | | | | | ✔ | |
 | WebSocket upgrade, routing, and admin auth gating | | | | | | | | | | | ✔ |

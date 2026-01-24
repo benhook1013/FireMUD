@@ -7,14 +7,14 @@ Authentication is performed via plaintext `LOGIN` commands. Clients are stateles
 ## Responsibility Split
 
 - **Account Service** – Verifies credentials (including OTP), issues JWTs, and publishes JWKS for validation.
-- **Game Session Service** – Fronts the `LOGIN` command, stores session context in Redis, and rebinds sockets on reconnect.
+- **Game Session Service** – Fronts the `LOGIN` command, stores gameplay session context in Redis, and rebinds sockets on reconnect.
 - **Spring Cloud Gateway** – Pass-through for gameplay login and admin/meta flows; enforces auth header presence on protected routes but does not validate tokens.
 
 Admin and moderator accounts can optionally enable **two-factor authentication**. When a `two_factor_secret` is present, the Account Service expects a one-time TOTP code during login. The `/auth/login` REST endpoint and the `Authenticate` gRPC call both accept an `otp` field for this purpose. The Game Session Service forwards this OTP when a player logs in.
 
 When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over **plaintext Telnet** are further constrained: only accounts that both (a) have two-factor authentication enabled and (b) explicitly opt in to “allow plaintext Telnet login” may authenticate via the raw TCP port. All other accounts must use the TLS Telnet port or the web client and receive a clear error if they attempt to log in over plaintext Telnet.
 
-Issued JWTs are stored in Redis using keys `session:auth:<tenantId>:<tokenHash>` where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
+Issued JWTs are stored in Redis using keys `session:auth:<scope>:<tokenHash>` where `scope` typically encodes tenant- or account-level context (for example `tenant:<tenantId>`), and `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
@@ -22,9 +22,36 @@ JWT lifetime and the session safety margin are documented in [Environment & Secr
 
 Token validity semantics:
 
-- A JWT must be cryptographically valid (signature and time-based claims such as `exp`), and its `session:auth:<tenantId>:<tokenHash>` entry must be present in Redis.
-- Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:auth:<tenantId>:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:*` force re-authentication.
+- A JWT must be cryptographically valid (signature and time-based claims such as `exp`), and its `session:auth:<scope>:<tokenHash>` entry must be present in Redis.
+- Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:auth:<scope>:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:*` force re-authentication for the affected scopes.
 - During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the allowlist check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side session/token entries to be present.
+
+---
+
+## Identity, Roles, and Tenant Access
+
+Authentication always identifies a single platform account, represented by the `accountId` claim. Tenant-specific state and permissions are layered on top of this identity:
+
+- `accountId` – Global platform identity managed by the Account Service.
+- `globalRoles` – Cross-tenant roles such as `platformAdmin` or global moderators.
+- `scopedRoles` – A map from `tenantId` to roles granted to the account within that tenant (for example, `"tenant-abc": ["player", "designer"]`).
+
+For the data model underpinning `accountId`, `tenantId`, characters, and membership relationships, see the [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) design.
+
+### Tenant Authorization Contract
+
+All meta/control services (Account, Game Design, Logging & Admin, and similar HTTP/gRPC APIs) must enforce a consistent tenant-authorization contract:
+
+- Each incoming request is authenticated to a single `accountId` using a JWT validated against the Account Service JWKS.
+- The effective tenant set for the request is derived from the token:
+  - For tenant-scoped operations, the service computes the set of `tenantId` values present in `scopedRoles` combined with any tenant IDs implied by `globalRoles` (for example, `platformAdmin` may be permitted to act on all tenants).
+  - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access; tenant-scoped roles must never implicitly grant cross-tenant privileges.
+- If an API accepts a `tenantId` (path, query parameter, or body field), the service must validate that:
+  - `tenantId` is in the effective tenant set for tenant-scoped calls, or
+  - The caller holds a cross-tenant `globalRole` that explicitly allows operating on the requested tenant.
+- Services must apply the `tenantId` filter to all read and write queries, even when the client does not explicitly supply a `tenantId` (for example, when inferring tenant from a game instance).
+
+A shared library helper (for example, a `TenantAccessGuard` used by `AuthTokenInterceptor`) should be used by all meta/control services so this contract is implemented in one place and kept in sync with future role/tenant model changes.
 
 ---
 
@@ -122,6 +149,20 @@ All meta services use a shared `AuthTokenInterceptor` that extracts claims from 
 
 ---
 
+## Trust Boundaries and Token Validation
+
+The Gateway sits at the edge of the platform and is deliberately **not** an authorization authority:
+
+- Spring Cloud Gateway enforces the presence of an `Authorization` header for protected routes but does not validate or interpret JWT contents.
+- All meta/control services that receive requests from the Gateway must validate JWTs using the Account Service JWKS and the shared `AuthTokenInterceptor`. No route that depends on JWT claims may bypass this middleware.
+- Gameplay services never accept or validate browser- or client-supplied JWTs directly. They rely on the Game Session Service to enforce access based on Redis session context and server-to-server JWTs.
+
+When adding a new public HTTP/gRPC route:
+
+- Classify it as either **public** (no auth), **tenant-scoped**, or **cross-tenant/admin**.
+- For tenant-scoped and cross-tenant/admin routes, require `AuthTokenInterceptor` and the Tenant Authorization Contract described above.
+- Log and audit cross-tenant operations, especially when initiated by roles such as `platformAdmin`, so misuse or misconfiguration is observable.
+
 ## Mid-Session Role Updates
 
 If roles change during an active session (e.g., a player is promoted to admin):
@@ -145,6 +186,25 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
   - Managing JWTs for backend interactions
 
 - Session entries in Redis expire after the derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) so abandoned sessions cannot linger indefinitely.
+
+### Session Types and Lifetimes
+
+FireMUD uses distinct types of “sessions” with different lifetimes and responsibilities:
+
+- **Auth token allowlist entries**  
+  - Keys: `session:auth:<scope>:<tokenHash>` on Coordination Redis.  
+  - Purpose: Server-side allowlist and revocation surface for internal JWTs used by meta/control services.  
+  - Lifetime: Absolute TTL derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Entries are not extended by client activity; when they expire, new tokens must be issued.
+
+- **Gameplay session bindings**  
+  - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, character identifiers, and tick-region context.  
+  - Purpose: Bind a connected socket (or reconnect token) to a character in a specific tenant, enforce “one session per character”, and support reconnect flows.  
+  - Lifetime: Sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
+
+Security- and billing-related events (for example, account bans, password resets, enabling two-factor auth, tenant suspension, or subscription expiration) must actively revoke both:
+
+- Relevant `session:auth:*` entries so new meta/control calls fail closed until re-authentication, and
+- Any gameplay session keys bound to the affected account and tenant, so active sockets are kicked and must re-login under the new security or billing conditions.
 
 > 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 

@@ -44,6 +44,7 @@ flowchart TD
     end
 
     SMTP[Email / SMTP Provider]
+    Admin[Admin / Operator Tools]
 
     MUD -- TCP --> TelnetEdge
     TelnetEdge -- TCP/PROXY --> TCPProxy
@@ -51,6 +52,8 @@ flowchart TD
     ExtLB -- wss/HTTP --> Gateway
     TCPProxy -- wss --> Gateway
     Gateway -- wss --> Session
+
+    Admin -- gRPC mgmt --> Gateway
 
     Session -- gRPC --> Account
     Session -- gRPC --> World
@@ -111,7 +114,7 @@ The diagram covers every microservice in the repository:
 
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
 
-All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, emit metrics to Prometheus, and send structured logs to Elasticsearch.
+All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
 
 ## Datastore Layer
 
@@ -120,8 +123,9 @@ Databases and caches shared across all services capture authoritative world stat
 - **PostgreSQL** – Primary persistent store for world topology, entities, characters, items, and transactional metadata (tenant-scoped tables include `tenantId` so data never mixes across games).
 - **Redis** – Volatile session, tick, and cache state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient.
 - **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.
+- **S3-compatible Asset Store** – Stores published game assets and exported content produced by the Game Design Service; other services and clients consume these assets via configured URLs, typically fronted by the gateway or a CDN.
 
-These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis`, `Elasticsearch`) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
+These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis`, `Elasticsearch`, and the asset store) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
 
 All datastores are shared across games. Tenant-scoped tables include a `tenantId` column (or reference a tenant-keyed parent), and Redis keys use a matching prefix, which isolates per-game data while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 

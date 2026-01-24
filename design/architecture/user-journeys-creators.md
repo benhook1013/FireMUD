@@ -51,6 +51,8 @@ Account creation and login flows are covered in the [Player Journeys](./user-jou
 
 After signing up, creators start a new project using the [Game Design Service](./microservices/game-design-service/README.md).
 
+Each new game maps to a tenant (`tenantId`) under the [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) design. Hosting and resource limits for that tenant are controlled by subscriptions as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md); creators must provision an appropriate plan before running production-scale game instances.
+
 ```plaintext
 Account Service (user) → Game Design Service (new game)
 ```

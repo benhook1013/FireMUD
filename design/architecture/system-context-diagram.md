@@ -21,11 +21,11 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
                 |         (DMZ)        |  HTTP/WebSocket  |       (DMZ)       |
                 +----------------------+                  +-------------------+
                             |
-                            | gRPC/WebSocket
+                            | WebSocket (gameplay)
                             v
       +-------------------------------------------+          +-------------------------------------------+
-      |             Internal Services             |--------->|           Email / SMTP Provider           |
-      |                                           |  Email   +-------------------------------------------+
+      |             Internal Services             |          |           Email / SMTP Provider           |
+      |                                           |          +-------------------------------------------+
       | - Game Session Service                    |                                ^
       | - Account Service                         |                                |
       | - Entity Management Service               |                                |
@@ -50,6 +50,9 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
       +-------------------------------------------+          | - Kibana (log UI)                         |
                                                              | - Alertmanager (alerts)                   |
                                                              +-------------------------------------------+
+
+      Account Service ---------------------------> Email / SMTP Provider
+      Logging & Admin Service -------------------> Email / SMTP Provider
 ```
 
 Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks, separate from player-facing HTTP/WebSocket traffic.

@@ -1,6 +1,6 @@
-# Stripe Integration Design (Stub)
+# Stripe Integration Design
 
-This document will capture the detailed design for how the Account Service integrates with **Stripe** to handle payments, donations, and subscriptions for FireMUD.
+This document describes how the Account Service integrates with **Stripe** to handle payments, donations, and subscriptions for FireMUD in a multi-tenant, auditable way.
 
 At a high level, the goals of the integration are:
 
@@ -9,17 +9,82 @@ At a high level, the goals of the integration are:
 - Keep sensitive Stripe data and API keys confined to the Account Service boundary.
 - Ensure idempotent, auditable payment flows that cooperate with existing saga and multi-tenancy patterns.
 
-## Planned Topics
+## Domain Model
 
-The following sections will be fleshed out as the implementation evolves:
+The Account Service owns billing records and maps them to Stripe resources while keeping `accountId` and `tenantId` as the primary internal keys:
 
-- **Domain Model** – How `payment_transaction`, `subscription`, and related tables map to Stripe objects.
-- **Payment Flows** – Sequence diagrams for creating payment intents, handling webhooks, issuing refunds, and managing retries.
-- **Multi-Tenancy & Security** – Key and customer isolation per tenant (game instance), webhook security, and PCI/sensitive-data considerations.
-- **Service APIs** – gRPC/REST endpoints exposed by the Account Service for initiating payments and querying billing state.
-- **Operational Concerns** – Monitoring, alerting, and failure handling around Stripe outages or degraded behavior.
+- `payment_transaction`  
+  - Represents a single payment attempt or completed charge, including one-time purchases, hosting fees, and donations.  
+  - Key fields: internal ID, `accountId`, optional `tenantId`, `amount_cents`, `platform_fee_cents`, `creator_share_cents`, `status` (`pending`, `succeeded`, `refunded`, `failed`), `provider` (`stripe`), and `provider_id` (Stripe `payment_intent` ID).  
+  - Records whether the transaction is a `donation` and which internal entity it relates to (for example, hosting subscription, in-game item purchase).
 
-For current requirements and high-level behavior, see:
+- `subscription`  
+  - Represents a recurring billing agreement between a creator (platform account) and the platform for a specific tenant’s hosting plan.  
+  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), and `provider_customer_id` (Stripe `customer` ID).  
+  - Plan metadata defines quota-related attributes (for example, maximum active sessions, world size tiers) that the platform uses to drive per-tenant resource limits as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md#tenant-configuration--scaling).
+
+- `billing_customer` (optional)  
+  - Internal cache of Stripe customer IDs keyed by `accountId` (and optionally billing email), ensuring that each platform account uses a consistent Stripe customer representation across tenants.
+
+## Payment Flows
+
+All payment flows follow the same high-level pattern: create or reuse a Stripe customer, create a Payment Intent or Subscription in Stripe, persist internal records, and rely on Stripe webhooks to finalize state transitions.
+
+### One-Time Purchases and Donations
+
+1. A service calls `CreatePaymentIntent` on the Account Service with `accountId`, optional `tenantId`, `amount_cents`, and purchase context (for example, donation vs one-time purchase).  
+2. The Account Service looks up or creates a Stripe customer for the account and calls Stripe to create a `PaymentIntent`.  
+3. A `payment_transaction` row is created in `pending` status with the returned `payment_intent` ID recorded as `provider_id`.  
+4. The client completes payment using Stripe’s client-side flow (for example, via Stripe.js); Stripe later calls a configured webhook when the intent succeeds or fails.  
+5. The webhook handler in the Account Service:
+   - Verifies the webhook signature.  
+   - Locates the `payment_transaction` row by `provider_id`.  
+   - Sets `status` to `succeeded` or `failed` and records Stripe failure codes where applicable.  
+   - Emits domain events or saga steps so other services (for example, Logging & Admin, in-game unlocks) can react.
+
+Refunds call Stripe’s `Refund` API and update the `payment_transaction` `status` to `refunded`, enabling chargeback handling workflows.
+
+### Subscriptions and Hosting Plans
+
+Subscription creation, lifecycle, and entitlements are covered in more detail in the [Subscription Management Design](./subscription-management.md). At a high level:
+
+1. A creator chooses a hosting plan for a tenant in the admin UI; the UI calls `CreateSubscription` with `accountId`, `tenantId`, and `plan_code`.  
+2. The Account Service ensures a Stripe customer exists for the account, then creates or updates a Stripe `subscription` using the configured Stripe product/price for `plan_code`.  
+3. An internal `subscription` row is created or updated with `status` based on the Stripe subscription’s state and linked to the Stripe `subscription` ID.  
+4. Stripe webhooks (`invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`) drive subsequent state transitions and keep the internal `subscription` table in sync.  
+5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state.
+
+## Multi-Tenancy and Security
+
+Stripe integration must preserve tenant isolation while allowing platform-level reporting:
+
+- Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
+- Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata.  
+- Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` (for example, `platformAdmin`) as enforced by the Tenant Authorization Contract.  
+- Stripe API keys, webhook secrets, and any PCI-relevant configuration remain confined to the Account Service. Other services never communicate with Stripe directly.
+
+## Service APIs
+
+The Account Service exposes gRPC and REST endpoints for initiating and inspecting billing flows:
+
+- `CreatePaymentIntent` – Initiate a one-time payment or donation and return the client-facing Stripe Payment Intent details.  
+- `RefundPayment` – Issue a refund for an existing `payment_transaction` and update its status.  
+- `CreateSubscription` – Start or update a recurring hosting subscription for a specific `tenantId` and `plan_code`.  
+- Subscription and transaction query APIs – Allow tenant owners and admins to view their billing history, constrained by tenant and account authorization.
+
+All endpoints are protected by JWT-based auth, and tenant-scoped operations must validate that the caller is allowed to act on the specified `tenantId` using the Tenant Authorization Contract from [Authentication & Authorization](../../system-architecture-authentication.md#tenant-authorization-contract).
+
+## Operational Concerns
+
+Operational behavior around Stripe integration focuses on observability, idempotency, and resilience:
+
+- Webhook handlers are idempotent and keyed by Stripe event IDs; repeated deliveries do not change internal state after the first successful application.  
+- Metrics track payment and subscription statuses (for example, counts of `payment_transaction` by `status`, and subscriptions in `past_due` or `grace` states).  
+- Alerts fire when webhook processing fails repeatedly, when Stripe API calls start failing at elevated rates, or when the number of tenants in `grace` or `suspended` billing states exceeds thresholds.  
+- During Stripe outages, new purchases and subscription changes fail closed, but existing tenants remain in their last-known-good state until internal policies (for example, maximum grace period) dictate otherwise.
+
+For current requirements and additional context, see:
 
 - [Core Requirements – Monetization](../../../project-management/core-requirements.md#2.8-moderation-administration--monetization)
+- [Subscription Management Design](./subscription-management.md)
 - [Account Service README](./README.md)
