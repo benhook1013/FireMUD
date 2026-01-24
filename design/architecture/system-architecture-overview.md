@@ -10,7 +10,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Spring Cloud Gateway** serves as the unified HTTP/WebSocket entry point for all clients
 - **TCP Proxy Service** accepts Telnet connections and upgrades them to WebSocket for the Gateway (in production this is typically fronted by a Telnet edge proxy that forwards to the TCP Proxy using PROXY protocol). The Proxy → Gateway hop is secured with mutual TLS; see [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway), [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-edge-proxy-and-proxy-protocol), and the TCP Proxy Service design’s **Implementation Status** section for environment-specific wiring details.
 - **Consistent end-to-end WebSocket flow**: Telnet (TCP) → TCP Proxy Service (WebSocket upgrade) → Spring Cloud Gateway → Game Session Service
-- **All client traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
+- **All application-level gameplay and admin traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. Raw Telnet TCP terminates at the Telnet edge proxy and TCP Proxy Service before being bridged to the Gateway over WebSocket. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
   - Ordering and delivery guarantees for the combined Telnet/WebSocket path (FIFO where delivered, at-most-once semantics, and explicit drop conditions) are documented in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
   - Backpressure and slow-client behavior across the TCP Proxy and WebSocket layers are described in [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
    > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
@@ -24,6 +24,22 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 - **Admin and operations tooling communicates with Spring Cloud Gateway over an internal gRPC management API** for route and health management; no gameplay traffic flows over this control-plane path.
+
+### Authentication Modes and Boundaries
+
+FireMUD uses two complementary authentication modes that share a common identity model but differ in how they are presented by clients:
+
+- **Gameplay sessions (players)**  
+  - Players authenticate using the `LOGIN` command handled by the **Game Session Service**.  
+  - Game Session delegates credential verification (including 2FA, external identity providers, and lockout rules) to the **Account Service**, which owns all credential and account-security decisions.  
+  - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context) and enforces “one session per character”. Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
+
+- **Admin and creator sessions (control plane)**  
+  - Admin and creator tools authenticate via HTTP/gRPC using JWTs issued by the **Account Service**, which publishes JWKS and remains the source of truth for token semantics.  
+  - Internal services validate JWTs using a shared library and JWKS; they do not make ad-hoc token-parsing decisions.  
+  - Spring Cloud Gateway forwards auth headers and can enforce coarse-grained route protections (for example, “admin endpoints require a valid JWT”) but does not own credential verification or authorization policy.
+
+This split keeps gameplay session management and tick-sensitive orchestration in the Game Session Service while ensuring that account security, token issuance, and policy remain centralized in the Account Service. See [Authentication & Authorization](./system-architecture-authentication.md) for detailed flows.
 
 > 🔗 See [System Architecture Diagram](./system-architecture-diagram.md) and [System Context Diagram](./system-context-diagram.md).
 
@@ -55,7 +71,7 @@ Certain failures can affect only the Telnet path while web clients remain health
 
 ---
 
-## Redis Roles and Data Ownership
+## Redis Roles, Keyspace Partitioning, and Data Ownership
 
 Persistent, authoritative data and transient coordination state are deliberately separated so gameplay remains consistent under load:
 
@@ -63,7 +79,25 @@ Persistent, authoritative data and transient coordination state are deliberately
 - **Coordination Redis** holds volatile, gameplay-critical structures (session bindings, tick queues, locks, timers) owned primarily by the Game Session Service and a small number of cooperating services using shared helpers.
 - **Cache/Rate-Limit Redis** is used for best-effort caches and rate limiting by Spring Cloud Gateway, the TCP Proxy Service, and selected backend services; these keys use dedicated prefixes and must not share a deployment with coordination keys in player-facing environments.
 
-See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md) for the detailed key structure and allowed patterns, and the [Service Responsibility Matrix](./service-responsibility-matrix.md) for which services participate in each Redis role.
+Within Redis, keys are further partitioned by responsibility and, in production, can be mapped onto different logical databases or clusters:
+
+- **Coordination and session keys (Coordination Redis)**  
+  - Examples: gameplay sessions, tick-region leases, command queues, timers, and automation tick coordination.  
+  - Canonical prefixes include (non-exhaustive):  
+    - `session:*` – gameplay session bindings and takeover metadata.  
+    - `coord:*` – distributed locks, leases, and tick/timer coordination.  
+    - `tick:*` – tick queues, region scheduling, and pacing-related state.  
+    - `automation:*` – automation and scripting tick coordination and work queues.
+
+- **Cache and rate-limit keys (Cache/Rate-Limit Redis)**  
+  - Examples: read-side caches, rate-limit counters, and quota tracking for non-critical flows.  
+  - Canonical prefixes include (non-exhaustive):  
+    - `cache:*` – general-purpose caches for derived data, short-lived lookups, and infrequently updated views.  
+    - `ratelimit:*` – per-account or per-IP rate limiting for APIs, login attempts, and abuse prevention.
+
+Coordination Redis and Cache/Rate-Limit Redis should be operated and scaled independently in production so cache or rate-limit spikes cannot degrade tick execution or session coordination.
+
+See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md) for the detailed key structure, multi-tenant key design, and allowed patterns, and the [Service Responsibility Matrix](./service-responsibility-matrix.md) for which services participate in each Redis role.
 
 ---
 

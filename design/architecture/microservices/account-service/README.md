@@ -42,9 +42,10 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 - **Coordination Redis**
   - The Account Service does **not** participate in tick or gameplay coordination and never touches `tick:*`, `timer:*`, `retry:*`, or other tick-related prefixes on Coordination Redis; those responsibilities remain with the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
-  - It does, however, use tenant-scoped auth/session keys as documented in [Authentication](../../system-architecture-authentication.md):
-    - `session:auth:<tenantId>:<tokenHash>` – Account/JWT bindings for internal auth.
-  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions. They are short-lived but **reset-sensitive**: coordination resets that drop `session:*` force re-authentication and token re-issuance for affected tenants.
+  - It does, however, use auth/session keys as documented in [Authentication](../../system-architecture-authentication.md):
+    - `session:auth:tenant:<tenantId>:<tokenHash>` – tenant-scoped Account/JWT bindings for internal auth, consulted when authorizing tenant-specific operations.
+    - `session:auth:global:<accountId>:<tokenHash>` – global/admin Account/JWT bindings for internal auth, consulted when authorizing cross-tenant or platform-wide operations based on `globalRoles`.
+  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions. They are short-lived but **reset-sensitive**: coordination resets that drop `session:*` force re-authentication and token re-issuance for affected tenants and global sessions.
 - **Cache/Rate-Limit Redis**
   - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
   - When introducing new Redis usage here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so auth/session keys, roles, and observability remain consistent with the global design.
@@ -216,11 +217,16 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:auth:<tenantId>:<tokenHash>`, where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). Their TTL is derived from the JWT lifetime:
+Authentication generates a JWT that is stored **server-side** in Redis for internal calls, following the scope model defined in [Authentication & Authorization](../../system-architecture-authentication.md):
+
+- Tenant-scoped entries: `session:auth:tenant:<tenantId>:<tokenHash>` when the token’s effective privileges are limited to a specific tenant and derived from `scopedRoles[tenantId]`.
+- Global/admin entries: `session:auth:global:<accountId>:<tokenHash>` when the token carries cross-tenant `globalRoles` such as `platformAdmin`.
+
+The Account Service may create one tenant-scoped entry per tenant in `scopedRoles` for a purely tenant-scoped token, or a single global entry (plus optional tenant entries) for tokens that include `globalRoles`. In all cases, `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT), and TTL is derived from the JWT lifetime:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
-See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication).
+See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for configuration details.
 
 ### Two-Factor Authentication
 

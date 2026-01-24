@@ -48,6 +48,16 @@ At runtime, plugins use the same **component-based scripting DSL and sandbox** a
 
 Plugin executions appear in `script_event_audit` with the same identifiers as regular scripts, plus plugin-specific metadata, and contribute to the same automation metrics, enabling operators to monitor plugin behavior without a separate observability pipeline.
 
+### Validation Rules for Plugins
+
+From a validation perspective, plugins follow the same core rules as regular scripts, with additional restrictions driven by their tighter trust model:
+
+- The Game Design Service applies the same **graph validation and loop safety analysis** to plugin graphs as it does to regular scripts. Unsafe graphs (for example, unbounded cycles without guard nodes) are rejected and must be fixed before a plugin version can be enabled.
+- Platform owners may maintain a **plugin-specific allowlist** of components. Components that are safe for core automation but not for plugins (for example, administrative or world-generation primitives) are either hidden in plugin editors or treated as `UNSAFE` in plugin contexts and must be removed before publication.
+- Deprecation and migration flows apply equally: plugins using deprecated or unsafe components appear in “requires migration” views and are not eligible to run until migrated and republished.
+
+Validation results for plugins surface through the same tooling as core scripts (Game Design and Logging & Admin UIs), but may include plugin-specific reason codes so operators can distinguish “invalid graph” from “disallowed component for plugin use”.
+
 ## Plugin Lifecycle & Rollback
 
 Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, pluginId>`:
@@ -63,6 +73,13 @@ Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, p
 - Updating a plugin involves setting a new `pendingVersionId`, loading and validating the new plugin graphs and bindings, and then atomically switching `activeVersionId` if validation succeeds. If validation or initialization fails, the new version is marked `FAILED`, `activeVersionId` remains unchanged, and triggers for the failed version are rejected with an appropriate outcome (for example, `version_unavailable` or `plugin_version_failed`).
 
 Plugin triggers share the same `scriptEventId` lifecycle as regular scripts. Each invocation is recorded in `script_event_audit` with `eventType`, `pluginId`, `pluginVersionId`, `scriptEventId`, and a canonical `outcome` / `reason` pair, so operators can correlate plugin behavior with publish and enable/disable operations.
+
+Certain safety decisions are **platform-wide and not overridable by tenant administrators**:
+
+- Plugin component allowlists and any global “blocked component” flags are controlled by platform operators.
+- Plugin-level quotas and budgets may be stricter than for core scripts by default; tenant administrators can lower their own plugin activity (for example, by increasing intervals or disabling plugins) but cannot raise plugin limits beyond operator-defined ceilings.
+
+This ensures that even trusted tenant administrators cannot inadvertently weaken the global safety posture for plugins.
 
 ## Related Documentation
 

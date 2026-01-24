@@ -65,8 +65,25 @@ Subscription status feeds directly into tenant availability and resource enforce
     - The Game Session Service and world-management flows must reject new game instance creations and startup requests for the tenant.  
     - New player logins for that tenant are rejected with a dedicated error code and user-facing message indicating that the game is currently unavailable due to billing.
   - Admin and creator tools remain accessible so owners can resolve billing issues or export data.
+  - As part of the transition into `suspended` or `canceled`, the Account Service emits a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`. Game Session and related services consume this event and immediately:
+    - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and  
+    - Delete all tenant-scoped auth allowlist entries `session:auth:tenant:<tenantId>:*` so meta/control calls that depend on those entries fail closed until billing is resolved and new tokens are issued.
 
-These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): when a tenant becomes `suspended` or `canceled`, relevant gameplay sessions are revoked and new sessions are blocked.
+These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of both gameplay sessions and tenant-scoped auth entries, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
+
+## Runtime Entitlement Contract
+
+The Account Service is the source of truth for per-tenant billing state and entitlements. It exposes a `GetTenantEntitlements(tenantId)` API (gRPC and REST) that returns a snapshot of:
+
+- The current subscription status for the tenant (for example, `trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).  
+- The effective plan and quotas (for example, maximum `active_sessions`, maximum concurrent instances, and storage/world-size tiers) derived from the active plan.  
+- The current billing-state flags used for availability decisions (for example, whether the tenant is considered “available for gameplay”).
+
+Runtime services such as the Game Session Service and world-management components use this contract as follows:
+
+- On game instance start or significant scaling operations, they call `GetTenantEntitlements(tenantId)` and enforce quotas before admitting new load.  
+- When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new logins.  
+- They cache entitlements for a bounded period and invalidate or refresh them when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events are received, rather than checking entitlements on every tick.
 
 ## Edge Cases and Failure Handling
 

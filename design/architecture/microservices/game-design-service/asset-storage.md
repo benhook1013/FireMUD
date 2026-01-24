@@ -84,8 +84,12 @@ manifest metadata:
   `(tenantId, versionId)` overwrites the same prefix and manifest and leaves the
   version metadata consistent.
 - If any downstream publish step fails, the Saga compensates by either deleting
-  the newly written prefix or marking the version as failed/unusable so it
-  cannot be activated.
+  the newly written prefix or marking the version as **Failed** in the Game
+  Design Service so it cannot be activated. Failed versions follow the
+  lifecycle rules in
+  [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
+  and require an explicit repair or retry action before they can transition
+  back to Draft or Published.
 
 The database is optimized for design-time editing rather than long-term bulk
 storage. Implementations should treat `game_assets` as:
@@ -101,7 +105,10 @@ them. In practice this means:
 - An asset row is eligible for purge only if:
   - it is not referenced by any `version_asset` row where the associated version
     is in the Published, Active, or Retired states, and
-  - it is not reachable from any open revision, branch, or Draft version.
+  - it is not reachable from any open revision, branch, or Draft version via
+    the normalized history reference tables (for example `revision_asset`)
+    described in
+    [Version Control for Design Assets](./version-control.md).
 - Assets referenced by non-Retired versions must never be deleted, and their
   binary contents must not be modified in place.
 

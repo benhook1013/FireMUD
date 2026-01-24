@@ -51,7 +51,7 @@ For designer-oriented guidance on building and debugging scripts in the visual e
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `<tenantId, regionId>` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantRegionTag}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
 - **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation:queue:<tenantId>:<entityId>`, stages them under `automation:tick:{tenantScriptTag}:...`, and enqueues resulting **tick commands** into per-entity tick command queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
 - **Automation queue** – a per-tenant, per-entity Redis queue (`automation:queue:<tenantId>:<entityId>`) that holds **post-handler script work items** (domain commands plus script metadata such as `scriptEventId`, `scriptId`, and version information) after sandboxed DSL execution and before automation ticks convert them into tick commands and move them into tick-compatible queues.
-- **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `tickId` progression per `<tenantId, regionId>`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details.
+- **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `(regionEpoch, tickId)` progression per `<tenantId, regionId>`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details and the `(regionEpoch, tickId)` coordination timeline.
 
 ---
 
@@ -340,7 +340,7 @@ Within that model:
 
 - The Game Session Service owns **authoritative tick progression** and tick timers, as described in `design/architecture/system-architecture-ticks.md`.
 - The Automation & Scripting Service owns **script timers and intervals**, which are scheduled against tick heartbeat information but do not own ticks themselves.
-- Scheduler data structures such as `automation:timer:{tenantRegionTag}` (see the service README and tick docs) are used to track when script timers should fire relative to tick progression.
+- Scheduler data structures such as `automation:timer:{tenantRegionTag}` (see the service README and tick docs) are used to track when script timers should fire relative to tick progression; durable script schedules and quotas live in the Automation & Scripting Service’s PostgreSQL schema, while Redis indexes are coordination structures that can be rebuilt or reset without changing which scripts should eventually run.
 
 From the tick system’s perspective, script timers are just another source of work that ultimately enqueues commands into tick queues. The determinism rules in this document apply equally to timer-driven triggers.
 
@@ -356,12 +356,12 @@ This section summarizes how a single `onInterval` timer behaves across normal op
   - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`. If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed; otherwise it is enqueued for sandbox execution and the interval entry’s next due point is advanced.
 
 - **Leader changes**
-  - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and tracking how far they have progressed. In addition to the current heartbeat `tickId`, schedulers maintain a region-scoped checkpoint such as `script-scheduler:{tenantRegionTag}:lastTickId` (see the tick and Redis design docs).
+  - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and tracking how far they have progressed. In addition to the current heartbeat `(regionEpoch, tickId)`, schedulers maintain a region-scoped checkpoint such as `script-scheduler:{tenantRegionTag}:lastTickId` (see the tick and Redis design docs).
   - When leadership changes, the new leader:
-    - reads `script-scheduler:{tenantRegionTag}:lastTickId` for each region it owns,
-    - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream, and
-    - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued exactly once before the leader resumes normal scheduling from the latest `tickId`. If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
-  - Because the authoritative timer state lives in Redis (the region index plus the heartbeat checkpoint), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
+    - reads `script-scheduler:{tenantRegionTag}:lastTickId` for each region it owns, interpreted in the context of the current `regionEpoch`,
+    - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream for that epoch, and
+    - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued at most once before the leader resumes normal scheduling from the latest `(regionEpoch, tickId)`. If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
+  - Because the authoritative schedule configuration lives in PostgreSQL and Redis holds only coordination state (timer indexes and checkpoints), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
 - **Script reload**
   - During reload, leaders set `reloadState=RELOADING` for the affected `<tenantId, pendingPatchVersion>` and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` (and any derived per-script projections) remain in Redis but are treated as **pending**.
@@ -371,7 +371,7 @@ This section summarizes how a single `onInterval` timer behaves across normal op
     - resumes normal scheduling for `onInterval` using the updated `activePatchVersion`. No interval runs against a partially loaded script definition.
   - If reload fails, `activePatchVersion` remains unchanged, `pendingPatchVersion` is marked failed, and the leader resumes using the existing region-index timer entries as-is. Any `onInterval` triggers that fire after a failed reload are still scheduled according to the stored cadence, but always execute under the last known good patch version.
 
-Under this model, `automation:timer:{tenantRegionTag}` and related coordination keys form the authoritative source of interval state, and the combination of tick heartbeat, checkpoints, and script patch versioning preserves both correctness and determinism across failures.
+Under this model, durable script schedules and quotas live in PostgreSQL, while `automation:timer:{tenantRegionTag}`, `script-scheduler:{tenantRegionTag}:lastTickId`, and related coordination keys form a reset-tolerant coordination layer for interval state. The combination of tick heartbeat, checkpoints, and script patch versioning preserves both correctness and determinism across failures and leader changes: losing or resetting these Redis keys may delay or slightly reshuffle timer firings within the tail-loss envelope but must not change which scripts are eventually scheduled according to their stored configurations.
 
 ---
 

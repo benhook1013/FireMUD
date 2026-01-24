@@ -12,11 +12,25 @@ The **Game Design Service** manages version metadata and publish workflows for g
 
 1. When a version is ready, creators trigger a **Publish** action in the Game Design Service using the `PublishVersion` gRPC method.
 2. The service writes a new `version_id` and associated records to its database, linking the version to each tenant and recording notes and base versions.
-3. A Saga coordinates all domain services so they validate and finalize their draft data for the given `tenantId` and `version_id`, marking that data as published and ready for runtime use. Domain services already host the versioned graphs for their domains; no separate design database is copied at publish time.
-4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
+3. During authoring, the Game Design Service applies revisions incrementally to **Draft** template rows hosted by the owning domain services via idempotent design APIs keyed by `(tenantId, versionId)`. At publish time, a Saga coordinates all domain services so they validate and finalize their existing Draft data for the given `tenantId` and `version_id`, marking that data as Published and ready for runtime use. No separate design database is copied into the domain services; they already host the versioned graphs for their domains.
+4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga can mark the version as **Failed** so it is not eligible for activation.
 5. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
 
-Published versions are immutable; further changes require publishing a new `version_id`. Services may keep additional draft or experimental versions internally, but only published versions are eligible to be activated for live game instances.
+Published versions are immutable; further changes require publishing a new `version_id`. Services may keep additional draft or experimental versions internally, but only Published versions are eligible to be activated for live game instances.
+
+### Ownership
+
+Ownership is split between the Game Design Service and domain services:
+
+- The Game Design Service is the canonical store for:
+  - Version metadata and lifecycle (`Draft`, `Published`, `Active`, `Retired`, `Failed`).
+  - Branches, commits, revisions, and their relationships to domain objects.
+  - References from revisions/versions to assets, scripts, and templates via stable identifiers.
+- Domain services such as World Management, Entity Management, Game Logic, and others are the canonical stores for:
+  - Versioned template graphs keyed by `(tenantId, versionId)` (world topology, entity templates, balance records, etc.).
+  - Runtime/instance state keyed by `(tenantId, gameInstanceId)` or equivalent.
+
+Domain services must not persist their own commit histories; they expose only the current and historical template snapshots keyed by `(tenantId, versionId)`. Game Design Service must not maintain a second, divergent copy of world or entity template graphs; it references domain templates via stable IDs and version metadata.
 
 ### Version Lifecycle
 
@@ -24,8 +38,9 @@ Game versions go through a simple lifecycle:
 
 - **Draft** – revisions are still being edited; the version cannot be activated.
 - **Published** – the Saga has completed successfully (including asset export) and the version is available for use by game instances.
-- **Active** – a specific published version is recorded as the `runtime_version` for one or more entries in the `game_instances` table.
-- **Retired/Archived** – the version is no longer eligible to be activated for new instances, and no `game_instances` reference it as `runtime_version`. Only **retired** versions may have their object-store prefixes or other external assets deleted.
+- **Active** – a specific Published version is recorded as the `runtime_version` for one or more entries in the `game_instances` table.
+- **Failed** – a version whose publish Saga has failed in a way that leaves data incomplete or unusable. Failed versions are never eligible for activation until a repair/retry step transitions them back to Draft or Published.
+- **Retired/Archived** – the version is no longer eligible to be activated for new instances, and no `game_instances` reference it as `runtime_version`. Only **Retired** versions may have their object-store prefixes or other external assets deleted.
 
 Administrative tooling (for example via the Game Design Service or Logging & Admin Service) should:
 
@@ -38,12 +53,21 @@ Runbooks that remove published assets from the object store must validate that t
 
 Published versions are immutable from the perspective of domain templates:
 
-- The Game Design Service is the source of truth for version state (`Draft`, `Published`, `Active`, `Retired`).
-- Domain services such as World Management and Entity Management expose **design APIs** that create or update template rows only for Draft versions keyed by `(tenantId, versionId)`.
-- Once a version reaches the Published state, template tables in domain services must treat rows for that `(tenantId, versionId)` as read-only. Any attempt to modify templates for a Published or Active version should fail fast at the design API boundary and be surfaced as a validation error in the Game Design UI.
+- The Game Design Service is the source of truth for version state (`Draft`, `Published`, `Active`, `Failed`, `Retired`).
+- Domain services such as World Management and Entity Management expose **design APIs** that create or update template rows only for Draft versions keyed by `(tenantId, versionId)`. Authoring tools call these APIs incrementally as revisions are saved so Draft template graphs in domain services always reflect the latest committed design state for that version.
+- Once a version reaches the Published state, template tables in domain services must treat rows for that `(tenantId, versionId)` as read-only. Any attempt to modify templates for a Published, Active, or Failed version should fail fast at the design API boundary and be surfaced as a validation error in the Game Design UI.
 - Runtime gameplay flows (ticks, Sagas for world creation, etc.) never mutate template tables. They only read templates for the active `runtime_version` and write to runtime/instance tables keyed by `(tenantId, gameInstanceId)` or equivalent.
 
-This contract ensures that published template graphs remain stable inputs for rollback and historical inspection. Structural changes to templates must always occur by creating a new Draft version, applying revisions, and publishing a new `version_id`.
+At a high level, each `(tenantId, versionId)` template graph in a domain service follows this lifecycle:
+
+- **Absent** – no rows exist for the version.
+- **Draft** – design APIs have created or updated rows keyed by `(tenantId, versionId)`; additional revisions may continue to modify these templates.
+- **Published** – the publish Saga has validated the Draft data and marked the version Published. Template rows are now immutable.
+- **Active** – some game instances reference the version as `runtime_version`, but templates remain immutable.
+- **Failed** – publish attempted but left the version in an unusable state; templates, if present, must not be used for new instances until the version is repaired.
+- **Retired** – no `game_instances` reference the version and it is no longer eligible for activation; templates may be kept for historical inspection until migrations retire them.
+
+This contract ensures that Published template graphs remain stable inputs for rollback and historical inspection. Structural changes to templates must always occur by creating a new Draft version, applying revisions, and publishing a new `version_id`.
 
 ### Script-Only Patch Versions
 
@@ -70,6 +94,31 @@ gRPC endpoint in the Automation & Scripting Service so modified scripts are
 reloaded in memory. The Game Session Service records the active
 `script_patch_version` with each running game instance for recovery. See
 [Scripting & Automation](./system-architecture-scripting.md) for more details.
+
+### Cross-Asset Version Cohesion
+
+Several kinds of design-time assets participate in a published game version:
+
+- **Core templates and world data** owned by domain services such as World Management, Entity Management, and Game Logic.
+- **Abilities and actions** owned by the Game Logic Service and authored via the Ability & Action tools.
+- **Automation scripts and plugins** owned by the Automation & Scripting Service and authored via the scripting DSL and modding framework.
+
+The versioning model treats a published `version_id` as the **cohesive bundle** of these assets for a tenant:
+
+- For a given `(tenantId, versionId)`:
+  - Template and ability schemas and identifiers are stable for the lifetime of that version.
+  - Scripts and plugins may evolve through **script-only and plugin-only patch versions**, expressed as `scriptPatchVersion` and `pluginVersionId` values, as long as they remain compatible with the underlying templates and ability schemas.
+- Script-only and plugin-only patches:
+  - Are tied to a `baseVersionId` and do not change core world or ability data.
+  - May be hot-reloaded for running game instances without changing the `runtime_version`, following the semantics in the scripting architecture and Automation & Scripting Service docs.
+  - Must not introduce dependencies on ability or template changes that require a new `version_id`; such changes should be delivered via a new game version publish.
+
+Rollback behavior follows the same cohesion rules:
+
+- Rolling back `runtime_version` for a game instance reverts templates and abilities to those for the selected `version_id`, and script/plugin patch selection follows the version/pinning rules in the scripting docs.
+- Rolling back a script-only or plugin-only patch affects only automation behavior for the current `version_id`; it does not change templates or abilities.
+
+Tooling in the Game Design and Logging & Admin services should surface these relationships so creators and operators can see, for a given game instance, which `version_id`, `scriptPatchVersion`, and plugin versions are in effect.
 
 ### Schema Migrations vs Design Data
 
@@ -101,6 +150,8 @@ a stricter lifecycle than scripts:
   allowed after all versions that depend on the previous behavior have entered
   the Retired state and migrations have followed the guidelines in
   [Database Migrations](./system-architecture-database-migrations.md).
+
+For non-script content, there is no cross-version reuse of instance data. A given `gameInstanceId` is always tied to a single `runtime_version`, and all `*_instance` rows for that instance must be derivable from that version’s templates. Migrating a game to a different version is modeled as starting a new game instance with its own `gameInstanceId` (and fresh world creation workflow) rather than reusing existing world instance rows across versions.
 
 ## Version Activation & Rollback
 

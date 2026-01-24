@@ -105,14 +105,13 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Participating services include **Account**, **Game Design**, **Game Session**, **World Management**, **Automation Scripting**, **Social Groups**, and **Logging & Admin**
   
 - **State Management**:
-  - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library
-  - These tables reside in a dedicated `saga` schema shared by all services
-  - Tracks in-progress, completed, and failed workflows
-  - Supports compensation
-  - Flyway migrations bundled with the library create these tables automatically
-  - Automatic retries, timeout detection, and alerting
-  - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow using MDC
-  - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md)
+  - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library.
+  - These tables reside in a dedicated `saga` schema inside **each service’s own database**. Flyway migrations from `firemud-common` are applied per service database so saga state is local to the service that owns the workflow.
+  - Tracks in-progress, completed, and failed workflows.
+  - Supports compensation.
+  - Flyway migrations bundled with the library create these tables automatically when consuming services start.
+  - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each workflow using MDC.
+  - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md), which queries saga status via service APIs rather than directly reading every database.
   
 - **Execution Model**:
   - Steps are gRPC calls to owning services

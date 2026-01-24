@@ -35,3 +35,24 @@ The saga state is stored in the `saga_instance` and `saga_step` tables defined i
 See [World Management Service](README.md) for additional service context.
 
 See [Transaction Strategies](../../system-architecture-transactions.md) for background on how sagas are used across FireMUD.
+
+## Version Switching and Instance Data
+
+A `gameInstanceId` is always tied to a single `runtime_version` and the
+instance data derived from that version:
+
+- All `*_instance` rows for a given `gameInstanceId` must be derivable from the
+  templates for that instance’s `runtime_version`. There is no cross-version
+  mixing of instance data.
+- Moving a game to a different version is modeled as starting a **new** game
+  instance with a fresh `gameInstanceId` and running the world-creation Saga
+  again for the new `(tenantId, versionId)`. Existing instances continue to use
+  their original templates until they are shut down.
+- Operational tooling should not attempt to “retarget” an existing
+  `gameInstanceId` to a new `runtime_version` while reusing its world instance
+  rows; doing so would violate the invariant above and can lead to corrupted
+  world state.
+
+This policy keeps the world-creation workflow simple and ensures that every
+game instance has a self-consistent view of templates and instance data for its
+chosen version.

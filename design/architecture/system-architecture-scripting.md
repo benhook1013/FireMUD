@@ -47,6 +47,7 @@ The table below summarizes the high-level implementation status of major areas i
 - [Implementation Status](#implementation-status)
 - [Who Should Read What](#who-should-read-what)
 - [Goals](#goals)
+- [Validation & Admission Pipeline](#validation--admission-pipeline)
 - [TL;DR Flow](#tldr-flow)
 - [Where to Find Details](#where-to-find-details)
 
@@ -82,6 +83,41 @@ The table below summarizes the high-level implementation status of major areas i
 - Enable **event-driven scripting** and **NPC automation** so worlds feel alive even without active players.
 - Keep the system **extensible** while preventing malicious or abusive scripts.
 - Support **persistence** and versioned updates so game creators can iterate safely.
+
+---
+
+## Validation & Admission Pipeline
+
+At a high level, a script (or plugin) must pass through several stages before it can execute in production. Different services own different steps:
+
+1. **Editor graph validation (Game Design Service)**
+   - The visual editor enforces type correctness, required connections, and basic structural rules (for example, no missing inputs, no dangling edges).
+   - Loop safety is checked at the graph level using the bounded-loop rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#loop-safety-analysis`.
+   - Errors at this stage are shown directly in the editor; scripts cannot be published until they are resolved.
+
+2. **Compile-time validation and persistence (Automation & Scripting Service)**
+   - When designers publish a new script patch, the Game Design Service drives a Saga that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
+   - The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
+
+3. **`onLoad` initialization (Automation & Scripting Service, per tenant)**
+   - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant.
+   - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, the previous `activePatchVersion` remains in use, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
+
+4. **Version pinning (Game Session Service)**
+   - Once a patch is `READY` for a tenant, the Game Session Service may pin it as the active `scriptPatchVersion` for a game. All script events emitted by Game Session include that pinned version and the upstream-generated `scriptEventId`.
+   - The Automation & Scripting Service never silently substitutes a different version; if it receives an unknown or `FAILED` patch for a tenant, it rejects the trigger rather than falling back.
+
+5. **Quota and budget admission (Automation & Scripting Service)**
+   - Only after a trigger passes version checks does `ScriptQuotaService` and the multi-level budgeting model decide whether it is allowed to run. Quota denials (`quota_denied`) happen **before** any sandbox work and do not consume CPU/memory budgets.
+
+6. **Sandbox execution (Automation & Scripting Service)**
+   - Admitted triggers run in the sandboxed DSL engine with per-run CPU/iteration and memory budgets as described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
+   - Runtime guard violations are recorded as `sandbox_error` outcomes with specific reasons (for example, `cpu_budget_exceeded`, `memory_budget_exceeded`) and feed into failure-rate circuit breakers.
+
+7. **Command staging and tick execution**
+   - Successful runs produce commands that are staged into `automation:queue:<tenantId>:<entityId>` and then into tick queues via `ScriptTickService`, where they follow the standard tick idempotency and replay semantics.
+
+All stages emit metrics and audit records (especially `script_event_audit`) so designers and operators can see where a script failed to progress. The quotas and operations document (`design/architecture/system-architecture-scripting-quotas-and-operations.md`) is the primary reference for interpreting these outcomes in production.
 
 ---
 

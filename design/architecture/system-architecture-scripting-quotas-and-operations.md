@@ -22,6 +22,7 @@ Companion docs:
 - [Operational Cookbook: Quotas, Budgets, and Metrics](#operational-cookbook-quotas-budgets-and-metrics)
 - [Operational Disable / Throttle Flows](#operational-disable--throttle-flows)
 - [Environment Variables](#environment-variables)
+- [Rollback & Recovery Cookbook](#rollback--recovery-cookbook)
 
 ---
 
@@ -174,6 +175,19 @@ Additional queue-health metrics help detect automation backlogs that are not dra
 
 A small, bounded inspector loop in `ScriptTickService` periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between automation and tick processing for investigation.
 
+For scripting and automation, these metrics follow shared naming and labeling conventions so dashboards and alerts remain consistent across services:
+
+- `automation_script_triggers_total{tenantId, scriptId, pluginId, eventType, outcome}` – counts all admitted triggers, tagged with the final `outcome` for the run.
+- `automation_script_skips_total{tenantId, scriptId, pluginId, reason}` – counts triggers that were intentionally skipped before sandbox execution (for example, `reason="reloading"`, `reason="disabled"`, `reason="priority_throttled"`).
+- `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason}` – counts triggers that could not be processed (for example, `reason="quota"`, `reason="cluster_limit_reached"`, `reason="version_unavailable"`).
+- `script_quota_allowed_total{tenantId, scriptId}` / `script_quota_denied_total{tenantId, scriptId}` – per-script quota decisions before sandbox work begins.
+- `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
+- `automation_script_errors_total{tenantId, scriptId, pluginId, reason}` – higher-level error classification, including downstream failures.
+- `automation_script_tenant_budget_seconds{tenantId, tier}` – per-tenant, per-priority-tier budget consumption.
+- `automation_script_runtime_seconds{tenantId, scriptId, pluginId}` – distribution of runtime per script/plugin.
+
+Plugin executions use the same metrics but typically add `pluginId` and `pluginVersionId` labels where relevant so dashboards and alerts can distinguish plugin behavior from core automation.
+
 ### Cross-Service Correlation
 
 Script execution spans several services (Game Design, Game Session, Automation & Scripting, Game Logic, Logging & Admin). To support end-to-end debugging and replay, the system relies on a shared set of identifiers:
@@ -208,6 +222,24 @@ This section is **illustrative**, not normative. The **authoritative definitions
 - Automation & Scripting Service README: `design/architecture/microservices/automation-scripting-service/README.md`
 
 Implementations should align emitted metrics with those documents; the intent here is only to show how common outcomes map conceptually to “counted”, “skipped”, or “dropped” signals so readers understand the observability story.
+
+At a high level:
+
+- **Pre-admission quota and budgeting outcomes**
+  - `outcome = quota_denied` – trigger was rejected by `ScriptQuotaService` before sandbox execution; increments `script_quota_denied_total` and contributes to `automation_script_triggers_dropped_total{reason="quota"}` but does **not** increment sandbox failure metrics.
+  - `outcome = tenant_budget_exceeded` or other budget-related skips – trigger was not admitted because per-tenant or cluster budgets were exhausted; contributes to `automation_script_skips_total` or `automation_script_triggers_dropped_total` with appropriate `reason` tags but does not run the sandbox.
+
+- **Sandbox-level failures**
+  - `outcome = sandbox_error` – the DSL runtime rejected the run or hit a guard (for example, `reason="cpu_budget_exceeded"`, `reason="memory_budget_exceeded"`, `reason="iteration_budget_exceeded"`); increments `automation_script_sandbox_failures_total{reason=...}` and `automation_script_errors_total{reason=...}` and feeds into failure-rate circuit breakers.
+
+- **Infrastructure-level failures**
+  - `outcome = infrastructure_error` – transport or infrastructure problems (for example, Redis timeouts, gRPC `UNAVAILABLE`); counted separately from sandbox errors, may trigger retries at lower layers using idempotency keys, and contribute to infra-focused alerts.
+
+The failure-rate circuit breaker primarily considers **sandbox_error** and other logical script failures when deciding to transition a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. Quota denials and purely infrastructure-level errors do not, by themselves, trigger disables, although they should still be visible in metrics and dashboards.
+
+---
+
+## Operational Cookbook: Quotas, Budgets, and Metrics
 
 ---
 
@@ -306,6 +338,46 @@ Operators can disable or throttle scripts to respond to failures or abuse:
   - In addition, the failure-rate circuit breaker may place a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, which behaves like a hard disable until an administrator explicitly clears the status; these transitions are captured in `script_event_audit` using canonical outcomes (`disabled_due_to_errors`, `tenant_budget_exceeded`, etc.) paired with specific `reason` strings.
 
 All disable/enable and throttle actions are **idempotent** and recorded with the acting principal (where available) via the `actorPrincipal` field, so operators can trace when and why a script stopped executing.
+
+---
+
+## Rollback & Recovery Cookbook
+
+This section summarizes common failure scenarios and how operators should respond. It complements the per-feature lifecycle details in the DSL reference and modding framework documents.
+
+- **Script patch `onLoad` failures or patch status `FAILED`**
+  - Symptoms:
+    - For a given `<tenantId, scriptPatchVersion>`, audit entries with `eventType=onLoad` and `outcome=sandbox_error` or other logical failures.
+    - Triggers referencing that patch produce `outcome=version_unavailable` (or a more specific variant) and drop metrics such as `automation_script_triggers_dropped_total{reason="version_unavailable"}`.
+  - Behavior:
+    - The Automation & Scripting Service marks the patch `FAILED` for that tenant; the previous `activePatchVersion` remains in use.
+    - No automatic rollback beyond “keep the last known good patch active” occurs.
+  - Operator actions:
+    - Use Game Design tooling to inspect and fix the script configuration, then publish a new patch.
+    - Optionally disable the faulty script entirely (`runtimeStatus=DISABLED`) to stop further admission attempts while iterating.
+
+- **Plugin version failures or misbehavior**
+  - Symptoms:
+    - Plugin lifecycle state in the Automation & Scripting Service shows `pluginState=FAILED` or frequent `sandbox_error` outcomes for `pluginId` / `pluginVersionId`.
+    - Audit entries in `script_event_audit` tagged with `pluginId` / `pluginVersionId` show repeated failures, and plugin-specific metrics spike.
+  - Behavior:
+    - The modding framework keeps `activeVersionId` unchanged when a new plugin version fails validation or initialization; triggers for the failed version are rejected.
+  - Operator actions:
+    - Use Logging & Admin APIs to set the plugin to a disabled or drain state for affected tenants.
+    - Roll back to a previous `pluginVersionId` by promoting it to `activeVersionId` if still trusted, or require a new signed bundle upload via the Game Design Service.
+
+- **Heavy timer drops or throttled `onInterval` handlers**
+  - Symptoms:
+    - High counts for `automation_script_triggers_dropped_total{reason="tenant_budget_exceeded"}` or `reason="cluster_limit_reached"` for `eventType=onInterval`.
+    - Audit entries for `onInterval` with `outcome=quota_denied`, `tenant_budget_exceeded`, or `version_unavailable`.
+  - Behavior:
+    - Timer-based triggers are at-most-once per scheduled firing; dropped or skipped intervals are not replayed, although future firings may still occur.
+  - Operator actions:
+    - Reduce cadence (increase `intervalTicks`) or lower priority for noisy timers.
+    - Adjust per-tenant budgets or cluster ceilings if drops reflect legitimate load rather than misbehaving scripts.
+    - For persistent version-related drops, investigate patch status and either fix and republish or explicitly disable the affected scripts.
+
+In all of these cases, `script_event_audit` is the primary source of truth for what happened to individual triggers, and metrics from this document’s glossary indicate whether the problem is localized to a script/plugin, a tenant budget, or cluster capacity.
 
 ---
 

@@ -19,6 +19,20 @@ For details on how scripts are authored, how standard and custom events are mode
 
 An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
 
+### Audience Guide
+
+- **For operators and SREs**
+  - Focus on **Environment Variables**, **Fairness Quotas**, and the metrics list under **Additional Details**.
+  - Pair this README with:
+    - `design/architecture/system-architecture-scripting-quotas-and-operations.md` for quotas, budgets, and rollback flows.
+    - `design/architecture/system-architecture-logging-monitoring.md` for metrics and alerting.
+    - `design/architecture/system-architecture-redis.md` for Redis behavior.
+- **For backend developers**
+  - Focus on **Architecture / Design Notes**, **Saga Participation**, **Redis Role and Prefixes**, and **REST & gRPC Endpoints**.
+  - Pair this README with:
+    - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for scripting semantics and contracts.
+    - `design/architecture/system-architecture-transactions.md` for idempotency and Saga patterns.
+
 ## Architecture / Design Notes
 
 - Executes scripts in response to world or player events received via **gRPC callbacks** from the Game Session Service and other domain services. Standard lifecycle events (`onSpawn`, `onEnterRegion`, `onCommand`, etc.) are delivered as unary gRPC calls (conceptually via a `TriggerScriptEvent`–style API), while tick-derived scheduling signals (for example, “every N ticks”) are driven by a **gRPC streaming tick heartbeat** originating from the Game Session Service. See [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and [Tick System and Runtime Design](../../system-architecture-ticks.md#tick-events--heartbeat-stream) for event and heartbeat details.
@@ -185,6 +199,20 @@ This behavior ensures that a script patch either becomes the new active version 
   - An envelope for the event payload, including any domain-specific fields.
   Event ingress RPCs are **idempotent** with respect to `scriptEventId` within a `<tenantId>` (and, where applicable, `<regionId>`): repeated calls with the same identifiers must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
 
+### Idempotency & Retries
+
+The Automation & Scripting Service relies on upstream callers (typically the Game Session Service) to generate **stable `scriptEventId` values** for each trigger. These identifiers serve as the canonical idempotency keys for event ingress:
+
+- Any RPC that accepts `scriptEventId` as part of its request (for example, the conceptual `TriggerScriptEvent` API and timer-driven internal scheduling) is **idempotent with respect to that ID**:
+  - Re-sending the same request with the same `<tenantId, regionId, scriptId, scriptEventId>` must not cause the DSL body to run twice.
+  - The service records at most one `script_event_audit` row per `scriptEventId`.
+- Downstream calls made from DSL components (for example, to Game Logic or World Management) must also carry a **stable idempotency token** derived from `<tenantId, regionId, scriptId, scriptEventId[, tickId]>` so infrastructure-level retries do not duplicate side effects. See `design/architecture/system-architecture-transactions.md` for recommended patterns.
+
+Transport-level retries:
+
+- Unary event ingress calls are safe to retry at the gRPC transport layer **only if** they reuse the same `scriptEventId`.
+- Timer and scheduler internals may retry infrastructure operations (for example, Redis writes) but never re-execute the DSL body for the same `scriptEventId`; they replay only idempotent downstream operations.
+
 ## Faction & Reputation System
 
 NPC behaviour references player reputation to decide when to become hostile,
@@ -226,17 +254,25 @@ variables to access its databases.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
+For day-to-day operations, environment variables fall into three broad categories:
+
+- **Stable operator knobs** – part of the supported operational surface and expected to remain compatible across minor releases.
+- **Advanced/experimental** – powerful tuning knobs that should be changed only with guidance from maintainers.
+- **Internal implementation details** – not intended for direct use; may change or be removed without notice.
+
 Additional variables tune the scripting engine:
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` |
-| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` |
-| `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` |
-| `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` |
-| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` |
-| `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` |
-| `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` |
+| Variable | Purpose | Default | Class |
+| -------- | ------- | ------- | ----- |
+| `SCRIPT_QUOTA_LIMIT` | Number of events a script may process per window | `50` | Stable operator knob |
+| `SCRIPT_QUOTA_WINDOWSECONDS` | Length of the quota window in seconds | `60` | Stable operator knob |
+| `AUTOMATION_TICK_DURATION_MS` | Duration of a processing tick in milliseconds | `1000` | Stable operator knob |
+| `AUTOMATION_TICK_MAX_EVENTS` | Max events staged from the automation queue each tick | `50` | Stable operator knob |
+| `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` | Advanced/experimental |
+| `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` | Stable operator knob |
+| `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` | Stable operator knob |
+
+Any additional, less common tuning variables should be documented alongside their introduction and clearly marked as advanced or internal. Operational runbooks should treat only **stable operator knobs** as supported surface for routine adjustments; changes to advanced or internal settings should go through code review and coordinated rollout.
 
 ## Proto Files
 
@@ -293,6 +329,17 @@ Expected response:
   "message": "pong"
 }
 ```
+
+### Dry-Run / Test Execution
+
+In addition to live event handling, the Automation & Scripting Service exposes a **non-committing test path** used by the Game Design and Logging & Admin tools:
+
+- Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
+- Instead of enqueuing commands into `automation:queue:<tenantId>:<entityId>` or tick queues, test runs return the would-be commands to the caller for inspection.
+- Test executions are recorded in `script_event_audit` with a dedicated `eventType` (for example, `testRun`) or an `isDryRun` flag so they can be distinguished from live traffic.
+- By default, dry runs **do not consume ScriptQuotaService windows or tenant budgets**, but they do contribute to sandbox failure metrics to keep behavior consistent and observable.
+
+This test facility is intended for pre-production validation and privileged diagnostics; it should be exposed only to appropriately authorized principals and is not a general-purpose bypass for quotas or budgets.
 
 ### Fairness Quotas
 

@@ -52,7 +52,7 @@ Subscription creation, lifecycle, and entitlements are covered in more detail in
 2. The Account Service ensures a Stripe customer exists for the account, then creates or updates a Stripe `subscription` using the configured Stripe product/price for `plan_code`.  
 3. An internal `subscription` row is created or updated with `status` based on the Stripe subscription’s state and linked to the Stripe `subscription` ID.  
 4. Stripe webhooks (`invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`) drive subsequent state transitions and keep the internal `subscription` table in sync.  
-5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state.
+5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state. For transitions into hard cutoff states such as `suspended` or `canceled`, the webhook pipeline drives `SubscriptionStatusChanged` and `TenantBillingStateChanged` domain events that downstream services consume to revoke gameplay sessions and tenant-scoped auth allowlist entries as described in [Subscription Management](./subscription-management.md#tenant-availability-and-quota-enforcement) and [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
 
 ## Multi-Tenancy and Security
 
@@ -81,7 +81,7 @@ Operational behavior around Stripe integration focuses on observability, idempot
 - Webhook handlers are idempotent and keyed by Stripe event IDs; repeated deliveries do not change internal state after the first successful application.  
 - Metrics track payment and subscription statuses (for example, counts of `payment_transaction` by `status`, and subscriptions in `past_due` or `grace` states).  
 - Alerts fire when webhook processing fails repeatedly, when Stripe API calls start failing at elevated rates, or when the number of tenants in `grace` or `suspended` billing states exceeds thresholds.  
-- During Stripe outages, new purchases and subscription changes fail closed, but existing tenants remain in their last-known-good state until internal policies (for example, maximum grace period) dictate otherwise.
+- During Stripe outages, new purchases and subscription changes fail closed, but existing tenants remain in their last-known-good state until internal policies (for example, maximum grace period) dictate otherwise. Where possible, the same webhook pipeline that updates subscription state also emits the revocation events described above, so failures in that pipeline are observable and can be correlated with potential entitlement enforcement drift.
 
 For current requirements and additional context, see:
 

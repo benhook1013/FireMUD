@@ -79,3 +79,24 @@ When using a self-hosted MinIO cluster as the asset store:
    - No game instances can be started or restarted against this `version_id`.
    - The Game Design and Game Session services have already marked the version
      as retired.
+
+## Handling Failed Publish Versions
+
+Occasionally the asset-export step of `PublishVersion` may fail in a way that
+leaves a version incomplete or unusable:
+
+- When the Saga marks a version as **Failed**, it must not appear in
+  `game_manifest` or any launch manifests, and operators must not attempt to
+  start game instances against it.
+- Failed versions may have partially written prefixes in the object store. Do
+  not delete these manually unless the Game Design Service has already marked
+  the version Failed and there is no intention to retry publish.
+- Preferred recovery is to:
+  - Investigate and fix the underlying issue (for example missing assets or
+    permission errors).
+  - Trigger a documented “retry publish” or “repair version” workflow in the
+    Game Design or Logging & Admin Service so the Saga re-runs the asset export
+    step and transitions the version back to Draft/Published as appropriate.
+- If clean-up is required after deciding to abandon a Failed version, follow
+  the same safety checks as for Retired versions, then remove the corresponding
+  `<tenant>/<version>/` prefix from the object store.

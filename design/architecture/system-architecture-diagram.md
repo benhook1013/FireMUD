@@ -54,6 +54,7 @@ flowchart TD
     Gateway -- wss --> Session
 
     Admin -- gRPC mgmt --> Gateway
+    Admin -- admin APIs --> Logging
 
     Session -- gRPC --> Account
     Session -- gRPC --> World

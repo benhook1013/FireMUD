@@ -14,7 +14,17 @@ Admin and moderator accounts can optionally enable **two-factor authentication**
 
 When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over **plaintext Telnet** are further constrained: only accounts that both (a) have two-factor authentication enabled and (b) explicitly opt in to “allow plaintext Telnet login” may authenticate via the raw TCP port. All other accounts must use the TLS Telnet port or the web client and receive a clear error if they attempt to log in over plaintext Telnet.
 
-Issued JWTs are stored in Redis using keys `session:auth:<scope>:<tokenHash>` where `scope` typically encodes tenant- or account-level context (for example `tenant:<tenantId>`), and `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
+Issued JWTs are stored in Redis using keys `session:auth:<scope>:<tokenHash>` where `scope` encodes the authorization context and `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). This keeps key lengths bounded and avoids leaking raw token contents into key names. FireMUD standardizes the following scope formats:
+
+- `session:auth:tenant:<tenantId>:<tokenHash>` – tenant-scoped allowlist entry for a JWT whose effective privileges are limited to a single tenant. Services consult these entries when authorizing tenant-specific operations based on `scopedRoles[tenantId]`.
+- `session:auth:global:<accountId>:<tokenHash>` – global/admin allowlist entry for a JWT that carries cross-tenant `globalRoles` such as `platformAdmin`. These entries are used when authorizing cross-tenant operations that are not tied to a single `tenantId`.
+
+JWT issuance follows these rules:
+
+- If a JWT has only tenant-scoped roles (no `globalRoles`), the Account Service may create one `session:auth:tenant:<tenantId>:<tokenHash>` entry per tenant in `scopedRoles`.
+- If a JWT includes `globalRoles`, the Account Service creates a single `session:auth:global:<accountId>:<tokenHash>` entry and may additionally create tenant-scoped entries when needed for services that require per-tenant allowlist checks.
+
+The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
@@ -22,7 +32,7 @@ JWT lifetime and the session safety margin are documented in [Environment & Secr
 
 Token validity semantics:
 
-- A JWT must be cryptographically valid (signature and time-based claims such as `exp`), and its `session:auth:<scope>:<tokenHash>` entry must be present in Redis.
+- A JWT must be cryptographically valid (signature and time-based claims such as `exp`), and at least one relevant `session:auth:<scope>:<tokenHash>` entry (tenant-scoped or global) must be present in Redis for the context in which it is being used.
 - Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:auth:<scope>:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:*` force re-authentication for the affected scopes.
 - During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the allowlist check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side session/token entries to be present.
 
@@ -80,7 +90,7 @@ Login commands only carry account credentials (plus optional OTP). Accounts are 
 
 Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss). If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes gameplay seamlessly.
 
-**Note:** This slice treats `playerId` as the authenticated `accountId` because explicit character selection is not yet implemented. Once characters land, the service will map `playerId` to the selected avatar instead of the raw account identifier so session resumption aligns with actual player context.
+**Note:** In the target design, `playerId` represents a **character-level identity** within a tenant. The current implementation treats `playerId` as the authenticated `accountId` because explicit character selection is not yet implemented, but all Redis key formats and Game Session Service APIs must treat `playerId` as an abstract “character identifier”. When character selection is introduced, `playerId` will switch to a proper character or avatar ID without changing key prefixes or semantics, and sessions will bind sockets to characters rather than raw accounts.
 
 > 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
@@ -147,6 +157,10 @@ Access to services is governed by roles from the JWT:
 
 All meta services use a shared `AuthTokenInterceptor` that extracts claims from the `Authorization` header and stores them in a thread-local `SessionContext`. Service methods read roles from this context via the `@RequireAdminRole` annotation (or similar). Gameplay services never read or propagate these claims.
 
+### Mandatory Auth Middleware
+
+All meta/control services that depend on JWT claims must install the shared security configuration that wires `AuthTokenInterceptor` into both HTTP and gRPC stacks. No controller or gRPC service that relies on authorization may be reachable without passing through this middleware. New routes that require authentication must opt into this configuration from the outset; adding endpoints that bypass it is considered an architectural violation and must be corrected before promotion to shared environments.
+
 ---
 
 ## Trust Boundaries and Token Validation
@@ -192,8 +206,8 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 FireMUD uses distinct types of “sessions” with different lifetimes and responsibilities:
 
 - **Auth token allowlist entries**  
-  - Keys: `session:auth:<scope>:<tokenHash>` on Coordination Redis.  
-  - Purpose: Server-side allowlist and revocation surface for internal JWTs used by meta/control services.  
+  - Keys: `session:auth:<scope>:<tokenHash>` on Coordination Redis, where `<scope>` is either `tenant:<tenantId>` or `global:<accountId>` as described above.  
+  - Purpose: Server-side allowlist and revocation surface for internal JWTs used by meta/control services. Tenant-scoped entries are consulted for tenant-specific operations; global entries are consulted for cross-tenant/admin operations.  
   - Lifetime: Absolute TTL derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Entries are not extended by client activity; when they expire, new tokens must be issued.
 
 - **Gameplay session bindings**  
@@ -203,8 +217,18 @@ FireMUD uses distinct types of “sessions” with different lifetimes and respo
 
 Security- and billing-related events (for example, account bans, password resets, enabling two-factor auth, tenant suspension, or subscription expiration) must actively revoke both:
 
-- Relevant `session:auth:*` entries so new meta/control calls fail closed until re-authentication, and
+- Relevant `session:auth:*` entries so new meta/control calls fail closed until re-authentication. For tenant-level events such as tenant suspension, services delete `session:auth:tenant:<tenantId>:*` entries; for account-level events such as account bans, services delete both `session:auth:global:<accountId>:*` and all tenant-scoped entries for that account.
 - Any gameplay session keys bound to the affected account and tenant, so active sockets are kicked and must re-login under the new security or billing conditions.
+
+### Control-Plane Logout
+
+Control-plane logout for admin and creator UIs is implemented as an explicit API on the Account Service. Clients call `POST /auth/logout` (or the equivalent gRPC method) with the current JWT in the `Authorization` header. The Account Service:
+
+- Computes the `tokenHash` from the presented JWT.
+- Deletes the corresponding `session:auth:*:<tokenHash>` allowlist entries for that token (global and any tenant-scoped entries that were created for it).
+- Emits an audit event so logout activity is observable.
+
+This flow performs a **per-token logout**: it invalidates the current browser or device session without affecting other active sessions for the same account. Global “logout from all devices” behavior, if needed, is modeled as a separate endpoint that revokes all allowlist entries for an account rather than a single token.
 
 > 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
 

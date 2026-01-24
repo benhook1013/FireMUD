@@ -78,7 +78,7 @@ Each script run follows a consistent lifecycle:
      - `quota_denied`
      - `sandbox_error` (with a specific reason)
      - `infrastructure_error`
-   - Outcomes are written to the `script_event_audit` store and exposed via metrics for dashboards and alerts.
+   - Outcomes are written to the `script_event_audit` store and exposed via metrics for dashboards and alerts. Pre-admission quota denials (`quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics; sandbox errors (for example, budget violations) do, and are considered by the failure-rate circuit breaker. See `design/architecture/system-architecture-scripting-quotas-and-operations.md#outcome-to-metric-mapping` for how these outcomes map to metrics and disable behavior.
 
 ---
 

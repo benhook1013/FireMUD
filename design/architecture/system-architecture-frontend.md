@@ -49,9 +49,9 @@ Frontend flows are split between **player gameplay sessions** and **admin/creato
 
 - **Admin and creator UIs**  
   - Admin/creator interfaces authenticate through the Account Service (for example, via `/auth/login` exposed behind the Gateway). Successful login issues a short-lived JWT for control-plane APIs.  
-  - Admin JWTs are treated as **internal tokens** and should be stored in the browser using HttpOnly cookies or in-memory storage managed by the frontend auth layer; they must not be written to `localStorage` or exposed to third-party origins.  
-  - The frontend attaches the token to meta/control API calls handled by RTK Query. Backend services validate these JWTs with the shared `AuthTokenInterceptor` and enforce tenant access via the Tenant Authorization Contract described in [Authentication & Authorization](./system-architecture-authentication.md#tenant-authorization-contract).  
-  - Logout clears the client-side auth state (cookies or in-memory token) and triggers server-side session revocation so subsequent requests require re-authentication.
+  - Admin JWTs are treated as **internal tokens** and are stored only in in-memory frontend state managed by the auth layer; they must not be written to `localStorage`, session storage, or exposed to third-party origins.  
+  - The frontend sends these tokens on meta/control API calls by setting the `Authorization: Bearer <token>` header for RTK Query requests. Backend services validate these JWTs with the shared `AuthTokenInterceptor` and enforce tenant access via the Tenant Authorization Contract described in [Authentication & Authorization](./system-architecture-authentication.md#tenant-authorization-contract).  
+  - Logout clears the in-memory auth state and calls the Account Service logout endpoint so server-side allowlist entries are revoked; subsequent requests require re-authentication.
 
 All new frontend features that interact with protected APIs should reuse the shared auth utilities and RTK Query base configuration so token handling, logout, and error behavior remain consistent across player, admin, and creator experiences.
 

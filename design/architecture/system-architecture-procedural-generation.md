@@ -124,13 +124,14 @@ The following rules align generators with the core runtime and tooling:
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service. Discovery uses Spring bean scanning, and scripted or DSL-based generators are supported.
 
-Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. These rules are treated as **runtime configuration**, not versioned design data:
+Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. These rules are treated as **runtime configuration** for future runs, but each individual generation run persists an **immutable snapshot** of the configuration it actually used:
 
 - Rules are keyed by `tenantId` and updated in place via REST.
 - World creation and runtime generation calls snapshot the effective parameters
-  they use (including the generator type, seed, and rule identifiers or hashes)
-  alongside the generated regions and rooms so that operators can later
-  reconstruct the inputs used for a particular world or instance.
+  they use (including the generator type, seed, and a serialized config blob
+  that carries an explicit `schemaVersion`) alongside the generated regions and
+  rooms so that operators can later reconstruct the inputs used for a particular
+  world or instance, even if live rules have changed.
 
 ---
 
@@ -139,7 +140,9 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 ### World Management Service
 
 - Owns invocation of generators as pure functions and persists generated rooms/biomes/regions; assigns canonical `roomId`s
-- Persists generator metadata (`seed`, `generatorType`, params) and editor overlays, including a snapshot of the effective procedural rule configuration used for each generation run
+- Persists generator metadata (`seed`, `generatorType`, and an immutable config
+  snapshot with `schemaVersion`) and editor overlays, including a snapshot of
+  the effective procedural rule configuration used for each generation run
 - Provides read APIs for geometry, overlays, and region metadata
 
 ### Automation & Scripting Service

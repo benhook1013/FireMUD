@@ -8,17 +8,21 @@
 | Design-time feature flag definitions | ✔ | | | | | | | | | | |
 | Room and zone editing | ✔ | | | | | | | | | | |
 | World map region layout | | ✔ | | | | | | | | | |
-| Room state persistence | | ✔ | | | | | | | | | |
+| Room topology and static metadata (descriptions, flags, ambient properties) | | ✔ | | | | | | | | | |
+| Room dynamic world state (persistent environment flags, doors, hazards) | | | | | ✔ | | | | | | |
+| Room occupancy (entity locations in rooms) | | | | | ✔ | | | | | | |
 | Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
 | Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
 | Email and system notifications | | | ✔ | | | | | | ✔ | | |
 | Payment, subscriptions, and bans | | | ✔ | | | | | | | | |
+| Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
+| Login throttling, lockout, password reset, and email verification | | | ✔ | | | | | | | | |
 | WebSocket transport connection lifecycle (upgrade, routing, DMZ edges) | | | | | | | | | | ✔ | ✔ |
 | Gameplay session lifecycle (login, resume, takeover) | | | | ✔ | | | | | | | |
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
-| Session state storage (volatile, Redis) | | | | ✔ | | | | | | | |
+| Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
 | Coordination Redis ownership (ticks, locks, timers, sessions) | | | | ✔ | | | | | | | |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |

@@ -44,18 +44,18 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
       |                                           | Metrics/ |                                           |
       | - PostgreSQL (shared cluster; per-service | Traces   | - Prometheus (metrics)                    |
       |   schemas, tenant-scoped tables)          |          |                                           |
-      | - Redis (sessions, ticks)                 |          | - OpenTelemetry Collector (traces)        |
-      | - Elasticsearch (logs)                    |          | - Jaeger (trace UI)                       |
-      | - S3-compatible object storage (assets)   |          | - Grafana (metrics dashboards)            |
-      +-------------------------------------------+          | - Kibana (log UI)                         |
-                                                             | - Alertmanager (alerts)                   |
-                                                             +-------------------------------------------+
+      | - Redis (sessions, ticks, caches,         |          | - OpenTelemetry Collector (traces)        |
+      |   rate limits; coordination vs cache      |          | - Jaeger (trace UI)                       |
+      |   keyspaces)                              |          | - Grafana (metrics dashboards)            |
+      | - Elasticsearch (logs)                    |          | - Kibana (log UI)                         |
+      | - S3-compatible object storage (assets)   |          | - Alertmanager (alerts)                   |
+      +-------------------------------------------+          +-------------------------------------------+
 
       Account Service ---------------------------> Email / SMTP Provider
       Logging & Admin Service -------------------> Email / SMTP Provider
 ```
 
-Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks, separate from player-facing HTTP/WebSocket traffic.
+Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks, separate from player-facing HTTP/WebSocket traffic. From there, admin commands and moderation actions are forwarded to domain services (for example, Game Session, Account, Social & Groups) over gRPC, following the ownership boundaries in the Service Responsibility Matrix.
 
 Only the Account Service and Logging & Admin Service send email directly to the SMTP provider; other internal services surface email-worthy events through these owners rather than talking to SMTP themselves. This matches the responsibilities defined in the Service Responsibility Matrix.
 

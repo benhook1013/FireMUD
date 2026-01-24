@@ -26,13 +26,18 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 - Tables reside in dedicated schemas for each service to ensure isolation.
   Schema names match the owning service (for example `account_service`). See
   [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
-- Common tables shared by multiple services reside in the `common-library` module with its own migrations.
-- It contains saga table migrations described in [System Architecture – Transactions](./system-architecture-transactions.md).
-- Services that need these shared tables include the module as a dependency during their build.
-- The library packages its migrations inside the JAR so Flyway automatically
-  picks them up from the classpath when each service starts.
-  The `common-library` itself does not run Flyway; consuming services execute
-  these migrations on startup.
+- Shared schema components such as the Saga tables are defined in the
+  `common-library` module with their own migrations, but are still applied
+  **per service database**:
+  - The `common-library` contains saga table migrations described in
+    [System Architecture – Transactions](./system-architecture-transactions.md).
+  - Services that need these shared tables include the module as a dependency
+    during their build.
+  - The library packages its migrations inside the JAR so Flyway automatically
+    picks them up from the classpath when each service starts.
+  - The `common-library` itself does not run Flyway; each consuming service
+    executes these migrations against its own database on startup, creating a
+    local `saga` schema as needed.
 - New migrations are committed alongside service code so history stays with the owning service.
 
 ### Version-Aware Migration Guidelines
