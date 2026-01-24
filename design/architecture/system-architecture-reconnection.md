@@ -15,13 +15,13 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 | Layer | Responsibility |
 | --- | --- |
 | **TCP Proxy Service** | Parses Telnet input and clears buffered commands; emits a best-effort disconnect notification to Game Session over an internal-only gRPC event sink |
-| **Spring Cloud Gateway** | Stateless WebSocket passthrough; reconnects backend automatically |
+| **Spring Cloud Gateway** | Stateless WebSocket passthrough; resumes routing once clients reconnect |
 | **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers |
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.**
 Game Session Service restarts are **transparent** if the client remains connected.
-The Gateway automatically re-establishes WebSocket sessions after a restart. Telnet clients typically remain connected to the TCP Proxy Service during a Gateway restart, but gameplay traffic may pause while the proxy re-establishes its WebSocket bridge to Spring Cloud Gateway (input buffering is limited and is governed by the proxy’s per-connection ceilings). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for how TCP and WebSocket clients share the same backend.
+When Spring Cloud Gateway or Game Session pods restart, Web clients **reconnect their WebSocket connections**; once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh. Telnet clients typically remain connected to the TCP Proxy Service during a Gateway restart, but gameplay traffic may pause while the proxy re-establishes its WebSocket bridge to Spring Cloud Gateway (input buffering is limited and is governed by the proxy’s per-connection ceilings). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for how TCP and WebSocket clients share the same backend.
 TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 If the Gateway link remains unavailable beyond the TCP Proxy Service’s short reconnect window (see `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` in the TCP Proxy design), the proxy fail-closes Telnet sockets with a clear message rather than buffering unbounded input at the DMZ edge; clients then reconnect and reauthenticate with `LOGIN`.
 
@@ -41,11 +41,11 @@ For the **canonical `NotifyDisconnect` contract** – including retry windows, t
 ### Spring Cloud Gateway (Web Clients)
 
 - Stateless WebSocket router
-- Automatically re-establishes backend connections if restarted
+- Resumes routing once Web clients reconnect their WebSocket connections after a blip or restart
 - Holds no gameplay, auth, or session state
 
 > TCP Proxy restarts drop Telnet connections.
-> Spring Cloud Gateway restarts temporarily disconnect Web clients, but the WebSocket connection is reestablished automatically.
+> Spring Cloud Gateway restarts temporarily disconnect Web clients; clients must reconnect their WebSocket and re-`LOGIN`, after which Game Session reloads state from Redis if available.
 > Telnet clients may remain connected to the TCP Proxy Service during brief Gateway blips, but if the proxy cannot re-establish its WebSocket bridge within its short reconnect window it closes the Telnet socket and the client reconnects.
 
 ### Game Session Service
@@ -107,6 +107,15 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 - Game Session Service governs all reconnection, deduplication, and rebinding
 - Clients are **fully stateless**
 - Transparent failover is supported across infrastructure layers
+
+## Failure Modes & Reconciliation Rules
+
+`NotifyDisconnect` events and edge behaviour around disconnects are intentionally **advisory**, with Redis and gameplay activity as the source of truth:
+
+- **Authoritative liveness** – Game Session treats Redis session entries, tick activity, and its own heartbeats as authoritative for session liveness. `NotifyDisconnect` is a best-effort, at-least-once hint from the TCP Proxy Service, not the sole indicator of whether a client is still connected.
+- **Idempotent disconnect handling** – Game Session keys disconnect handling by `{proxyConnectionId, disconnectSequence}` and treats duplicate events for the same pair as no-ops. Late events that arrive after a new socket has been bound or after Redis has expired the session are also safe to ignore; they must not forcefully tear down a new, healthy binding.
+- **Missing hints** – Absence of a `NotifyDisconnect` event is never interpreted as a guarantee that the client is still connected. Game Session relies on its own timeouts and region/tick-level activity to clean up stale sessions when disconnect hints are missing (for example due to gRPC transport failures).
+- **Edge ordering vs domain idempotency** – The TCP Proxy → Gateway → Game Session path provides per-connection FIFO where delivered and at-most-once delivery, as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants). Game Session and downstream domain services implement durable idempotency guards (for example effect IDs and transaction rows) so retries and replays within the tick system remain safe even when edge hints are late or duplicated. See [gRPC API Style & Versioning](./system-architecture-grpc.md) and [Transactions & Idempotency](./system-architecture-transactions.md) for the underlying RPC and effect semantics.
 
 ---
 

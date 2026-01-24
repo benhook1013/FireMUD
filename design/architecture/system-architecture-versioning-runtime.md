@@ -13,9 +13,26 @@ The **Game Design Service** manages version metadata and publish workflows for g
 1. When a version is ready, creators trigger a **Publish** action in the Game Design Service using the `PublishVersion` gRPC method.
 2. The service writes a new `version_id` and associated records to its database, linking the version to each tenant and recording notes and base versions.
 3. A Saga coordinates all domain services so they validate and finalize their draft data for the given `tenantId` and `version_id`, marking that data as published and ready for runtime use. Domain services already host the versioned graphs for their domains; no separate design database is copied at publish time.
-4. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
+4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md).
+5. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
 
 Published versions are immutable; further changes require publishing a new `version_id`. Services may keep additional draft or experimental versions internally, but only published versions are eligible to be activated for live game instances.
+
+### Version Lifecycle
+
+Game versions go through a simple lifecycle:
+
+- **Draft** – revisions are still being edited; the version cannot be activated.
+- **Published** – the Saga has completed successfully (including asset export) and the version is available for use by game instances.
+- **Active** – a specific published version is recorded as the `runtime_version` for one or more entries in the `game_instances` table.
+- **Retired/Archived** – the version is no longer eligible to be activated for new instances, and no `game_instances` reference it as `runtime_version`. Only **retired** versions may have their object-store prefixes or other external assets deleted.
+
+Administrative tooling (for example via the Game Design Service or Logging & Admin Service) should:
+
+- Prevent retiring a version while any `game_instances` still reference it.
+- Ensure the `game_manifest` table and any launch manifests are updated when a version is retired so operators cannot accidentally start new instances against it.
+
+Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state.
 
 ### Script-Only Patch Versions
 
@@ -62,6 +79,8 @@ The **Game Session Service** controls which published version is active for each
   table managed by the Game Session Service.
 - Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.
 - All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
+
+Because rollback relies on being able to reactivate previously published `version_id` values, schema migrations must be coordinated with versioned data. See the **Version-Aware Migration Guidelines** in [Database Migrations](./system-architecture-database-migrations.md) for constraints on dropping or reshaping columns that are still used by any published version.
 
 ## Runtime Feature Flags
 

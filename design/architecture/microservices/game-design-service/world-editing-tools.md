@@ -13,9 +13,18 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 ## Workflow
 
 1. Use the web UI to modify rooms, items or NPC definitions.
-2. Each change is stored as a **revision** linked to the author's account.
-3. Revisions are grouped into a **version** and published via the saga workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
-4. Domain services load their own versioned data strictly by `version_id` at runtime; the Game Design Service is not queried during gameplay.
+2. Each change is stored as a **revision** linked to the author's account and
+   associated with concrete domain objects (rooms, regions, NPCs, items) via
+   stable identifiers.
+3. Revisions are grouped into a **version** and published via the saga workflow
+   described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+   The Game Design Service applies the relevant revision set to the World
+   Management and Entity Management services through idempotent design APIs so
+   their template tables reflect the same versioned graphs.
+4. Domain services load their own versioned data strictly by `version_id` at
+   runtime; the Game Design Service is not queried during gameplay. Commit and
+   revision history remains anchored in the Game Design Service even though
+   domain services store the versioned templates.
 
 ## Related Documentation
 

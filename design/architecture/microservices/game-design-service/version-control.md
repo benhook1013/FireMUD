@@ -12,6 +12,23 @@ Design assets are versioned to enable rollback and collaborative workflows. This
 - The service exposes APIs to create branches, merge changes and list commit history.
 - External Git repositories can be synchronized using webhook triggers for advanced workflows.
 
+### History and Provenance Across Services
+
+The Game Design Service is the canonical history store for world and entity
+content even though domain services own the runtime templates:
+
+- Each revision and commit references concrete domain objects (rooms, regions,
+  NPCs, items, templates) via stable identifiers.
+- When a version is published, the service applies the corresponding revision
+  set to downstream services such as World Management and Entity Management via
+  idempotent design APIs so their template tables match the committed graphs.
+- Domain services do not maintain their own commit histories; they expose only
+  the current and historical versioned templates keyed by `(tenantId, versionId)`.
+
+To audit the history of a room, NPC, or item, contributors query the Game
+Design Service’s branches and commits and then correlate the resulting
+revisions with the versioned templates stored in domain services.
+
 ## Benefits
 
 - Designers can experiment on feature branches without affecting the main game line.

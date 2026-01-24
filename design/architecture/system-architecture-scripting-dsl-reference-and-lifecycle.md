@@ -239,6 +239,32 @@ Because script definitions are stored in the Automation & Scripting Service data
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
+### Version Authority & Consistency
+
+At a high level:
+
+- The **Game Design Service** owns the *authoring* view of versions and drives the publish Saga.
+- The **Automation & Scripting Service** owns the *runtime* view of script patch readiness per tenant (for example, whether a patch is `READY` or `FAILED`).
+- The **Game Session Service** owns the *pinned* `scriptPatchVersion` for each game and is responsible for including that version in events sent to the Automation & Scripting Service.
+
+The intended invariants are:
+
+- A script patch may be pinned as the active `scriptPatchVersion` for a game only after the Automation & Scripting Service has loaded and validated that patch for the tenant and marked it `READY` as part of the publish Saga.
+- When Game Session emits events, it includes the currently pinned `scriptPatchVersion`. The Automation & Scripting Service must **not** silently substitute a different version; if the supplied patch is unknown or is marked `FAILED` for that tenant, the trigger is rejected.
+
+From the Automation & Scripting Service’s point of view:
+
+- For each `<tenantId, scriptPatchVersion>` it tracks:
+  - `activePatchVersion` – patch currently used for live execution.
+  - `pendingPatchVersion` – patch being loaded or validated, not yet live.
+  - `patchStatus` – per-tenant status such as `READY`, `FAILED`, or `VALIDATING`.
+- When a trigger arrives:
+  - If `scriptPatchVersion` is `READY` and matches `activePatchVersion`, the scheduler proceeds normally (subject to quotas, sandbox limits, and error handling below).
+  - If `scriptPatchVersion` is unknown or `FAILED` for that tenant, the trigger is rejected with `outcome=version_unavailable` (or a more specific variant such as `skipped_version_unavailable`), and a drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
+  - Automation & Scripting never falls back to an older patch for that trigger; callers must fix the pinned version or republish.
+
+All script-event audit entries include the effective `scriptPatchVersion` at the time of evaluation so operators can correlate failures with patch lifecycle and publish history.
+
 ---
 
 ## Determinism & Allowed Non-Determinism
@@ -404,3 +430,37 @@ Retry behavior:
 - Infrastructure errors **may be retried** by lower layers following platform-wide retry policies and idempotency contracts, but those retries operate only on idempotent downstream operations, not on the DSL body.
 
 When script components call other services over gRPC, they must pass a stable idempotency key (for example, a composite of `<tenantId, regionId, scriptId, scriptEventId, tickId>` or a dedicated `effectId`) and rely on the transaction strategies in `design/architecture/system-architecture-transactions.md` so those downstream operations can be safely retried without duplicating effects.
+
+### Timer Failure Semantics
+
+Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the same **at-most-once per trigger** semantics as other events:
+
+- When a timer becomes due, the scheduler attempts to admit the corresponding trigger subject to per-script quotas, per-tenant budgets, cluster ceilings, and automation tick budgets.
+- If a timer trigger is skipped because of quotas or budgets (for example, tenant budget exhaustion or cluster ceilings), or because the associated patch is `FAILED` or `version_unavailable`, the scheduler records the skip in `script_event_audit` with a canonical outcome (for example, `quota_denied`, `tenant_budget_exceeded`, `version_unavailable`) and updates the corresponding metrics. The skipped firing is **not automatically re-run later**, although subsequent firings based on the cadence may still occur.
+- If a timer trigger fails with `infrastructure_error` (for example, Redis timeouts, gRPC transport failures) after admission, the DSL body is not re-executed for the same `scriptEventId`. Downstream operations may be retried in an idempotent fashion as part of infrastructure-level retries, but the engine does not replay the handler logic.
+- The scheduler’s responsibility is to *attempt* to fire timers that fit within configured budgets and capacity; there is no guarantee of eventual execution for every individual interval or timer firing.
+
+Operators and designers should rely on automation metrics and `script_event_audit` entries to detect missed or heavily throttled timers and adjust cadence, budgets, or script design accordingly.
+
+---
+
+### `onLoad` Semantics and Failure Handling
+
+The `onLoad` lifecycle event is used to initialize shared script state for a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
+
+- `onLoad` handlers run **after** static validation and compilation succeed, but **before** the patch is marked `READY` for a tenant and before the Game Session Service pins it as the active `scriptPatchVersion` for any game in that tenant.
+- Each `onLoad` execution is keyed by `<tenantId, scriptPatchVersion>` and is treated as at-most-once; repeated attempts (for example, after transient infrastructure errors) must be idempotent.
+- Handlers are expected to:
+  - Use idempotent operations and stable idempotency keys when calling downstream services, following patterns from `design/architecture/system-architecture-transactions.md`.
+  - Avoid irreversible side effects that cannot be safely retried or compensated.
+
+Failure handling:
+
+- If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant and allow it to become the `activePatchVersion` during the next reload transition.
+- If `onLoad` fails with a logical or sandbox-level error (for example, misconfiguration, quota denial, sandbox guard), the patch is marked `FAILED` for that tenant:
+  - The previous `activePatchVersion` remains in use for live execution.
+  - Events referencing the failed patch are rejected explicitly with `outcome=version_unavailable` (or a more specific variant such as `onload_failed`) and corresponding metrics.
+  - No automatic retries of the `onLoad` handler occur; an operator or designer must fix the underlying configuration and republish.
+- If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations. If retries are exhausted, the patch is treated as `FAILED` for that tenant as above.
+
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final `outcome` and `reason`, so operators can verify initialization state for each patch and tenant.

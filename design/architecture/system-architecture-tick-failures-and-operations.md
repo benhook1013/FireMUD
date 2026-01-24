@@ -88,6 +88,17 @@ Alerts fire when:
 
 These metrics complement the Redis- and lock-level health metrics described in the Redis architecture and operations docs.
 
+### Ledger Replay Controller
+
+Responsibility for driving ledger rows to a terminal outcome lies with the Game Session Service:
+
+- A background “ledger replay controller” in Game Session:
+  - Periodically scans for `SCHEDULED` rows that have exceeded the configured grace window for a given `(tenantId, regionId, region_epoch, tickId)`.
+  - Replays eligible effects using the same idempotent handlers the tick pipeline uses, marking rows `APPLIED` when domain state confirms success.
+  - Marks rows `ABANDONED` with a precise reason when replay is no longer safe or meaningful (for example, entities removed, sessions expired, or region/tenant/cluster resets that bumped `region_epoch`).
+- The controller also runs on service startup for each region to converge any lingering `SCHEDULED` rows before normal tick processing resumes.
+- For incident handling, the same replay logic is exposed via coordination tooling (for example, an admin CLI or maintenance API) so operators can explicitly drive convergence for a selected `(tenantId, regionId)` or `region_epoch` when guided by runbooks in the Redis operations docs.
+
 Common scenarios and invariants:
 
 - **Primary crash, AOF fully up to date**
@@ -295,6 +306,7 @@ Cross-region flows may use best-effort Redis hint markers such as `remote:<tenan
   - They may be overwritten, duplicated, or lost.
   - Correctness is derived from durable follow-up rows in PostgreSQL, not from the presence of `remote:*` keys.
 - Region-level coordination resets do not attempt to delete `remote:*` keys because these keys are tenant-scoped rather than region-scoped.
+- Tenant- and cluster-scoped coordination resets may drop `remote:*` keys alongside other coordination state for the affected tenant; losing them remains safe because they only affect how quickly remote follow-ups are noticed, not whether those follow-ups eventually apply.
 - After a region reset, the next tick executor:
   - Resumes draining due follow-ups from PostgreSQL into its normal tick pipeline.
   - Treats any stale or missing `remote:*` markers as affecting only how quickly it notices new work, not whether the work is eventually applied.

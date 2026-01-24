@@ -45,6 +45,24 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   prefix; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
+### Saga Participation
+
+The Automation & Scripting Service uses the shared Saga library in two ways:
+
+- **Script upload/update orchestration** – the `UpdateScript` gRPC method runs
+  as a Saga to persist new script definitions, update metadata, and emit audit
+  records with compensation on failure, as noted above and in
+  [Transaction Strategies](../../system-architecture-transactions.md).
+- **Script patch consumption** – when a script-only patch version is published,
+  the Game Design Service drives the Saga; this service participates as a
+  consumer via `NotifyScriptVersionUpdate`, reloading scripts in memory without
+  coordinating its own Saga steps.
+
+Tick-driven automation and event handling never use Sagas; they follow the
+Redis and tick contracts described in
+[System Architecture: Scripting & Automation](../../system-architecture-scripting.md)
+and [Tick System and Runtime Design](../../system-architecture-ticks.md).
+
 ### Redis Role and Prefixes
 
 - **Coordination Redis participation**
@@ -136,7 +154,7 @@ interaction.
 ### Script Lifecycle
 
 - Scripts reside in the Automation & Scripting Service database and are versioned along with other game data as described in the design service versioning process.
-- Events from the Game Session Service trigger script execution via gRPC. For each admitted trigger, the service executes the relevant sandboxed DSL handler **synchronously**, producing domain commands instead of mutating game state directly.
+- Events from the Game Session Service and other domain services trigger script execution via gRPC. For each admitted trigger, the service executes the relevant sandboxed DSL handler **synchronously**, producing domain commands instead of mutating game state directly.
 - The sandboxed engine limits CPU time and memory for each script to prevent runaway behavior.
 - After a handler runs, the resulting commands and metadata are enqueued into `automation:queue:<tenantId>:<entityId>` for the affected entity. `ScriptTickService` then stages, commits, and, when necessary, rolls back these queued work items in Redis. Automation ticks run independently of the main game tick loop and operate only on the `automation:tick:{tenantScriptTag}:*` namespace described above.
   Script ticks never hold the game tick locks (`tick:{tenantRegionTag}:lock:<entityId>`); they only batch and stage automation work before handing it to the Game Session Service, which applies commands under its own tick and locking model. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed once they enter the per-entity tick queues.
@@ -146,10 +164,10 @@ interaction.
 Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each `<tenantId, scriptPatchVersion>`:
 
 - The service tracks the currently executing version as `activePatchVersion` and treats the incoming one as `pendingPatchVersion`, with a simple `reloadState` (`IDLE`, `RELOADING`, `FAILED`) mirroring [Hot Reload & Resume Behavior](../../system-architecture-scripting.md#hot-reload--resume-behavior).
-- On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for that tenant, but in-flight executions complete and triggers remain queued.
-- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts. If the reload succeeds on the current leaders responsible for that tenant, they atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume scheduling.
+- On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for that tenant: in-flight executions complete under the existing patch, but **new triggers are not admitted** while reload is in progress.
+- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts and execute any `onLoad` initialization handlers required for the new patch. If this process succeeds on the current leaders responsible for that tenant, they atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume scheduling.
 - If reload or validation fails, the new patch never becomes active. The service keeps `activePatchVersion` on the prior patch, marks the pending patch as failed and `reloadState=FAILED`, discards any partially loaded state, and resumes scheduling using the last known good configuration. A failure result is reported back to the Game Design Service so the publish can be investigated or retried.
-- Triggers pinned to a failed or unknown `scriptPatchVersion` are rejected explicitly. The service records an audit entry (for example, `skipped_version_unavailable`) and increments a drop metric such as `automation_script_triggers_dropped_total{reason=version_unavailable}` instead of silently falling back to the previous patch.
+- Triggers pinned to a failed or unknown `scriptPatchVersion` are rejected explicitly. The service records an audit entry (for example, `skipped_version_unavailable` or `skipped_reloading`) and increments a drop metric such as `automation_script_triggers_dropped_total{reason=\"version_unavailable\"}` or `automation_script_triggers_dropped_total{reason=\"reloading\"}` instead of silently falling back to the previous patch or allowing unbounded queuing during reload.
 
 This behavior ensures that a script patch either becomes the new active version for that tenant or fails cleanly without affecting live automation behavior.
 
@@ -160,6 +178,12 @@ This behavior ensures that a script patch either becomes the new active version 
   entity.
 - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version`
   is available; the service reloads affected scripts and updates its registry.
+- **Event ingress RPCs** – domain services such as the Game Session Service and Game Logic Service call event-ingress methods (for example, `TriggerScriptEvent` or a batch equivalent defined in `automation_scripting_service.proto`) to deliver script events. These RPCs carry:
+  - `tenantId`, `regionId`, and `entityId` for the target context.
+  - `scriptEventId` as a stable, caller-supplied identifier for the trigger.
+  - `eventType` and versioning metadata such as `scriptPatchVersion`.
+  - An envelope for the event payload, including any domain-specific fields.
+  Event ingress RPCs are **idempotent** with respect to `scriptEventId` within a `<tenantId>` (and, where applicable, `<regionId>`): repeated calls with the same identifiers must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
 
 ## Faction & Reputation System
 

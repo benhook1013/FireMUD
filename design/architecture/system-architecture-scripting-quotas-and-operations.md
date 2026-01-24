@@ -73,6 +73,19 @@ The main mechanisms include:
 
 These controls work alongside the **failure-rate circuit breaker**, which can automatically place scripts into a `disabled_due_to_errors` state when error rates exceed configured thresholds in a window.
 
+### Plugin Workloads
+
+Plugins executed via the modding framework share the same underlying quota and scheduling infrastructure as regular scripts:
+
+- Each plugin is represented in the Automation & Scripting Service as a script-like runtime object with a distinct identifier (for example, `scriptType=PLUGIN` plus `pluginId` and `pluginVersionId` metadata) and participates in the same per-script quota and concurrency model.
+- Plugin triggers (for example, `onEnterRoom` or `onItemUse` events wired through the plugin system) run under the same multi-level budgeting model:
+  - Per-plugin quotas enforced by `ScriptQuotaService`.
+  - Per-tenant budgets, including priority tiers (for example, `high`, `normal`, `background`).
+  - Cluster-wide ceilings and automation tick budgets.
+- From an observability perspective, plugin executions are recorded in `script_event_audit` alongside other script runs, with additional tags such as `pluginId` and `pluginVersionId` so operators can distinguish plugin activity from core automation.
+
+This alignment ensures that plugin code cannot bypass or weaken the resource-isolation guarantees of the scripting system; operational tooling and metrics apply uniformly to both plugins and regular scripts.
+
 ### Per-Script Scheduling Policies
 
 Per-script scheduling knobs control how often scripts are allowed to run and how they behave under load:
@@ -160,6 +173,32 @@ Additional queue-health metrics help detect automation backlogs that are not dra
 - `automation_queue_oldest_entry_age_seconds` – records the age of the oldest sampled queue item per tenant/script so operators can see when automation queues are falling behind.
 
 A small, bounded inspector loop in `ScriptTickService` periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between automation and tick processing for investigation.
+
+### Cross-Service Correlation
+
+Script execution spans several services (Game Design, Game Session, Automation & Scripting, Game Logic, Logging & Admin). To support end-to-end debugging and replay, the system relies on a shared set of identifiers:
+
+- `tenantId` and `regionId` – identify the game and region.
+- `entityId` – identifies the target entity for script-driven work.
+- `scriptId` and `scriptPatchVersion` – identify the script definition and patch.
+- `scriptEventId` – uniquely identifies a particular trigger from the caller’s perspective.
+- `tickId` – identifies the authoritative game tick in which commands execute.
+- `correlationId` – optional cross-service correlation token for Sagas and user-visible flows.
+
+These identifiers appear consistently in:
+
+- `script_event_audit` records in the Automation & Scripting Service.
+- Tick logs and effect ledgers in the Game Session and Game Logic services.
+- Logs and traces emitted by the Logging & Admin Service.
+
+A typical troubleshooting flow for a problematic script or plugin is:
+
+1. Start from a player-visible issue or a game tick log that includes `tenantId`, `regionId`, `entityId`, and `tickId`.
+2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and automation metrics (for example, `automation_script_triggers_total` and `automation_script_triggers_dropped_total`).
+3. From those records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`.
+4. Cross-reference the associated publish or plugin enable/disable actions in Game Design and Logging & Admin using the same identifiers.
+
+By consistently tagging metrics and audits with these identifiers, operators can follow a single script event across authoring, publishing, execution, and downstream effects without needing ad hoc joins or heuristics.
 
 ### Outcome-to-Metric Mapping
 

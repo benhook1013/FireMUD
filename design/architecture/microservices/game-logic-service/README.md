@@ -38,6 +38,16 @@ Executes the core gameplay rules and command parsing. It processes player action
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
 
+### Saga Participation
+
+The Game Logic Service does not orchestrate or own any Saga workflows. All
+gameplay commands execute inside ticks using Redis-based rollback and the
+transaction model described in [Transaction Strategies](../../system-architecture-transactions.md).
+When a game version is published, its rule data is prepared and finalized by
+the Game Design and Game Session services; this service simply reads the
+already-published, versioned rule data for the active `runtime_version` and
+does not participate directly in the publish Saga.
+
 ### Redis Role and Prefixes
 
 - **Coordination Redis**

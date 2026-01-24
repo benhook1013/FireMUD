@@ -69,7 +69,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
   - A **trigger** is a concrete event such as `onEnterRegion`, `onSpawn`, `onCommand`, or a custom event emitted by a service.
   - Each trigger starts a **single run** of your script’s graph for a specific context (for example, a particular NPC or region).
   - Common triggers are surfaced as **event source nodes** in the visual editor.
-  - There is also a script-level lifecycle event, `onLoad`, which runs once per script version for a tenant to initialize shared script state; per-entity setup should still use events like `onSpawn` and `onEnterRegion`. See the reference doc for the full `onLoad` lifecycle semantics.
+  - There is also a script-level lifecycle event, `onLoad`, which runs once per script version for a tenant to initialize shared script state; per-entity setup should still use events like `onSpawn` and `onEnterRegion`. `onLoad` must be safe to retry and is treated as part of the publish and activation flow for a script patch—if `onLoad` fails for a tenant, that patch may not go live until the underlying issues are fixed. See the reference doc for the full `onLoad` lifecycle semantics and failure behavior.
 
 - **Conditions and actions**
   - **Condition nodes** check world state or inputs, then branch via labeled outputs such as `onTrue` / `onFalse` or `onBelowThreshold` / `onAboveThreshold`.

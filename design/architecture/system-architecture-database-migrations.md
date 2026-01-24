@@ -35,6 +35,29 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   these migrations on startup.
 - New migrations are committed alongside service code so history stays with the owning service.
 
+### Version-Aware Migration Guidelines
+
+Because game data is versioned and previously published `version_id` values may
+be reactivated for rollback, migrations must be written to preserve the ability
+to load existing versioned graphs:
+
+- Prefer **additive** changes (adding tables/columns, widening types) while any
+  published versions still depend on the existing schema shape.
+- When a column or table needs to be removed or repurposed:
+  - First introduce replacement fields and write data-migration steps that
+    copy or transform data for all active and published versions.
+  - Mark the old fields as deprecated in service documentation and avoid using
+    them for new versions.
+  - Drop or repurpose the deprecated fields only after all affected versions
+    have been retired according to the lifecycle in
+    [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+- Avoid destructive operations (`DROP COLUMN`, `DROP TABLE`, type narrowing)
+  that would make it impossible to reconstruct historical versions that are
+  still eligible for rollback.
+
+These rules apply both to service-local schemas and to shared saga tables so
+that rollback and historical analysis remain viable across deployments.
+
 ## CI/CD Execution
 
 - Flyway runs automatically when a service container starts.

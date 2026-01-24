@@ -67,6 +67,12 @@ manifest files.
   corresponding APIs expose these records.
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
 
+Design-time tables (such as `revision`, `version`, `game_templates`,
+`runtime_flag`, and `game_assets`) are the source of truth for world and entity
+history. Domain services (World Management, Entity Management, etc.) store the
+versioned templates they consume at runtime, but commit and revision history
+remains anchored in the Game Design Service.
+
 ### Design Workflow
 
 1. Creators use the web UI to craft worlds, items, and scripts.

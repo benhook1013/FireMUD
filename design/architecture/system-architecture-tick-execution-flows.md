@@ -126,6 +126,19 @@ Remote follow-ups (work created in one region but owned by entities in another) 
 
 Best-effort hint markers (`remote:<tenantId>:<entityId>`) are only allowed to influence latency. Correctness is derived solely from the durable follow-up records in PostgreSQL and the idempotent handling of those records in the target region’s tick pipeline.
 
+## Cross-Region Commands Under Resets
+
+Cross-region flows participate in the same coordination timeline and reset rules as purely local ticks:
+
+- Each leg of a cross-region command is tied to a specific `(region_epoch, tickId, effectKey)` on its origin or target region, and its durable state is tracked in the tick effect ledger and follow-up tables described in `system-architecture-tick-failures-and-operations.md`.
+- When a region/tenant/cluster reset bumps `region_epoch` for a region, any surviving `SCHEDULED` ledger rows or follow-ups from the old epoch converge to `ABANDONED` under the ledger rules; they are not silently retried on the new epoch.
+- Origin regions must treat:
+  - Explicit `ABANDONED` outcomes from target-region effects as a failed or partial remote leg and, where relevant, surface that status to players (for example, “the remote portion of your action failed”).
+  - Timeouts waiting for remote results as equivalent to a failed remote leg and mark their own coordinating effects as `ABANDONED` with an appropriate reason once the timeout elapses.
+- By default, cross-region commands are **best-effort and eventually consistent**, not globally atomic across regions:
+  - Each leg still satisfies the “no double-apply” and APPLIED/ABANDONED convergence invariants.
+  - Features that require stronger “all-or-nothing across regions” behavior must document that requirement explicitly and provide their own higher-level coordination on top of these primitives.
+
 ## Tick Chaining and Reentrant Effect Control
 
 Some effects (for example, explosions, chained spells, scripted traps) spawn follow-up actions. To keep this behavior bounded:

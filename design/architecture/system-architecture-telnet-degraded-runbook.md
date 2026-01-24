@@ -11,6 +11,7 @@ For the design of the Telnet and protocol-bridging path, see:
 
 - Players using Telnet cannot connect or experience frequent disconnects.
 - Metrics show elevated errors or latency on the TCP Proxy Service or protocol-bridging components.
+- In some incidents, Web clients may remain healthy while Telnet is degraded; in others, WebSocket connectivity may degrade independently of Telnet. This runbook focuses on the Telnet path but includes a brief checklist for Web-only WebSocket issues so operators can quickly compare paths.
 
 ## Triage
 
@@ -60,3 +61,27 @@ For the design of the Telnet and protocol-bridging path, see:
    - If Telnet is degraded but WebSocket is healthy and the root cause is not immediately fixable:
      - Communicate to players that Telnet may be unreliable and recommend the Web client as a temporary workaround.
      - Track the incident and any config changes in the Logging & Admin Service / runbook history so future investigations can correlate behavioral changes with deployment events.
+
+## Buffer, Slow-Client, and WebSocket-Specific Considerations
+
+The TCP Proxy Service and WebSocket path enforce backpressure rather than silently dropping gameplay lines; understanding how this shows up in metrics and user reports helps distinguish client issues from server-side regressions:
+
+- **TCP Proxy output buffer and slow Telnet clients**
+  - When a Telnet client cannot keep up with outbound traffic (for example due to a very slow terminal or network), the proxy’s per-socket output buffer can fill. In this case the proxy **closes the Telnet connection with a clear message** instead of silently discarding lines mid-stream. Expect to see:
+    - Elevated `tcpproxy.telnet.discarded` with reasons related to buffer or rate ceilings.
+    - Short-lived connections from the same IP repeatedly hitting the same limits.
+  - If this pattern affects many well-behaved players simultaneously, treat it as a configuration or gameplay-output problem (for example an excessively verbose broadcast) and consider:
+    - Temporarily relaxing per-socket output limits in the affected environment while you reduce output volume or fix the regression.
+    - Coordinating with game designers to avoid bursty, unbounded broadcast patterns that overwhelm slow clients.
+  - If the pattern is confined to a handful of IPs, treat it as client-side slowness or abuse and prefer blocking or rate limiting those sources rather than relaxing global limits.
+
+- **WebSocket path checks when Web clients are degraded**
+  - When Web clients (browser or other WebSocket-based tools) experience frequent disconnects or stalled gameplay while Telnet remains healthy:
+    - Verify that the `/ws/game/**` route is still present and correctly configured in Spring Cloud Gateway (route predicates, filters, and target Service).
+    - Check Gateway metrics for elevated connection churn or WebSocket send failures on the gameplay route, and correlate with Game Session metrics to ensure backend pods are healthy.
+    - Confirm that any load balancer or CDN in front of the gateway is not terminating idle WebSocket connections too aggressively compared to the expected gameplay session duration.
+  - WebSocket send failures and slow-client issues should result in the connection being closed rather than frames being silently dropped. If you observe symptoms that look like partial updates or missing messages without disconnects, treat this as a bug in the gateway or Game Session implementation and open an incident referencing this runbook and [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
+
+- **Telnet vs Web-only incidents**
+  - If Telnet is degraded while Web remains healthy, this runbook plus the TCP Proxy design should be your primary reference.
+  - If Web is degraded while Telnet remains healthy, start with the WebSocket checklist above and Spring Cloud Gateway documentation; treat the Telnet path as a known-good control when forming hypotheses and testing fixes.

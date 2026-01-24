@@ -50,9 +50,24 @@ When using a self-hosted MinIO cluster as the asset store:
    - When the gateway proxies `/assets/**` to MinIO, set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` so published manifests generate public URLs.
 5. **Removing published versions**
 
-   To remove a published tenant version, delete the corresponding prefix:
+   Removing assets for a published version must be coordinated with the version
+   lifecycle described in
+   [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md):
 
-   ```bash
-   kubectl run mc --rm -it --image=minio/mc --command -- \
-     sh -c "mc rm -r --force local/firemud-assets/<tenant>/<version>/"
-   ```
+   - Only **retired/archived** versions (no `game_instances` rows reference the
+     `version_id` as `runtime_version`, and the version is no longer listed as
+     launchable in `game_manifest`) are eligible for asset deletion.
+   - Prefer invoking a higher-level admin workflow (for example an
+     `ArchiveVersion` or `RetireVersion` operation in the Game Design or
+     Logging & Admin Service) that:
+       - Verifies the version is eligible for retirement.
+       - Updates manifests and internal metadata to mark it as retired.
+       - Deletes the corresponding `<tenant>/<version>/` prefix from the object
+         store.
+
+   Directly deleting a prefix with `mc rm` should be treated as a last-resort
+   manual fix and only performed after verifying that:
+
+   - No game instances can be started or restarted against this `version_id`.
+   - The Game Design and Game Session services have already marked the version
+     as retired.

@@ -44,6 +44,11 @@ Two related concepts:
 - **Tick execution** – the authoritative per-region loop inside the Game Session Service.
 - **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) exposing `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
 
+The tick heartbeat is the **canonical timeline** for each `<tenantId, regionId>`:
+
+- `tickId` is monotonic per region within a given `region_epoch`.
+- Consumers must be able to reconstruct their view of progress and scheduling purely from the heartbeat stream plus durable domain state; no Redis structure is treated as an authoritative log of past ticks.
+
 In addition to the gRPC heartbeat, the Game Session Service exposes a **tick event stream** for schedulers and observers:
 
 - Events are keyed by `<tenantId, regionId>` and include:
@@ -54,8 +59,10 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
 - Consumers (for example, schedulers or reconnection logic) typically:
   - Acquire a small lease such as `tick-events-lease:{tenantRegionTag}` to avoid duplicate processing.
   - Persist their last-processed offset in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}` so they can resume from the correct `tickId` after restarts.
-- The stream itself is a **best-effort coordination structure**, not a durable log of record:
-  - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}` using Redis Streams or pub/sub as long as per-region ordering is preserved.
+- The event stream is a **best-effort coordination structure**, not a durable log of record:
+  - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}`.
+  - Production-like profiles that persist offsets use **Redis Streams** for this prefix so consumers can resume from an offset; pub/sub is reserved for fire-and-forget observers that never track offsets or history.
+  - Events may be dropped, duplicated, or reordered relative to the heartbeat; correctness must not rely on seeing every past event.
   - It is classified as **reset-tolerant** in the Redis reset policy matrix: region/tenant/cluster resets may drop both the event stream and any stored offsets without violating correctness.
   - Consumers must treat missing or truncated history as a signal to re-establish their baseline from the canonical gRPC heartbeat and domain state rather than assuming every past event is available.
 

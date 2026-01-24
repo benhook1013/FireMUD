@@ -23,11 +23,11 @@ Despite their differences, both protocols are normalized into the same internal 
 - Connections are initiated using the WebSocket protocol.
 - Routed through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md), which supports WebSocket proxying.
 - Forwarded to the [Game Session Service](./microservices/game-session-service/README.md), which maintains the gameplay session.
-- Spring Cloud Gateway restarts automatically re-establish backend WebSocket connections.
+- When Spring Cloud Gateway or Game Session pods restart, **clients reconnect their WebSocket connections**, and Game Session uses Redis-backed session state to resume gameplay where possible as described in [Reconnection Strategy](./system-architecture-reconnection.md). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts; it simply resumes routing once clients re‑establish connections.
 
 ### WebSocket Flow Benefits
 
-- Leverages Spring Cloud Gateway’s routing, auth, logging, and rate limiting.
+- Leverages Spring Cloud Gateway’s routing, header enforcement and forwarding, logging, and rate limiting while leaving authentication and authorization decisions to backend services as described in [Authentication & Authorization](./system-architecture-authentication.md).
 - Ideal for web UIs, admin tools, or companion clients.
 
 ---
@@ -39,7 +39,42 @@ Despite their differences, both protocols are normalized into the same internal 
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
 - The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
-- Normal Telnet clients never need to send a `SESSION` envelope. They connect, issue `LOGIN`, and let the Game Session Service create or bind the session exactly as WebSocket clients do; `SESSION` is an **optional optimization** for advanced tools. This document intentionally does not redefine envelope or header rules; for the canonical `SESSION` envelope behaviour (including malformed/partial handling and header propagation), see the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section.
+- Normal Telnet clients never need to send a `SESSION` envelope. They connect, issue `LOGIN`, and let the Game Session Service create or bind the session exactly as WebSocket clients do; `SESSION` is an **optional optimization** for advanced tools. This document intentionally does not redefine envelope or header rules; for the canonical `SESSION` envelope behaviour (including malformed/partial handling and header propagation), see the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section. `SESSION` envelopes are scoped to a single TCP connection: advanced clients that reconnect must resend `SESSION` if they want those hints/headers applied on the new connection, even when the underlying gameplay session resumes from Redis.
+
+MCP negotiation and cord state are also scoped to a single TCP connection. When a Telnet client reconnects after any disconnect (including Gateway outages, TCP Proxy restarts, or client-side network loss), it must re-run MCP negotiation and re-open any required cords. Redis-backed gameplay session state (account/player identity, tick queues, cooldowns) is distinct from MCP/SESSION state and governs whether gameplay resumes or starts fresh. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery) for details.
+
+---
+
+## Ordering & Delivery Invariants
+
+The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves a clear set of ordering and delivery guarantees for gameplay commands:
+
+- **Per-connection FIFO where delivered** – For a given Telnet/TCP or WebSocket connection, commands and text lines are forwarded to the Game Session Service in the same order they were accepted by the edge (TCP Proxy for Telnet, Gateway for WebSocket). No component in the chain intentionally reorders gameplay messages or generates duplicates.
+- **At-most-once delivery with bounded loss** – The protocol path itself is **at most once**: once a command is dropped by any layer (for example due to buffer ceilings or abuse limits), it is not retried or replayed by that layer. Higher-level retries and replay semantics live entirely in Game Session and domain services; see [Transactions & Idempotency](./system-architecture-transactions.md) for the canonical idempotency model.
+- **Explicit drop conditions** – Commands or lines may be dropped under clearly defined conditions, including:
+  - TCP Proxy per-connection ceilings such as `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` when the WebSocket bridge is unavailable within the configured reconnect window;
+  - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
+  - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed envelopes) where the proxy either discards input or closes the connection;
+  - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
+- **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After any disconnect, clients must resend `LOGIN` (and any optional `SESSION`/MCP negotiation) and rely on Game Session and Redis to resume or start fresh.
+
+Domain services treat incoming commands as **idempotent with respect to their effect identifiers** so that retries at the Game Session layer (for example tick replays) can safely handle duplicates even though the edge path is at-most-once. See [Transactions & Idempotency](./system-architecture-transactions.md) and [Redis Architecture](./system-architecture-redis.md) for the underlying invariants.
+
+---
+
+## Backpressure & Slow Clients
+
+Backpressure and slow-client handling are split across layers so that the platform remains robust without silently corrupting gameplay streams:
+
+- **Telnet/TCP clients (TCP Proxy Service)**
+  - The TCP Proxy Service enforces a strict per-socket output buffer limit. When a Telnet client cannot keep up with outbound traffic and the proxy’s output buffer fills, the proxy closes the Telnet connection with a clear message rather than silently dropping gameplay lines in the middle of a session. Relevant events are surfaced via metrics such as `tcpproxy.telnet.discarded` and per-connection counters; see the TCP Proxy Service design’s **Connection Limits and Abuse Protection** section.
+  - Input-side backpressure is governed by per-connection and per-IP line-rate budgets, as well as MCP-specific limits. Excess input beyond these budgets may be dropped (for example MCP control lines over budget) or cause the proxy to close the connection for sustained abuse. The Telnet degraded runbook documents how operators should interpret these metrics and when to adjust limits vs block abusive sources.
+- **WebSocket clients (Gateway + Game Session Service)**
+  - WebSocket backpressure is provided primarily by the underlying WebSocket implementation. When a client is slow to read, outbound send buffers eventually fill; repeated send failures or timeouts are treated as a reason to close the WebSocket connection rather than silently discarding frames.
+  - Spring Cloud Gateway’s Redis-backed rate limiting focuses on **connection establishment and HTTP requests**, not individual WebSocket frames, as described in [Gateway Architecture](./system-architecture-gateway.md#rate-limiting--abuse-protection). Once a WebSocket is established to `/ws/game/**`, ongoing gameplay messages traverse the connection without additional gateway-level frame-by-frame throttling; Game Session Service enforces per-session and per-command safety.
+  - When WebSocket connections close due to slow-client behavior or network issues, clients must reconnect and re-`LOGIN`; Game Session’s Redis-backed state determines whether gameplay resumes or starts fresh, per [Reconnection Strategy](./system-architecture-reconnection.md).
+
+This model favors **clear closures over silent drops** when a client cannot keep up, and centralizes any higher-level retries or deduplication in Game Session and domain services.
 
 ### Telnet edge proxy and PROXY protocol
 

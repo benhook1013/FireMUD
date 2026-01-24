@@ -4,7 +4,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 ## Gateway Pattern
 
-**Spring Cloud Gateway** serves as the **single entry point** into the FireMUD system for all **external client traffic**:
+**Spring Cloud Gateway** serves as the **single HTTP(S)/WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP/WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform.
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
@@ -13,9 +13,8 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - Deployed in both development and production environments
 - **Stateless and horizontally scalable** – no sticky sessions required
 - Auto‑scaling policies handle high concurrency
-  - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; Spring Cloud Gateway
-    itself does not hold session state between reconnects
-  - Gateway restarts are *transparent* for gameplay sessions: clients reconnect over WebSocket, and the Game Session Service restores gameplay state using Redis as described in [Reconnection Strategy](./system-architecture-reconnection.md).
+  - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; Spring Cloud Gateway itself does not hold session state between reconnects
+  - Gateway restarts are *transparent* for gameplay sessions in the sense that **clients reconnect their WebSocket connections**, and the Game Session Service restores gameplay state from Redis as described in [Reconnection Strategy](./system-architecture-reconnection.md). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts; it simply resumes routing once clients re-establish connections.
 - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
 
 > **Implementation status note (Telnet WebSocket mTLS):**

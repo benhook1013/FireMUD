@@ -91,6 +91,19 @@ Client authors should treat MCP integration as **backwards-compatible but evolvi
 - Do not assume that every documented package is available in all environments; rely on the negotiated package list rather than hard-coding expectations.
 - Avoid making gameplay-critical flows depend solely on MCP; the plain text protocol remains the canonical channel for commands and responses, and MCP is used to augment the experience with structured data.
 
+## Reconnection & Session Recovery
+
+MCP state is **strictly per TCP connection** and does not survive reconnects on its own:
+
+- When a Telnet client disconnects and later reconnects (whether due to client-side network loss, TCP Proxy restart, Gateway outages, or other infrastructure events), the TCP connection and its associated MCP negotiation are gone. Redis-backed gameplay session state (account/player bindings, tick queues, cooldowns) lives in the Game Session Service and determines whether gameplay resumes or starts fresh, but it does **not** restore MCP negotiation or cords.
+- After any reconnect, MCP-aware clients must:
+  - Re-run the `mcp` version negotiation and agree on a fresh `authentication-key`.
+  - Re-advertise and activate packages with `mcp-negotiate-can` / `mcp-negotiate-end`.
+  - Re-open any required cords (for example status panels) using `mcp-cord-open`.
+- Telnet `SESSION` envelopes are likewise per TCP connection. Advanced clients that rely on `SESSION` for session/tenant hints must resend the envelope on reconnect if they want those hints to apply again, even when the underlying gameplay session resumes from Redis.
+
+From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect, and Game Session uses Redis-backed state to decide whether to resume or start a new session. MCP and `SESSION` provide additional structure and hints on top of that flow but never replace the core text protocol or Redis session state as the source of truth.
+
 ## Example Workflow
 
 1. Client connects and negotiates MCP support with the TCP Proxy Service.

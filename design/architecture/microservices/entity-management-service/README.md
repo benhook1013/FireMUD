@@ -22,7 +22,10 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 - Item transfers and other gameplay actions span services but execute within ticks
   using Redis scripts for rollback. Sagas are reserved for non-gameplay
   workflows. See [Transaction Strategies](../../system-architecture-transactions.md).
-  This service does not participate in any saga workflows.
+- For long-running, non-gameplay workflows such as publishing a game version,
+  this service participates as a domain step in Saga flows coordinated by the
+  Game Design Service as described in
+  [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 - All entity tables include a `tenantId` column. Service methods always filter on
   this value so character data for different games remains isolated; Redis keys
   mirror this prefix. Details are in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
@@ -35,6 +38,40 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
+
+## Data Model and Versioning
+
+Entity Management maintains a clear separation between **template/design data**
+and **live runtime entities** so authoring workflows cannot corrupt active games:
+
+- Template tables (for example item and NPC definitions, balance curves) are
+  stored as versioned design records keyed by `(tenantId, versionId)` and are
+  updated only through design-time workflows orchestrated by the Game Design
+  Service.
+- Live runtime entities (characters, inventories, containers including
+  room-ground containers) are stored in runtime tables keyed by
+  `tenantId` plus runtime identifiers such as `entityId` and game-instance or
+  shard identifiers. These rows are mutated only by tick-driven gameplay flows.
+- Publishing a version finalizes template rows for that `(tenantId, versionId)`
+  and records them as immutable inputs for future game instances. Runtime
+  entity state never changes those template rows; it only references them via
+  stable identifiers.
+
+See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
+and [Item & Equipment Balancing Tools](../game-design-service/item-equipment-balancing.md)
+for how design-time definitions flow into these versioned templates.
+
+### Saga Participation
+
+Entity Management does not orchestrate its own Saga workflows and does not use
+Sagas for tick-driven gameplay or inventory operations. For long-running,
+non-gameplay workflows such as publishing or rolling back a game version, it
+participates as a domain step in Sagas coordinated by the Game Design Service
+and Game Session Service. These workflows finalize or validate versioned
+template data for `(tenantId, versionId)` without touching live runtime
+entities. See [Transaction Strategies](../../system-architecture-transactions.md)
+and [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
+for the overall Saga patterns.
 
 ### Redis Role and Prefixes
 

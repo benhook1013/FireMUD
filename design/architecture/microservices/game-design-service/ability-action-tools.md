@@ -13,6 +13,14 @@ Game creators build complex combat systems without modifying the core engine. Al
 
 The web-based editor described in [Web-Based Visual Design Interface](web-visual-interface.md) serves as the front end for these tools.
 
+## Integration with the Scripting DSL
+
+Abilities and actions defined through these tools can participate in scripted behavior:
+
+- The scripting DSL exposes components that can reference abilities and action sequences (for example, nodes that conceptually “cast ability X” or “trigger action sequence Y”). These nodes emit commands into the tick system rather than bypassing Game Logic.
+- From the scripting engine’s perspective, invoking an ability is just another domain command; it is subject to the same per-entity, per-tick fairness rules and idempotency guarantees described in `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
+- Script-side quotas and budgets, as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`, indirectly cap ability-heavy behaviors (for example, scripts that attempt to spam abilities) by limiting how often the relevant script handlers may run and how many commands they may produce.
+
 ## Capabilities
 
 - **Ability Editor** – create spell and skill definitions with cooldowns, resource costs, and targeting rules.

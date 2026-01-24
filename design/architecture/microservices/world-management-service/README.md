@@ -14,6 +14,23 @@ The World Management Service stores and manages game world topology and content 
 - Track character locations and instance occupancy
 - Do not store or manage live item or inventory state; room inventory and ground items are derived from Entity Management queries scoped by room/instance identifiers.
 
+### Identifiers
+
+World Management distinguishes the following identifiers when storing and
+serving data:
+
+- `tenantId` – identifies the game (tenant) as described in
+  [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+- `versionId` – identifies a published world/template configuration owned by
+  domain services as described in
+  [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- `gameInstanceId` – identifies a running game instance managed by the Game
+  Session Service.
+
+Template/topology data is keyed by `(tenantId, versionId)`, while runtime world
+instances are keyed by `(tenantId, gameInstanceId)` with references back to the
+active `versionId`.
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
@@ -22,10 +39,10 @@ The World Management Service stores and manages game world topology and content 
 - Supports procedural generation with options for dynamic world expansion.
 - Uses a region → zone → room hierarchy for efficient lookups.
 - Publishes world event notifications for NPC scripts and game logic processing.
-- During version publishing the service participates in a Saga that finalizes versioned world data for each `tenantId` and `version_id`, ensuring world data matches the active version. See
+- During version publishing the service participates in a Saga that finalizes versioned world template data for each `tenantId` and `version_id`, ensuring world data matches the active version. See
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
   and [Transaction Strategies](../../system-architecture-transactions.md).
-- World creation for new games runs as a Saga, inserting a starter region instance and seeding initial world state based on the published version. See [World Creation Workflow](world-creation-workflow.md).
+- World creation for new games runs as a Saga, inserting a starter region instance and seeding initial world state for a particular `gameInstanceId` based on the published version. See [World Creation Workflow](world-creation-workflow.md).
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../../system-architecture-multi-tenancy.md).

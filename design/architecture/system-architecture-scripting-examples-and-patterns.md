@@ -99,3 +99,11 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using recorded `outcome` and `reason` fields alongside identifiers like `scriptEventId`, `scriptId`, and `tickId`.
 
 As with `onEnterRegion`, reload failures or version issues are surfaced via specific outcomes (for example, `skipped_reloading`, `version_unavailable`) and corresponding metrics, detailed in the quotas and operations document.
+
+### Timer Reliability Notes
+
+Timer-driven handlers such as `onInterval` follow the same **at-most-once per trigger** semantics described in the DSL reference:
+
+- If an `onInterval` firing is skipped because of quotas, tenant budgets, cluster ceilings, or version issues, that specific firing is not automatically replayed later, although subsequent firings based on the cadence may still occur.
+- If an admitted `onInterval` firing fails with `infrastructure_error`, lower layers may retry individual downstream operations in an idempotent way, but the DSL body is not re-executed for the same `scriptEventId`.
+- Designers and operators should use `script_event_audit` and automation metrics to detect heavily throttled or consistently failing timers and adjust cadence, budgets, or script design as needed.
