@@ -61,3 +61,19 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Persistent contention or stalled-progress alerts should drive **design or layout changes** (region boundaries, command costs) rather than only adding replicas.
 
 Scaling decisions should be made against these metrics so that additional capacity actually improves tick health, tail-loss envelopes, and cross-region behavior instead of only shifting bottlenecks.
+
+## Starting Guardrails (Baseline Sizing)
+
+The exact safe limits for a deployment depend on hardware and tuning, but the following **baseline guardrails** provide a starting point that aligns with the tick and Redis SLOs. They are intentionally conservative and should be validated and adjusted via load tests:
+
+- **Per-Game Session instance region density**
+  - For tick intervals around `100–250ms`, start with **no more than 50–100 active regions** per Game Session pod.
+  - If `tick.execution_time_ms_p99 / tick_interval_ms` regularly exceeds ~0.5 for any region, treat that as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
+- **Per-region coordination load**
+  - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
+  - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
+- **Redis tail-loss envelope**
+  - Size Coordination Redis so that measured `tail_loss_ms` remains within the 1–2 second envelope (or roughly `≤ 2 × tick_interval_ms`) under expected peak load.
+  - If tail-loss regularly exceeds that envelope after scaling application services, prioritize Coordination Redis capacity (CPU, memory, AOF layout) or region density before adding more tick producers.
+
+Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and tail-loss metrics so operators can make informed scaling decisions in future iterations.

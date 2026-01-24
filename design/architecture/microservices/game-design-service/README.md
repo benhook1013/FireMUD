@@ -17,6 +17,7 @@ manifest files.
 - Upload branding assets to version-scoped object storage and generate a
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
+- Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store.
 
 ## Architecture / Design Notes
 

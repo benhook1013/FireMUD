@@ -15,6 +15,15 @@ Procedural generation allows games to quickly bootstrap playable areas, spawn in
 - 🧱 **Design Templates** – Offer scaffolds for designers to expand on.
 - 🔁 **Replayable Zones** – Create consistent layouts from the same seed across sessions.
 
+Generation flows fall into two categories:
+
+- **Design-time/template generation** – invoked from Game Design workflows to produce
+  versioned world scaffolding that is saved into template tables keyed by
+  `(tenantId, versionId)` and later published like any other design asset.
+- **Runtime/instance generation** – invoked from world-creation Sagas or tick-driven
+  commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these
+  flows never modify template tables for Published versions.
+
 ---
 
 ## Generator Types
@@ -44,7 +53,17 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as versioned world records. Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details.
+Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records depending on the calling context:
+
+- When invoked from Game Design workflows for **design templates**, results are
+  persisted as template rows keyed by `(tenantId, versionId)` and become part of
+  the published topology for that version.
+- When invoked from world-creation Sagas or tick-driven commands for **runtime
+  instances**, results are persisted as instance rows keyed by
+  `(tenantId, gameInstanceId)` and refer back to the chosen `versionId`; template
+  rows remain unchanged.
+
+Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details appropriate to the template or instance context.
 
 ---
 
@@ -97,7 +116,7 @@ The following rules align generators with the core runtime and tooling:
 
 1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended, configurable time budget.
 2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions.
-3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. The **Automation & Scripting Service** includes these values in its result payload but **does not store** them.
+3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`. The **Automation & Scripting Service** includes these values in its result payload but **does not store** them.
 4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. Generators resolve tenant feature flags/config before execution.
 5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
 6. **Post-generation Population** – After rooms are created, the Automation & Scripting Service triggers population scripts based on room tags, biome, and difficulty zone.

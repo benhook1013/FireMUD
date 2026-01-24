@@ -50,13 +50,15 @@ MCP negotiation and cord state are also scoped to a single TCP connection. When 
 The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves a clear set of ordering and delivery guarantees for gameplay commands:
 
 - **Per-connection FIFO where delivered** – For a given Telnet/TCP or WebSocket connection, commands and text lines are forwarded to the Game Session Service in the same order they were accepted by the edge (TCP Proxy for Telnet, Gateway for WebSocket). No component in the chain intentionally reorders gameplay messages or generates duplicates.
-- **At-most-once delivery with bounded loss** – The protocol path itself is **at most once**: once a command is dropped by any layer (for example due to buffer ceilings or abuse limits), it is not retried or replayed by that layer. Higher-level retries and replay semantics live entirely in Game Session and domain services; see [Transactions & Idempotency](./system-architecture-transactions.md) for the canonical idempotency model.
+- **At-most-once delivery with bounded loss** – The protocol path itself is **at most once**: once a command is dropped by any layer (for example due to buffer ceilings or abuse limits), it is not retried or replayed by that layer. “Bounded” here means that potential loss is limited to the commands still resident in that layer’s per-connection buffers or reconnect windows at the time of failure; there is no implicit replay across disconnects. Higher-level retries and replay semantics live entirely in Game Session and domain services; see [Transactions & Idempotency](./system-architecture-transactions.md) for the canonical idempotency model.
 - **Explicit drop conditions** – Commands or lines may be dropped under clearly defined conditions, including:
   - TCP Proxy per-connection ceilings such as `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` when the WebSocket bridge is unavailable within the configured reconnect window;
   - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
   - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed envelopes) where the proxy either discards input or closes the connection;
   - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
 - **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After any disconnect, clients must resend `LOGIN` (and any optional `SESSION`/MCP negotiation) and rely on Game Session and Redis to resume or start fresh.
+
+When any layer drops input due to its own limits or backpressure protections, it must either close the connection with a clear, human-readable message or (for WebSocket clients) send an explicit error/close reason before terminating the session; edge components do **not** silently discard gameplay commands while keeping a connection that appears healthy to the client.
 
 Domain services treat incoming commands as **idempotent with respect to their effect identifiers** so that retries at the Game Session layer (for example tick replays) can safely handle duplicates even though the edge path is at-most-once. See [Transactions & Idempotency](./system-architecture-transactions.md) and [Redis Architecture](./system-architecture-redis.md) for the underlying invariants.
 
@@ -75,6 +77,8 @@ Backpressure and slow-client handling are split across layers so that the platfo
   - When WebSocket connections close due to slow-client behavior or network issues, clients must reconnect and re-`LOGIN`; Game Session’s Redis-backed state determines whether gameplay resumes or starts fresh, per [Reconnection Strategy](./system-architecture-reconnection.md).
 
 This model favors **clear closures over silent drops** when a client cannot keep up, and centralizes any higher-level retries or deduplication in Game Session and domain services.
+
+For gameplay WebSocket sessions, Game Session applies a per-session outbound queue limit and send timeout budget. If either is exceeded (for example because a client has stopped reading or a downstream hop is persistently slow), the session is closed with an explicit close reason rather than allowing the queue to grow without bound or dropping frames while pretending the connection is healthy. For inbound overload (for example, a misbehaving client sending commands far beyond expected rates), Game Session either rejects excess commands with visible error messages or terminates the session after sustained abuse; it does not accept and then silently discard gameplay input.
 
 ### Telnet edge proxy and PROXY protocol
 

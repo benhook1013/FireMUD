@@ -47,7 +47,10 @@ and **live runtime entities** so authoring workflows cannot corrupt active games
 - Template tables (for example item and NPC definitions, balance curves) are
   stored as versioned design records keyed by `(tenantId, versionId)` and are
   updated only through design-time workflows orchestrated by the Game Design
-  Service.
+  Service. Entity Management accepts template writes only for Draft versions;
+  once a version is marked Published in the Game Design Service, the associated
+  template rows for that `(tenantId, versionId)` are treated as immutable and
+  may only be read by runtime flows.
 - Live runtime entities (characters, inventories, containers including
   room-ground containers) are stored in runtime tables keyed by
   `tenantId` plus runtime identifiers such as `entityId` and game-instance or
@@ -56,6 +59,14 @@ and **live runtime entities** so authoring workflows cannot corrupt active games
   and records them as immutable inputs for future game instances. Runtime
   entity state never changes those template rows; it only references them via
   stable identifiers.
+
+Template identifiers are stable within each version: a given template ID must
+not be repurposed to represent a different conceptual entity while any
+non-Retired version still references it. When switching a game instance to a
+new `runtime_version`, the Game Session Service and Entity Management treat
+missing or incompatible templates as a fatal configuration error for that
+launch; the version selection must be corrected rather than silently
+substituting defaults or partial data.
 
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
 and [Item & Equipment Balancing Tools](../game-design-service/item-equipment-balancing.md)

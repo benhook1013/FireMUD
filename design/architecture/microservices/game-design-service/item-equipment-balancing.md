@@ -18,7 +18,14 @@ These capabilities are available in the current implementation.
 
 1. Items and equipment are defined through the Entity Designer (see [World Editing & Customization Tools](world-editing-tools.md)).
 2. Balancing views aggregate stats and show graphs for cost vs. power.
-3. Finalized changes are published as part of a game version and persisted as versioned item records in the Entity Management Service, which uses the active `version_id` at runtime.
+3. Finalized changes are published as part of a game version and persisted as
+   versioned item records in the Entity Management Service, which uses the
+   active `version_id` at runtime. Balancing edits are applied only to Draft
+   versions; once a version is Published, its item templates are immutable and
+   new balance changes must flow through a new Draft and publish cycle. For live
+   games this means non-script balance adjustments are deployed by publishing a
+   new version and restarting game instances against the new `runtime_version`,
+   not by editing templates for an Active version in place.
 
 ## Related Documentation
 

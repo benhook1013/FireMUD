@@ -82,6 +82,12 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 > 🔄 For full takeover behavior, including forced logins from a different client and Redis socket rebinding, see [Authentication & Authorization](./system-architecture-authentication.md#👥-multi-client-behavior-and-session-takeover).
 
+At most one active gameplay binding is supported per `{accountId, playerId}` at any point in time. When a new client successfully issues `LOGIN` for a character that is already bound to another connection (whether Telnet or WebSocket), Game Session treats this as a **takeover**:
+
+- The previous connection is disconnected or demoted according to the takeover rules in the authentication design.
+- No ordering guarantees are provided between the last few commands on the old connection and the first commands on the new one; only **per-connection FIFO** is maintained as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+- Clients and tools must not assume that keeping multiple concurrent connections (for example Telnet + Web) to the same character will preserve any cross-connection ordering; instead, they should rely on the single active binding and takeover semantics.
+
 ---
 
 ## Resume vs Reload Scenarios

@@ -795,16 +795,20 @@ This detector does not replace the canonical catalogs; it acts as a guardrail th
 - Repeated `STALE_LEASE`, `UNSUPPORTED_EPOCH`, or other Lua script responses that reference inconsistent `region_epoch` values for the same `<tenantId, regionId>`.
 - PostgreSQL epoch validation rejecting writes because a second executor attempted to bump the same `coordination_meta` row with an older epoch.
 - Redis/Sentinel/Cluster alerts showing simultaneous primaries for the same hash slot or other signs of split-brain.
+- Explicit dual-leader metrics such as `redis.coordination_dual_leader_detected_total{tenantId,regionId}` raised by lease-checking scripts or the control plane.
 
 ### Runbook (control-plane implementation)
 
 1. The Logging & Admin Service (or a future dedicated coordination manager) pauses tick scheduling for the affected `<tenantId, regionId>` pairs via Game Session’s admin/control APIs (or globally if multiple slots are impacted).
 2. It verifies, using Postgres and Redis health APIs/metrics, that the coordination metadata table’s `region_epoch` reflects the highest-authoritative epoch and that Redis has converged to a single primary for the impacted slots.
-3. It uses the coordination reset tooling:
-   - Stop Redis or fail over to a clean node if necessary.
+3. For each affected `<tenantId, regionId>`, it performs a **scoped coordination reset** as described in `system-architecture-redis-reset-and-recovery.md`:
+   - Bump `region_epoch` in the coordination metadata so all existing leases become stale.
+   - Clear `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}` using the versioned reset tooling.
+   - Drive the tick effect ledger for the old epoch to convergence (SCHEDULED → APPLIED/ABANDONED with reset-specific reasons) per the tick failures/operations doc.
+4. Only if the split-brain is caused by a corrupted or misconfigured Coordination Redis deployment that cannot be isolated to specific regions/tenants, perform a **cluster-scoped reset**:
+   - Stop Redis or fail over to a clean node.
    - Delete or recreate the AOF volume so the keyspace resets.
-   - Restart Redis, preload scripts, and allow the Game Session Service to acquire the new epoch.
-4. Clear or reconcile any stale metadata (locks, pending entries) in PostgreSQL if required.
+   - Restart Redis, preload scripts, and allow the Game Session Service to acquire new epochs.
 5. Resume ticks via the same control APIs only once Redis, PostgreSQL, and the epoch metadata are consistent to guarantee a single executor is in charge again.
 
 Treat split-brain as an operational incident, not a service-level retry: the reset deliberately drops volatile coordination state and rebuilds it from PostgreSQL so that the single-authority invariant is re-established before gameplay continues. The Logging & Admin control plane is expected to automate these steps for narrow, clearly diagnosed cases (for example, per-region incidents) while still surfacing alerts and audit logs for operators.

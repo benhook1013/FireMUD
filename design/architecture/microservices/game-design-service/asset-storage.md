@@ -22,6 +22,23 @@ The `game_assets` table stores the raw binary data for design-time uploads. Colu
 - `data` – binary blob
 - `created_at` – upload timestamp
 
+To associate assets with specific published versions while still allowing reuse across
+versions, the Game Design Service maintains a separate mapping table:
+
+- `version_asset`:
+  - `tenant_id` – owning game
+  - `version_id` – published version identifier
+  - `asset_id` – foreign key to `game_assets.id`
+  - `usage_type` – optional classifier such as `logo`, `icon`, or `audio`
+  - `created_at` – mapping creation timestamp
+
+The combination `(tenant_id, version_id, asset_id)` is unique so the same asset can be
+referenced by multiple versions without duplicating the binary row. Once a mapping
+exists for a version in the Published or Active state described in
+[Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md),
+the referenced asset must be treated as immutable; replacing the binary requires
+creating a new `game_assets` row and a new `version_asset` mapping.
+
 The `data` column uses PostgreSQL `BYTEA` type to store the file contents.
 When returned by the REST API this byte array is Base64 encoded by default so the JSON response remains text based.
 
@@ -53,10 +70,16 @@ The publish workflow uses a dedicated Saga step to export assets and update
 manifest metadata:
 
 - For each `(tenantId, versionId)` the Saga runs an `ExportAssets` step that:
-  - Uploads assets from `game_assets` to a deterministic prefix such as
+  - Selects assets by joining `version_asset` to `game_assets` for the target
+    `(tenantId, versionId)`; assets not referenced via `version_asset` are **never**
+    exported for that version.
+  - Uploads the selected assets from `game_assets` to a deterministic prefix such as
     `<tenantId>/<versionId>/` in object storage.
   - Writes or overwrites the version-scoped `manifest.json` in the same prefix.
   - Updates version metadata with the manifest location.
+  - Fails the Saga step if any asset referenced in `version_asset` for the target
+    `(tenantId, versionId)` is missing, so partially published versions cannot be
+    marked as Published.
 - The step is **idempotent**: rerunning `ExportAssets` for the same
   `(tenantId, versionId)` overwrites the same prefix and manifest and leaves the
   version metadata consistent.
@@ -73,7 +96,17 @@ storage. Implementations should treat `game_assets` as:
 
 A background maintenance job (or admin workflow) may mark unused asset rows as
 `obsolete` once no open revisions, branches, or published versions reference
-them and then purge those rows to control database size. The exact retention
+them. In practice this means:
+
+- An asset row is eligible for purge only if:
+  - it is not referenced by any `version_asset` row where the associated version
+    is in the Published, Active, or Retired states, and
+  - it is not reachable from any open revision, branch, or Draft version.
+- Assets referenced by non-Retired versions must never be deleted, and their
+  binary contents must not be modified in place.
+
+Once these conditions are met, a maintenance process can purge the asset row to
+control database size. The exact retention
 policy (for example “keep assets referenced by the last N versions per tenant”)
 is configurable but should be documented alongside operational runbooks.
 

@@ -57,6 +57,14 @@ When using a self-hosted MinIO cluster as the asset store:
    - Only **retired/archived** versions (no `game_instances` rows reference the
      `version_id` as `runtime_version`, and the version is no longer listed as
      launchable in `game_manifest`) are eligible for asset deletion.
+   - Published assets are discovered via the `version_asset` mapping table in the
+     Game Design Service. Operators must never delete individual objects that are
+     still referenced by any `version_asset` row for a non-retired version.
+   - If object-store contents drift from the database (for example missing objects for
+     a still-published version), operators should re-run the `ExportAssets` Saga step
+     for the affected `(tenantId, versionId)` so the manifest and prefix are rebuilt
+     from the authoritative `version_asset` mappings rather than attempting manual
+     repair.
    - Prefer invoking a higher-level admin workflow (for example an
      `ArchiveVersion` or `RetireVersion` operation in the Game Design or
      Logging & Admin Service) that:

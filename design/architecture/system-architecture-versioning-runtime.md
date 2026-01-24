@@ -34,6 +34,17 @@ Administrative tooling (for example via the Game Design Service or Logging & Adm
 
 Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state.
 
+### Template Mutability Rules
+
+Published versions are immutable from the perspective of domain templates:
+
+- The Game Design Service is the source of truth for version state (`Draft`, `Published`, `Active`, `Retired`).
+- Domain services such as World Management and Entity Management expose **design APIs** that create or update template rows only for Draft versions keyed by `(tenantId, versionId)`.
+- Once a version reaches the Published state, template tables in domain services must treat rows for that `(tenantId, versionId)` as read-only. Any attempt to modify templates for a Published or Active version should fail fast at the design API boundary and be surfaced as a validation error in the Game Design UI.
+- Runtime gameplay flows (ticks, Sagas for world creation, etc.) never mutate template tables. They only read templates for the active `runtime_version` and write to runtime/instance tables keyed by `(tenantId, gameInstanceId)` or equivalent.
+
+This contract ensures that published template graphs remain stable inputs for rollback and historical inspection. Structural changes to templates must always occur by creating a new Draft version, applying revisions, and publishing a new `version_id`.
+
 ### Script-Only Patch Versions
 
 Minor fixes to NPC behavior or quest logic often only touch automation scripts.
@@ -69,6 +80,27 @@ version therefore does not run Flyway migrations—it simply loads new data when
 game instance starts or reloads scripts for patch versions. See
 [Database Migrations](./system-architecture-database-migrations.md) for the
 Flyway workflow.
+
+### Non-Script Content Updates
+
+Non-script content such as world layouts, item templates, and balance curves follow
+a stricter lifecycle than scripts:
+
+- Changes to these templates are always delivered via new versions (`version_id`)
+  published by the Game Design Service. Domain services never apply in-place edits
+  to template rows for Published or Active versions.
+- Switching the `runtime_version` for a game instance is a controlled **restart**
+  operation managed by the Game Session Service. Instances do not hot-swap
+  non-script templates mid-session; operators select a new version and restart the
+  instance so all services reload consistent data for the new `runtime_version`.
+- Template identifiers and their semantics are stable within each version; a given
+  template ID must not be repurposed to point at a different conceptual entity
+  while any non-Retired version references it.
+- Destructive changes to template schemas or semantics (for example removing an
+  item archetype or reusing a template ID for a different purpose) are only
+  allowed after all versions that depend on the previous behavior have entered
+  the Retired state and migrations have followed the guidelines in
+  [Database Migrations](./system-architecture-database-migrations.md).
 
 ## Version Activation & Rollback
 

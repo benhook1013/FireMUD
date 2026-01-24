@@ -47,6 +47,28 @@ Tick execution is replayable: retries, failover, and Redis AOF replay can cause 
 
 > 🔗 The canonical `EffectId` contract and per-side-effect patterns are defined in [Tick Effect Identity and Idempotency Contract](./system-architecture-ticks.md#tick-effect-identity-and-idempotency-contract).
 
+### Tick-Adjacent Workflows (Outbox Boundary)
+
+Some player actions conceptually trigger both in-world effects and “business” side effects such as billing, email, or external webhooks. These **tick-adjacent workflows** must still respect the tick replay model:
+
+- Tick handlers are allowed to:
+  - Apply deterministic, idempotent domain mutations guarded by `EffectId` (for example HP changes, inventory moves).
+  - Enqueue durable outbox records keyed by `EffectId` into the owning service’s database.
+- Tick handlers must not:
+  - Call external systems with irreversible side effects (payment processors, email providers, third-party APIs) directly from tick-driven endpoints.
+  - Depend on external acknowledgements to decide whether a tick effect was “applied”.
+
+Instead, the recommended pattern is:
+
+- **Inside the tick** – Game Session invokes a domain handler that:
+  - Uses the standard idempotency guards (`last_tick_id` or `tick_effect_guard`) for in-world state.
+  - Writes a single outbox/event row keyed by `EffectId` when an external workflow should be started.
+- **Outside the tick** – A background worker or saga step consumes the outbox row and:
+  - Performs the external call(s), with its own idempotency and retry strategy.
+  - Updates saga and/or outbox state independently of tick replay.
+
+This keeps tick execution fast, bounded, and safely replayable, while sagas and outbox processors own long-running, cross-service workflows. New designs that mix tick-driven state changes with external side effects must explicitly document this boundary and reference both this section and the tick idempotency rules in `system-architecture-tick-failures-and-operations.md`.
+
 ---
 
 ## When Sagas *Are* Used (Out-of-Band Workflows)

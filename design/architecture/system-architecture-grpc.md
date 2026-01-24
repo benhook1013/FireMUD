@@ -117,6 +117,19 @@ sourceSets["main"].java.srcDirs(
 
 Running `./gradlew generateProto` compiles stubs into `build/generated/source/proto` for each service.
 
+## Event and Streaming Semantics
+
+Some FireMUD gRPC APIs are used as **event sinks** or long-lived streams (for example, DMZ edge services emitting disconnect hints into core gameplay services). These flows must assume **at-least-once delivery** at the transport layer and rely on idempotent consumers for correctness.
+
+When designing such APIs:
+
+- Treat producer → consumer delivery as **at-least-once**: events may be delivered more than once or arrive late after reconnects or retries.
+- Include a stable idempotency key in every event (for example a composite like `{streamId, sequence}` or an explicit `event_id` field) so consumers can de-duplicate safely.
+- Require consumers to treat events as **idempotent** with respect to that key; repeated delivery of the same key must not cause duplicate side effects.
+- Make failure semantics explicit in the proto comments (for example “transport is at-least-once; consumers must handle duplicates keyed by `disconnect_sequence`”) and link back to the relevant architecture documents such as [Reconnection Strategy](./system-architecture-reconnection.md) and [Transactions & Idempotency](./system-architecture-transactions.md).
+
+The TCP Proxy Service’s `NotifyDisconnect` event sink into Game Session is the canonical example of this pattern: the reconnection model assumes that disconnect hints are best-effort, at-least-once signals, and that Game Session keys handling by `{proxyConnectionId, disconnectSequence}` so duplicates and late arrivals are safe.
+
 ## TLS Requirements
 
 All internal gRPC calls use **mutual TLS**. Each service sets the following environment variables so certificates can be mounted from Secrets or local files:

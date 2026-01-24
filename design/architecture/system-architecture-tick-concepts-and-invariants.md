@@ -32,7 +32,7 @@ When designing new tick-driven features, keep these invariants in mind:
 
 - **Single authoritative executor per region** – all tick-side state for a `<tenantId, regionId>` is owned by one executor at a time.
 - **Lease and lock tokens are authoritative** – region leases and per-entity locks in Redis always carry opaque tokens; tick scripts must validate those tokens (and the current `tickId`) inside a single Lua invocation before applying or cleaning up any staged work.
-- **One action per entity per tick** – fairness is enforced by limiting how many commands a single entity can execute per tick. This applies equally to player commands, AI scripts, and automation.
+- **One action per entity per tick** – fairness is enforced by limiting how many commands a single entity can execute per tick. This applies equally to player commands, AI scripts, and automation, including remote follow-ups drained from other regions (which are enqueued into the same per-entity queues at the target region).
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – tick IDs and effect guards must be used so that replays after failure do not double-apply mutations.
 
@@ -43,6 +43,14 @@ The tick system adopts the same **coordination timeline** concept as the Redis a
 - When region authority moves or a scoped coordination reset occurs, the tick control plane bumps `region_epoch` and ensures that subsequent work is scheduled only on the new timeline; survivors from older epochs are treated as stale and either ignored or explicitly reconciled.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
+
+### Fairness Under Tail-Loss and Resets
+
+Fairness and the “one action per entity per tick” rule apply to steady-state execution within a stable `region_epoch`. Around the coordination tail-loss window and explicit resets:
+
+- Redis tail-loss and scoped coordination resets may cause some actions near the tail of the timeline to be dropped, replayed, or slightly re-ordered.
+- In these cases, the system prioritizes **EffectId convergence** (each `(tenantId, regionId, region_epoch, tickId, effectKey)` ends up durably APPLIED or ABANDONED without double-apply) over strict per-entity fairness across the reset boundary.
+- Designers should treat fairness guarantees as strong within a healthy epoch and best-effort across failures and resets; if a feature requires stronger guarantees around resets, that requirement must be called out explicitly in its design and validated against the Redis tail-loss SLOs.
 
 Conceptually, domain services treat Redis locks and leases as **opaque tick-engine concerns**: handlers see only `(tenantId, regionId, tickId, effectKey)` plus their own idempotency state. They never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` to make application-level decisions, nor do they depend on Cache/Rate-Limit Redis keys (for example `inventory:*`, `view:*`, `ratelimit:*`) for correctness or ordering. Cache usage, when present, is encapsulated inside domain services and affects only latency, not the tick engine’s notion of “what happened” or “in which order”.
 

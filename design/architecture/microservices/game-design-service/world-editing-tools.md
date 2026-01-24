@@ -21,7 +21,11 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
    The Game Design Service applies the relevant revision set to the World
    Management and Entity Management services through idempotent design APIs so
    their template tables reflect the same versioned graphs.
-4. Domain services load their own versioned data strictly by `version_id` at
+4. Domain services accept design-time writes only for **Draft** versions. When
+   a version transitions to the Published state, their template tables for that
+   `(tenantId, versionId)` become read-only; further changes must target a new
+   Draft version.
+5. Domain services load their own versioned data strictly by `version_id` at
    runtime; the Game Design Service is not queried during gameplay. Commit and
    revision history remains anchored in the Game Design Service even though
    domain services store the versioned templates.

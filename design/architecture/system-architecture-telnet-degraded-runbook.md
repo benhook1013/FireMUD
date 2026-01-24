@@ -79,9 +79,28 @@ The TCP Proxy Service and WebSocket path enforce backpressure rather than silent
   - When Web clients (browser or other WebSocket-based tools) experience frequent disconnects or stalled gameplay while Telnet remains healthy:
     - Verify that the `/ws/game/**` route is still present and correctly configured in Spring Cloud Gateway (route predicates, filters, and target Service).
     - Check Gateway metrics for elevated connection churn or WebSocket send failures on the gameplay route, and correlate with Game Session metrics to ensure backend pods are healthy.
-    - Confirm that any load balancer or CDN in front of the gateway is not terminating idle WebSocket connections too aggressively compared to the expected gameplay session duration.
+    - Confirm that any load balancer or CDN in front of the gateway is not terminating idle WebSocket connections more aggressively than the gateway’s own WebSocket idle timeout and ping/pong interval described in [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts).
   - WebSocket send failures and slow-client issues should result in the connection being closed rather than frames being silently dropped. If you observe symptoms that look like partial updates or missing messages without disconnects, treat this as a bug in the gateway or Game Session implementation and open an incident referencing this runbook and [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
 
 - **Telnet vs Web-only incidents**
   - If Telnet is degraded while Web remains healthy, this runbook plus the TCP Proxy design should be your primary reference.
   - If Web is degraded while Telnet remains healthy, start with the WebSocket checklist above and Spring Cloud Gateway documentation; treat the Telnet path as a known-good control when forming hypotheses and testing fixes.
+
+### Web-Only WebSocket Degradation Playbook
+
+When Web clients are degraded and Telnet remains healthy, use this focused checklist in addition to the general guidance above:
+
+1. **Scope and comparison**
+   - Confirm that Telnet sessions via the TCP Proxy can still log in, issue `LOOK`/`SAY`, and receive responses.
+   - Capture a small set of affected Web client sessions (for example by `sessionId` or account) and compare their behaviour with Telnet for the same accounts.
+2. **Gateway `/ws/game/**` health**
+   - Inspect Gateway metrics for the gameplay route: connection churn, WebSocket handshake failures, send-timeout or close reasons, and any route-level errors.
+   - Verify that recent configuration changes to routes, filters, or mTLS listeners (for example the internal-only WebSocket listener used by `GATEWAY_WS_URL`) have been rolled out as expected.
+3. **Idle timeout and heartbeat alignment**
+   - Check that the gateway’s configured WebSocket idle timeout and ping interval match the expectations in [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts).
+   - Confirm that upstream load balancers, CDNs, or service meshes are not closing idle connections earlier than the gateway’s own timeouts.
+4. **Game Session impact**
+   - Compare Game Session metrics (per-session queues, command throughput, error rates) for WebSocket-only sessions versus Telnet-bridged sessions.
+   - If WebSocket sessions are consistently being closed due to backpressure or timeouts while Telnet remains within limits, treat this as a configuration or capacity issue on the WebSocket path and adjust limits or scale out as needed.
+5. **Mitigation**
+   - If Web-only issues cannot be resolved quickly, communicate a temporary recommendation for affected players to use Telnet where appropriate, and record any gateway/config changes made during mitigation so they can be correlated with behaviour changes in future incidents.

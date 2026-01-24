@@ -101,6 +101,7 @@ MCP state is **strictly per TCP connection** and does not survive reconnects on 
   - Re-advertise and activate packages with `mcp-negotiate-can` / `mcp-negotiate-end`.
   - Re-open any required cords (for example status panels) using `mcp-cord-open`.
 - Telnet `SESSION` envelopes are likewise per TCP connection. Advanced clients that rely on `SESSION` for session/tenant hints must resend the envelope on reconnect if they want those hints to apply again, even when the underlying gameplay session resumes from Redis.
+- The TCP Proxy Service never attempts to “reattach” a new TCP socket to a previous `SESSION` or MCP negotiation; each TCP connection is treated as a fresh transport, even when it leads to a resumed gameplay session in Game Session.
 
 From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect, and Game Session uses Redis-backed state to decide whether to resume or start a new session. MCP and `SESSION` provide additional structure and hints on top of that flow but never replace the core text protocol or Redis session state as the source of truth.
 

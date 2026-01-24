@@ -58,6 +58,46 @@ to load existing versioned graphs:
 These rules apply both to service-local schemas and to shared saga tables so
 that rollback and historical analysis remain viable across deployments.
 
+### Version-Aware Migration Checklist
+
+Before applying destructive or shape-changing migrations in a service that owns
+versioned/template data (for example templates keyed by `(tenantId, versionId)`),
+engineers should follow this checklist:
+
+1. **Enumerate non-Retired versions**
+   - Query the Game Design Service’s version metadata (or the service-local
+     mirror of version state) to list all `version_id` values that are not in
+     the Retired/Archived state for the affected tenants.
+   - Confirm which tables and columns participate in those versions’ template
+     graphs (for example via ERD diagrams or schema documentation).
+2. **Assess dependencies on the fields being changed**
+   - For each non-Retired version, determine whether the column/table or JSON
+     field being dropped, narrowed, or repurposed is still used in:
+     - Published templates (world, entity, or asset mappings),
+     - Procedural generation metadata, or
+     - Runtime feature/config records that must remain readable for rollback.
+   - If any non-Retired version still depends on the field, delay destructive
+     changes and use additive migrations plus data backfills instead.
+3. **Provide fixtures for older versions**
+   - Maintain at least one fixture or seed dataset per major schema era that
+     includes representative versioned graphs. Migration tests in CI should
+     apply new migrations over these fixtures to ensure old versions remain
+     loadable.
+4. **Handle JSON/metadata schema versions**
+   - When changing JSON structures (for example generator params or config
+     blobs), introduce an explicit `schemaVersion` or equivalent discriminator.
+   - Write migrations and code paths that can still read older `schemaVersion`
+     values until all non-Retired versions that rely on them have been
+     retired or upgraded.
+5. **Align with version lifecycle**
+   - Only drop or repurpose fields once all versions that depend on the old
+     semantics have been Retired, in line with the lifecycle defined in
+     [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+
+Services that own versioned templates (such as Game Design, World Management,
+Entity Management, and Asset Storage) should reference this checklist in their
+local docs and treat it as part of their migration review process.
+
 ## CI/CD Execution
 
 - Flyway runs automatically when a service container starts.

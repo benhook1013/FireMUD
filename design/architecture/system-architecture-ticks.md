@@ -42,17 +42,18 @@ See `system-architecture-tick-concepts-and-invariants.md` for the full descripti
 Two related concepts:
 
 - **Tick execution** – the authoritative per-region loop inside the Game Session Service.
-- **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) exposing `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
+- **Tick heartbeat** – a gRPC stream (`StreamTickHeartbeats`) exposing `regionEpoch` and `tickId` progression so external services (for example Automation & Scripting) can align timers and quotas to the canonical tick timeline.
 
 The tick heartbeat is the **canonical timeline** for each `<tenantId, regionId>`:
 
-- `tickId` is monotonic per region within a given `region_epoch`.
+- The canonical coordination timeline is the pair `(regionEpoch, tickId)`; within a given `regionEpoch`, `tickId` is monotonic per region.
 - Consumers must be able to reconstruct their view of progress and scheduling purely from the heartbeat stream plus durable domain state; no Redis structure is treated as an authoritative log of past ticks.
+- Consumers that persist offsets or schedules must key them by `(tenantId, regionId, regionEpoch, tickId)` and treat any observed jump in `regionEpoch` as a reset boundary: state derived from the old epoch is discarded or reconciled from PostgreSQL before resuming.
 
 In addition to the gRPC heartbeat, the Game Session Service exposes a **tick event stream** for schedulers and observers:
 
 - Events are keyed by `<tenantId, regionId>` and include:
-  - `tickId` (monotonic per region).
+  - `regionEpoch` and `tickId` (the canonical coordination timeline for the region).
   - `regionId` / shard metadata.
   - The timestamp when the tick began.
   - The `activeVersionId` pinned for that tick.
@@ -67,6 +68,8 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
   - Consumers must treat missing or truncated history as a signal to re-establish their baseline from the canonical gRPC heartbeat and domain state rather than assuming every past event is available.
 
 This event stream powers “every N ticks” scheduling in Automation & Scripting, reconnection timer replay hints, and other out-of-band reporting. Tick execution itself never depends on these observers.
+
+Durable automation schedules and quotas live in PostgreSQL (see the scripting DSL and Automation & Scripting service docs); Redis structures such as `tick-events:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` are coordination hints only. Losing or resetting those keys must not change which automation jobs are eventually executed, only when they are next discovered.
 
 Automation & Scripting Service instances typically:
 

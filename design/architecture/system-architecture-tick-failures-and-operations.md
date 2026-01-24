@@ -49,6 +49,19 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
 - Rows must not remain in `SCHEDULED` beyond a configured grace window; stuck rows are treated as operational smells and surfaced via metrics and alerts.
 
+#### Ownership Summary
+
+Tick-related durable structures are intentionally split between a central ledger and per-service guards:
+
+- **Game Session Service**
+  - Owns the global tick effect ledger tables (for example `tick_effects`) and any cross-region follow-up tables that encode scheduled work between regions.
+  - Defines the canonical projection of `EffectId` into ledger schema and is responsible for convergence of `(tenantId, regionId, region_epoch, tickId, effectKey)` to `APPLIED` or `ABANDONED`.
+- **Domain services (Entity Management, World Management, etc.)**
+  - Own their own idempotency guard tables (for example `entity_tick_state`, `tick_effect_guard`) in their respective schemas.
+  - Use those guards to implement per-aggregate `last_tick_id` and operation-level idempotency patterns, but do not introduce additional “mini-ledgers” for tick effects.
+
+New designs must not create ad-hoc ledger tables for tick effects in other services; they should either extend the Game Session–owned ledger/follow-up schema or add domain-local guard tables that project the existing `EffectId`.
+
 Replay of a tick is driven from ledger state:
 
 - When reprocessing a tick, the executor loads ledger rows for that `<tenantId, regionId, tickId>` with `status = SCHEDULED` and:

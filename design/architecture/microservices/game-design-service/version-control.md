@@ -22,6 +22,10 @@ content even though domain services own the runtime templates:
 - When a version is published, the service applies the corresponding revision
   set to downstream services such as World Management and Entity Management via
   idempotent design APIs so their template tables match the committed graphs.
+- These design APIs accept writes only for Draft versions. Once a version is
+  marked Published, the corresponding template rows in domain services are
+  treated as immutable for that `(tenantId, versionId)`; further edits require
+  creating a new Draft version and publishing it.
 - Domain services do not maintain their own commit histories; they expose only
   the current and historical versioned templates keyed by `(tenantId, versionId)`.
 

@@ -36,7 +36,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ## Key Features
 
-- Central API gateway and policy enforcement point (routing, rate limiting, and basic admin auth gating only; downstream services own JWT validation).
+- Central API gateway and policy enforcement point (routing, rate limiting, and basic admin auth gating only; downstream services own all gameplay authentication and authorization decisions).
 - Real-time delivery of gameplay and admin messages over HTTP and WebSocket.
 - Reconnection support for dropped clients.
 - Routes HTTP and WebSocket traffic to appropriate backend services. The gateway’s gRPC surface is reserved for internal management and diagnostics (for example, `GatewayManagementService` on port `6565`).

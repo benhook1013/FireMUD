@@ -315,8 +315,8 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `retry:{tenantRegionTag}` | Retry queue for failed actions. |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
 | `remote:<tenantId>:<entityId>` | Best‑effort hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). |
-| `automation:tick:{tenantScriptTag}:lock` / `queue` / `pending` | Per‑script automation tick locks and staging (Automation & Scripting Service). |
-| `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler checkpoint for “every N ticks” triggers; used to resume interval counting after leader changes. |
+| `automation:tick:{tenantScriptTag}:lock` / `queue` / `pending` | Per-script automation tick locks and staging (Automation & Scripting Service). |
+| `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler checkpoint for “every N ticks” triggers; used to resume interval counting after leader changes. Durable automation schedules and quotas live in PostgreSQL; this key is a coordination hint, not the source of truth for which scripts should eventually run. |
 
 Region‑scoped coordination keys share the same `{tenantRegionTag}` hash tag and therefore land in the same Redis Cluster slot. Tenant‑scoped session/auth keys and other single‑key prefixes do not require a hash tag but must still honour the coordination vs cache role split described above.
 

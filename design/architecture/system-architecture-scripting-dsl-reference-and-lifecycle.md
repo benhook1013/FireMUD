@@ -329,7 +329,14 @@ For additional details and any new key patterns, see the Automation & Scripting 
 
 ## Script Timers vs Tick Timers
 
-Script timers are layered on top of the core tick model:
+Script timers are layered on top of the core tick model and always express cadence in terms of the **authoritative game tick timeline**, not raw wall-clock seconds:
+
+- Cadence for `onInterval` and other tick-based timers is configured in **ticks** (for example, “every N ticks”). Internally, schedulers may derive wall-clock hints from tick heartbeat streams, but the public contract is expressed in game ticks.
+- Missed firings are handled in a **bounded, deterministic way**:
+  - When leaders change, the new leader walks forward from its last persisted `tickId` to the current `tickId` and enqueues at most **one synthetic firing** for each cadence boundary crossed in that gap (see [End-to-End `onInterval` Timer Lifecycle](#end-to-end-oninterval-timer-lifecycle)).
+  - Missed firings due to quotas, budgets, disabled scripts, or failed/unknown versions are **not replayed later**; they are recorded in `script_event_audit` and associated metrics as dropped or skipped triggers.
+
+Within that model:
 
 - The Game Session Service owns **authoritative tick progression** and tick timers, as described in `design/architecture/system-architecture-ticks.md`.
 - The Automation & Scripting Service owns **script timers and intervals**, which are scheduled against tick heartbeat information but do not own ticks themselves.

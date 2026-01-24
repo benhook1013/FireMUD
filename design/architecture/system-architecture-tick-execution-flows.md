@@ -60,7 +60,7 @@ At each tick for a `<tenantId, regionId>`, the executor:
 1. Collects work:
    - Pulls at most one queued command per active entity.
    - Pulls a bounded number of due timers and retries (up to configured caps per tick).
-   - Optionally includes a bounded “remote follow-up drain” step (see below).
+   - Optionally includes a bounded “remote follow-up drain” step (see below); drained remote follow-ups are enqueued into the same per-entity queues as local commands at the target region so they respect the same fairness limits.
 2. Orders fairly:
    - Ensures at most one action per entity per tick to preserve fairness.
    - Orders commands using a combination of arrival time, stat-based priority, and any configured scheduling policy.

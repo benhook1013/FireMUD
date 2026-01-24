@@ -18,6 +18,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Broadcast lifecycle events and world updates to other services
 - Support reconnection and recovery of running games
 - Publish **coordination and tick health metrics** (per `<tenantId, regionId>`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
+- Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 
 ## Architecture / Design Notes
 
