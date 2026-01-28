@@ -96,7 +96,11 @@ leaves a version incomplete or unusable:
     permission errors).
   - Trigger a documented “retry publish” or “repair version” workflow in the
     Game Design or Logging & Admin Service so the Saga re-runs the asset export
-    step and transitions the version back to Draft/Published as appropriate.
+    step and transitions the version back to Draft/Published as appropriate. The
+    exporter always writes a `manifest.json` that includes a `schemaVersion`
+    field; when manifest formats evolve, operators should prefer rerunning
+    `ExportAssets` so manifests are regenerated consistently for the new schema
+    version rather than attempting manual edits.
 - If clean-up is required after deciding to abandon a Failed version, follow
   the same safety checks as for Retired versions, then remove the corresponding
   `<tenant>/<version>/` prefix from the object store.

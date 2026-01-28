@@ -24,4 +24,3 @@ Then:
 - Do not summarize the intended behavior or describe what is already good.
 - Only identify problems, gaps, or contradictions: unclear tick invariants, missing guarantees (ordering, idempotency, consistency), ambiguous data ownership across services, weak failure or recovery stories, unrealistic scaling assumptions, or Redis usage that is risky or under-specified.
 - For each issue, tie it back to the specific document or documents involved and propose concrete, actionable improvements (clarifications, additional flows, stronger invariants, different Redis patterns, or better operational safeguards).
-

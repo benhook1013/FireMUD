@@ -19,6 +19,14 @@ database when the template is saved. The `config` field uses a structured
 schema describing world layout, starter items, default rulesets, and admin
 accounts.
 
+The `config` payload does not embed authoritative copies of world, entity, or script definitions. Instead it carries:
+
+- References to world templates (regions, rooms) using stable identifiers owned by the World Management Service and scoped by `(tenantId, versionId)`.
+- References to starter items, NPCs, and equipment using stable identifiers owned by the Entity Management Service and scoped by `(tenantId, versionId)`.
+- References to rulesets and scripts via identifiers defined by the Automation & Scripting Service.
+
+Canonical schemas, identifiers, and versioned template rows remain in the owning domain services; `GameTemplateDto.config` is a configuration and wiring layer that composes these existing templates for bootstrapping new games.
+
 > **Note**
 
 Templates are **versioned** like any other design asset. Publishing a

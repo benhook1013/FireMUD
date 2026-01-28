@@ -15,13 +15,13 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 | Layer | Responsibility |
 | --- | --- |
 | **TCP Proxy Service** | Parses Telnet input and clears buffered commands; emits a best-effort disconnect notification to Game Session over an internal-only gRPC event sink |
-| **Spring Cloud Gateway** | Stateless WebSocket passthrough; resumes routing once clients reconnect |
-| **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers |
+| **Spring Cloud Gateway** | Stateless WebSocket passthrough; resumes routing once clients reconnect after edge-visible disconnects |
+| **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers when the edge connection remains healthy |
 
 Each layer handles fault tolerance independently.
 **Only client connection loss requires reauthentication.**
-Game Session Service restarts are **transparent** if the client remains connected.
-When Spring Cloud Gateway or Game Session pods restart, Web clients **reconnect their WebSocket connections**; once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh. Telnet clients typically remain connected to the TCP Proxy Service during a Gateway restart, but gameplay traffic may pause while the proxy re-establishes its WebSocket bridge to Spring Cloud Gateway (input buffering is limited and is governed by the proxy’s per-connection ceilings). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for how TCP and WebSocket clients share the same backend.
+Game Session Service restarts are **transparent** when the client remains connected to the TCP Proxy Service or Spring Cloud Gateway: the outer TCP/WebSocket connection stays up, a new Game Session instance rebinds to Redis-backed session state, and gameplay continues, subject to the at-most-once delivery semantics in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants) for any commands in flight during the restart.
+When Spring Cloud Gateway pods restart, Web clients are disconnected; they must open a new WebSocket and issue `LOGIN` again. Once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh. Telnet clients typically remain connected to the TCP Proxy Service during a Gateway restart, but gameplay traffic may pause while the proxy re-establishes its WebSocket bridge to Spring Cloud Gateway (input buffering is limited and is governed by the proxy’s per-connection ceilings). See [Protocol Bridging](./system-architecture-protocol-bridging.md) for how TCP and WebSocket clients share the same backend and for the explicit at-most-once edge model.
 TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 If the Gateway link remains unavailable beyond the TCP Proxy Service’s short reconnect window (see `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` in the TCP Proxy design), the proxy fail-closes Telnet sockets with a clear message rather than buffering unbounded input at the DMZ edge; clients then reconnect and reauthenticate with `LOGIN`.
 
@@ -73,6 +73,8 @@ Redis-backed session state enables seamless resumption if valid, or fresh login 
 Session entries in Redis expire after a derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
 > 🧭 For full details on `LOGIN` behavior, argument formats, and session flow, see [Authentication & Authorization](./system-architecture-authentication.md#🔁-login-and-session-flow)
+
+Gameplay command idempotency for reconnects is intentionally simple from the client’s perspective: Telnet and WebSocket clients treat commands as fire-and-forget. They do not attach idempotency keys or effect identifiers to individual commands in the text protocol; idempotency is handled internally by Game Session and domain services as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#gameplay-command-idempotency-client-view) and [Transactions & Idempotency](./system-architecture-transactions.md).
 
 ---
 

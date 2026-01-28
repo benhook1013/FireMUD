@@ -37,8 +37,7 @@ This summary highlights the **most important product and infrastructure requirem
   - See: `design/architecture/system-architecture-redis.md` and `design/architecture/system-architecture-redis-cache.md`.
 - **Deployment & operations**
   - Docker + Kubernetes deployment, with CI/CD pipelines and backup/restore flows.
-  - Centralized logging, metrics, and tracing for all services.
-  - See: `design/architecture/system-architecture-cicd.md`, `design/architecture/system-architecture-logging-monitoring.md`, and `design/architecture/system-architecture-backup-recovery.md`.
+- Centralized logging, metrics, and tracing for all services.
+- See: `design/architecture/system-architecture-cicd.md`, `design/architecture/system-architecture-logging-monitoring.md`, and `design/architecture/system-architecture-backup-recovery.md`.
 
 For detailed requirements, constraints, and non-functional goals, see `design/project-management/core-requirements.md`.
-

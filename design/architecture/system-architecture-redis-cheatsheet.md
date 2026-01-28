@@ -9,6 +9,7 @@ Treat it as a **routing map and curated subset**:
 - When adding new prefixes, always update the canonical catalog first, then reflect representative entries here as needed for discoverability.
 
 > 🔗 Canonical details live in:
+>
 > - [System Architecture: Redis](./system-architecture-redis.md)
 > - [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md)
 > - [Redis Reset & Recovery](./system-architecture-redis-reset-and-recovery.md)

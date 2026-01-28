@@ -83,8 +83,7 @@ These tasks apply to every FireMUD service unless noted otherwise. Gateway and T
 - Create `design/README.md` summarizing APIs and sample requests.
 - Document proto contracts and any Redis keys in the service README.
 - Document required environment variables and configuration.
-- Note `tenantId` handling and cross-service dependencies.
-- Add a design document under `design/architecture/microservices/<service>/README.md`.
+  - Note `tenantId` handling and cross-service dependencies.
+  - Add a design document under `design/architecture/microservices/<service>/README.md`.
 
 Game-specific services may define additional commands or entity behavior but follow the same deployment conventions.
-

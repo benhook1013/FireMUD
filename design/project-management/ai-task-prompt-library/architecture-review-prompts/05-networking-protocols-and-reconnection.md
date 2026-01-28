@@ -17,4 +17,3 @@ Then:
 - Do not summarize intended behavior or praise what is already clear.
 - Only identify problems, contradictions, or gaps: unclear ownership between the TCP proxy, gateway, and backend services; missing or inconsistent protocol guarantees such as ordering, backpressure, or idempotency; weak reconnection semantics; under-specified degraded modes; or operational edge cases not covered, such as partial disconnects, slow clients, or load spikes.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clarified responsibilities, more precise protocol contracts, explicit reconnection and state-recovery rules, or additional degraded-mode and failure-handling scenarios.
-

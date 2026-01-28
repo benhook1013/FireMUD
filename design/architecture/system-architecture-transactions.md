@@ -88,6 +88,30 @@ These workflows:
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require durable coordination and rollback capabilities
 
+### State Ownership and Mutation Boundaries
+
+To keep responsibilities clear across design-time, domain, and runtime services:
+
+- Game Design Service owns version metadata, branches, commits, and revision history but does not own canonical schemas or template rows for worlds, entities, or assets.
+- Domain services such as World Management, Entity Management, and Game Design’s asset storage tables own their respective schemas and all versioned/template rows keyed by `(tenantId, versionId)`. They must be able to load every non-Retired version they own even if Game Design Service is unavailable.
+- Runtime services such as Game Session and Automation & Scripting own transient tick state (primarily in Redis) and any persistent instance data they create via domain-service APIs (for example world instance rows keyed by `(tenantId, gameInstanceId)`), but they must never write template rows directly.
+- All cross-service workflows that change persistent state across more than one service database must either:
+  - execute inside a Saga defined via `firemud-common` (for example account creation, version publish, world creation), or
+  - be modeled as tick-adjacent outbox-driven flows when initiated from gameplay commands.
+
+In particular:
+
+- Design-time writes to template tables are only allowed via domain services’ Draft APIs invoked from Game Design Service workflows.
+- Published templates for a given `(tenantId, versionId)` are immutable; changing behavior for a live game means creating a new version and new game instances (or, for script-only fixes, changing `scriptPatchVersion` at instance creation time as described in `microservices/game-design-service/version-control.md`).
+
+### Live Script Patch Boundary
+
+Transactional guarantees for tick execution assume deterministic scripts for the `(versionId, scriptPatchVersion)` pair recorded on a game instance:
+
+- Game Session Service binds each `gameInstanceId` to a specific `(runtime_version, scriptPatchVersion)` at instance creation.
+- Tick handlers and script runners must treat that pair as fixed; moving an instance to a new script patch is modeled as creating a new instance with a new `(runtime_version, scriptPatchVersion)` rather than hot-swapping scripts in place.
+- Operational tooling that starts or restarts instances is responsible for selecting the desired `scriptPatchVersion` and recording it alongside `runtime_version` for observability and audit.
+
 ---
 
 ## FireMUD Saga Architecture

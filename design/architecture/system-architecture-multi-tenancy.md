@@ -68,6 +68,26 @@ This model underpins both authentication and authorization:
 - Per-game resource quotas ensure one tenant cannot exhaust cluster capacity.
   Quota thresholds are configured per tenant, derived from the active subscription plan and entitlements returned by `GetTenantEntitlements(tenantId)` in the Account Service. Metrics expose current usage so operators can track `active_sessions`, quota denials, and the impact of billing state on availability (for example, `suspended` or `canceled` tenants cannot start new instances or admit new player sessions even if raw capacity is available).
 
+### Quota Enforcement Responsibilities
+
+Quotas are enforced at multiple layers, each with a clear scope:
+
+- **Network and API rate quotas (Gateway and TCP Proxy Service):**
+  - Spring Cloud Gateway enforces per‑tenant API rate limits and connection caps based on configuration derived from Account Service entitlements (for example, maximum concurrent WebSocket connections or HTTP requests per second per tenant).
+  - TCP Proxy Service enforces per‑tenant and per‑IP Telnet connection limits and rate limits for legacy clients, derived from tenant entitlements and cluster‑wide safety caps.
+  - Both components use shared rate‑limit helpers in Redis (`ratelimit:*` prefixes) and expose metrics so operators can see when tenants are being throttled or rejected at the edge.
+
+- **Gameplay command and tick quotas (Game Session Service):**
+  - Game Session Service enforces per‑tenant budgets for active sessions, queued commands, and tick workload (for example, maximum commands per tick per tenant, maximum concurrent sessions per tenant).
+  - When quotas are exceeded, Game Session may reject or defer new sessions and commands for that tenant, shed low‑priority work, or apply backpressure while preserving core gameplay invariants.
+  - Quota decisions are driven by tenant entitlements and regional capacity; metrics and logs record when quotas are enforced so that support and operators can investigate.
+
+- **Storage and long‑lived state quotas (PostgreSQL and object storage):**
+  - Storage usage is tracked per tenant via `tenantId` in PostgreSQL schemas and per‑tenant prefixes in object storage.
+  - Alerts and dashboards in Logging & Admin Service surface when tenants approach storage thresholds so operators can work with creators to clean up data or upgrade plans.
+
+Account Service remains the **source of truth** for entitlements and plan details, while enforcement is carried out by Gateway, TCP Proxy Service, Game Session Service, and the backing datastores according to the scopes above. When new quota types are introduced, their enforcement point and metrics must be documented alongside the entitlement fields that drive them.
+
 ---
 
 > 🔗 For service roles and interactions, see the

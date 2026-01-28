@@ -23,6 +23,7 @@ Companion docs:
 - [Operational Disable / Throttle Flows](#operational-disable--throttle-flows)
 - [Environment Variables](#environment-variables)
 - [Rollback & Recovery Cookbook](#rollback--recovery-cookbook)
+- [Developer Tools](#developer-tools)
 
 ---
 
@@ -53,6 +54,12 @@ Scripts execute inside a **sandboxed runtime** owned by the Automation & Scripti
   - Dangerous components can be flagged as `UNSAFE` and enforced via migration and deprecation flows.
 
 For lower-level sandbox and runtime internals, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
+
+Dry-run and test execution paths exposed by the Automation & Scripting Service share the same sandbox and guardrails as live traffic:
+
+- They execute handlers through the same engine with the same CPU/iteration and memory budgets.
+- They record `sandbox_error` and `infrastructure_error` outcomes in `script_event_audit` so failure modes are observable.
+- By default they do **not** consume per-script quotas or per-tenant budgets enforced by `ScriptQuotaService`; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
 
 ---
 
@@ -85,7 +92,7 @@ Plugins executed via the modding framework share the same underlying quota and s
   - Cluster-wide ceilings and automation tick budgets.
 - From an observability perspective, plugin executions are recorded in `script_event_audit` alongside other script runs, with additional tags such as `pluginId` and `pluginVersionId` so operators can distinguish plugin activity from core automation.
 
-This alignment ensures that plugin code cannot bypass or weaken the resource-isolation guarantees of the scripting system; operational tooling and metrics apply uniformly to both plugins and regular scripts.
+This alignment ensures that plugin code cannot bypass or weaken the resource-isolation guarantees of the scripting system; operational tooling and metrics apply uniformly to both plugins and regular scripts. For the structural lifecycle of plugins (versioning, enable/disable states, and rollback), see `design/architecture/microservices/game-design-service/modding-framework.md`; Logging & Admin APIs provide the control plane for changing `pluginState` and `activeVersionId` while the Automation & Scripting Service enforces quotas, budgets, and sandbox rules at runtime.
 
 ### Per-Script Scheduling Policies
 
@@ -241,10 +248,6 @@ The failure-rate circuit breaker primarily considers **sandbox_error** and other
 
 ## Operational Cookbook: Quotas, Budgets, and Metrics
 
----
-
-## Operational Cookbook: Quotas, Budgets, and Metrics
-
 Use the following patterns to answer common operational questions:
 
 - **“Which scripts are being hard-dropped by per-script quotas or queues?”**
@@ -341,9 +344,9 @@ All disable/enable and throttle actions are **idempotent** and recorded with the
 
 ---
 
-## Rollback & Recovery Cookbook
+## Rollback & Recovery Scenarios
 
-This section summarizes common failure scenarios and how operators should respond. It complements the per-feature lifecycle details in the DSL reference and modding framework documents.
+This section summarizes common failure and rollback scenarios and how operators should respond. It complements the per-feature lifecycle details in the DSL reference and modding framework documents.
 
 - **Script patch `onLoad` failures or patch status `FAILED`**
   - Symptoms:
@@ -404,3 +407,35 @@ Several helper scripts streamline common tasks when working with scripting and a
 - `dev-tools/seed/seed-automation-scripting-data.sh` – populates the Automation & Scripting Service with sample scripts, actions, and quotas so you can observe scheduler behavior without manual editing.
 
 These scripts complement the web-based editor and allow creators and operators to automate routine actions when testing or observing the scripting system.
+
+---
+
+## Rollback & Recovery Cookbook
+
+This section summarizes common rollback and recovery scenarios for scripting and automation. It complements the broader backup and recovery guidance in `design/architecture/system-architecture-backup-recovery.md` and the versioning rules in `design/architecture/system-architecture-versioning-runtime.md`.
+
+### Misbehaving Script Patch After Activation
+
+Symptoms:
+
+- A script patch has already been marked `READY` for a tenant and pinned as the active `scriptPatchVersion`, but automation metrics and `script_event_audit` show sustained `sandbox_error` or `infrastructure_error` outcomes for one or more scripts.
+- Players or operators report regressions that correlate with the newly active patch (for example, NPCs stuck in loops, missing timers, or over-aggressive automation).
+
+Behavior:
+
+- The Automation & Scripting Service continues to enforce quotas, budgets, and failure-rate circuit breakers for individual scripts; misbehaving handlers may be transitioned to `runtimeStatus=DISABLED_DUE_TO_ERRORS`.
+- Timer and event triggers remain **at-most-once per firing**; skipped or failed triggers are not automatically replayed even if the patch is later rolled back.
+
+Operator actions:
+
+1. Identify the affected scripts and patch
+   - Use `script_event_audit` filtered by `tenantId`, `scriptPatchVersion`, and `scriptId` to confirm which handlers are failing.
+   - Correlate with automation metrics such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_triggers_dropped_total` to determine scope and severity.
+2. Contain impact at the script level
+   - Use the normal disable/throttle flows in this document to set offending scripts to `runtimeStatus=DISABLED` or a drain state while you triage (for example, `DISABLE_AFTER_DRAIN`).
+3. Roll back the active script patch if necessary
+   - If regressions are widespread or difficult to isolate, use Logging & Admin or Game Session tooling to repin the game back to the previous known-good `scriptPatchVersion` for the affected tenant and game instance.
+   - Repinning does **not** attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch.
+4. Repair and republish
+   - Fix the underlying script configuration in the Game Design Service and publish a new script-only patch version.
+   - Verify that the new patch reaches `patchStatus=READY` for the tenant and that `onLoad` initialization succeeds before promoting it to the active `scriptPatchVersion` again.

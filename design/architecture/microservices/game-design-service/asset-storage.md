@@ -7,9 +7,11 @@ tenant- and version-scoped object storage (e.g., S3, MinIO, or a CDN) and
 generates a `manifest.json` that maps asset keys to public URLs. A manifest is
 produced for every published version, even if no assets are present. The manifest is
 stored alongside the assets and its URL is recorded in the published version
-metadata so runtime clients can retrieve it. The Game Design Service is not
-queried during gameplay. Each record remains tied to a `tenantId` so icons, UI
-images, and audio files are isolated per game.
+metadata so runtime clients can retrieve it. Each manifest includes an explicit
+`schemaVersion` field so clients and tooling can distinguish between manifest
+formats over time. The Game Design Service is not queried during gameplay. Each
+record remains tied to a `tenantId` so icons, UI images, and audio files are
+isolated per game.
 
 ## Table Structure
 

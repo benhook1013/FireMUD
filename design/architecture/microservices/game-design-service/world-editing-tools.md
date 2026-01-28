@@ -42,6 +42,16 @@ is marked `OUT_OF_SYNC` and a reconciliation process replays the canonical
 revisions until domain services report the expected template shape. Versions
 must be `IN_SYNC` before they can be published.
 
+## Cross-Service Reference Invariants
+
+World and entity templates owned by domain services must reference each other using stable, normalized identifiers rather than ad hoc fields in opaque JSON blobs:
+
+- World layouts refer to NPCs, items, equipment, and other entities only via stable identifiers exposed by the Entity Management Service (for example `entity_template_id` or equivalent), always scoped and versioned by `(tenantId, versionId)`.
+- Population rules and other design-time bindings between world regions/rooms and entity templates are stored via normalized join tables (for example `world_entity_template` or generation binding tables) owned by the relevant domain services, not inferred from partial JSON in Game Design payloads.
+- Scripts and automation hooks are likewise referenced via explicit identifiers or normalized relations defined by the Automation & Scripting Service, rather than embedded directly in Game Design configuration blobs as canonical data.
+
+Game Design Service may carry references to these identifiers in its revision history, branches, and commits, but canonical ownership of the underlying world, entity, and script schemas and identifiers always remains with the corresponding domain services.
+
 ## Related Documentation
 
 - [Game Design Service Architecture](README.md)

@@ -76,7 +76,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
     - `chat:tell:<tenantId>:<conversationId>`
     - `chat:guild:<tenantId>:<guildId>`
     - `chat:account:<tenantId>:<accountId>`
-     - `chat:city:<tenantId>:<cityId>`
+    - `chat:city:<tenantId>:<cityId>`
   - These lists mirror persisted history in PostgreSQL for quick retrieval and are subject to TTL and max-message limits configured via `FIREMUD_CHAT_*` variables, following the cache key and TTL guidance in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md). They are treated as **best-effort TTL-only caches**: correctness comes from PostgreSQL, while Redis provides short-lived history windows bounded by the configured TTLs and message counts, consistent with the `chat:*` entries in the Cache/Rate-Limit Key Catalog.
 - New chat/cache prefixes or changes to Redis usage should be validated against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so they remain aligned with the global key catalog and SLOs, and should be added to the Cache/Rate-Limit Redis key catalog maintained in the Redis cache design docs (Redis cheat sheet plus `system-architecture-redis-cache.md`) with documented size/complexity budgets.
   - Cache metrics for these prefixes should follow the `chat:*` recommendations in `system-architecture-redis-cache.md` (for example `cache.chat_hits_total` / `cache.chat_misses_total` with chat-type labels) so hit/miss behavior and key counts are observable.

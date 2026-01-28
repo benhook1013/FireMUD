@@ -22,4 +22,3 @@ Then:
 - Do not summarize behavior or describe what is already good.
 - Only identify problems, contradictions, or gaps: unclear ownership boundaries between services, inconsistencies in how world, entity, and asset data are modeled, weak migration or rollback stories, missing rules for live content changes, or persistence patterns that are likely to cause data corruption, performance issues, or developer-experience issues.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer ownership diagrams, stronger invariants, explicit migration or rollback flows, or adjusted responsibilities between services.
-

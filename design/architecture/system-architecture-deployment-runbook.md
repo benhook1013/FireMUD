@@ -50,4 +50,3 @@ If a deployment causes instability:
 - `design/architecture/system-architecture-redis-incident-runbook.md`
 - `design/architecture/system-architecture-asset-store-runbook.md`
 - `design/architecture/system-architecture-telnet-degraded-runbook.md`
-

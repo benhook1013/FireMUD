@@ -2,7 +2,7 @@
 
 This document expands on the access control and operational guardrails described in `system-architecture-redis.md`. It focuses on how human operators and maintenance tooling are allowed to interact with **coordination prefixes** and how those tools participate in the [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model).
 
-**Default operator surface in this doc**
+## Default Operator Surface
 
 - Using the **read-only ops user** for inspection and the **application user** (via supported tooling) for any coordination writes.
 - Running coordination maintenance exclusively through the **versioned maintenance CLI** and its documented commands.
@@ -132,7 +132,7 @@ The coordination maintenance client/CLI is treated as a first-class part of the 
 
 This ensures that operators use the same abstractions as application code and reduces the risk that maintenance tools silently drift away from the main coordination design.
 
-**Discovery and version discipline**
+## Discovery and Version Discipline
 
 - The coordination maintenance CLI is shipped as part of the normal build/release pipeline (for example as a small JVM application or script under `dev-tools/`); runbooks and Helm hooks should reference its **concrete entrypoint** (for example, `dev-tools/coord-maintenance.sh` or the corresponding Gradle task) so operators do not need to guess how to invoke it.
 - Operators must only use a CLI version that matches the deployed services and Lua registry:

@@ -64,7 +64,7 @@ Redis coordination state is subject to a bounded tail-loss envelope (see `system
   - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
   - Region leases being briefly lost and re-acquired under the same or a new `region_epoch`.
 
-**Tick Tail-Loss Contract**
+## Tick Tail-Loss Contract
 
 The tick system and Redis tail-loss SLOs combine into a simple contract:
 

@@ -27,6 +27,11 @@ These capabilities are available in the current implementation.
    new version and restarting game instances against the new `runtime_version`,
    not by editing templates for an Active version in place.
 
+Cross-service references to item and equipment templates follow the normalized invariants described in `world-editing-tools.md`:
+
+- World layouts, loot tables, and procedural generation rules refer to items and equipment only via stable template identifiers owned by the Entity Management Service, always scoped by `(tenantId, versionId)`.
+- Balancing tools do not create separate, competing representations of item stats in Game Design Service; they operate directly on the versioned templates in Entity Management via design-time APIs and record provenance in Game Design history.
+
 ## Related Documentation
 
 - [Game Design Service Architecture](README.md)

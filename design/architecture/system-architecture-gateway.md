@@ -4,7 +4,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 ## Gateway Pattern
 
-**Spring Cloud Gateway** serves as the **single HTTP(S)/WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP/WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform.
+**Spring Cloud Gateway** serves as the **single HTTP(S)/WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP/WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
@@ -14,12 +14,12 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - **Stateless and horizontally scalable** – no sticky sessions required
 - Auto‑scaling policies handle high concurrency
   - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; Spring Cloud Gateway itself does not hold session state between reconnects
-  - Gateway restarts are *transparent* for gameplay sessions in the sense that **clients reconnect their WebSocket connections**, and the Game Session Service restores gameplay state from Redis as described in [Reconnection Strategy](./system-architecture-reconnection.md). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts; it simply resumes routing once clients re-establish connections.
+  - Spring Cloud Gateway restarts **disconnect WebSocket clients**; browsers and other WebSocket tools must open a fresh WebSocket connection and issue `LOGIN` again. Once reconnected, the gateway resumes routing and the Game Session Service uses Redis-backed state to decide whether to resume or start fresh as described in [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts or attempt to replay in‑flight messages; edge delivery remains per‑connection FIFO and at‑most‑once as defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
 - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
 
 > **Implementation status note (Telnet WebSocket mTLS):**
 > The TCP Proxy → Gateway WebSocket mTLS behaviour described in this document reflects the **target-state** production design. The current rollout status and any remaining gaps are tracked in the TCP Proxy Service design’s **Implementation Status** table (`./microservices/tcp-proxy-service/README.md#implementation-status`). When you encounter discrepancies, align implementation with that design and this document rather than weakening mTLS requirements.
-
+>
 > **Important:**
 > Spring Cloud Gateway is responsible for routing **only external client requests**.
 > **Internal microservice-to-microservice communication does not pass through the Gateway**.
@@ -56,7 +56,7 @@ Spring Cloud Gateway acts as the canonicalizer for client identity and session/t
 
 ---
 
-## Header Trust Model
+## Header Trust Model Details
 
 Spring Cloud Gateway is the **canonicalization point** for any client-identity and session-hint headers. Downstream services (including the Game Session Service) treat these headers as meaningful only because **the gateway produced them after applying trust rules**, not because an upstream client provided them.
 
@@ -130,7 +130,7 @@ Gameplay WebSocket connections are long-lived but not unbounded. To avoid half-o
 - If no `pong` or other traffic is observed for a configured idle window (for example 90 seconds), the connection is closed with a clear close reason. Load balancers or CDNs in front of the gateway must be configured with idle timeouts greater than this window so they do not terminate connections more aggressively than the gateway itself.
 - Web clients are not required to send their own application-level heartbeats, but they may do so; they must be prepared for the gateway to close idle or unreachable connections according to these limits and to follow the reconnection rules in [Reconnection Strategy](./system-architecture-reconnection.md).
 
-For gameplay WebSocket sessions, FireMUD standardises a small set of close codes and reasons so clients and operators can interpret failures consistently:
+For gameplay WebSocket sessions, FireMUD standardises a small set of close codes and reasons so clients and operators can interpret failures consistently. These codes and reasons define the canonical categories for WebSocket closures; Telnet disconnect messages on the TCP Proxy Service map directly onto the same categories as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons):
 
 - `1000` with reason `logout` – explicit, clean shutdown (for example, user-initiated logout or admin‑initiated session end where no error occurred).
 - `1001` with reason `idle_timeout` – idle-connection timeout where the gateway or Game Session has not observed traffic within its configured idle window.

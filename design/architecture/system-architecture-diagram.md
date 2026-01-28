@@ -53,8 +53,8 @@ flowchart TD
     TCPProxy -- wss --> Gateway
     Gateway -- wss --> Session
 
-    Admin -- gRPC mgmt --> Gateway
-    Admin -- admin APIs --> Logging
+    Admin -- gRPC mgmt (infra) --> Gateway
+    Admin -- admin APIs (via Gateway) --> Logging
 
     Session -- gRPC --> Account
     Session -- gRPC --> World
@@ -113,7 +113,7 @@ The diagram covers every microservice in the repository:
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
 - **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with dashboards built from Elasticsearch logs, Prometheus metrics, and Jaeger traces to support moderation.
 
-Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
+Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. Admin and creator tools always connect to **Logging & Admin Service and other domain services via the Gateway**; Logging & Admin is not exposed directly at the edge. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) and [System Architecture Overview](./system-architecture-overview.md#admin-entry-points-and-control-plane) for details.
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
 

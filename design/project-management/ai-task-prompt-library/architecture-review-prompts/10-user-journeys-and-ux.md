@@ -17,4 +17,3 @@ Then:
 - Do not simply restate the journeys or list features that already align well.
 - Only identify problems, contradictions, or gaps: journeys that rely on flows not supported by the architecture, missing steps or feedback for users during critical operations, unclear transitions between services or tools, or UX risks created by latency, consistency, or operational behaviors.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as revised flows, additional support tools or surfaces, clearer user feedback, or architectural changes needed to support the intended experience.
-

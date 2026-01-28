@@ -88,6 +88,21 @@ This normalized reference model ensures that cleanup jobs and operational
 runbooks can safely determine which assets are still in use without scanning
 opaque JSON blobs or service-specific payloads.
 
+### Script Patch Versions and Runtime Behavior
+
+Script-only fixes are tracked as `scriptPatchVersion` values attached to a `baseVersionId`. Together, `(versionId, scriptPatchVersion)` define the effective script bundle for a game:
+
+- Game instances are created against a specific `(runtime_version, scriptPatchVersion)` pair recorded in the Game Session Service. That pair is treated as immutable for the lifetime of a given `gameInstanceId`.
+- Changing `scriptPatchVersion` for a game requires creating a new game instance bound to the new pair; existing instances continue to run with the script patch level they started with until they are shut down.
+- This model keeps tick execution deterministic and auditing straightforward: logs, metrics, and incident analysis can always attribute behavior to a concrete `(versionId, scriptPatchVersion)` combination.
+
+Rollbacks follow the same pattern:
+
+- Rolling back a script patch means starting new game instances with an earlier `scriptPatchVersion` for the same `baseVersionId`.
+- Historical records for prior instances remain associated with the `(versionId, scriptPatchVersion)` they actually ran, even after new instances start with a different patch level.
+
+Game Design Service owns the history and metadata for script revisions and patch versions, but runtime services load and cache scripts based on the `(versionId, scriptPatchVersion)` selected at instance creation time.
+
 ## Benefits
 
 - Designers can experiment on feature branches without affecting the main game line.

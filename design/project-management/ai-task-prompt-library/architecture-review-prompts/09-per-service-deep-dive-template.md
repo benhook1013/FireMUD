@@ -19,4 +19,3 @@ Then:
 - Do not summarize the service or describe what is already working well.
 - Only identify problems, contradictions, or gaps: unclear or leaking boundaries with neighboring services, responsibilities that conflict with the global responsibility matrix, underspecified failure or retry behavior, ambiguous data ownership or lifecycle, or missing observability and operational hooks.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer contracts, responsibility shifts between services, additional diagrams or flow descriptions, or more precise error and lifecycle handling.
-

@@ -88,6 +88,12 @@ The TCP Proxy Service and WebSocket path enforce backpressure rather than silent
   - If Telnet is degraded while Web remains healthy, this runbook plus the TCP Proxy design should be your primary reference.
   - If Web is degraded while Telnet remains healthy, start with the WebSocket checklist above and Spring Cloud Gateway documentation; treat the Telnet path as a known-good control when forming hypotheses and testing fixes.
 
+When inspecting Telnet-side disconnects, prefer reasoning in terms of the standard Telnet disconnect reasons defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons) rather than ad-hoc message strings. In particular:
+
+- Treat `policy_violation` closes as non-retriable or very low-rate retriable; they usually indicate client behaviour that must change (scripts, bots, abusive traffic) rather than platform outages.
+- Treat `backend_unavailable` closes as indicators of core gameplay outages, comparable to WebSocket `1013` (`backend_unavailable`) from the gateway, and prioritise checking Game Session, Redis, and tick runtime health before tuning Telnet limits.
+- Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.
+
 ### Web-Only WebSocket Degradation Playbook
 
 When Web clients are degraded and Telnet remains healthy, use this focused checklist in addition to the general guidance above:
@@ -106,3 +112,11 @@ When Web clients are degraded and Telnet remains healthy, use this focused check
    - If WebSocket sessions are consistently being closed due to backpressure or timeouts while Telnet remains within limits, treat this as a configuration or capacity issue on the WebSocket path and adjust limits or scale out as needed.
 5. **Mitigation**
    - If Web-only issues cannot be resolved quickly, communicate a temporary recommendation for affected players to use Telnet where appropriate, and record any gateway/config changes made during mitigation so they can be correlated with behaviour changes in future incidents.
+
+### Stalled Backend / Partial-Disconnect Symptoms
+
+Some failures present as **“connection alive, commands accepted, but no responses”** from the player’s perspective. When Telnet remains connected but multiple players report that commands like `LOOK` or `SAY` stop producing output while metrics show Game Session or Redis under stress:
+
+- Treat this pattern as a likely **backend or tick-runtime degradation**, not just a Telnet problem.
+- Correlate with the tick and Redis runbooks – in particular [Tick Failures & Operations](./system-architecture-tick-failures-and-operations.md) and [Redis Operations](./system-architecture-redis-operations.md) – to determine whether regions are marked degraded, timers are over budget, or Redis latency is elevated.
+- Avoid compensating at the Telnet layer (for example by greatly increasing buffers) when the root cause is stalled ticks or overloaded Redis; prefer relieving backend pressure or reducing gameplay output volume.

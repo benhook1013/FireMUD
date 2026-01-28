@@ -9,9 +9,11 @@ This service exposes an **internal-only gRPC health check** (`Ping`) for operato
 For TCP Proxy’s position in the overall system (DMZ, Telnet edge, and WebSocket bridge to Spring Cloud Gateway), see the [System Architecture Diagram](../../system-architecture-diagram.md) and [System Context Diagram](../../system-context-diagram.md); those diagrams show the Telnet edge proxy → PROXY protocol → TCP Proxy → Spring Cloud Gateway flow described in this document.
 
 > **Canonical specs:** This document is the authoritative reference for:
+>
 > - Telnet `SESSION` envelope semantics and header propagation (see **Telnet Session Envelope & Event Metrics**). `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc.
 > - `NotifyDisconnect` event semantics and layering guarantees.
 > - Proxy metrics naming and label cardinality rules (see **Metrics Summary**).
+>
 > Other docs (Reconnection Strategy, Protocol Bridging, Gateway Architecture, and user journeys) intentionally summarize behaviour and link back here instead of redefining these protocols.
 
 ## Implementation Status
@@ -64,6 +66,7 @@ For any shared or player-facing environment, operators should ensure at least:
 - Runs in the network DMZ. All gameplay traffic is forwarded only via WebSocket through Spring Cloud Gateway; the proxy uses a narrow, mTLS-protected gRPC client call to the Game Session Service exclusively for `NotifyDisconnect` lifecycle events. This event surface is **internal-only** and is secured using the same `FIREMUD_GRPC_*` certificate paths as other services. Telnet‑side TLS (if enabled) is configured via `TCP_PROXY_TLS_*` and is independent from the Proxy → Gateway WebSocket mTLS settings, which use the separate `FIREMUD_GATEWAY_WS_*` certificate paths.
 
 > **Legacy Telnet requirement:** Support for plaintext/raw Telnet in production is an intentional, non-removable requirement so that classic MUD clients which cannot speak TLS can connect. Security hardening for this legacy channel lives in the [Telnet Command Handling and Controls](../../system-architecture-security.md#telnet-command-handling-and-controls) section of the Security Architecture (2FA requirements, per-account opt‑in, warnings, rate limits, DMZ boundary, etc.). Architecture and security reviews must treat raw Telnet as an accepted, documented trade-off rather than a defect to remove; concerns should focus on whether the documented mitigations are correctly implemented and configured.
+
 - Sanitizes incoming Telnet data and enforces a whitelist of
   **Telnet protocol commands** as described in the
   [Security Architecture](../../system-architecture-security.md#telnet-command-handling-and-controls).
@@ -114,7 +117,7 @@ reconnection logic centralized in the Game Session Service:
   [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication)
   for details on how this window is derived.
 
-### Connection Limits and Abuse Protection
+### Connection Limits and Abuse Protection (Tuning)
 
 Because the TCP Proxy Service sits in the network DMZ, it enforces hard resource
 ceilings even though tenant-aware throttling and rich abuse policies live in
@@ -304,13 +307,13 @@ source of truth:
   as a single source of truth.
 - Duplicate events for the same `{proxyConnectionId, disconnectSequence}` (or older `disconnectSequence` values for a given `proxyConnectionId`) are handled without side effects so the stream can be retried safely.
 
-**Failure modes and expectations**
+### Failure Modes and Expectations
 
 - Loss or delay of `NotifyDisconnect` events must never leave players “stuck logged in” or unable to resume; Game Session is responsible for independently detecting liveness via WebSocket/TCP close and Redis-backed timeouts.
 - Retries and at-least-once delivery should only increase duplication of advisory events, not change observable gameplay behaviour; idempotent handling keyed by `{proxyConnectionId, disconnectSequence}` is required.
 - In practice, losing events at this layer should only slow down session cleanup or metrics accuracy slightly, not introduce new correctness states.
 
-**Logging and correlation**
+### Logging and Correlation
 
 For operators and developers, `NotifyDisconnect` is designed to be easy to correlate end-to-end:
 
@@ -779,7 +782,7 @@ The WebSocket bridge reconnect window and buffer depth (`TCP_PROXY_GATEWAY_RECON
 - `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` should reflect how many recent commands you are willing to buffer during a brief Gateway restart (for example 32–128 lines), balanced against memory usage and the expectation that the proxy never replays commands after a disconnect. If the buffer fills before the Gateway link recovers, the proxy closes the Telnet connection and increments `tcpproxy.telnet.discarded`.
 - When tuning these values, watch `tcpproxy.websocket.reconnects`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.telnet.discarded` over a few releases to ensure you are not either buffering too aggressively or dropping legitimate players too often during normal deploy cycles.
 
-**Recommended dev defaults**
+### Recommended Dev Defaults
 
 - `TCP_PROXY_MAX_CONNECTIONS=50` – small cap to catch runaway local clients.
 - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=10` – enough for multiple terminals per developer.
@@ -787,14 +790,14 @@ The WebSocket bridge reconnect window and buffer depth (`TCP_PROXY_GATEWAY_RECON
 - It is acceptable to use `ws://` for `GATEWAY_WS_URL` in local/docker-compose setups; mTLS is not required in dev, but be cautious when forwarding dev traffic over the public Internet.
 - In dev/CI-only environments it is permissible to leave `TCP_PROXY_MAX_CONNECTIONS` / `TCP_PROXY_MAX_CONNECTIONS_PER_IP` at `0` while iterating locally, but any shared or player-facing deployment must override these to non-zero values as outlined below.
 
-**Minimum viable prod hardening**
+### Minimum Viable Prod Hardening
 
 - Size `TCP_PROXY_MAX_CONNECTIONS` to expected concurrent players plus a safety margin (for example `500`–`1000` depending on cluster size).
 - Set `TCP_PROXY_MAX_CONNECTIONS_PER_IP=3`–`5` so individual IPs cannot exhaust the connection pool while still allowing multiple windows per player.
 - Use `TCP_PROXY_MAX_MALFORMED_ENVELOPES=5` so connections that repeatedly send bad `SESSION` lines are closed as abusive.
 - Strongly prefer `wss://` with mutual TLS for `GATEWAY_WS_URL` so the Proxy → Gateway hop always uses mTLS in production; fall back to `ws://` only in tightly controlled internal test environments.
 
-**Heavier deployments**
+### Heavier Deployments
 
 - Scale the proxy horizontally and keep per-pod limits moderate (for example `TCP_PROXY_MAX_CONNECTIONS=2000` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP=5`), rather than pushing a single instance to extreme totals.
 - Treat sustained increases in `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded` as signals to either:

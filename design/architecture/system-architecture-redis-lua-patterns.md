@@ -7,7 +7,7 @@ re-invocation behavior for tick-related scripts.
 > 🔗 The high-level Redis coordination model, key naming, and failure modes are
 > described in [System Architecture: Redis](./system-architecture-redis.md).
 
-**Default author/reviewer expectations in this doc**
+## Default Author/Reviewer Expectations
 
 - New or changed scripts must fit one of the existing **script categories** and satisfy the idempotency, determinism, and `schemaVersion` rules described here.
 - Compatibility decisions (for example `compatible`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and rollout plans are made via the **Lua Script Registry**, not by introducing per-script operational knobs.

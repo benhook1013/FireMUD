@@ -2,6 +2,8 @@
 
 This document describes how FireMUD supports **both modern and traditional MUD clients** by bridging two distinct communication protocols: **WebSocket** and **raw TCP (Telnet)**. Both are routed into a unified backend session service for shared logic and scalability.
 
+This design is the **canonical specification** for gameplay command flows through the edge: it defines ordering and delivery guarantees, backpressure and slow-client behaviour, Telnet/WebSocket reconnection and buffering rules, and the Telnet disconnect reason taxonomy. Service-specific designs such as the TCP Proxy Service README describe implementation details and configuration but must remain consistent with the invariants in this document.
+
 ---
 
 ## Bridging Overview
@@ -57,11 +59,43 @@ The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves 
   - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
   - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed envelopes) where the proxy either discards input or closes the connection;
   - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
-- **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After any disconnect, clients must resend `LOGIN` (and any optional `SESSION`/MCP negotiation) and rely on Game Session and Redis to resume or start fresh.
+- **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After any disconnect, clients must resend `LOGIN` (and any optional `SESSION`/MCP negotiation) and rely on Game Session and Redis to resume or start fresh according to [Reconnection Strategy](./system-architecture-reconnection.md). Game Session and downstream domain services may use internal effect identifiers and transactional idempotency to protect tick processing and side effects, but these mechanisms are not exposed directly in the Telnet/WebSocket text protocol.
+
+Edge behaviour distinguishes between **gameplay command lines** and **MCP/control lines**:
+
+- Gameplay text commands that Game Session treats as input are never silently discarded while the connection remains open. When a gameplay line would exceed a non-MCP input or output safety limit, the TCP Proxy Service or gateway closes the connection with a clear reason rather than dropping the command in place.
+- MCP control lines may be discarded under the MCP-specific budgets above while the connection stays open. When this happens, gameplay continues but MCP behaviour for that connection is effectively degraded or disabled as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery). Sustained symptoms that look like “partial gameplay output” or “missing gameplay commands without disconnects” should be treated as a bug in the edge or Game Session implementation rather than expected backpressure behaviour.
 
 When any layer drops input due to its own limits or backpressure protections, it must either close the connection with a clear, human-readable message or (for WebSocket clients) send an explicit error/close reason before terminating the session; edge components do **not** silently discard gameplay commands while keeping a connection that appears healthy to the client.
 
 Domain services treat incoming commands as **idempotent with respect to their effect identifiers** so that retries at the Game Session layer (for example tick replays) can safely handle duplicates even though the edge path is at-most-once. See [Transactions & Idempotency](./system-architecture-transactions.md) and [Redis Architecture](./system-architecture-redis.md) for the underlying invariants.
+
+### Gameplay Command Idempotency (Client View)
+
+External clients (WebSocket and Telnet) treat gameplay commands as **fire-and-forget** with respect to the edge:
+
+- Clients do not attach idempotency keys, effect identifiers, or per-command sequence numbers to text commands as part of the Telnet or WebSocket protocol described in this document.
+- When a command fails due to network loss, disconnect, or backend-unavailable conditions, clients surface the failure to the user and may choose to reissue the command as a new gameplay action, but there is no protocol-level replay contract.
+- Idempotency and replay safety for ambiguous situations inside the tick system are handled entirely by Game Session and domain services using internal effect IDs and transactional safeguards as described in [Transactions & Idempotency](./system-architecture-transactions.md).
+
+Architecture and service designs must not assume that external clients participate in any idempotency or sequence-key protocol beyond these fire-and-forget semantics.
+
+### Telnet Disconnect Reasons
+
+Telnet clients receive final disconnect messages from the TCP Proxy Service when connections close due to policy, slow-client behaviour, backend outages, or internal errors. To keep behaviour aligned with WebSocket close codes from [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts), the TCP Proxy Service standardises a small set of Telnet disconnect reason categories:
+
+- `logout` – explicit, clean shutdown (user-initiated logout or admin-initiated session end); maps to WebSocket `1000` with reason `logout`.
+- `idle_timeout` – idle-connection timeout where no traffic has been observed within the configured idle window; maps to WebSocket `1001` with reason `idle_timeout`.
+- `policy_violation` – client behaviour that violates platform policies (for example sustained command-rate abuse, malformed envelopes, repeated MCP negotiation failures, or intentionally abusive traffic); maps to WebSocket `1008` with reason `policy_violation`.
+- `backend_unavailable` – gameplay backend services (Game Session or critical dependencies) are unavailable or overloaded beyond a short grace window; maps to WebSocket `1013` with reason `backend_unavailable`.
+- `internal_error` – unexpected server-side failures not attributable to client behaviour and not clearly backend-unavailable; maps to WebSocket `1011` with reason `internal_error`.
+
+The exact Telnet disconnect line format is defined in the TCP Proxy Service design, but every player-visible disconnect must include one of these reason tokens so that:
+
+- Client authors can treat `policy_violation` as non-retriable (or much longer backoff) and the others as retriable with the backoff rules in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
+- Operators can aggregate disconnect metrics by reason category in a way that lines up with WebSocket close-code dashboards.
+
+Any additional Telnet-specific reasons introduced in the TCP Proxy implementation must be documented here and mapped to one of the WebSocket categories above (or a new, explicitly added category) to keep the taxonomy unified.
 
 ---
 

@@ -26,6 +26,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - Automation coordination structures that participate in tick timelines.
   - Characteristics:
     - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
+    - Owned by the **Game Session Service** for coordination and session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and `session:*`; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:
@@ -44,12 +45,15 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
   - Characteristics:
     - Treated as **non‑authoritative** and fully reset‑tolerant.
     - Eviction and TTL are part of normal behavior; designs must tolerate cold caches.
+    - Schema and TTL policies for cache and rate‑limit prefixes are defined centrally in shared infrastructure libraries rather than per service.
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
     - `view:room-look:<tenantId>:<roomId>`
     - `world-dynamic:<tenantId>:<aggregateId>`
     - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
     - `automation:queue:<tenantId>:<entityId>` and automation quota counters.
+
+In the initial deployment topology, Coordination Redis and Cache/Rate‑Limit Redis may share a single Redis cluster in some environments, but they must remain clearly separated by prefix and usage rules so that we can move to a split‑cluster model without changing application semantics. Production‑like environments are expected to use **distinct deployments** for the two roles; see [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
 
 New prefixes must declare:
 

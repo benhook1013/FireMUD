@@ -17,4 +17,3 @@ Then:
 - Do not summarize behavior or highlight what is already good.
 - Only identify problems, contradictions, or gaps: unclear trust boundaries between services; inconsistent definitions of “user”, “account”, “session”, or “tenant”; missing rules for cross-tenant isolation; ambiguous session invalidation or expiry; under-specified interaction between billing, subscriptions, and access control; or flows that create security, data-leak, or user-experience risks.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer role or identity models, more precise session contracts, explicit tenant-isolation rules, or better coordination between account and session services.
-

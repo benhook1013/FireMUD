@@ -17,4 +17,3 @@ Then:
 - Do not summarize the happy-path billing flows or restate API details that are already clear.
 - Only identify problems, contradictions, or gaps: inconsistencies between billing state and access control, unclear handling of grace periods or payment failures, missing rules for refunds or chargebacks, weak security or privacy stories around payment data and account deletion, or UX risks around surprise lockouts or entitlement changes.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer state models, explicit lifecycle diagrams, better coordination between billing and authorization, or additional safeguards for payment and account transitions.
-

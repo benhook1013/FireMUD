@@ -13,7 +13,8 @@
 | Room occupancy (entity locations in rooms) | | | | | ✔ | | | | | | |
 | Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
 | Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
-| Email and system notifications | | | ✔ | | | | | | ✔ | | |
+| Account-related email (verification, password reset, security alerts, subscription/billing notifications) | | | ✔ | | | | | | | | |
+| Operational and moderation notifications (alerts, moderation actions, admin digests) | | | | | | | | | ✔ | | |
 | Payment, subscriptions, and bans | | | ✔ | | | | | | | | |
 | Account security policy (password rules, lockout, MFA requirements) | | | ✔ | | | | | | | | |
 | Gameplay login command handling and session binding (Redis) | | | | ✔ | | | | | | | |
@@ -56,6 +57,12 @@
 | WebSocket upgrade, routing, and admin auth gating | | | | | | | | | | | ✔ |
 | Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
+
+## Notes on Redis Ownership and Participation
+
+- **Coordination Redis ownership (ticks, locks, timers, sessions)** – Game Session Service owns the coordination keyspace and schema (for example, `coord:*`, `tick:*`, and `session:*` prefixes). Other services participate in coordination via shared helper libraries and documented key formats; they do not introduce new coordination prefixes or modify TTLs without going through Game Session ownership and the Redis design review process.
+- **Redis-backed automation tick coordination (`automation:*` keys)** – Automation & Scripting Service owns the `automation:*` keyspace and Lua scripts that drive automation ticks. Game Session and other services interact with automation via gRPC APIs, not by writing `automation:*` keys directly.
+- **Cache/Rate-Limit Redis usage (caches, quotas, rate limiting)** – TCP Proxy Service, Spring Cloud Gateway, Entity Management Service, Automation & Scripting Service, and Social & Groups Service all use shared cache and rate‑limit helpers backed by Redis (for example, `cache:*` and `ratelimit:*` prefixes). The schema, TTL policies, and correctness guarantees for these prefixes are defined in the shared cache/rate-limit library and in the Redis Cache & Rate Limiting design; individual services should not diverge from these patterns.
 
 ## Related Documentation
 

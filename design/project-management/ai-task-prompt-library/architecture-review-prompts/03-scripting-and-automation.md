@@ -20,4 +20,3 @@ Then:
 - Do not summarize behavior or call out what is already good.
 - Only identify problems, conflicts, or gaps: unclear execution or lifecycle semantics, ambiguous trust or sandbox boundaries, missing quota or abuse controls, weak failure or rollback stories, inconsistencies between designer-facing docs and service responsibilities, or underspecified observability or operational hooks.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as extra lifecycle steps, clearer API or contract definitions, stronger sandbox or limits, or better integration points with other services.
-

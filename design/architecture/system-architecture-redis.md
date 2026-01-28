@@ -32,7 +32,7 @@ This document is the **conceptual hub** for Redis in FireMUD. It explains the me
 - [Atomicity and Concurrency Control](#atomicity-and-concurrency-control)
 - [Key Naming and Shard Discipline](#key-naming-and-shard-discipline)
 - [Topology Compatibility Overview](#topology-compatibility-overview)
- - [External Invariants Redis Depends On](#external-invariants-redis-depends-on)
+- [External Invariants Redis Depends On](#external-invariants-redis-depends-on)
 - [Related Documentation](#related-documentation)
 
 ---
@@ -326,7 +326,6 @@ Region‑scoped coordination keys share the same `{tenantRegionTag}` hash tag an
 
 ---
 
-## Topology Compatibility Overview
 ## Topology Compatibility Overview
 
 Redis features and assumptions in FireMUD must work across both single‑instance and clustered deployments. This table summarizes what is supported; operational details and exact configuration live in **Redis Usage & Profiles** and **Redis Operations & Migrations**.

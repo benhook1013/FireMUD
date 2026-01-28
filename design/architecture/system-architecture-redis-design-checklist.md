@@ -59,7 +59,7 @@ Only after these workflow steps are accounted for should a change be considered 
 
 Use this when adding or changing coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`).
 
-**Role and scope**
+### Role and Scope
 
 - [ ] Confirm the prefix lives on **Coordination Redis** only.
 - [ ] Identify the owning service(s) and document them in the service README and Redis cheat sheet.
@@ -67,7 +67,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
   - [ ] `tenantId` dimension.
   - [ ] `regionId` or equivalent region concept where applicable.
 
-**Key naming and shard discipline**
+### Key Naming and Shard Discipline
 
 - [ ] Key format uses `tenantId` (and `regionId` if applicable) as stable IDs, not user‑provided strings.
 - [ ] Region‑scoped keys use `{tenantRegionTag}` (or an equivalent canonical hash tag) so all keys for a region land in a single cluster slot.
@@ -75,7 +75,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
   - [ ] Only touch keys that share the same hash tag and slot.
   - [ ] Do not mix coordination and cache prefixes in one invocation.
 
-**Tail-loss and reset behavior**
+### Tail-Loss and Reset Behavior
 
 - [ ] The design explicitly states:
   - [ ] Whether the prefix is **reset‑tolerant**, **reset‑sensitive**, or **reset‑forbidden**.
@@ -84,7 +84,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 - [ ] Flows that are **not** tail‑loss compatible (for example, real‑money or cross‑tenant transfers) use durable domain mechanisms and do not rely solely on Redis.
 - [ ] The appropriate reset scope (region/tenant/cluster) is documented in the service design and referenced from **Redis Reset & Recovery**.
 
-**Observability**
+### Observability
 
 - [ ] Metrics exist or are planned to track:
   - [ ] Key counts or approximate size for this prefix by tenant/region.
@@ -98,7 +98,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 
 Use this when adding or changing cache or rate‑limit prefixes (for example `inventory:*`, `view:room-look:*`, `world-dynamic:*`, `ratelimit:*`, `automation:queue:*`).
 
-**Role and behavior**
+### Role and Behavior
 
 - [ ] Confirm the prefix lives on **Cache/Rate‑Limit Redis** only.
 - [ ] Clearly state whether it is:
@@ -106,7 +106,7 @@ Use this when adding or changing cache or rate‑limit prefixes (for example `in
   - [ ] A **TTL‑only** best‑effort cache that tolerates occasional stale reads.
 - [ ] The cache’s correctness expectations (staleness tolerance, acceptable data loss) are documented in the relevant service design.
 
-**Eviction and TTL**
+### Eviction and TTL
 
 - [ ] Set explicit TTLs that match the data’s volatility and usage patterns.
 - [ ] Confirm eviction is acceptable:
@@ -116,14 +116,14 @@ Use this when adding or changing cache or rate‑limit prefixes (for example `in
   - [ ] The authoritative store exposes a version or `lastModified` field.
   - [ ] Cache invalidation logic clearly ties updates to version changes.
 
-**Key shape and multi-tenant behavior**
+### Key Shape and Multi-Tenant Behavior
 
 - [ ] Keys include `tenantId` and any other isolation dimensions required (for example, per‑player or per‑guild).
 - [ ] For rate‑limit prefixes:
   - [ ] Bucketing strategy is documented (per‑client vs hashed buckets).
   - [ ] Memory and key count growth per tenant/time window stays within budget.
 
-**Redis role separation**
+### Redis Role Separation
 
 - [ ] No coordination logic depends on these keys being present or accurate.
 - [ ] Cache and rate‑limit keys are **never** written to Coordination Redis.
@@ -134,7 +134,7 @@ Use this when adding or changing cache or rate‑limit prefixes (for example `in
 
 Use this when adding or changing Lua scripts that operate on coordination or cache prefixes.
 
-**Determinism**
+### Determinism
 
 - [ ] Script behavior is a pure function of:
   - [ ] `KEYS[...]` and `ARGV[...]` arguments.
@@ -144,19 +144,19 @@ Use this when adding or changing Lua scripts that operate on coordination or cac
   - [ ] `TIME` or other clock‑dependent primitives in control flow or key contents.
   - [ ] Global mutable state or side effects outside Redis.
 
-**Key handling and hash tags**
+### Key Handling and Hash Tags
 
 - [ ] All keys are passed via `KEYS[...]`; no hard‑coded key concatenation in Lua.
 - [ ] Multi‑key scripts only operate on keys that share a hash tag and cluster slot.
 - [ ] Script category (tick lock, timer queue, session CAS, automation, etc.) is documented in the Lua Script Registry.
 
-**Idempotency and replay safety**
+### Idempotency and Replay Safety
 
 - [ ] Re‑running the script with the same `KEYS`/`ARGV` in the same state does not apply additional logical effects.
 - [ ] Script uses set‑style semantics, version checks, or membership checks to avoid duplicate entries on replay.
 - [ ] Error outcomes (`STALE_LEASE`, `STALE_LOCK`, `UNSUPPORTED_SCHEMA_VERSION`, etc.) are explicit and non‑mutating.
 
-**Schema versioning**
+### Schema Versioning
 
 - [ ] Structured payloads include an explicit `schemaVersion`.
 - [ ] Script:
@@ -164,7 +164,7 @@ Use this when adding or changing Lua scripts that operate on coordination or cac
   - [ ] Supports at least the current and previous schema versions during rollout.
   - [ ] Returns an explicit non‑mutating outcome for unknown versions.
 
-**Testing and registry**
+### Testing and Registry
 
 - [ ] Script is registered in the Lua Script Registry with:
   - [ ] Name and file path.
@@ -181,14 +181,14 @@ Use this when adding or changing Lua scripts that operate on coordination or cac
 
 Use this when changing Redis profiles, topologies, or reset behavior.
 
-**Profile and environment mapping**
+### Profile and Environment Mapping
 
 - [ ] Target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`, or documented variant) is clearly defined.
 - [ ] For each environment (local, CI, staging, prod):
   - [ ] Document which profile it approximates.
   - [ ] Record AOF, `maxmemory`, and clustering settings for each role.
 
-**Topology compatibility**
+### Topology Compatibility
 
 - [ ] Verify that:
   - [ ] Coordination scripts and key patterns remain valid on the chosen topology (single‑node vs cluster).
@@ -197,7 +197,7 @@ Use this when changing Redis profiles, topologies, or reset behavior.
   - [ ] Coordination and Cache/Rate‑Limit Redis remain separate deployments, even when co‑located on a host.
   - [ ] Configuration helpers and dashboards detect when roles accidentally point to the same endpoint.
 
-**Reset model**
+### Reset Model
 
 - [ ] Design changes explicitly state:
   - [ ] Which reset scopes are safe (region, tenant, cluster).
@@ -210,7 +210,7 @@ Use this when changing Redis profiles, topologies, or reset behavior.
   - [ ] Either they use a different store as primary, with Redis in a purely cache/index role, or
   - [ ] They introduce their own explicit deployment and runbooks outside the general Coordination Redis reset tooling.
 
-**Observability and SLOs**
+### Observability and SLOs
 
 - [ ] Tail‑loss SLOs remain meaningful under the new profile/topology.
 - [ ] Metrics and alerts:

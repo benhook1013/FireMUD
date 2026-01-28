@@ -24,6 +24,13 @@ Generation flows fall into two categories:
   commands to create per-instance layouts keyed by `(tenantId, gameInstanceId)`; these
   flows never modify template tables for Published versions.
 
+All generator invocations are explicitly **mode-aware**. Callers must specify a `generationMode` value:
+
+- `DESIGN_TEMPLATE` – used only by Game Design Service design-time workflows to populate or reshape template graphs keyed by `(tenantId, versionId)` on Draft versions.
+- `RUNTIME_INSTANCE` – used by World Management and Game Session for world creation and runtime instancing to create instance records keyed by `(tenantId, gameInstanceId)`; this mode is not permitted to write any template rows regardless of version state.
+
+World Management enforces this boundary: any attempt to invoke a generator in `RUNTIME_INSTANCE` mode that would modify template tables, or to write template rows for a Published version in `DESIGN_TEMPLATE` mode, is rejected with a hard validation error. Template writes must always originate from Game Design Service design-time APIs targeting Draft versions.
+
 ---
 
 ## Generator Types
@@ -62,6 +69,13 @@ Procedural generators are invoked by the World Management Service, which calls p
   instances**, results are persisted as instance rows keyed by
   `(tenantId, gameInstanceId)` and refer back to the chosen `versionId`; template
   rows remain unchanged.
+
+For persistent instance layouts, the invariant is that all `*_instance` rows must be **replayable** from:
+
+- the published templates for the associated `versionId`, plus
+- the stored generator metadata for each generation run, including `generationMode`, `seed`, `generatorType`, and an immutable `configSnapshot` with an explicit `schemaVersion`.
+
+Runtime-only dungeons or short-lived instances may be treated as ephemeral data that exists only for the lifetime of a specific `gameInstanceId` and is never shared across instances or versions. Long-lived overworld-style instance layouts that need to survive restarts must persist enough generator metadata to satisfy the replayable-from-templates invariant.
 
 Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details appropriate to the template or instance context.
 
@@ -133,6 +147,8 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
   rooms so that operators can later reconstruct the inputs used for a particular
   world or instance, even if live rules have changed.
 
+When the shape of generator configuration evolves, schema changes must follow the version-aware migration rules in `system-architecture-database-migrations.md`. New fields should be added under a new `schemaVersion`, and World Management and related services must continue to understand existing non-Retired `schemaVersion` values until the corresponding versions have been retired or explicitly migrated.
+
 ---
 
 ## Service Responsibilities
@@ -149,6 +165,7 @@ Generation parameters can be tuned at runtime through the [Procedural Generation
 
 - Provides optional post-generation population scripts (for example, spawning NPCs or loot) that can be invoked by World Management based on tags, biome, and difficulty
 - Integrates procedural generation results with the broader scripting and automation framework where needed
+- Does not directly persist generator outputs; it returns results to World Management or other domain services, which are solely responsible for writing template or instance rows
 
 ### Game Session Service
 

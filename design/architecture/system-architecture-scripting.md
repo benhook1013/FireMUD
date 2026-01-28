@@ -48,6 +48,7 @@ The table below summarizes the high-level implementation status of major areas i
 - [Who Should Read What](#who-should-read-what)
 - [Goals](#goals)
 - [Validation & Admission Pipeline](#validation--admission-pipeline)
+- [Sandboxing & Security](#sandboxing--security)
 - [TL;DR Flow](#tldr-flow)
 - [Where to Find Details](#where-to-find-details)
 
@@ -120,6 +121,21 @@ At a high level, a script (or plugin) must pass through several stages before it
 All stages emit metrics and audit records (especially `script_event_audit`) so designers and operators can see where a script failed to progress. The quotas and operations document (`design/architecture/system-architecture-scripting-quotas-and-operations.md`) is the primary reference for interpreting these outcomes in production.
 
 ---
+
+## Sandboxing & Security
+
+From a system perspective, script safety comes from three layers:
+
+- The **DSL and editor** restrict behavior to curated components with strong validation and loop-safety checks.
+- The **sandbox runtime** in the Automation & Scripting Service enforces CPU, time, and memory budgets per run and per tenant, treating budget violations as `sandbox_error` outcomes that feed into failure-rate circuit breakers.
+- **Infrastructure limits** (Kubernetes resource limits, Redis and database quotas) provide outer guards for catastrophic failures.
+
+Detailed sandbox behavior and resource limits live in:
+
+- `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` – engine-level sandbox and budget semantics.
+- `design/architecture/system-architecture-scripting-quotas-and-operations.md#sandboxing--security` – how sandboxing interacts with quotas, multi-tenant fairness, and operations.
+
+For security and trust boundaries around plugins and external content, see the modding and game-design docs referenced under **Where to Find Details**.
 
 ## TL;DR Flow
 

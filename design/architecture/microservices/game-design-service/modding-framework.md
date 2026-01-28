@@ -81,6 +81,30 @@ Certain safety decisions are **platform-wide and not overridable by tenant admin
 
 This ensures that even trusted tenant administrators cannot inadvertently weaken the global safety posture for plugins.
 
+Operationally, the **Logging & Admin Service** acts as the control plane for plugin lifecycle management. Enabling, disabling, draining, and rolling back plugin versions are all performed via Logging & Admin APIs that update the registry in the Automation & Scripting Service; tenants do not manipulate `activeVersionId` or `pluginState` directly inside game traffic.
+
+To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+
+## Monitoring & Debugging
+
+Plugin executions participate in the same observability pipeline as core scripts and use shared identifiers and metrics:
+
+- Each plugin trigger is recorded in `script_event_audit` with `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, `scriptEventId`, `eventType`, and a canonical `outcome` / `reason` pair.
+- Automation metrics such as:
+  - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome}`
+  - `automation_script_skips_total{tenantId, pluginId, reason}`
+  - `automation_script_triggers_dropped_total{tenantId, pluginId, reason}`
+  - `automation_script_sandbox_failures_total{tenantId, pluginId, reason}`
+  - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, pluginVersionId}`
+  expose plugin behavior alongside core automation.
+
+Dashboards and Logging & Admin tooling should surface these identifiers so operators can:
+
+- Filter by `pluginId` / `pluginVersionId` to inspect plugin-specific health.
+- Jump from a player-visible tick log (using `scriptEventId` or `correlationId`) to matching plugin executions in `script_event_audit`.
+
+For details on the metrics glossary and cross-service correlation, see `design/architecture/system-architecture-scripting-quotas-and-operations.md#auditability--metrics` and `design/architecture/system-architecture-scripting-quotas-and-operations.md#cross-service-correlation`.
+
 ## Related Documentation
 
 - [Automation & Scripting Service](../automation-scripting-service/README.md)

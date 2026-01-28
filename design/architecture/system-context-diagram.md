@@ -55,9 +55,9 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
       Logging & Admin Service -------------------> Email / SMTP Provider
 ```
 
-Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks, separate from player-facing HTTP/WebSocket traffic. From there, admin commands and moderation actions are forwarded to domain services (for example, Game Session, Account, Social & Groups) over gRPC, following the ownership boundaries in the Service Responsibility Matrix.
+Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks, separate from player-facing HTTP/WebSocket traffic. From there, admin commands and moderation actions are forwarded to domain services (for example, Game Session, Account, Social & Groups, Logging & Admin) over gRPC, following the ownership boundaries in the Service Responsibility Matrix. External admin and creator tools do not call Logging & Admin Service directly; they always go through the Gateway so that authentication, authorization, and rate limiting are applied consistently.
 
-Only the Account Service and Logging & Admin Service send email directly to the SMTP provider; other internal services surface email-worthy events through these owners rather than talking to SMTP themselves. This matches the responsibilities defined in the Service Responsibility Matrix.
+Only the Account Service and Logging & Admin Service send email directly to the SMTP provider; other internal services surface email-worthy events through these owners rather than talking to SMTP themselves. This matches the responsibilities defined in the Service Responsibility Matrix: Account Service owns account-centric and security-related emails (for example, verification, password reset, subscription and billing notifications), while Logging & Admin Service owns operational and moderation notifications (for example, alerts, escalations, moderation decisions, and admin digests).
 
 ## Related Documentation
 

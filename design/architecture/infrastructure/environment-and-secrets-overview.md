@@ -162,4 +162,3 @@ The catalog groups variables by subsystem and keeps the tables and rotation note
 - `../system-architecture-redis.md` – Redis architecture hub.
 - `../system-architecture-authentication.md` – Authentication and authorization flows.
 - `../system-architecture-redis-usage-and-profiles.md` – How Redis roles and profiles are wired in different environments.
-

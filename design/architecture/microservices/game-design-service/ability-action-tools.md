@@ -35,6 +35,10 @@ Within a given published game version:
 
 Scripts and plugins may safely reference abilities by identifier within a game version and across script-only or plugin-only patches, but they should not assume that those identifiers remain valid across **different game versions**. Versioning runtime docs describe how these assets are pinned and how rollbacks behave when a game version is reverted.
 
+The Game Design Service’s publish Saga is responsible for enforcing these rules: during `PublishVersion`, it verifies that all ability identifiers referenced by scripts and plugins targeting a given `(tenantId, versionId)` exist and are compatible with the ability schema for that version. If mismatches are detected, the Saga marks the version as `FAILED` and prevents the corresponding `scriptPatchVersion` values from becoming `READY` for that tenant, so runtime handlers never execute against missing or incompatible abilities.
+
+From an observability perspective, script and plugin invocations that exercise abilities are recorded in `script_event_audit` with a `scriptEventId` that you can use to correlate designer-facing events with automation metrics and downstream tick effects, following the patterns in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+
 ## Capabilities
 
 - **Ability Editor** – create spell and skill definitions with cooldowns, resource costs, and targeting rules.

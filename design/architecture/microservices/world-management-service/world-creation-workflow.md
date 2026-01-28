@@ -14,7 +14,7 @@ The implementation uses the published world topology for the chosen `tenantId` a
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `room_template`, or authored generation metadata); and
 - Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `room_instance`, `world_event`).
 
-It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`.
+It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 
 ## Steps
 
@@ -42,8 +42,11 @@ A `gameInstanceId` is always tied to a single `runtime_version` and the
 instance data derived from that version:
 
 - All `*_instance` rows for a given `gameInstanceId` must be derivable from the
-  templates for that instance’s `runtime_version`. There is no cross-version
-  mixing of instance data.
+  templates for that instance’s `runtime_version` plus any persisted procedural
+  generation metadata (for example `generatorType`, `seed`, and an immutable
+  `configSnapshot` with `schemaVersion`). There is no cross-version mixing of
+  instance data and no reuse of instance layouts across different
+  `gameInstanceId` values.
 - Moving a game to a different version is modeled as starting a **new** game
   instance with a fresh `gameInstanceId` and running the world-creation Saga
   again for the new `(tenantId, versionId)`. Existing instances continue to use
@@ -56,3 +59,5 @@ instance data derived from that version:
 This policy keeps the world-creation workflow simple and ensures that every
 game instance has a self-consistent view of templates and instance data for its
 chosen version.
+
+Short-lived, runtime-generated dungeons or similar instanced content are treated as ephemeral and exist only for the lifetime of a specific `gameInstanceId`. Long-lived overworld-style instance layouts that must survive restarts remain bound to the original `(tenantId, runtime_version, gameInstanceId)` tuple; upgrading to a new `runtime_version` always uses a new `gameInstanceId` and reruns world creation rather than attempting to migrate or reuse prior instance layouts.

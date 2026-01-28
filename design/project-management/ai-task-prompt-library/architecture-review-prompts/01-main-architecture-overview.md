@@ -16,4 +16,3 @@ Then:
 - Do not summarize or praise what is already clear or working well.
 - Only describe suggested improvements or corrections: missing decisions, contradictory statements between docs, unclear or overlapping service responsibilities, undocumented assumptions, or areas where the architecture is likely to cause operational, scalability, or developer-experience problems.
 - When possible, propose concrete, actionable clarifications or structural changes for each issue you identify.
-

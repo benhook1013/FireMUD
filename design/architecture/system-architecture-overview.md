@@ -25,6 +25,19 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 - **Admin and operations tooling communicates with Spring Cloud Gateway over an internal gRPC management API** for route and health management; no gameplay traffic flows over this control-plane path.
 
+### Admin Entry Points and Control Plane
+
+All external admin and creator tools access the platform through the **Spring Cloud Gateway**; Logging & Admin Service is never exposed directly at the network edge.
+
+- **Control-plane API:** Admin/ops tools use an internal **gRPC management API** on the Gateway for route configuration, health checks, and runtime configuration that affects Gateway behavior itself. This path is for infrastructure and routing concerns only; it does not directly perform moderation or gameplay actions.
+- **Admin/creator data-plane APIs:** Admin and moderation UIs talk to **Logging & Admin Service and other domain services via the Gateway**, using standard HTTP/gRPC APIs routed through Gateway’s configuration. Moderation actions, feature flag toggles, and dashboards all use this path so that Gateway remains a single enforcement point for authn/authz, rate limiting, and audit logging.
+- **Internal-only dependencies:** Logging & Admin Service calls Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager directly from the internal network for analytics and dashboards. These observability backends are **not** exposed to clients and are treated as internal, operator-facing dependencies of Logging & Admin.
+
+Network policies and ingress configuration must reflect this model:
+
+- Only Gateway and TCP Proxy Service are reachable from external networks.
+- Logging & Admin Service accepts traffic only from Gateway (and from observability systems where necessary), not from the public internet or VPN clients directly.
+
 ### Authentication Modes and Boundaries
 
 FireMUD uses two complementary authentication modes that share a common identity model but differ in how they are presented by clients:
@@ -230,6 +243,17 @@ Environment-specific routing is configured via Spring profiles defined in `appli
 Game Logic Service is stateless and deterministic.
 Game Session Service governs pacing, conflict handling, and orchestration across distributed tick regions.
 
+### Command Fan-Out, Orchestration, and Scaling
+
+Game Session Service is an **orchestrator**, not a business-logic owner. To avoid turning it into an accidental monolith and to keep latency predictable:
+
+- Gameplay commands are represented as **coarse-grained operations** (for example, “execute command for character in region X”) rather than many fine-grained calls.
+- Game Session may issue a small, bounded number of synchronous gRPC calls per command (for example, a single call to Game Logic plus at most one read-model fetch). If a feature would require more than this, the design must introduce read models, projections, or caching instead of adding further fan-out.
+- Game Logic Service owns deterministic mechanics (combat, movement, progression). Game Session is responsible for ordering, conflict resolution, and deciding when to invoke Logic and when to defer or drop commands based on tick and quota state.
+- Horizontal scaling is based on **tenant + tick-region** sharding. Redis keys for sessions and coordination (for example, `session:{tenantRegionTag}:*`, `tick:{tenantRegionTag}:*`) must be designed so that all state needed for a tick region can be executed locally on a single Game Session shard.
+
+New APIs and Redis keys should be reviewed with this orchestration model in mind: Game Session should be able to drive gameplay using a small number of deterministic calls and region-local Redis operations for each tick, rather than building deep, ad hoc call graphs at runtime.
+
 ### Authoritative Data Ownership (Examples)
 
 The following examples illustrate where key concepts live; the full matrix remains canonical:
@@ -239,11 +263,22 @@ The following examples illustrate where key concepts live; the full matrix remai
 | Accounts, login credentials, JWT issuance | Account Service | Issues and validates JWTs; manages subscriptions and bans. |
 | Characters, NPCs, items, inventories | Entity Management Service | Owns persistent entity state, inventories, and stats. |
 | World topology (rooms, regions, maps) | World Management Service | Stores published room graphs, regions, and pathfinding metadata; Game Design Service is the design-time authoring tool and publishes topology versions into World Management. |
+| Dynamic room state (doors, hazards, persistent environment flags) | Entity Management Service | Owns mutable room state such as door open/closed flags, persistent hazards, and other environment attributes that can change at runtime; World Management remains the source of topology only. |
+| Room occupancy (entities present in each room) | Entity Management Service | Maintains indices and queries for which entities are in which rooms; other services read occupancy via Entity APIs rather than duplicating occupancy state. |
 | Game assets (published content and exported artifacts) | Game Design Service | Owns game asset publishing to the S3-compatible object store; other services and clients consume published assets via configured URLs rather than writing to the store directly. |
 | Gameplay mechanics (combat, movement, progression) | Game Logic Service | Implements deterministic rules; no persistent ownership. |
 | Live sessions, ticks, command queues | Game Session Service | Owns Redis-backed coordination for active gameplay. |
 | Chat, groups, social graph | Social & Groups Service | Manages chat channels, guilds, friends/blocks. |
 | Moderation events, admin dashboards | Logging & Admin Service | Aggregates logs/metrics/traces and powers moderation tooling. |
+
+### Design-Time vs Runtime World Data
+
+World and room data flows through two distinct phases:
+
+- **Design-time authoring (Game Design Service):** Creators edit rooms, zones, and world graphs using the Game Design Service and its web-based tools. All edits are versioned, and draft configurations can be validated and tested in isolation.
+- **Published runtime topology (World Management Service):** When a version is published, the Game Design Service performs a copy/publish step that materializes the topology and region layout into World Management as read-optimized, immutable structures (per game version). World Management owns this published topology and any derived navigation data such as navmeshes.
+
+Game Session Service controls **which published version is active** per tenant and region. Game Design Service can request or schedule version changes, but activation ultimately happens via Game Session and runtime configuration flows (see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)).
 
 ---
 
@@ -283,3 +318,19 @@ The following examples illustrate where key concepts live; the full matrix remai
 ### Responsibilities
 
 - [Microservices Responsibility Matrix](./service-responsibility-matrix.md)
+
+### Service-to-Module Mapping
+
+Each microservice described in this overview is implemented as a Gradle module under `services/`:
+
+- Game Session Service → `:game-session-service` (path: `services/game-session-service`)
+- Account Service → `:account-service` (path: `services/account-service`)
+- World Management Service → `:world-management-service` (path: `services/world-management-service`)
+- Entity Management Service → `:entity-management-service` (path: `services/entity-management-service`)
+- Game Logic Service → `:game-logic-service` (path: `services/game-logic-service`)
+- Game Design Service → `:game-design-service` (path: `services/game-design-service`)
+- Automation & Scripting Service → `:automation-scripting-service` (path: `services/automation-scripting-service`)
+- Social & Groups Service → `:social-groups-service` (path: `services/social-groups-service`)
+- Logging & Admin Service → `:logging-admin-service` (path: `services/logging-admin-service`)
+- Spring Cloud Gateway → `:spring-cloud-gateway` (path: `services/spring-cloud-gateway`)
+- TCP Proxy Service → `:tcp-proxy-service` (path: `services/tcp-proxy-service`)

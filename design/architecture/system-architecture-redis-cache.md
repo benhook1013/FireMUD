@@ -17,7 +17,7 @@ The **Cache/Rate-Limit Key Catalog** in this file is the canonical catalog for c
 > from Coordination Redis. For a concise overview of prefixes, roles, and owning
 > services, see the [Redis Cheat Sheet](./system-architecture-redis-cheatsheet.md).
 
-**Default operator knobs in this doc**
+## Default Operator Knobs
 
 - Which aggregates are cached at all, and whether they are **versioned** or **TTL-only** (per-prefix correctness class).
 - Cache TTL ranges and high-level size/pressure budgets on Cache/Rate-Limit Redis (not per-tenant micro-tuning).
@@ -410,10 +410,10 @@ CI and code review checks are expected to:
 
 - Fail when new Redis prefixes are introduced in cache/rate-limit contexts without being added to this catalog.
 - Ensure that cache/rate-limit tooling and scripts explicitly bind to the Cache/Rate-Limit Redis role, not Coordination Redis, when using these prefixes.
- - Treat `automation:queue:*` and related automation caches as **best-effort only**:
-   - Automation workflows must be designed so that losing queued items or quota counters does not violate correctness; durable triggers and domain state remain the source of truth.
-   - Non-idempotent or “exactly-once” automation contracts must store their authoritative state outside Redis and use these prefixes only as advisory buffers.
-   - `automation:queue:*` must never be the sole source of truth for whether work has been enqueued or processed; any exactly-once or at-least-once guarantees come from durable trigger tables and idempotent domain logic, not from Redis queue contents.
+- Treat `automation:queue:*` and related automation caches as **best-effort only**:
+  - Automation workflows must be designed so that losing queued items or quota counters does not violate correctness; durable triggers and domain state remain the source of truth.
+  - Non-idempotent or “exactly-once” automation contracts must store their authoritative state outside Redis and use these prefixes only as advisory buffers.
+  - `automation:queue:*` must never be the sole source of truth for whether work has been enqueued or processed; any exactly-once or at-least-once guarantees come from durable trigger tables and idempotent domain logic, not from Redis queue contents.
 
 ### Cache Invalidation Policy Table
 

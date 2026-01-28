@@ -102,7 +102,7 @@ Triggers lead to DSL runs, which produce script work items in the automation que
 The DSL supports a variety of **built-in lifecycle events** and **custom events**. The exact set of events and their payload schemas are defined in the Automation & Scripting Service and domain service contracts; this section summarizes the main categories and how they behave.
 
 - **Script lifecycle events**
-  - `onLoad` is a **script-level lifecycle event** that runs once per `<tenantId, scriptId, versionId>` when a script becomes active for a tenant. It is designed for initializing script-global state (for example, loading lookups, seeding script-local caches, writing initial audit markers) rather than per-entity setup.
+  - `onLoad` is a **script-level lifecycle event** that runs once per `<tenantId, scriptId, scriptPatchVersion>` when a script becomes active for a tenant under a given patch. It is designed for initializing script-global state (for example, loading lookups, seeding script-local caches, writing initial audit markers) rather than per-entity setup.
 
 - **Spawn and destruction events**
   - `onSpawn` events fire when an entity (such as an NPC) is created or enters a relevant region.
@@ -126,22 +126,22 @@ See the Automation & Scripting Service README and service protos for the full, u
 
 ### `onLoad` Semantics
 
-`onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and executes once per script definition and active version for a tenant, not once per NPC or player.
+`onLoad` is a **script-level lifecycle event**, not an entity-level event. It runs without an entity context and executes once per script definition and script patch for a tenant, not once per NPC or player.
 
 - **When it fires**
-  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, versionId>` after a script becomes active for that tenant. In practice this means:
+  - The scheduler emits an `onLoad` trigger exactly once per `<tenantId, scriptId, scriptPatchVersion>` after that script becomes part of the tenant’s active script set under a given patch. In practice this means:
     - When a script first becomes part of the tenant’s active script set under a given `scriptPatchVersion`, and
     - After a successful hot reload that changes `activePatchVersion` for that tenant, `onLoad` fires once for each script in the newly active patch.
   - If a reload fails and `activePatchVersion` remains unchanged, no additional `onLoad` events are generated.
 
 - **Per-script vs per-entity**
-  - `onLoad` runs **without an entity context**; it executes once per script definition and active version for a tenant.
+  - `onLoad` runs **without an entity context**; it executes once per `<tenantId, scriptId, scriptPatchVersion>`.
   - Scripts that need per-entity initialization (for example, setting up patrol state when an NPC enters the world) should use `onSpawn`, `onEnterRegion`, or other entity-scoped events instead of relying on `onLoad`.
 
 - **Interaction with reloads and recovery**
-  - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, versionId>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose current version is already active.
+  - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, scriptPatchVersion>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose current patch is already active.
   - `onLoad` triggers are enqueued only after leaders have switched `activePatchVersion` and `reloadState` has returned to `IDLE`. Scripts never run `onLoad` against a `pendingPatchVersion` that is still being validated or has failed reload.
-  - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, the effective `versionId` or `scriptPatchVersion`, and a canonical `outcome` / `reason` pair so operators can verify that initialization ran for a given script and version.
+  - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the effective `scriptPatchVersion`, and a canonical `outcome` / `reason` pair so operators can verify that initialization ran for a given script and patch.
 
 ---
 
@@ -218,6 +218,7 @@ Two services collaborate to deliver scripting and automation:
   - Controls the **publish lifecycle** for scripts and component graphs: designers edit drafts, run validations, and then publish a new `scriptPatchVersion` tied to a `baseVersionId` as described in [System Architecture: Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions).
   - Drives a **cross-service Saga** when a script version is published:
     - Writes the final, validated script graphs and bindings into its own tables.
+    - Validates that referenced runtime assets such as abilities and actions are compatible with the target game version; if mismatches are detected, the Saga marks the publish as `FAILED` and the affected `scriptPatchVersion` is never eligible to become `READY` for that tenant.
     - Starts a Saga that upserts the compiled script definitions, event bindings, and any world-generation hooks into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
     - On success, marks the version as `PUBLISHED` and calls `NotifyScriptVersionUpdate` so the Automation & Scripting Service reloads runtime state.
     - On failure, rolls back or marks the publish as `FAILED`, keeping the prior `scriptPatchVersion` as the active one for that game.
@@ -471,3 +472,5 @@ Failure handling:
 - If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations. If retries are exhausted, the patch is treated as `FAILED` for that tenant as above.
 
 All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final `outcome` and `reason`, so operators can verify initialization state for each patch and tenant.
+
+In practice, individual `onLoad` executions are keyed by `<tenantId, scriptId, scriptPatchVersion>`, and patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of these per-script runs: a patch becomes `READY` for a tenant only after all `onLoad` handlers for scripts in that patch have completed successfully, and any script-level `onLoad` failure leaves the patch in a `FAILED` state with the previous `activePatchVersion` remaining in use.

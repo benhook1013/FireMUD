@@ -21,4 +21,3 @@ Then:
 - Do not summarize what already works well or restate basic descriptions of dashboards or metrics.
 - Only identify problems, contradictions, or gaps: missing signals for critical flows, unclear ownership of alerts, runbooks that do not map cleanly to the described failure modes, inconsistent use of tracing or logging across services, or operational scenarios that are not covered.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as stronger SLOs or SLIs, additional metrics or spans, clearer alert routing, or more complete, step-by-step runbooks.
-

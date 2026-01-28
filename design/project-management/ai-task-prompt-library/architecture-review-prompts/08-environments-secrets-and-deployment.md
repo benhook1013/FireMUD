@@ -20,4 +20,3 @@ Then:
 - Do not summarize the environment matrix or restate how CI or CD is generally supposed to work.
 - Only identify problems, contradictions, or gaps: unclear environment roles, redundant or missing secret sources, inconsistent handling of secrets between services, weak rotation or incident-response stories, unclear promotion or rollback flows between environments, or security assumptions that are unrealistic.
 - For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clarified environment roles, standardized secret-handling patterns, explicit deployment and rollback procedures, or stronger security and compliance controls.
-

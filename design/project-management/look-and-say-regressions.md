@@ -24,4 +24,3 @@ This document centralizes the cross-service regression plans for the `LOOK` and 
 
 - Prefer running these suites through `./gradlew crossServiceTest` once the harness is wired so both LOOK and SAY paths run together.
 - When adding new regressions, update this document, the underlying transcripts, and the associated Gradle tasks so the documentation and automation stay aligned.
-
