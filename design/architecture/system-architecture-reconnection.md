@@ -97,6 +97,8 @@ At most one active gameplay binding is supported per `{accountId, playerId}` at 
 | Client disconnect (TCP/WebSocket) | Requires new `LOGIN`; may resume via Redis |
 | TCP Proxy Service restart | Telnet clients disconnected; new `LOGIN` required |
 | Spring Cloud Gateway restart | Web clients disconnected; Telnet clients may stay connected to the TCP Proxy Service for brief restarts (gameplay may pause while the proxy reconnects its WebSocket bridge; prolonged outages close Telnet sockets) |
+| Gateway ↔ Game Session link degraded (short window) | WebSocket connections stay open; individual commands may fail with explicit errors from Game Session or the gateway, but clients do not need to reconnect immediately |
+| Gateway ↔ Game Session link degraded (sustained backend unavailable) | Gameplay becomes impossible; WebSocket sessions are closed with `1013` (`backend_unavailable`) and clients should reconnect with backoff as described below. Telnet clients are closed by the TCP Proxy with a clear “backend unavailable” message once the proxy’s reconnect/buffering window or a backend-unavailable grace window is exceeded. |
 | Game Session Service restart | Transparent if client remains connected |
 | Manual re-`LOGIN` from same character | Treated as reconnect; resumes if Redis intact |
 | Redis session expired/missing | Treated as fresh login; gameplay starts anew |
@@ -114,6 +116,23 @@ At most one active gameplay binding is supported per `{accountId, playerId}` at 
 - Clients are **fully stateless**
 - Transparent failover is supported across infrastructure layers
 
+## Client Reconnection Behaviour
+
+FireMUD treats reconnection as a **client responsibility**: after any disconnect, clients open a fresh transport (TCP or WebSocket) and issue a new `LOGIN`. To avoid thundering herds and to keep reconnect storms predictable during incidents, automated or first‑party clients should follow a consistent reconnection policy:
+
+- **Backoff and jitter**
+  - Start with an initial delay of `1–2s` after the first failed reconnect attempt.
+  - Use exponential backoff (for example, doubling the delay on each subsequent failure) up to a maximum backoff of `30–60s`.
+  - Apply jitter of ±25% to each delay to avoid synchronized reconnect bursts from many clients.
+- **Retry caps**
+  - Cap reconnect attempts to a reasonable rate per client (for example, no more than ~6 attempts in the first minute and ~60 attempts per hour).
+  - If the last close reason clearly indicates `policy_violation` or a similar non‑retriable condition (see [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts) for close codes), clients should either stop reconnecting or switch to a much longer backoff window and surface the error to the user.
+- **Scope of reconnection**
+  - Telnet clients reconnect by establishing a new TCP connection to the TCP Proxy Service and issuing `LOGIN` (and any optional `SESSION`/MCP negotiation) again.
+  - Web clients reconnect by opening a new WebSocket to `/ws/game/**` via Spring Cloud Gateway and issuing `LOGIN` again; they must not assume that any prior MCP or `SESSION` state has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
+
+Clients that do not implement these backoff rules will still function, but first‑party tools and reference clients should treat this behaviour as the normative baseline so that production incidents do not amplify reconnect load.
+
 ## Failure Modes & Reconciliation Rules
 
 `NotifyDisconnect` events and edge behaviour around disconnects are intentionally **advisory**, with Redis and gameplay activity as the source of truth:
@@ -122,6 +141,18 @@ At most one active gameplay binding is supported per `{accountId, playerId}` at 
 - **Idempotent disconnect handling** – Game Session keys disconnect handling by `{proxyConnectionId, disconnectSequence}` and treats duplicate events for the same pair as no-ops. Late events that arrive after a new socket has been bound or after Redis has expired the session are also safe to ignore; they must not forcefully tear down a new, healthy binding.
 - **Missing hints** – Absence of a `NotifyDisconnect` event is never interpreted as a guarantee that the client is still connected. Game Session relies on its own timeouts and region/tick-level activity to clean up stale sessions when disconnect hints are missing (for example due to gRPC transport failures).
 - **Edge ordering vs domain idempotency** – The TCP Proxy → Gateway → Game Session path provides per-connection FIFO where delivered and at-most-once delivery, as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants). Game Session and downstream domain services implement durable idempotency guards (for example effect IDs and transaction rows) so retries and replays within the tick system remain safe even when edge hints are late or duplicated. See [gRPC API Style & Versioning](./system-architecture-grpc.md) and [Transactions & Idempotency](./system-architecture-transactions.md) for the underlying RPC and effect semantics.
+
+### Backend-Unavailable Scenarios
+
+Some failures leave edge connections technically alive while core gameplay services are degraded. To keep behaviour predictable:
+
+- **Short, transient backend issues**
+  - When Game Session is intermittently failing but generally reachable (for example, a short burst of 5xx/`UNAVAILABLE` responses), Spring Cloud Gateway keeps existing WebSocket sessions open. Individual commands fail with explicit error responses from Game Session, but clients are not required to reconnect solely due to these transient errors.
+  - Telnet clients remain connected to the TCP Proxy Service while the proxy attempts to keep its WebSocket bridge to the gateway and Game Session healthy within the limits of `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and related buffering ceilings.
+- **Sustained backend unavailability**
+  - When Game Session or the gameplay backend becomes continuously unavailable for longer than a small grace window, Spring Cloud Gateway closes affected gameplay WebSocket sessions with close code `1013` and reason `backend_unavailable`, signalling clients to apply the reconnection/backoff rules above.
+  - If the TCP Proxy can reach the gateway but the gateway cannot reach Game Session for longer than the proxy’s reconnect or buffering window, the proxy closes affected Telnet sockets with a clear “backend unavailable” message rather than buffering unbounded commands at the edge.
+  - Operators should treat elevated counts of `1013` (`backend_unavailable`) and proxy‑side “backend unavailable” disconnects as indicators of core gameplay outages rather than client misuse, and use the metrics referenced in [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients) and the Telnet degraded runbook to distinguish these from slow‑client backpressure events.
 
 ---
 

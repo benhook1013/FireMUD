@@ -60,8 +60,8 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
    - Use the versioned coordination maintenance CLI to clear keys in Coordination Redis for the chosen scope, using shared key builders and descriptors.
    - No ad-hoc `DEL`/`FLUSH*` commands are used; all prefixes and key shapes are driven from the same catalogs used by the Lua Script Registry.
 4. **Reconcile tick effect ledger state**
-   - For the affected scope, SCHEDULED ledger rows tied to the old `region_epoch` converge to terminal outcomes (typically `ABANDONED` with a reset-specific reason) as described in `system-architecture-tick-failures-and-operations.md`.
-   - New executors do not resume old-epoch SCHEDULED rows; any re-drive or migration across epochs is performed by dedicated maintenance tooling.
+   - For the affected scope, `SCHEDULED` ledger rows tied to the old `region_epoch` converge to terminal outcomes (typically `ABANDONED` with a reset-specific reason) via a scoped tick-effect-ledger reconcile step in the reset tooling, as described in `system-architecture-tick-failures-and-operations.md`.
+   - New executors do not resume old-epoch `SCHEDULED` rows; any re-drive or migration across epochs is performed only by dedicated maintenance tooling that explicitly re-creates effects in the new epoch.
 5. **Resume ticks on the new epoch**
    - Once Coordination Redis is clean for the scope and the ledger has no indefinitely SCHEDULED rows for the old epoch, the control plane resumes tick scheduling.
    - New ticks start from `(region_epoch+1, tickId=0)` for each affected region, and all subsequent coordination state is written under the new epoch.

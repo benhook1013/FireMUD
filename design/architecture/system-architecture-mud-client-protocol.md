@@ -105,6 +105,8 @@ MCP state is **strictly per TCP connection** and does not survive reconnects on 
 
 From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect, and Game Session uses Redis-backed state to decide whether to resume or start a new session. MCP and `SESSION` provide additional structure and hints on top of that flow but never replace the core text protocol or Redis session state as the source of truth.
 
+MCP-aware clients should also follow the general reconnection backoff guidance from [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour): use exponential backoff with jitter when reconnecting after failures (including MCP negotiation failures), respect non‑retriable conditions such as clear policy violations, and avoid tight reconnect loops that could overload the TCP Proxy or Gateway during incidents.
+
 ## Example Workflow
 
 1. Client connects and negotiates MCP support with the TCP Proxy Service.

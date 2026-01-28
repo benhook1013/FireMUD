@@ -39,8 +39,9 @@ When designing new tick-driven features, keep these invariants in mind:
 The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
 
 - `tickId` is monotonic and uniquely identifies each committed tick for that region.
-- All coordination keys in Redis for that region (for example `tick:{tenantRegionTag}:*`, timers, retries, leases) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
-- When region authority moves or a scoped coordination reset occurs, the tick control plane bumps `region_epoch` and ensures that subsequent work is scheduled only on the new timeline; survivors from older epochs are treated as stale and either ignored or explicitly reconciled.
+- All **region-scoped tick coordination keys** in Redis (for example `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
+- Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
+- When region authority moves or a scoped coordination reset occurs, the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
 

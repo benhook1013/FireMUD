@@ -76,6 +76,19 @@ Automation & Scripting Service instances typically:
 - Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
 - Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) so they can compute which “every N ticks” boundaries have elapsed and enqueue `onInterval` and other tick-derived triggers under the same tick timeline.
 
+### Bootstrap vs Stream (Authoritative Timeline Source)
+
+For any consumer or operator that needs to locate “where a region is” on the `(regionEpoch, tickId)` timeline:
+
+- **Bootstrap** from a durable view:
+  - Game Session exposes a control/status API (for example `GetRegionTickStatus`) backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(regionEpoch, tickId)` per `<tenantId, regionId>`.
+  - New consumers and operational tools obtain their initial view of the timeline from this API or table; they do not infer it from Redis coordination keys.
+- **Follow** via streaming heartbeats:
+  - After bootstrapping, consumers attach to `StreamTickHeartbeats` and treat the combination of the bootstrap status and the live heartbeat as the authoritative progression of the timeline.
+  - If the heartbeat stream drops or a reset bumps `regionEpoch`, consumers use the new `(regionEpoch, tickId)` from the stream plus durable state to re-establish their position.
+
+Redis coordination keys remain a volatile buffer; neither `tick:*` nor event-stream prefixes are considered sources of truth for epoch or tick counters.
+
 Tick execution never depends on external buses; external services consume the heartbeat stream and/or tick event stream only. See `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md` for details.
 
 ---
@@ -231,6 +244,20 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 - Stored and scheduled via Redis timer keys.
 - Aligned with the tick heartbeat and tick cadence.
 - Subject to time-scaling rules that speed up or slow down perceived time while preserving ordering.
+
+### Scheduler Recovery Semantics
+
+Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules to implement “every N ticks” and similar timers:
+
+- For each scheduled script or automation job, PostgreSQL stores at least:
+  - `(tenantId, regionId, region_epoch, scriptId, next_due_tickId)` and the interval in ticks.
+- On startup or after a reset:
+  - The scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, regionId>` from `GetRegionTickStatus` and the corresponding `next_due_tickId` from PostgreSQL.
+  - If `next_due_tickId <= currentTickId`, the scheduler may fire at most one **catch-up trigger** per script (for example “you missed one interval while down”) and then advances `next_due_tickId` by whole intervals until it is strictly greater than `currentTickId`.
+  - Very old missed intervals are not replayed one-by-one; the system guarantees that **future intervals fire correctly** and, at most, a bounded catch-up occurs after downtime.
+- After recovery, the scheduler:
+  - Tracks progression purely from the heartbeat stream and updates `next_due_tickId` in PostgreSQL as intervals elapse.
+  - Uses Redis coordination keys such as `script-scheduler:{tenantRegionTag}:lastTickId` as hints/checkpoints only; losing them affects when work is next discovered, not which durably-configured schedules eventually execute.
 
 Details of timer key shapes and scaling strategies live in `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md`.
 

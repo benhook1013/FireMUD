@@ -722,7 +722,7 @@ Before performing any coordination reset (region/tenant/cluster scope), operator
   - Core tables for tick coordination (for example, tick effect ledger, `coordination_meta`/leadership tables) are reachable and not reporting corruption or constraint failures.
   - Saga state for workflows that depend on coordination (for example, game startup/shutdown) is in a consistent state or can tolerate replay from the last committed step.
 - Verify tick effect ledger status for the target scope:
-  - No `SCHEDULED` or `IN_PROGRESS` tick effects remain that would be orphaned by dropping coordination state, or such effects are explicitly marked as `ABANDONED`/resolved at the domain layer.
+  - Identify `SCHEDULED` (and any legacy `IN_PROGRESS`) tick effects for the affected `(tenantId, regionId, region_epoch)` combinations so that the ledger reconcile step can drive them to `APPLIED` or `ABANDONED` as part of the reset handshake.
 - Ensure game traffic is quiesced for the affected scope:
   - Tick scheduling and new command intake are paused for the relevant `<tenantId, regionId>` or tenants.
   - Any long-running maintenance or backfill jobs that depend on coordination keys are stopped.
@@ -730,6 +730,20 @@ Before performing any coordination reset (region/tenant/cluster scope), operator
   - Capture which tenants/regions are being reset, why the reset is needed, and which Redis deployment/role is affected, so the action is auditable alongside normal break-glass events.
 
 Only after these checks pass should a reset proceed; if any item cannot be satisfied, treat the situation as an incident and resolve the underlying domain/database issues before discarding coordination state.
+
+### Scoped Tick Effect Ledger Reconcile
+
+Every coordination reset that affects tick execution (region/tenant/cluster scope) must include a **tick effect ledger reconcile** step that makes the ledger converge for the old epoch:
+
+- The reset tooling invokes a scoped reconcile routine (for example a `coord-maint tick-ledger-reconcile` subcommand) that:
+  - Selects tick effect ledger rows and cross-region follow-up rows for the affected `(tenantId, regionId, region_epoch)` combinations with `status = SCHEDULED` (and any legacy `IN_PROGRESS`).
+  - For each row, determines whether the corresponding effect has already been durably applied by consulting domain state, and:
+    - Marks rows `APPLIED` where domain state clearly reflects the intended effect.
+    - Marks rows `ABANDONED` with a reset-specific reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, or `RESET_CLUSTER_SCOPED`) where the effect is no longer valid or cannot be safely replayed.
+- New executors **do not** resume `SCHEDULED` work from the old epoch:
+  - Any re-drive across epochs is performed only by explicit, feature-specific tooling that reads the old-epoch rows and re-creates fresh effects in the new epoch under well-documented rules.
+
+This reconcile step is the concrete enforcement of the convergence guarantees in the tick failures/operations doc: for each `(tenantId, regionId, region_epoch, tickId, effectKey)` the ledger eventually reaches a single terminal state (`APPLIED` or `ABANDONED`), even when coordination state is dropped.
 
 ### Runbook: Mis-sharded coordination keys
 

@@ -130,6 +130,11 @@ When designing such APIs:
 
 The TCP Proxy Service’s `NotifyDisconnect` event sink into Game Session is the canonical example of this pattern: the reconnection model assumes that disconnect hints are best-effort, at-least-once signals, and that Game Session keys handling by `{proxyConnectionId, disconnectSequence}` so duplicates and late arrivals are safe.
 
+Gameplay command streams from clients into Game Session are intentionally **different** from these event sinks: as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants), the edge path for client gameplay commands is per‑connection FIFO and **at‑most‑once**, with any retries or replays handled at the Game Session/domain level via effect identifiers and transactional idempotency. When designing new APIs, treat:
+
+- Client‑initiated gameplay command paths as at‑most‑once per connection.
+- Internal event/notification streams as at‑least‑once with required idempotency keys.
+
 ## TLS Requirements
 
 All internal gRPC calls use **mutual TLS**. Each service sets the following environment variables so certificates can be mounted from Secrets or local files:

@@ -163,6 +163,13 @@ The **Game Session Service** controls which published version is active for each
 - Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.
 - All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
 
+Before any operation that changes whether a tenant is actively serving gameplay for a given instance (for example, starting a new instance, restarting an instance with a different `runtime_version`, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
+
+- Call `GetTenantEntitlements(tenantId)` in the Account Service and enforce that:
+  - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
+  - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
+- If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
+
 Because rollback relies on being able to reactivate previously published `version_id` values, schema migrations must be coordinated with versioned data. See the **Version-Aware Migration Guidelines** in [Database Migrations](./system-architecture-database-migrations.md) for constraints on dropping or reshaping columns that are still used by any published version.
 
 ## Runtime Feature Flags

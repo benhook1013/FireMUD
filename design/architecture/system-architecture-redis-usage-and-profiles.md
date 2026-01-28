@@ -59,6 +59,23 @@ New prefixes must declare:
 
 The **Redis Cheat Sheet** keeps a representative mapping from prefixes to roles and owning services.
 
+### Automation & Scheduler Coordination Prefixes
+
+A small set of automation/scheduler-specific prefixes live on Coordination Redis but remain **reset-tolerant**:
+
+- `script-scheduler:{tenantRegionTag}:lastTickId`
+  - Role: Coordination Redis.
+  - Owner: Automation & Scripting Service.
+  - Purpose: per-region checkpoint for “every N ticks” schedulers tied to the canonical `(regionEpoch, tickId)` timeline.
+  - Reset behavior: classified as reset-tolerant in the reset policy matrix; region/tenant/cluster resets may drop this key. After resets or data loss, Automation & Scripting recomputes due work from PostgreSQL schedules and the tick heartbeat as described in the tick and scripting docs.
+- `automation:tick:{tenantScriptTag}:*`
+  - Role: Coordination Redis.
+  - Owner: Automation & Scripting Service.
+  - Purpose: shard-local automation tick locks and staging structures that participate directly in tick timelines.
+  - Reset behavior: classified as reset-tolerant in the reset policy matrix; keys may be dropped by scoped coordination resets and are rebuilt from durable automation state and fresh tick activity.
+
+Durable automation schedules, quotas, and script configuration live in PostgreSQL; these coordination prefixes are latency and progress hints only and must not be treated as the primary record of “which scripts should run”. Designs that introduce new automation-related coordination prefixes must register them in the reset policy matrix and document how they recover from resets.
+
 ---
 
 ### Redis Usage by Service

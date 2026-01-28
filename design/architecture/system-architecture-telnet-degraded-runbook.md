@@ -78,7 +78,9 @@ The TCP Proxy Service and WebSocket path enforce backpressure rather than silent
 - **WebSocket path checks when Web clients are degraded**
   - When Web clients (browser or other WebSocket-based tools) experience frequent disconnects or stalled gameplay while Telnet remains healthy:
     - Verify that the `/ws/game/**` route is still present and correctly configured in Spring Cloud Gateway (route predicates, filters, and target Service).
-    - Check Gateway metrics for elevated connection churn or WebSocket send failures on the gameplay route, and correlate with Game Session metrics to ensure backend pods are healthy.
+    - Check Gateway metrics for elevated connection churn or WebSocket send failures on the gameplay route, and correlate with Game Session metrics to ensure backend pods are healthy. In particular, distinguish:
+      - **Slow-client / policy enforcement** at the gateway (for example `gateway.websocket.slow_client_closes` or close-reason metrics dominated by `1008` / `policy_violation`), which typically point to individual misbehaving or very slow Web clients.
+      - **Backend-unavailable conditions** (for example close-reason metrics dominated by `1013` / `backend_unavailable` and matching Game Session health issues), which indicate that Web clients are being dropped because gameplay backends are unavailable rather than because of client behaviour.
     - Confirm that any load balancer or CDN in front of the gateway is not terminating idle WebSocket connections more aggressively than the gateway’s own WebSocket idle timeout and ping/pong interval described in [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts).
   - WebSocket send failures and slow-client issues should result in the connection being closed rather than frames being silently dropped. If you observe symptoms that look like partial updates or missing messages without disconnects, treat this as a bug in the gateway or Game Session implementation and open an incident referencing this runbook and [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
 

@@ -2,7 +2,7 @@
 
 This document describes how FireMUD authenticates clients, issues internal JWTs, manages session state, and enforces role-based access across services.
 
-Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; session state is managed server-side in Redis and restored via the Game Session Service. The service delegates credential verification to the Account Service's `/auth/login` endpoint. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
+Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived auth token allowlist entries in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates credentials (including OTP) and issues internal JWTs. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
 
 ## Responsibility Split
 
@@ -24,7 +24,7 @@ JWT issuance follows these rules:
 - If a JWT has only tenant-scoped roles (no `globalRoles`), the Account Service may create one `session:auth:tenant:<tenantId>:<tokenHash>` entry per tenant in `scopedRoles`.
 - If a JWT includes `globalRoles`, the Account Service creates a single `session:auth:global:<accountId>:<tokenHash>` entry and may additionally create tenant-scoped entries when needed for services that require per-tenant allowlist checks.
 
-The entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “session” expiry knobs:
+The `session:auth:*` entries use a TTL derived from the JWT lifetime so operators do not need to tune separate “JWT” and “auth session” expiry knobs:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
@@ -33,8 +33,8 @@ JWT lifetime and the session safety margin are documented in [Environment & Secr
 Token validity semantics:
 
 - A JWT must be cryptographically valid (signature and time-based claims such as `exp`), and at least one relevant `session:auth:<scope>:<tokenHash>` entry (tenant-scoped or global) must be present in Redis for the context in which it is being used.
-- Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:auth:<scope>:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:*` force re-authentication for the affected scopes.
-- During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the allowlist check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side session/token entries to be present.
+- Coordination Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:auth:<scope>:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication for the affected scopes.
+- During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the allowlist check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side auth-session/token entries to be present.
 
 ---
 
@@ -82,13 +82,24 @@ Telnet-specific behaviors (such as the optional `SESSION` envelope used by advan
 1. The Telnet/WebSocket client emits `LOGIN <username> <password> [otp]` (or the `LOGON` alias).
 2. The Game Session Service parses the line, normalizes casing, and issues a synchronous call to the Account Service `/auth/login` REST endpoint or the `Authenticate` gRPC method with a payload containing `username`, `password`, the optional `otp`, and connection metadata indicating the **transport security** (for example `transportSecurity=PLAINTEXT_TELNET` vs `transportSecurity=TLS_TELNET` / `WEB_TLS`). This metadata is derived from the TCP Proxy and Gateway handshake so the Account Service can enforce deployment-wide and per-account policies for plaintext Telnet logins.
 3. The Account Service validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `AUTH_PLAINTEXT_TCP_NOT_PERMITTED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, `ERROR 2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `ERROR PLAINTEXT_TCP_NOT_PERMITTED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded. For plaintext Telnet logins, the combination of `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and the per-account “allow plaintext Telnet login” flag follows the safety matrix defined in the Security Architecture’s **Plaintext Telnet safety matrix** section; implementations must treat any combination outside the allowed cells as a hard denial (`AUTH_PLAINTEXT_TCP_NOT_PERMITTED` or `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`) rather than silently weakening security.
-4. Success responses cause the Game Session Service to store the JWT and claims in Redis, bind the socket to the authenticated session, and emit `OK LOGIN Logged in as <username>` on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
+4. Success responses cause the Game Session Service to store the JWT and claims in Redis, bind the socket to an authenticated account context, and emit `OK LOGIN Logged in as <username>` on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
 
 Gameplay commands such as `LOOK` and `SAY` are gated by this authentication handshake. Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, except in explicitly documented development/test bypass modes that grant temporary access. Once the login-and-session vertical slice ships, these commands are no longer processed for anonymous sessions, keeping the gameplay queue free of unauthenticated traffic.
 
-Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and not tied to a single game or tenant; the same account is used across all worlds. Tenant context is bound later when the client selects a world, and the Game Session Service derives the `tenantId` from that world selection to enforce isolation when creating Redis session entries.
+Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and not tied to a single game or tenant; the same account is used across all worlds as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model).
 
-Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss). If a valid Redis session exists (`accountId + playerId`), the Game Session Service resumes gameplay seamlessly.
+### Tenant Selection for Gameplay
+
+Binding an authenticated account to a specific tenant and character is modeled as a separate, explicit step from account login so that tenant authorization and billing rules are consistently enforced.
+
+- After `LOGIN` succeeds, the Game Session Service exposes an explicit “enter game” flow (for example, a `SELECT_GAME` / `ENTER_GAME <tenantSlug>` command or equivalent envelope) that:
+  - Resolves the requested `tenantId` from the supplied identifier.
+  - Verifies that the account is authorized to act on that `tenantId` using the Tenant Authorization Contract (roles from `globalRoles` and `scopedRoles`).
+  - Consults the runtime entitlement contract `GetTenantEntitlements(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
+  - Binds the socket to a gameplay session key for the chosen tenant and character identity, as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
+- Any subsequent attempt to switch tenants or characters for a socket must go through the same tenant-selection flow so that role checks and entitlements are re-evaluated; there is no implicit cross-tenant switching based solely on the initial `LOGIN`.
+
+Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when auth token sessions have expired or been revoked. If a valid gameplay session key exists (`accountId + playerId + tenantId`) and the corresponding auth token sessions are still present, the Game Session Service resumes gameplay seamlessly on reconnect.
 
 **Note:** In the target design, `playerId` represents a **character-level identity** within a tenant. The current implementation treats `playerId` as the authenticated `accountId` because explicit character selection is not yet implemented, but all Redis key formats and Game Session Service APIs must treat `playerId` as an abstract “character identifier”. When character selection is introduced, `playerId` will switch to a proper character or avatar ID without changing key prefixes or semantics, and sessions will bind sockets to characters rather than raw accounts.
 
@@ -193,32 +204,56 @@ The Game Session Service exposes `/sessions/{sessionId}/refresh-roles` for manua
 
 ## Session and Identity Management
 
-- The Game Session Service is responsible for:
+FireMUD deliberately distinguishes between several types of “sessions” so that identity, gameplay continuity, and auth token lifetimes can evolve independently:
 
-  - Authenticating sockets and binding identity context
-  - Managing Redis session state (e.g. `playerId`, `tenantId`, tick region)
-  - Managing JWTs for backend interactions
+- **Auth token sessions** – Represented by `session:auth:<scope>:<tokenHash>` entries in Coordination Redis, backing internal JWTs used for meta/control APIs.
+- **Gameplay sessions** – Tenant-scoped bindings between a connected socket (or reconnect token) and a character in a specific tenant, backed by gameplay Redis keys.
+- **Control-plane UI sessions** – Browser or desktop admin/creator sessions that hold short-lived JWTs client-side and rely on auth token sessions on the server.
 
-- Session entries in Redis expire after the derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) so abandoned sessions cannot linger indefinitely.
+The Game Session Service is responsible for:
+
+- Authenticating sockets and binding identity context
+- Managing gameplay Redis session state (e.g. `playerId`, `tenantId`, tick region)
+- Managing JWTs for backend interactions
 
 ### Session Types and Lifetimes
 
-FireMUD uses distinct types of “sessions” with different lifetimes and responsibilities:
+FireMUD uses distinct lifetimes and invariants for each session type:
 
 - **Auth token allowlist entries**  
   - Keys: `session:auth:<scope>:<tokenHash>` on Coordination Redis, where `<scope>` is either `tenant:<tenantId>` or `global:<accountId>` as described above.  
-  - Purpose: Server-side allowlist and revocation surface for internal JWTs used by meta/control services. Tenant-scoped entries are consulted for tenant-specific operations; global entries are consulted for cross-tenant/admin operations.  
-  - Lifetime: Absolute TTL derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Entries are not extended by client activity; when they expire, new tokens must be issued.
+  - Purpose: Server-side allowlist and immediate revocation surface for internal JWTs used by meta/control services. Tenant-scoped entries are consulted for tenant-specific operations; global entries are consulted for cross-tenant/admin operations.  
+  - Lifetime: Absolute TTL derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Entries are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` entries force re-authentication for the affected scopes.
 
 - **Gameplay session bindings**  
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, character identifiers, and tick-region context.  
   - Purpose: Bind a connected socket (or reconnect token) to a character in a specific tenant, enforce “one session per character”, and support reconnect flows.  
-  - Lifetime: Sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
+  - Lifetime: Sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup. On reconnect, the Game Session Service must both locate the gameplay session key and confirm that at least one relevant auth token session (tenant-scoped or global, as applicable) still exists; if no suitable `session:auth:*` entry is present, reconnect fails with a “session expired” error and the player must log in again.
 
-Security- and billing-related events (for example, account bans, password resets, enabling two-factor auth, tenant suspension, or subscription expiration) must actively revoke both:
+Security- and billing-related events (for example, account bans, password resets, enabling two-factor auth, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
 
-- Relevant `session:auth:*` entries so new meta/control calls fail closed until re-authentication. For tenant-level events such as tenant suspension, services delete `session:auth:tenant:<tenantId>:*` entries; for account-level events such as account bans, services delete both `session:auth:global:<accountId>:*` and all tenant-scoped entries for that account.
-- Any gameplay session keys bound to the affected account and tenant, so active sockets are kicked and must re-login under the new security or billing conditions.
+- For **account-level security events** such as account bans or password resets, services must:
+  - Delete `session:auth:global:<accountId>:*` entries and all tenant-scoped entries for that account.
+  - Revoke any gameplay session keys bound to the affected account across tenants so active sockets are kicked and must re-login under the new security conditions.
+- For **tenant-level billing events**, see the subscription-state mapping below and [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement) for when revocation is mandatory vs when quotas and warnings apply.
+
+### Billing State and Revocation Rules
+
+Subscription and billing state drives how aggressively sessions are revoked:
+
+- `trialing`, `active`  
+  - No automatic revocation based solely on billing state.  
+  - Quotas and entitlements from the plan apply; gameplay and control-plane access behave normally.
+- `past_due`, `grace`  
+  - No automatic revocation of existing sessions.  
+  - Operator and creator UIs surface strong warnings; services enforce any soft restrictions defined by the plan (for example, blocking new instances while allowing existing ones to run).  
+  - Auth token sessions and gameplay sessions remain valid unless explicitly revoked for security reasons.
+- `suspended`, `canceled`  
+  - Tenant-level hosting is disabled for gameplay:  
+    - Game Session and world-management flows must reject new game instance creations, restarts, or tenant selection for gameplay for the affected `tenantId` based on `GetTenantEntitlements`.  
+    - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.  
+  - Existing gameplay sessions for the tenant must be revoked: gameplay Redis keys for that tenant are deleted so connected sockets are kicked and cannot reconnect.
+  - Tenant-scoped auth token sessions are revoked for gameplay and regular tenant-scoped operations (`session:auth:tenant:<tenantId>:*`), but a small, explicitly documented “billing-safe” control-plane surface remains available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement). That surface is typically authorized via global roles and `session:auth:global:<accountId>:<tokenHash>` entries rather than tenant-scoped entries.
 
 ### Control-Plane Logout
 
@@ -231,6 +266,16 @@ Control-plane logout for admin and creator UIs is implemented as an explicit API
 This flow performs a **per-token logout**: it invalidates the current browser or device session without affecting other active sessions for the same account. Global “logout from all devices” behavior, if needed, is modeled as a separate endpoint that revokes all allowlist entries for an account rather than a single token.
 
 > 🔗 See [Session Keys and Gameplay Binding](./system-architecture-redis.md#session-keys-and-gameplay-binding) for Redis structure and gameplay rebinding.
+
+### Control-Plane Session UX Expectations
+
+Control-plane UIs must treat certain auth failures as hard logout conditions and others as tenant-level billing issues:
+
+- Meta/control APIs that rely on JWTs return canonical error codes such as:
+  - `AUTH_TOKEN_EXPIRED` – The presented JWT is no longer valid because its cryptographic lifetime has ended. Frontends must clear any in-memory token, redirect to login, and display a “Session expired” message.
+  - `AUTH_SESSION_REVOKED` – The JWT’s auth token sessions have been revoked due to a security event (for example, password reset, account ban, or “logout all devices”). Frontends must clear in-memory token state, redirect to login, and indicate that the session was ended for security reasons.
+  - `TENANT_BILLING_BLOCKED` – The operation is blocked because the tenant’s billing state (for example, `suspended` or `canceled`) does not allow the requested action. Frontends must keep the user logged in but surface a billing-specific banner or UI state for that tenant and disable gameplay/instance management actions while still allowing the billing-safe control-plane surface (for example, updating payment details or exporting data).
+- Closing a browser tab or window does **not** automatically revoke auth token sessions; users must call explicit logout (or an operator must use “logout all devices”) to revoke server-side allowlist entries before TTL expiry. On shared devices, UIs must encourage explicit logout from admin/creator sections.
 
 ---
 

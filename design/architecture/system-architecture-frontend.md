@@ -45,15 +45,20 @@ Frontend flows are split between **player gameplay sessions** and **admin/creato
 - **Player UI (gameplay)**  
   - Players authenticate to the platform by issuing the `LOGIN` command over the WebSocket gameplay channel, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
   - The React client does not store or expose internal JWTs; instead it maintains a WebSocket connection to the Game Session Service through the Gateway, and the Game Session Service binds that socket to a gameplay session in Redis.  
-  - On page reload or connectivity loss, the client reconnects the WebSocket and replays the login flow as needed; the Game Session Service uses Redis session bindings to restore gameplay state when allowed by server-side TTLs and revocation rules.
+  - After login, the client participates in an explicit “enter game” or world-selection step that chooses a `tenantId` and character as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay). The Game Session Service enforces tenant authorization and entitlements for this step.  
+  - On page reload or connectivity loss, the client reconnects the WebSocket and replays the login and tenant-selection flow as needed; the Game Session Service uses Redis gameplay session bindings and auth token sessions to restore gameplay state when allowed by server-side TTLs and revocation rules.
 
 - **Admin and creator UIs**  
   - Admin/creator interfaces authenticate through the Account Service (for example, via `/auth/login` exposed behind the Gateway). Successful login issues a short-lived JWT for control-plane APIs.  
   - Admin JWTs are treated as **internal tokens** and are stored only in in-memory frontend state managed by the auth layer; they must not be written to `localStorage`, session storage, or exposed to third-party origins.  
   - The frontend sends these tokens on meta/control API calls by setting the `Authorization: Bearer <token>` header for RTK Query requests. Backend services validate these JWTs with the shared `AuthTokenInterceptor` and enforce tenant access via the Tenant Authorization Contract described in [Authentication & Authorization](./system-architecture-authentication.md#tenant-authorization-contract).  
-  - Logout clears the in-memory auth state and calls the Account Service logout endpoint so server-side allowlist entries are revoked; subsequent requests require re-authentication.
+  - Logout clears the in-memory auth state and calls the Account Service logout endpoint so server-side auth token sessions are revoked; subsequent requests require re-authentication. Closing a browser tab does not revoke auth token sessions; explicit logout (or a “logout all devices” flow) is required to force server-side revocation before TTL expiry.
 
-All new frontend features that interact with protected APIs should reuse the shared auth utilities and RTK Query base configuration so token handling, logout, and error behavior remain consistent across player, admin, and creator experiences.
+All new frontend features that interact with protected APIs should reuse the shared auth utilities and RTK Query base configuration so token handling, logout, and error behavior remain consistent across player, admin, and creator experiences. In particular, the RTK Query base layer should interpret canonical error codes from backend services as follows:
+
+- `AUTH_TOKEN_EXPIRED` – Clear in-memory auth state, redirect to login, and show a “Session expired” message.
+- `AUTH_SESSION_REVOKED` – Clear in-memory auth state, redirect to login, and show a security-focused message (for example, “You were signed out because your account security changed.”).
+- `TENANT_BILLING_BLOCKED` – Keep the user logged in, but mark the affected tenant as billing-blocked in UI state, show a prominent billing banner, and disable gameplay or instance-management actions for that tenant while still allowing billing-safe operations (such as viewing invoices or updating payment details).
 
 ## API Usage Patterns
 
