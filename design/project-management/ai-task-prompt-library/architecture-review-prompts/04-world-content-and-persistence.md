@@ -1,6 +1,6 @@
 # Architecture Review Prompt: World, Content, and Persistence
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/microservices/world-management-service/README.md`
 - `design/architecture/microservices/world-management-service/world-creation-workflow.md`

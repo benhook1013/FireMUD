@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Game Loop, Ticks, and Redis
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/system-architecture-ticks.md`
 - `design/architecture/system-architecture-tick-concepts-and-invariants.md`

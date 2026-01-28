@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Auth, Sessions, and Multi-tenancy
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-multi-tenancy.md`

@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Main Architecture Overview
 
-Read the main architecture overview and structure docs:
+Read the main architecture overview and structure docs, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/system-architecture-overview.md`
 - `design/architecture/system-architecture-diagram.md`

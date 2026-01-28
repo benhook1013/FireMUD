@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Networking, Protocols, and Reconnection
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/microservices/tcp-proxy-service/README.md`
 - `design/architecture/microservices/spring-cloud-gateway/README.md`

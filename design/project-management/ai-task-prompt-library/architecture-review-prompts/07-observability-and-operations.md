@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Observability and Operations
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/system-architecture-logging-monitoring.md`
 - `design/architecture/system-architecture-tracing.md`

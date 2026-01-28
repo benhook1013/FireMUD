@@ -1,6 +1,6 @@
 # Architecture Review Prompt: User Journeys and Experience
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/user-journeys.md`
 - `design/architecture/user-journeys-players.md`

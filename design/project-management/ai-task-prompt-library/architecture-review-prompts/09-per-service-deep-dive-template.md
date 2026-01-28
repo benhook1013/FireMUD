@@ -2,7 +2,7 @@
 
 Use this template to review any individual microservice in the context of the overall architecture.
 
-First, gather and read:
+First, gather and read, following references to any other design documents that appear relevant:
 
 - The main architecture overview documents you need for context, such as:
   - `design/architecture/system-architecture-overview.md`

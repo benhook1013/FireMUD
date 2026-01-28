@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Scripting and Automation
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/system-architecture-scripting.md`
 - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`

@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Monetization and Account Lifecycle
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/system-architecture-frontend.md` (if it covers authentication, payments, or account flows)
 - `design/architecture/microservices/account-service/README.md`

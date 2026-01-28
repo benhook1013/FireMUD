@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Environments, Secrets, and Deployment
 
-Read the following documents:
+Read the following documents, and follow references to any other design documents that appear relevant:
 
 - `design/architecture/infrastructure/README.md`
 - `design/architecture/infrastructure/deployment-environments.md`
