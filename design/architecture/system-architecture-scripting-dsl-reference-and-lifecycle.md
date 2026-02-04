@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Scripting DSL Reference & Event Lifecycle
 
-This document is the **canonical reference** for the scripting DSL’s terminology, execution lifecycle, semantics, and failure modes. It is intended for implementers and backend developers integrating with the Automation & Scripting Service, Tick System, and related infrastructure.
+This document is the **canonical reference** for the scripting DSL’s terminology, execution lifecycle, semantics, and failure modes. It is intended for implementers and backend developers integrating with the Automation & Scripting Service, Tick System, and related infrastructure. For sandbox enforcement details (CPU, time, and memory budgets, and how failures surface in `script_event_audit`), pair this document with `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`, which is the canonical spec for the sandbox engine itself.
 
 It is a companion to:
 
@@ -57,7 +57,7 @@ For designer-oriented guidance on building and debugging scripts in the visual e
 
 ## Versioning Terms
 
-These definitions summarize how common versioning concepts are used in scripting; the full model lives in [System Architecture: Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+These definitions summarize how common versioning concepts are used in scripting; the full model lives in [System Architecture: Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md). For the per-tenant lifecycle of script patches after publish, see [Script Patch Lifecycle](#script-patch-lifecycle).
 
 - **`scriptPatchVersion`** – a logical script-only patch identifier tracked per tenant/game (for example in the Game Session Service as `script_patch_version`). It pins which published script set is considered active at runtime so all triggers and timers execute against a consistent script configuration.
 - **`versionId`** – an internal identifier for a concrete compiled script or component version. `versionId` values distinguish individual revisions within a `scriptPatchVersion` and are used by the Automation & Scripting Service to load the exact behavior that should run for a given trigger.
@@ -253,18 +253,39 @@ The intended invariants are:
 - A script patch may be pinned as the active `scriptPatchVersion` for a game only after the Automation & Scripting Service has loaded and validated that patch for the tenant and marked it `READY` as part of the publish Saga.
 - When Game Session emits events, it includes the currently pinned `scriptPatchVersion`. The Automation & Scripting Service must **not** silently substitute a different version; if the supplied patch is unknown or is marked `FAILED` for that tenant, the trigger is rejected.
 
-From the Automation & Scripting Service’s point of view:
+From the Automation & Scripting Service’s point of view, each `<tenantId, scriptPatchVersion>` follows the lifecycle described in [Script Patch Lifecycle](#script-patch-lifecycle). All script-event audit entries include the effective `scriptPatchVersion` at the time of evaluation so operators can correlate failures with patch lifecycle and publish history.
 
-- For each `<tenantId, scriptPatchVersion>` it tracks:
-  - `activePatchVersion` – patch currently used for live execution.
-  - `pendingPatchVersion` – patch being loaded or validated, not yet live.
-  - `patchStatus` – per-tenant status such as `READY`, `FAILED`, or `VALIDATING`.
-- When a trigger arrives:
-  - If `scriptPatchVersion` is `READY` and matches `activePatchVersion`, the scheduler proceeds normally (subject to quotas, sandbox limits, and error handling below).
-  - If `scriptPatchVersion` is unknown or `FAILED` for that tenant, the trigger is rejected with `outcome=version_unavailable` (or a more specific variant such as `skipped_version_unavailable`), and a drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
-  - Automation & Scripting never falls back to an older patch for that trigger; callers must fix the pinned version or republish.
+---
 
-All script-event audit entries include the effective `scriptPatchVersion` at the time of evaluation so operators can correlate failures with patch lifecycle and publish history.
+## Script Patch Lifecycle
+
+Script patches move through a shared state machine that is owned by the Automation & Scripting Service and observed by the Game Design and Game Session services. The lifecycle is tracked per `<tenantId, scriptPatchVersion>` and governs whether a patch may be pinned as the active version for any game in that tenant.
+
+The canonical states are:
+
+- `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
+- `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by `<tenantId, scriptId, scriptPatchVersion>` and must be idempotent.
+- `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible to become the `activePatchVersion` for games in that tenant, and Game Session may pin it as the current `scriptPatchVersion`.
+- `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous `activePatchVersion` remains in use, and the failed patch is not eligible to be pinned.
+- `ROLLED_BACK` – an operator has explicitly repinned a game or tenant back to a previous `scriptPatchVersion` via Logging & Admin or Game Session tooling. The rolled-back patch remains in the database for audit purposes but is not active.
+
+Typical transitions are:
+
+1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design.
+2. `ONLOAD_RUNNING → READY` when all `onLoad` executions for scripts in the patch succeed for the tenant.
+3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; the previous `activePatchVersion` remains in effect.
+4. `READY → ROLLED_BACK` when operators repin a game or tenant to an older patch using the control-plane APIs described in the Automation & Scripting Service README and the quotas and operations document.
+
+Automation & Scripting exposes this lifecycle to other services via:
+
+- A read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` that returns the current state and relevant timestamps.
+- An event such as `ScriptPatchStatusChanged`, emitted whenever a patch transitions between states for a tenant, so Game Design and Logging & Admin can update their views and UIs.
+
+When a trigger arrives at the Automation & Scripting Service:
+
+- If the supplied `scriptPatchVersion` is `READY` for the tenant, the scheduler proceeds normally (subject to quotas, sandbox limits, and error handling).
+- If the patch is unknown or in a non-ready state (for example, `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `FAILED`), the trigger is rejected with `outcome=version_unavailable` (or a more specific variant such as `onload_failed`), and a drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
+- Automation & Scripting never silently falls back to an older patch for that trigger; callers must fix the pinned version, repin explicitly, or republish.
 
 ---
 

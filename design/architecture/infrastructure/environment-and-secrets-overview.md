@@ -76,11 +76,29 @@ For full descriptions of the variables and their defaults, open `environment-and
 ### Production
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
-- Sensitive values (database passwords, JWT keys, TLS certificates) are stored in Kubernetes `Secret` objects. TLS certificates are issued by **cert-manager** and rotated automatically; JWT signing keys are rotated in the same manner.
-- The manifests in `k8s/base/` demonstrate loading these via `envFrom` so that services receive the same variables as in development.
-- All secrets, including database passwords and JWT keys, are rotated automatically using cert-manager sync jobs.
+- Sensitive values (database passwords, JWT signing keys, TLS certificates) are stored in Kubernetes `Secret` objects.
+- TLS certificates are issued by **cert-manager** and rotated automatically; services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
+- JWT signing keys are stored in Secrets and rotated by dedicated Kubernetes Jobs (for example `jwt-rotation`) that update both the signing key Secret and the JWKS document served by the Account Service. See `system-architecture-security.md#jwt-key--jwks-rotation-workflow` for details.
+- Database credentials are stored in Secrets and rotated via explicit operational Jobs and runbooks (for example `db-credential-rotation` in `system-architecture-backup-recovery.md#post-restore-secret-hardening`); there is no fully automatic cadence today.
+- The manifests in `k8s/base/` demonstrate loading Secrets and ConfigMaps via `envFrom` so that services receive the same variables as in development.
 - Services reload TLS certificates for gRPC client and server channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the shared library.
 - **Kubernetes Secrets** is the chosen mechanism for storing all sensitive credentials. External secret stores like Vault are out of scope at this stage.
+
+---
+
+## JWT Trust Model by Environment
+
+JWT signing key and JWKS behavior differs slightly by environment to balance safety and operational complexity:
+
+- **Development**
+  - Environment variables are loaded from `.env`, and secrets such as JWT signing keys may be generated randomly on startup for convenience.
+  - Cross-service JWT validation is best-effort when random keys are used; operators should not assume that tokens remain valid across service restarts unless a persistent signing key Secret is configured.
+- **Staging / Non-production clusters**
+  - Recommended to mirror production: use a persistent `jwt-signing-keys` Secret and `jwt-jwks` ConfigMap/Secret, with the Account Service serving JWKS from the mounted file.
+  - The `jwt-rotation` CronJob may be enabled on a low-frequency schedule to exercise the rotation path.
+- **Production**
+  - Required to use a persistent `jwt-signing-keys` Secret and JWKS document; JWKS is the canonical trust source for all validating services.
+  - The `jwt-rotation` CronJob is defined with `spec.suspend: true` and is triggered explicitly by operators as part of a rotation runbook.
 
 ---
 

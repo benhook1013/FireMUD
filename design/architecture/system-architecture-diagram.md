@@ -29,8 +29,10 @@ flowchart TD
 
     subgraph Datastores
         DB[(PostgreSQL)]
-        Cache[(Redis)]
+        CoordRedis[(Redis - Coordination)]
+        CacheRedis[(Redis - Cache/Rate Limit)]
         ES[(Elasticsearch)]
+        AssetStore[(S3-compatible Asset Store)]
     end
 
     subgraph Observability
@@ -55,6 +57,7 @@ flowchart TD
 
     Admin -- gRPC mgmt (infra) --> Gateway
     Admin -- admin APIs (via Gateway) --> Logging
+    Admin -- admin APIs (via Gateway) --> Session
 
     Session -- gRPC --> Account
     Session -- gRPC --> World
@@ -65,7 +68,11 @@ flowchart TD
     Session -- gRPC --> Social
     Session -- gRPC --> Logging
 
-    InternalServices --> Datastores
+    InternalServices --> DB
+    InternalServices --> CoordRedis
+    InternalServices --> CacheRedis
+    InternalServices --> ES
+    Design --> AssetStore
     InternalServices -- logs --> FluentBit
     InternalServices -- metrics --> Prom
     InternalServices -- traces --> OTel
@@ -122,11 +129,12 @@ All internal communication from the **Game Session Service** to downstream micro
 Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
 
 - **PostgreSQL** – Primary persistent store for world topology, entities, characters, items, and transactional metadata (tenant-scoped tables include `tenantId` so data never mixes across games).
-- **Redis** – Volatile session, tick, and cache state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient.
+- **Coordination Redis** – Volatile session and tick coordination state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient. In production this runs as a dedicated cluster so cache and rate-limit spikes cannot interfere with gameplay coordination.
+- **Cache/Rate-Limit Redis** – Best-effort caches, quotas, and rate limiting; this runs as a separate cluster in production and is safe to evict or scale independently of Coordination Redis.
 - **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.
 - **S3-compatible Asset Store** – Stores published game assets and exported content produced by the Game Design Service; other services and clients consume these assets via configured URLs, typically fronted by the gateway or a CDN.
 
-These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis`, `Elasticsearch`, and the asset store) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
+These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis - Coordination`, `Redis - Cache/Rate Limit`, `Elasticsearch`, and the asset store) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
 
 All datastores are shared across games. Tenant-scoped tables include a `tenantId` column (or reference a tenant-keyed parent), and Redis keys use a matching prefix, which isolates per-game data while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 

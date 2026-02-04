@@ -33,7 +33,10 @@ This section centralizes the **normative targets** for Redis behavior that other
 - **Tail-loss window**
   - Production-like profiles (`hobby_self_hosted`, `production_clustered`) target a tail-loss envelope of **~1–2 seconds** of coordination activity per `<tenantId, regionId>`, or roughly **≤ 2 × `tick_interval_ms`** where that is larger.
   - Ephemeral profiles (`dev_local`, certain CI stacks) may accept wider or unbounded tail-loss, but must be clearly labelled as such and **must not** be used to validate tail-loss SLOs.
-  - From the tick system’s perspective (see `system-architecture-tick-concepts-and-invariants.md`), any sustained breach of this envelope is a **tick SLO violation**, not just a Redis metric anomaly: it means the replay and idempotency assumptions for `(tenantId, regionId, region_epoch, tickId, effectKey)` may no longer hold.
+  - From the tick system’s perspective (see `system-architecture-tick-concepts-and-invariants.md`), any sustained breach of this envelope is a **tick SLO violation**, not just a Redis metric anomaly: it means coordination state inside the tail-loss window can no longer be treated as reliably reflecting the tick effect ledger.
+  - Even under SLO breach, domain-level idempotency and the canonical `EffectId` contract still prevent **double-application** of tick effects; what degrades is:
+    - The size of the window where Redis coordination state can be trusted for **automatic** replay decisions.
+    - The amount of manual or tooling-driven reconciliation required to drive lingering `SCHEDULED` ledger rows to `APPLIED` or `ABANDONED` (see the ledger replay controller in `system-architecture-tick-failures-and-operations.md`).
 - **Restart time**
   - For `hobby_self_hosted` and `production_clustered` Coordination Redis nodes, planned restarts (including AOF/RDB replay) should typically complete within **30–60 seconds**.
   - Restarts that routinely exceed this window are treated as signals to adjust AOF size, hardware, or topology rather than “just slower maintenance”.

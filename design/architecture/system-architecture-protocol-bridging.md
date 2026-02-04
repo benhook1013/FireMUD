@@ -55,7 +55,7 @@ The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves 
 - **At-most-once delivery with bounded loss (gameplay commands)** – The edge protocol path for gameplay commands is **at most once**: once a command on a given connection is dropped by any edge layer (for example due to buffer ceilings or abuse limits), it is not retried or replayed by that layer. “Bounded” here means that potential loss is limited to the commands still resident in that layer’s per-connection buffers or reconnect windows at the time of failure; there is no implicit replay across disconnects. Higher-level retries and replay semantics live entirely in Game Session and domain services; see [Transactions & Idempotency](./system-architecture-transactions.md) for the canonical idempotency model.
 - **At-least-once delivery (edge event sinks)** – Internal gRPC event sinks associated with the edge (for example the TCP Proxy’s `NotifyDisconnect` stream into Game Session) are intentionally **at-least-once** and must be consumed idempotently with respect to their idempotency keys, as described in [gRPC API Style & Versioning](./system-architecture-grpc.md#event-and-streaming-semantics). These streams are advisory hints that complement, but do not change, the at‑most‑once guarantees for client gameplay commands.
 - **Explicit drop conditions (edge layers)** – Commands or lines may be dropped under clearly defined conditions, including:
-  - TCP Proxy per-connection ceilings such as `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` when the WebSocket bridge is unavailable within the configured reconnect window;
+  - TCP Proxy per-connection ceilings such as `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` when the WebSocket bridge is unavailable within the configured reconnect window; when this bound is reached, the proxy closes the Telnet connection with a clear, player-visible message and a Telnet disconnect reason of `backend_unavailable` rather than keeping the connection open and silently dropping additional gameplay lines. The proxy never replays buffered commands after the close; clients reconnect and re-`LOGIN` as described in [Reconnection Strategy](./system-architecture-reconnection.md).
   - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
   - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed envelopes) where the proxy either discards input or closes the connection;
   - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
@@ -97,6 +97,24 @@ The exact Telnet disconnect line format is defined in the TCP Proxy Service desi
 
 Any additional Telnet-specific reasons introduced in the TCP Proxy implementation must be documented here and mapped to one of the WebSocket categories above (or a new, explicitly added category) to keep the taxonomy unified.
 
+### Cross-Client Takeover Examples
+
+The underlying authentication and gameplay services enforce a **single active gameplay binding per `{accountId, playerId}`**, as described in [Authentication & Authorization](./system-architecture-authentication.md#👥-multi-client-behavior-and-session-takeover) and [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). From the networking and protocol edge, this manifests as follows:
+
+- **Telnet → Web takeover**
+  - A Telnet client connects via the TCP Proxy and issues `LOGIN` for a character. Gameplay continues normally over the Telnet connection.
+  - Later, a Web client connects via WebSocket to `/ws/game/**` and successfully issues `LOGIN` for the same character.
+  - Game Session treats the Web client as the new active binding, terminates or demotes the Telnet connection according to takeover rules, and closes the Telnet path with a `logout` Telnet reason (mapped to WebSocket `1000/logout` in the taxonomy above). No ordering guarantees are provided between the last Telnet commands and the first WebSocket commands; only per-connection FIFO holds on each individual connection.
+  - The Telnet client must treat this disconnect as a normal session handoff, apply its reconnection/backoff rules if it wishes to reconnect, and not assume that any new Telnet connection can “resume” alongside the active WebSocket binding.
+- **Web → Telnet takeover**
+  - A Web client connects via `/ws/game/**` and issues `LOGIN` for a character. Gameplay continues normally over the WebSocket connection.
+  - A Telnet client later connects through the TCP Proxy and logs in as the same character.
+  - Game Session treats the Telnet client as the new active binding; the WebSocket session is closed with `1000/logout` and the Telnet connection becomes authoritative. Again, cross-connection ordering is not defined: only per-connection FIFO is guaranteed, and clients must not attempt to sequence commands across the old and new transports.
+- **Concurrent Telnet + Web connections**
+  - When clients deliberately keep both a Telnet connection and a WebSocket connection open for the same character (for example a scripting tool plus a web UI), only one binding at a time is gameplay-active. The “losing” connection is closed or demoted by Game Session, surfaced at the edge via the standard disconnect categories, and must not be relied on for ongoing gameplay commands.
+
+The networking layer does not implement its own multi-client arbitration or attempt to keep connections in sync; it simply reflects Game Session’s takeover decisions via the Telnet and WebSocket disconnect taxonomy. Tools and clients must design their UX around the single-active-binding model rather than expecting concurrent, ordered control over a character from multiple transports.
+
 ---
 
 ## Backpressure & Slow Clients
@@ -117,6 +135,21 @@ Backpressure and slow-client handling are split across layers so that the platfo
   - When WebSocket connections close due to slow-client behavior, abuse, network issues, or backend unavailability, clients must reconnect and re-`LOGIN`. Game Session’s Redis-backed state determines whether gameplay resumes or starts fresh, per [Reconnection Strategy](./system-architecture-reconnection.md).
 
 This model favors **clear closures over silent drops** when a client cannot keep up and provides enough metrics at each layer for operators to identify whether the TCP Proxy, Gateway, or Game Session is enforcing backpressure in a given incident.
+
+### Global Load Shedding Strategy
+
+During severe load or partial outages, each layer in the TCP Proxy → Gateway → Game Session path participates in protecting the platform, but responsibilities are ordered so that core gameplay services are preserved and client signals remain clear:
+
+- **Core gameplay first (Game Session and Redis)**
+  - Game Session and its Redis dependencies expose health and saturation metrics (for example queue depth, tick latency, and error rates). When these cross defined thresholds, Game Session prioritises preserving existing sessions and regions while rejecting new logins or high-cost commands, surfacing clear error responses rather than allowing unbounded growth in queues or CPU usage.
+  - Region-level degradation and command throttling are considered core policy decisions and are described in more detail in the tick and Redis architecture docs; edge components treat these errors as backend-level signals rather than attempting to work around them.
+- **Gateway next (connection creation and route-level limits)**
+  - Spring Cloud Gateway protects the core by tightening rate limits on new HTTP/WebSocket connections and, when necessary, preferring to fail new handshake attempts (for example with 429/503 or `1013/backend_unavailable`) over tearing down large numbers of existing gameplay sessions. The `firemud.gateway.backendUnavailableGraceMs` grace window and route-level rate-limit configuration bound how long Gateway will sustain failing backends before closing sessions as described in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window).
+- **TCP Proxy as outer edge (DMZ safety rails)**
+  - The TCP Proxy Service remains the first line of defence against obvious floods and abusive Telnet patterns via `TCP_PROXY_MAX_CONNECTIONS`, `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, idle timeouts, and buffer depth limits, backed by metrics such as `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded`.
+  - In healthy but busy conditions, these limits are tuned so that normal player behaviour is primarily shaped by Gateway and Game Session policies rather than frequent proxy disconnects. Under clear Telnet-specific abuse (for example, a small set of IPs consuming most connections), operators first adjust proxy-side caps or block misbehaving sources rather than relaxing gateway or Game Session limits.
+
+Operators should interpret spikes in each layer’s metrics in this order when diagnosing load incidents: check Game Session and Redis saturation first, then Gateway rate-limit and backend-unavailable signals, and finally TCP Proxy connection limits. This layered strategy ensures that both WebSocket and Telnet entry points shed load in a way that keeps behaviour predictable for players and preserves the integrity of core gameplay services.
 
 ### Telnet edge proxy and PROXY protocol
 

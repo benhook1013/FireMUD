@@ -1,0 +1,14 @@
+{
+  "title": "Player Experience",
+  "uid": "player-experience",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [],
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "refresh": "30s"
+}
+

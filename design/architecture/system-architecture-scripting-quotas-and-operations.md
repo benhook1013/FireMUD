@@ -91,8 +91,9 @@ Plugins executed via the modding framework share the same underlying quota and s
   - Per-tenant budgets, including priority tiers (for example, `high`, `normal`, `background`).
   - Cluster-wide ceilings and automation tick budgets.
 - From an observability perspective, plugin executions are recorded in `script_event_audit` alongside other script runs, with additional tags such as `pluginId` and `pluginVersionId` so operators can distinguish plugin activity from core automation.
+- Plugin enforcement also respects a centrally managed component policy. When a plugin references a component that is disallowed by the current environment policy, its triggers are rejected with a dedicated outcome (for example, `plugin_component_blocked`) and corresponding metrics (for example, `automation_plugin_policy_violations_total`) so operators can distinguish policy violations from quota or sandbox failures.
 
-This alignment ensures that plugin code cannot bypass or weaken the resource-isolation guarantees of the scripting system; operational tooling and metrics apply uniformly to both plugins and regular scripts. For the structural lifecycle of plugins (versioning, enable/disable states, and rollback), see `design/architecture/microservices/game-design-service/modding-framework.md`; Logging & Admin APIs provide the control plane for changing `pluginState` and `activeVersionId` while the Automation & Scripting Service enforces quotas, budgets, and sandbox rules at runtime.
+This alignment ensures that plugin code cannot bypass or weaken the resource-isolation guarantees of the scripting system; operational tooling and metrics apply uniformly to both plugins and regular scripts. For the structural lifecycle of plugins (versioning, enable/disable states, and rollback), see `design/architecture/microservices/game-design-service/modding-framework.md`; Logging & Admin APIs provide the control plane for changing `pluginState` and `activeVersionId` while the Automation & Scripting Service enforces quotas, budgets, sandbox rules, and component policy at runtime.
 
 ### Per-Script Scheduling Policies
 
@@ -220,6 +221,19 @@ A typical troubleshooting flow for a problematic script or plugin is:
 4. Cross-reference the associated publish or plugin enable/disable actions in Game Design and Logging & Admin using the same identifiers.
 
 By consistently tagging metrics and audits with these identifiers, operators can follow a single script event across authoring, publishing, execution, and downstream effects without needing ad hoc joins or heuristics.
+
+### Dry-Run Budgets & Limits
+
+Dry-run and test executions share the same sandbox engine and guards as live traffic but are subject to their own **budgets and rate limits** so they cannot bypass safety mechanisms:
+
+- Dry-runs do **not** consume ScriptQuotaService windows or per-tenant automation budgets that gate live triggers, but they:
+  - Execute through the same sandbox, CPU, and memory budgets described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
+  - Contribute to sandbox failure metrics and error-rate circuit breakers for the scripts they exercise.
+- To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
+  - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
+  - Maximum concurrent dry-runs per tenant or cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY`).
+- Dry-run activity is surfaced via dedicated metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`) and labels on existing metrics so operators can distinguish test traffic from live automation.
+- Logging & Admin and Game Design tools are responsible for exposing dry-run entry points only to privileged users and for applying complementary API gateway limits; test endpoints must not be wired into game traffic or public-facing flows.
 
 ### Outcome-to-Metric Mapping
 
@@ -434,8 +448,10 @@ Operator actions:
 2. Contain impact at the script level
    - Use the normal disable/throttle flows in this document to set offending scripts to `runtimeStatus=DISABLED` or a drain state while you triage (for example, `DISABLE_AFTER_DRAIN`).
 3. Roll back the active script patch if necessary
-   - If regressions are widespread or difficult to isolate, use Logging & Admin or Game Session tooling to repin the game back to the previous known-good `scriptPatchVersion` for the affected tenant and game instance.
-   - Repinning does **not** attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch.
+   - If regressions are widespread or difficult to isolate, use Logging & Admin or Game Session tooling to repin the game back to the previous known-good `scriptPatchVersion` for the affected tenant and game instance. Concretely:
+     - Query the Automation & Scripting Service via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` (or consume `ScriptPatchStatusChanged` events) to confirm which patches are `READY` or `FAILED` for the tenant.
+     - Call a control-plane API on the Game Session or Logging & Admin service such as `SetActiveScriptPatchVersion(tenantId, gameId, scriptPatchVersion)` or `RollbackScriptPatchVersion(tenantId, gameId, targetScriptPatchVersion)` to update the pinned version for the affected game instances.
+   - Repinning does **not** attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch, and at-most-once guarantees for past triggers are preserved.
 4. Repair and republish
    - Fix the underlying script configuration in the Game Design Service and publish a new script-only patch version.
    - Verify that the new patch reaches `patchStatus=READY` for the tenant and that `onLoad` initialization succeeds before promoting it to the active `scriptPatchVersion` again.

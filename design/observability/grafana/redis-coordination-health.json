@@ -1,0 +1,14 @@
+{
+  "title": "Redis & Coordination Health",
+  "uid": "redis-coordination-health",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [],
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "refresh": "30s"
+}
+

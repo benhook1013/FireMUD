@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Scripting & Automation Framework
 
-This document is the **hub** for FireMUD’s scripting and automation architecture. It outlines how custom in-game behavior is executed through a sandboxed scripting framework and points to focused reference docs for details.
+This document is the **hub** for FireMUD’s scripting and automation architecture. It outlines how custom in-game behavior is executed through a sandboxed scripting framework and points to focused reference docs for details. It is intentionally high level: for precise DSL semantics and sandbox behavior, treat `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` as the canonical specifications.
 
 It complements:
 
@@ -10,7 +10,7 @@ It complements:
 
 ## Implementation Status
 
-This section summarizes where the scripting and automation framework stands relative to the target-state design as of 2025-12-04.
+This section summarizes where the scripting and automation framework stands relative to the target-state design as of 2025-12-04. For fine-grained sandbox semantics and their implementation status, refer to the matrix in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
 
 For the most accurate, fine-grained status, refer to the [Automation & Scripting Service Task List](../project-management/task-list-automation-scripting-service.md).
 

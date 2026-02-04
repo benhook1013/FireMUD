@@ -94,6 +94,23 @@ Gatling scenarios simulate thousands of concurrent connections to measure servic
 
 OWASP ZAP crawls the web client and Gateway endpoints during CI to surface common web vulnerabilities. Penetration tests and rate-limiting checks run before major releases.
 
+### Observability Tests
+
+In addition to functional, load, and security tests, FireMUD treats observability wiring as part of the system contract. A minimal set of checks should validate that critical metrics and alerts are present and correctly labeled:
+
+- **Metric presence and labels**
+  - After a small synthetic workload in CI (for example a short end-to-end smoke test that exercises login and a few commands), assert that:
+    - `grpc_app_error` metrics are exported with bounded `code` labels taken from the shared error catalog.
+    - At least one tick-related metric such as `tick.execution_time_ms` or `tick.execution_time_ms_p95` appears for a synthetic region in environments where ticks run.
+    - `tick.effect_outcome_total` is emitted for at least one synthetic tick effect, with `outcome` values limited to the documented set (for example `first_apply`, `replay_ok`, `guard_error`).
+    - Where Redis coordination is enabled, a basic tail-loss or coordination metric such as `redis.coordination_tail_loss_ms` is exposed, even if its value is near zero in CI.
+  - These checks should confirm that metrics follow the cardinality guardrails defined in the Logging & Monitoring doc (for example, no `traceId` or `playerId` labels).
+- **Alert wiring smoke tests**
+  - For high-priority alerts (for example a test-only alert or a dedicated “observability smoke test” rule), provide a short-lived probe that intentionally pushes a metric over a threshold in a non-production environment and verifies that Alertmanager receives and routes the alert.
+  - These smoke tests can run as non-blocking or informational checks initially; once stable, they can be promoted to required checks for production-like environments.
+
+New services and features that add critical metrics or alerts should extend these observability tests where feasible so configuration errors are caught in CI rather than only in staging or production.
+
 ---
 
 ## Related Documentation

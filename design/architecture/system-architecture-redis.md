@@ -350,7 +350,10 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
 
 - **Region epoch and single-writer guarantees**
   - The tick system maintains a `region_epoch` per `<tenantId, regionId>` in PostgreSQL (see `system-architecture-tick-concepts-and-invariants.md` and related docs).
-  - At any time, at most one executor is allowed to hold the active epoch for a region; Lua scripts validate epoch and lease tokens against this metadata.
+  - At any time, at most one executor is allowed to hold the active epoch for a region; Lua scripts validate epoch and lease tokens against this metadata by:
+    - Carrying the expected `region_epoch` (directly or via an epoch-bearing lease token) in `ARGV`.
+    - Comparing it against epoch metadata stored alongside region-scoped coordination keys such as `tick:{tenantRegionTag}:pending` before performing any writes.
+    - Returning explicit non-mutating outcomes (for example `"STALE_EPOCH"`, `"STALE_LEASE"`) when the epoch or lease token no longer matches.
   - Redis designs may assume that “single writer per region + epoch” is upheld by the tick control plane and database, and must treat violations (for example, split-brain) as incidents that trigger resets, not normal control flow.
   - Scoped coordination resets are expected to interact with `region_epoch` as follows:
     - Region- or tenant-scoped resets normally bump `region_epoch` for the affected `<tenantId, regionId>` pairs and invalidate any pre-reset executor leases.

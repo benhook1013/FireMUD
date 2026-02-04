@@ -17,7 +17,7 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 ## Architecture / Design Notes
 
-- Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
+- Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. JWTs are issued to backend services and first-party admin/creator web UIs; gameplay protocol clients (Telnet/WebSocket) never see or transmit these tokens.
 - The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
 - Auth token allowlist entries are stored in Redis as described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
 - Creation events are logged to the Logging & Admin Service via a saga step.
@@ -265,7 +265,7 @@ The Game Session Service translates these codes into the text-protocol `ERROR <C
 - `POST /accounts` – create a new account and profile.
 - `GET /accounts/{accountId}/export` – export all account data.
 - `DELETE /accounts/{accountId}` – remove an account permanently.
-- `POST /auth/login` – authenticate and establish a session. JWTs are stored for internal service calls and never returned to clients.
+- `POST /auth/login` – authenticate and establish a control-plane session for first-party admin/creator UIs by returning a short-lived JWT (and associated metadata) that the frontend stores in memory and sends on meta/control API calls. Gameplay clients do not call this endpoint directly; they authenticate exclusively via the text `LOGIN`/`LOGON` flow fronted by the Game Session Service.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.

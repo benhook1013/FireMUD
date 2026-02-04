@@ -2,29 +2,64 @@
 
 This document outlines how FireMUD secures service communication, manages authentication keys, protects network traffic, and tracks abuse attempts. It complements the [Authentication & Authorization](./system-architecture-authentication.md) document by focusing on secret management, TLS usage, abuse resistance, and operational trust guarantees.
 
-Kubernetes Secrets has been selected as the platform's unified secret
-storage solution. This keeps credential management simple while working
-seamlessly with cert-manager for automatic rotation of TLS certificates.
-JWT signing keys rotate manually or through cert-manager automation.
+Kubernetes Secrets has been selected as the platform's unified secret storage solution. This keeps credential management simple while working seamlessly with cert-manager for automatic rotation of TLS certificates and with Kubernetes Jobs and utilities that handle JWT signing key rotation and other sensitive credentials.
 
 ---
 
 ## Token Issuance & Secret Storage
 
 - The **Account Service** signs JWTs used for internal gRPC authorization.
-- Signing keys are stored as **Kubernetes Secrets**. Rotation is can be performed manually or via **cert-manager** automation.
+- Signing keys are stored as **Kubernetes Secrets** and rotated by dedicated Kubernetes Jobs. See [JWT Key & JWKS Rotation Workflow](#jwt-key--jwks-rotation-workflow) for details.
 - Keys are **never committed** to the repository and can be rotated without redeploying other services.
-- A **JWKS endpoint** exposes public keys for internal services to validate tokens. The
-  Account Service serves these keys at `/.well-known/jwks.json`. The JWKS file is static and
-  must be updated manually when signing keys rotate.
+- A **JWKS endpoint** exposes public keys for internal services to validate tokens. The Account Service serves these keys at `/.well-known/jwks.json`. The JWKS document is supplied at runtime (for example via a mounted ConfigMap or Secret) and is updated whenever signing keys rotate.
 
 ### Key and Certificate Rotation
 
-- cert-manager issues the mTLS certificates used between services. JWT signing keys are stored as Secrets and rotated manually; can also be rotated by cert-manager.
+- cert-manager issues the mTLS certificates used between services. These TLS certificates are rotated automatically by cert-manager.
+- JWT signing keys are stored as Secrets and rotated by dedicated Kubernetes Jobs that update both the signing key Secret and the JWKS document. See [JWT Key & JWKS Rotation Workflow](#jwt-key--jwks-rotation-workflow) and [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for how services consume these Secrets.
 - All services support **hot reload** of mounted secrets using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the `firemud-common` library. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
 - The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
 - During rotation, services reload credentials when files change.
-- The JWKS endpoint serves a static key file located at `services/account-service/src/main/resources/jwks.json`. Rotation is automated with cert-manager.
+- The JWKS endpoint serves a key file that is mounted into the Account Service pod (for example from a `jwt-jwks` ConfigMap or Secret). The same JWT rotation Jobs that update signing key Secrets also regenerate this JWKS document so validators always see the current public keys.
+
+### JWT Key & JWKS Rotation Workflow
+
+JWT signing keys and JWKS metadata are rotated inside the Kubernetes cluster using dedicated Jobs. The goals are:
+
+- Keep signing keys in Kubernetes Secrets, never in the repository.
+- Allow safe, repeatable rotation with a short overlap period for old tokens.
+- Let services hot-reload keys via `JwtSecretWatcher` without code changes.
+
+Data model:
+
+- A `jwt-signing-keys` Secret (per environment) stores private keys:
+  - `current.key` – PEM (or JKS/JSON) material for the active signing key.
+  - `previous.key` – PEM material for the previous key, kept for overlap.
+  - Optional `metadata.json` – timestamps, key IDs, and rotation history.
+- A `jwt-jwks` ConfigMap or Secret stores:
+  - `jwks.json` – the JWKS document with public keys for both `current` and `previous`, each with a stable `kid`.
+
+The Account Service mounts both resources:
+
+- `jwt-signing-keys` is mounted as a file referenced by `FIREMUD_AUTH_JWT_SECRET_PATH`. `JwtSecretWatcher` reads this file and hot-reloads signing keys when it changes.
+- `jwt-jwks` is mounted as `jwks.json`; the Account Service serves `/.well-known/jwks.json` directly from this file. Other services continue to validate JWTs by calling the JWKS endpoint.
+
+Rotation is handled by a Kubernetes `CronJob` template (for example `jwt-rotation`) and a dedicated service account (for example `sa-jwt-rotation`) with narrow RBAC (`get` / `update` on `jwt-signing-keys` and `jwt-jwks`, and optional `patch` on the Account Service Deployment for rollout annotations). Each rotation Job:
+
+1. Reads `jwt-signing-keys` and parses `current.key`, `previous.key`, and any `metadata.json`.
+2. Generates a new signing keypair.
+3. Moves the existing `current.key` to `previous.key` (if present) and writes the new private key to `current.key`.
+4. Derives public keys for both `current` and `previous` and regenerates `jwks.json` with both keys and distinct `kid` values.
+5. Updates the `jwt-signing-keys` Secret and `jwt-jwks` ConfigMap/Secret with the new data.
+6. Optionally patches the Account Service Deployment with a `jwt-rotation/<timestamp>` annotation to trigger a rollout; in normal operation `JwtSecretWatcher` reloads keys without needing restarts.
+
+Environment behavior:
+
+- Production: the `jwt-rotation` CronJob is defined with `spec.suspend: true`. Rotation is triggered by creating a one-off Job from this template as part of an explicit operator runbook.
+- Staging: the same CronJob may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path.
+- Development: rotation may be disabled or configured to run frequently with throwaway keys, depending on how closely the environment mirrors production.
+
+Rotation keeps `previous.key` in JWKS for a configurable overlap window so existing tokens continue to validate. A follow-up pruning step (either part of the same Job or a separate Job) drops keys whose timestamps fall outside this window. Metrics and logs record the last successful rotation time and any failures so operators can monitor the process.
 
 ---
 
@@ -163,8 +198,8 @@ Putting this together:
 
 | Topic | Strategy |
 | --- | --- |
-| JWT Secret Storage | Kubernetes Secrets with hot reload via `JwtSecretWatcher`; rotation can be manual or automated via cert-manager |
-| Key & Cert Rotation | Hot reload via `TlsCertificateWatcher`; automatic JWKS rotation with credential caching |
+| JWT Secret Storage | Kubernetes Secrets with hot reload via `JwtSecretWatcher`; rotation handled by dedicated Kubernetes Jobs that also refresh JWKS |
+| Key & Cert Rotation | TLS certificates auto-rotated by cert-manager with hot reload via `TlsCertificateWatcher`; JWT keys rotated via Jobs with JWKS updates and credential caching |
 | TLS Termination | Load balancer |
 | Internal Encryption | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |

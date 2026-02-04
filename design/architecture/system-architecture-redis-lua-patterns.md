@@ -209,12 +209,16 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
       - If the token matches, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
     - Callers treat `"STALE_LEASE"` as loss of leadership for that `<tenantId, regionId>` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
-- **Pattern 2 – Compare-and-set on `tickId` (monotonic guard)**
-  - Scripts that touch `tick:{tenantRegionTag}:pending` treat `tickId` as a monotonic guard:
-    - Read the current `tickId` stored in `pending`.
-    - If there is an existing `tickId` that is greater than the requested `tickId`, the script returns a replay/out-of-date result and does not modify state.
-    - If the `tickId` is equal, the script proceeds but treats existing effect entries as already staged (see Pattern 3).
-    - If there is no `tickId` or it is less than the requested `tickId`, the script sets/updates it and stages new effects.
+- **Pattern 2 – Compare-and-set on `region_epoch` + `tickId` (monotonic guards)**
+  - Scripts that touch `tick:{tenantRegionTag}:pending` treat both `region_epoch` and `tickId` as monotonic guards:
+    - Inputs include:
+      - The expected `region_epoch` in `ARGV` (or encoded into the lease token associated with `tick-executor-lease:{tenantRegionTag}`).
+      - The requested `tickId` for the staged work.
+    - The script reads the current epoch/tick metadata stored alongside `pending` (or in a dedicated epoch key for the region) and:
+      - If the stored `region_epoch` does not match the expected epoch, it returns a non-mutating `"STALE_EPOCH"` outcome and does not modify state; callers treat this as “reset or handoff happened, abandon this attempt and reacquire lease under the new epoch”.
+      - If the epoch matches and there is an existing `tickId` that is greater than the requested `tickId`, the script returns a replay/out-of-date result and does not modify state.
+      - If the epoch matches and the `tickId` is equal, the script proceeds but treats existing effect entries as already staged (see Pattern 3).
+      - If the epoch matches and there is no `tickId` or it is less than the requested `tickId`, the script sets/updates it and stages new effects.
 
 - **Pattern 3 – Effect-key sets for staging (no duplicate staging)**
   - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:<entityId>:apply:damage:<commandId>`), and scripts use **set-style semantics**:

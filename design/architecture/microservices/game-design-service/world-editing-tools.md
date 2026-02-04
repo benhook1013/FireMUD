@@ -52,6 +52,15 @@ World and entity templates owned by domain services must reference each other us
 
 Game Design Service may carry references to these identifiers in its revision history, branches, and commits, but canonical ownership of the underlying world, entity, and script schemas and identifiers always remains with the corresponding domain services.
 
+At a high level, ownership for common cross-cutting templates is:
+
+- **World Management Service** – owns world topology templates (regions, zones, rooms) and declarative population bindings such as spawn rules keyed by `(tenantId, versionId, regionTemplateId/roomTemplateId, entityTemplateId)`. These records define *where* and *under what conditions* entities can appear.
+- **Entity Management Service** – owns entity templates (items, NPCs, equipment, loot-table definitions) keyed by `(tenantId, versionId, entityTemplateId or lootTableId)` and any normalized mappings between loot tables and item templates.
+- **Automation & Scripting Service** – owns script and automation definitions keyed by `(tenantId, versionId, scriptId)` and exposes identifiers that world and entity templates can reference for triggers and behaviors.
+- **Game Design Service** – orchestrates design-time editing of all of the above via design APIs, but does not define or store competing schema copies; it stores only revision and version metadata plus configuration payloads that reference domain-owned identifiers.
+
+Schema changes or identifier migrations that affect these shared templates must follow the version-aware rules in [Database Migrations](../../system-architecture-database-migrations.md), using new template rows and migration workflows instead of repurposing existing identifiers while non-Retired versions still reference them.
+
 ## Related Documentation
 
 - [Game Design Service Architecture](README.md)

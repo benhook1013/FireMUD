@@ -165,6 +165,65 @@ This behavior is distinct from **failover**:
   `.github/workflows/manual-backup-restore.yml` can run these checks on
   demand from the GitHub Actions UI. See [Operational Runbooks](./system-architecture-runbooks.md#recovery) for step-by-step instructions.
 
+### Backup Observability and Alerts
+
+Backup and verification jobs must emit simple, environment-agnostic metrics so operators can see whether the pipeline is healthy:
+
+- `backup_last_success_timestamp_seconds` – Unix timestamp of the last successful PostgreSQL logical backup (`pg_dump`) for the environment.
+- `backup_verify_last_success_timestamp_seconds` – Unix timestamp of the last successful verification run from `verify-backups.sh` (for example, verifying that recent dumps exist in the object store).
+- Optional per-job counters such as:
+  - `backup_run_total{result="success"|"failure"}` – counts of backup Job executions.
+  - `backup_verify_run_total{result="success"|"failure"}` – counts of verification Job executions.
+
+Prometheus and Alertmanager should expose and alert on these metrics using rules along the lines of:
+
+- **Missed backups (P1)**
+  - Expression: “no successful backup in the last N minutes” (for example, `time() - backup_last_success_timestamp_seconds > 90 * 60` in production).
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing"`.
+- **Missed verification (P1/P2)**
+  - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
+  - Labels similar to the backup alert, with a clear `runbook` annotation.
+
+Grafana dashboards under `design/observability/grafana` should include a small “Backups” section or dedicated dashboard that visualizes:
+
+- The age of the last successful backup and verification.
+- Recent backup/verify success vs failure counts.
+
+These signals allow operators to treat backup and verification health as first-class SLOs alongside tick, Redis, and player experience SLOs.
+
+---
+
+## Post-Restore Secret Hardening
+
+Restoring a production cluster from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
+
+Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates two flows:
+
+1. JWT signing key and JWKS rotation:
+   - Creates or runs the `jwt-rotation` Job described in `system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
+   - Waits for the Job to succeed so a fresh JWT signing key is written to the `jwt-signing-keys` Secret and `jwks.json` is regenerated with updated public keys.
+   - Verifies that the Account Service is healthy and that services can still validate tokens via the JWKS endpoint.
+
+2. Database credential rotation:
+   - Runs a `db-credential-rotation` Job with a dedicated service account (for example `sa-db-rotation`) that:
+     - Reads the current application database credentials from a Secret such as `postgres-credentials`.
+     - Uses an admin credential (for example from `postgres-admin-credentials`) to execute `ALTER ROLE <app_user> WITH PASSWORD '<new password>';` against PostgreSQL.
+     - Updates the `postgres-credentials` Secret with the new password.
+     - Triggers a rolling restart of Deployments and StatefulSets that consume this Secret (for example via `kubectl rollout restart` using the Kubernetes API) so all services reconnect using the new credentials.
+   - The Job fails fast on any error so operators can investigate before exposing the restored environment to players.
+
+The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
+
+- JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the JWKS ConfigMap/Secret, and, optionally, the Account Service Deployment.
+- Database rotation service accounts can only read/update the PostgreSQL credential Secrets and, optionally, restart the Deployments/StatefulSets that use them.
+
+Runbooks should treat this Job as a mandatory step in any production disaster recovery:
+
+1. Restore PostgreSQL and Kubernetes manifests as described above.
+2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
+3. Confirm application health checks, login/session flows, and JWT validation.
+4. Only then route external traffic to the restored cluster.
+
 ---
 
 ## Restore Workflow Summary

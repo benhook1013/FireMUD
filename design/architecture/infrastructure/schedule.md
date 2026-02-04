@@ -11,7 +11,9 @@ This document lists automated jobs that run on a schedule. Each entry links to t
 | Weekly Security Scan | Weekly on Sundays at 03:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/weekly-security-scan.yml](../../../.github/workflows/weekly-security-scan.yml) |
 | Dependabot dependency updates | Weekly on Saturdays at 16:00 (Sunday 04:00 Pacific/Auckland) | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/dependabot.yml](../../../.github/dependabot.yml) |
 
-## Kubernetes Cluster
+## Kubernetes Cluster (Production)
+
+The following CronJobs run in the **production** Kubernetes cluster. Development and staging clusters rely on ad hoc backup and restore scripts instead of scheduled jobs unless explicitly configured otherwise.
 
 | Scheduled Item | Frequency (UTC) | Documentation | Configuration |
 | --- | --- | --- | --- |

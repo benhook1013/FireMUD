@@ -143,9 +143,12 @@ This invariant ensures that even highly scripted encounters remain bounded and o
 Two related configuration concepts control how long tick work is allowed to run and how long leases/locks are held:
 
 - `tick_interval_ms` – the configured target interval between ticks for a region.
-- `tick_budget_ms` – the soft execution budget for a tick (how long the tick engine is allowed to hold locks and perform work), typically derived from `tick_interval_ms` (for example, `tick_budget_ms = tick_interval_ms * 0.8`) but adjustable independently when needed.
+- `tick_budget_ms` – the soft execution budget for a tick (how long the tick engine is allowed to hold locks and perform work). FireMUD uses a shared, canonical derivation:
+  - `tick_budget_ms = tick_interval_ms * 0.8`
+- `lock_ttl_ms` – the TTL used for per-entity locks (for example `tick:{tenantRegionTag}:lock:<entityId>`), derived from the budget using a bounded multiplier:
+  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
 
-From this budget, the Game Session Service derives TTLs for locks and leases using fixed multipliers (see the Redis architecture doc for full details). The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
+These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
 
 At runtime, observed tick durations are compared against lock TTLs using histograms such as `tick.execution_time_ms_p95` and `tick.execution_time_ms_p99`. Ratios like `tick.execution_time_ms_p99 / lock_ttl_ms` drive a simple health model for each `<tenantId, regionId>`:
 

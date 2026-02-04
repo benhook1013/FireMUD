@@ -1,6 +1,6 @@
 # FireMUD System Architecture: CI/CD Pipeline
 
-This document describes the continuous integration strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and images are pushed to the registry. Deployment to Kubernetes runs through a separate workflow so both local and cloud-hosted clusters use the same pipeline.
+This document describes the continuous integration strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and images are pushed to the registry. Deployment to Kubernetes runs through separate workflows so both local and cloud-hosted clusters use the same pipeline but use different manifests per environment.
 
 ---
 
@@ -8,7 +8,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default.
+- **Deploy to Kubernetes development/demo clusters** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
@@ -124,11 +124,7 @@ The firemud-base image provides a consistent OS and JVM setup across all service
 
 ## Deploying to Kubernetes
 
-Kubernetes rollouts are triggered through the
-[`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow.
-The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and
-`values-local.yaml` by default. Cluster credentials and registry secrets must be
-configured beforehand. The example below mirrors the deployment steps.
+Kubernetes rollouts for local and development clusters are triggered through the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow. The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and `values-local.yaml` by default. Cluster credentials and registry secrets must be configured beforehand. The example below mirrors the deployment steps. Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook.
 
 ```yaml
 name: Manual Helm Deploy
@@ -185,3 +181,16 @@ automatically.
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Testing Strategy](./system-architecture-testing.md)
 - [User Journeys – Testing & Continuous Delivery](./user-journeys-operators.md#3-testing--continuous-delivery)
+
+---
+
+## Promotion & Rollback Model
+
+FireMUD uses a simple promotion flow from pull requests through staging to production:
+
+- Feature branches are merged into `develop` after passing CI.
+- The `develop` branch is deployed to a staging cluster using Kubernetes manifests (for example `k8s/overlays/stage`) so operators and playtesters can validate changes in a prod-like environment.
+- When a release is ready, `release-please` opens a release PR and creates a version tag (for example `v1.2.3`) that is merged to `main`. Images for this tag are built and pushed by the Docker image workflow.
+- Production deployments pull tagged images and apply the `k8s/overlays/prod` manifests using the standard deployment runbook.
+
+Rollbacks are handled by resuming a previously known-good image tag and re-applying the staging or production manifests with that tag. See the Deployment Runbook for the step-by-step operator flow.

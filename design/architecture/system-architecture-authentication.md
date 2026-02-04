@@ -2,7 +2,7 @@
 
 This document describes how FireMUD authenticates clients, issues internal JWTs, manages session state, and enforces role-based access across services.
 
-Authentication is performed via plaintext `LOGIN` commands. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived auth token allowlist entries in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates credentials (including OTP) and issues internal JWTs. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
+Authentication is performed via plaintext `LOGIN` commands for gameplay protocol clients and via `/auth/login` or equivalent flows for first-party web UIs. Clients are stateless; server-side “sessions” are split between gameplay bindings in Redis and short-lived auth token allowlist entries in Coordination Redis. The Game Session Service restores gameplay session state from Redis, while the Account Service validates credentials (including OTP) and issues internal JWTs. Gameplay protocol clients (Telnet/WebSocket) never see these tokens directly; first-party admin/creator web UIs and backend services use them for meta/control APIs. Accounts may also authenticate using linked external providers such as Google, Discord, or Steam.
 
 ## Responsibility Split
 
@@ -48,14 +48,30 @@ Authentication always identifies a single platform account, represented by the `
 
 For the data model underpinning `accountId`, `tenantId`, characters, and membership relationships, see the [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) design.
 
+### Role Model
+
+FireMUD standardizes a small, explicit role set so tenant authorization and cross-tenant behavior remain consistent across services:
+
+- **Global roles (`globalRoles`)**
+  - `platformAdmin` – Full cross-tenant administrative access, including starting and stopping game instances, viewing cross-tenant analytics, and reading billing and subscription state for any tenant.
+  - `support` – Limited cross-tenant support tools (for example, viewing but not mutating tenant configuration and subscription data), subject to audit.
+  - `billingAdmin` – Cross-tenant access to billing-safe control-plane APIs (for example, viewing invoices, updating payment methods, and managing subscriptions) but no gameplay or design privileges.
+- **Tenant roles (`scopedRoles[tenantId]`)**
+  - `player` – Can join gameplay for the tenant subject to entitlements and quotas; no design, admin, or billing capabilities.
+  - `designer` – Can edit design-time content for the tenant via Game Design tools; cannot control runtime instances or billing.
+  - `tenantAdmin` – Owns the tenant in day-to-day operations: can manage game instances, configure runtime settings, and manage subscriptions and billing for that tenant.
+  - `moderator` – Performs tenant-scoped moderation actions (for example, muting or banning players) but cannot alter billing or platform-wide configuration.
+
+Services must not introduce ad-hoc roles without updating this model and the Tenant Authorization Contract. Where finer-grained behavior is required, services should prefer additional capabilities/flags derived from these core roles rather than inventing new top-level roles.
+
 ### Tenant Authorization Contract
 
 All meta/control services (Account, Game Design, Logging & Admin, and similar HTTP/gRPC APIs) must enforce a consistent tenant-authorization contract:
 
 - Each incoming request is authenticated to a single `accountId` using a JWT validated against the Account Service JWKS.
 - The effective tenant set for the request is derived from the token:
-  - For tenant-scoped operations, the service computes the set of `tenantId` values present in `scopedRoles` combined with any tenant IDs implied by `globalRoles` (for example, `platformAdmin` may be permitted to act on all tenants).
-  - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access; tenant-scoped roles must never implicitly grant cross-tenant privileges.
+  - For tenant-scoped operations, the service computes the set of `tenantId` values present in `scopedRoles` combined with any tenant IDs implied by `globalRoles` (for example, `platformAdmin` may be permitted to act on all tenants; `billingAdmin` may act only on billing-safe surfaces for all tenants).
+  - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access for the specific API category (for example, only `platformAdmin` for gameplay- or data-bearing operations, and `billingAdmin` or `platformAdmin` for billing-safe control-plane operations). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
 - If an API accepts a `tenantId` (path, query parameter, or body field), the service must validate that:
   - `tenantId` is in the effective tenant set for tenant-scoped calls, or
   - The caller holds a cross-tenant `globalRole` that explicitly allows operating on the requested tenant.
@@ -284,7 +300,7 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
 | Topic | Description |
 | --- | --- |
 | Auth Command | `LOGIN` (or `LOGON`) — supports prompt or argument input |
-| JWT Usage | Internal-only for backend gRPC auth |
+| JWT Usage | Issued to backend services and first-party admin/creator web UIs; gameplay protocol clients never see or send tokens |
 | Claims | `accountId`, `globalRoles[]`, `scopedRoles{}` |
 | Session State | Stored in Redis; bound to socket by Game Session Service |
 | Session TTL | Derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS` + `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` |

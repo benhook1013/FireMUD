@@ -17,7 +17,7 @@ manifest files.
 - Upload branding assets to version-scoped object storage and generate a
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
-- Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store.
+- Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services and are not stored as blobs in the asset store.
 
 ## Architecture / Design Notes
 
@@ -37,6 +37,25 @@ manifest files.
 - All gRPC APIs require JWT authentication between services. REST authentication is supported.
   Tokens are parsed by a shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+
+### Script Patch Lifecycle and Runtime Coordination
+
+The Game Design Service owns the **authoring** view of script patches, while the Automation & Scripting Service owns the **runtime** lifecycle of those patches per tenant:
+
+- When `PublishScriptPatchVersion` is called, the Game Design Service:
+  - Validates and persists the new script graphs, bindings, and metadata.
+  - Starts a Saga that upserts compiled definitions and bindings into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
+  - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.
+- For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
+- The Game Design Service queries this lifecycle via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and/or subscribes to `ScriptPatchStatusChanged` events so that UIs can show:
+  - That a patch is published but still **pending runtime validation**.
+  - Whether `onLoad` initialization has succeeded or failed for each tenant.
+  - When a patch has been rolled back at runtime for a tenant.
+
+In the design UI:
+
+- `PublishScriptPatchVersion` should surface that script patches become fully active only after the Automation & Scripting Service marks them `READY` for the tenant.
+- Failed `onLoad` runs that result in `FAILED` patch status should be visible to designers, with links back to `script_event_audit` entries and automation metrics for debugging.
 
 ## Key Features
 

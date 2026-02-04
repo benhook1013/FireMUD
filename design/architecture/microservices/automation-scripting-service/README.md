@@ -271,8 +271,20 @@ Additional variables tune the scripting engine:
 | `AUTOMATION_TICK_BUDGET_MS` | Soft execution budget for a script tick in milliseconds | `100` | Advanced/experimental |
 | `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` | Stable operator knob |
 | `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` | Stable operator knob |
+| `SCRIPT_TEST_MAX_RUNS_PER_MINUTE` | Maximum dry-run/test executions allowed per tenant per minute | `60` | Stable operator knob |
+| `SCRIPT_TEST_MAX_CONCURRENCY` | Maximum concurrent dry-run/test executions per tenant or cluster | `10` | Stable operator knob |
 
 Any additional, less common tuning variables should be documented alongside their introduction and clearly marked as advanced or internal. Operational runbooks should treat only **stable operator knobs** as supported surface for routine adjustments; changes to advanced or internal settings should go through code review and coordinated rollout.
+
+### Script Patch Management APIs
+
+In addition to event-handling and test endpoints, the Automation & Scripting Service exposes control-plane APIs for inspecting script patch state. These APIs are **read-only**; the authority to change which patch is active for a game lives in the Game Session and Logging & Admin services.
+
+- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`), timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
+- `ListScriptPatchStatuses(tenantId)` – lists known script patches and their status for a tenant so operators and tools can see which patches are eligible to be pinned.
+- `ScriptPatchStatusChanged` event – emitted whenever a patch transitions between lifecycle states for a tenant. Logging & Admin and Game Design subscribe to this event so UIs and dashboards stay in sync with runtime state.
+
+Game Session and Logging & Admin use these read-only APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a game (for example, `SetActiveScriptPatchVersion` or `RollbackScriptPatchVersion`) are defined on the Game Session or Logging & Admin APIs and are documented in the corresponding service architecture docs; the Automation & Scripting Service only enforces that incoming events reference patches in a `READY` state.
 
 ## Proto Files
 
@@ -337,9 +349,10 @@ In addition to live event handling, the Automation & Scripting Service exposes a
 - Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
 - Instead of enqueuing commands into `automation:queue:<tenantId>:<entityId>` or tick queues, test runs return the would-be commands to the caller for inspection.
 - Test executions are recorded in `script_event_audit` with a dedicated `eventType` (for example, `testRun`) or an `isDryRun` flag so they can be distinguished from live traffic.
-- By default, dry runs **do not consume ScriptQuotaService windows or tenant budgets**, but they do contribute to sandbox failure metrics to keep behavior consistent and observable.
+- By default, dry runs **do not consume ScriptQuotaService windows or tenant automation budgets**, but they do contribute to sandbox failure metrics to keep behavior consistent and observable.
+- Separate **dry-run budgets** cap how much test traffic a tenant or principal can generate (for example, max runs per minute and max concurrent dry-runs) so test tools cannot overload the automation cluster even though they bypass mainline quotas.
 
-This test facility is intended for pre-production validation and privileged diagnostics; it should be exposed only to appropriately authorized principals and is not a general-purpose bypass for quotas or budgets.
+This test facility is intended for pre-production validation and privileged diagnostics; it should be exposed only to appropriately authorized principals, protected by additional per-tenant/per-principal rate limits at the API gateway or Logging & Admin layer, and is not a general-purpose bypass for quotas or budgets.
 
 ### Fairness Quotas
 

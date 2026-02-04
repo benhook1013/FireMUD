@@ -36,6 +36,14 @@ In practice this means:
 - **Template tables** (world layout and generation metadata) are versioned by `(tenantId, versionId)` and are updated only through design-time workflows coordinated by the Game Design Service.
 - **Instance tables** (per-game-instance regions, rooms and transient instances) are keyed by `(tenantId, gameInstanceId)` and are created or mutated only by world-creation Sagas and tick-driven gameplay flows. Runtime logic must never modify template rows for published versions.
 
+### Template Identifier Invariants
+
+World templates follow the same stability rules as entity templates:
+
+- Template identifiers for regions, zones, rooms, and related topology (for example `region_template_id`, `room_template_id`) must not be repurposed to represent different conceptual locations while any non-Retired version or game template still references them.
+- Structural changes to world layouts (such as splitting a region, renumbering rooms, or replacing a template) must be modeled as new template rows under the appropriate `(tenantId, versionId)` rather than mutating existing identifiers in-place. Older templates remain readable for all non-Retired versions that depend on them.
+- Cross-service references from Game Design Service (revisions, game templates) or other domain services must use these stable template identifiers scoped by `(tenantId, versionId)` and follow the version-aware migration rules in [Database Migrations](../../system-architecture-database-migrations.md) when introducing replacements or removing deprecated templates.
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
@@ -114,7 +122,7 @@ In practice this means:
   - `instance` table tracks temporary copies of zones for instanced gameplay, with an `expires_at` column defining when instances are cleaned up by a scheduled job.
   - `character_location` table records the current room for each character, including which instance they are in; item locations and containment are modeled and stored by the Entity Management Service rather than this table.
 - **Runtime configuration and events**:
-  - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are runtime configuration, not versioned design data; generation calls snapshot the effective rule set alongside the affected instance records.
+  - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are runtime configuration, not versioned design data; each generation run snapshots the effective rule set (including `schemaVersion`) alongside the affected template or instance records so that the inputs for that run remain reconstructable even if live rules are later updated.
   - `world_event` table stores timed changes such as weather updates.
   - `region_instance.weather` (or equivalent) records the current weather state for live regions; template rows may include default weather or climate metadata but are not updated during gameplay.
   - `region_instance.shard_id` indicates which server shard hosts the region at runtime.

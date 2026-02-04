@@ -8,10 +8,10 @@ This document explains how FireMUD coordinates data consistency across its indep
 
 | Term | Meaning |
 | --- | --- |
-| **Command** | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained transaction**, backed by Redis. |
-| **Transaction** | A unit of work that must either fully succeed or be rolled back. Each in-game command is treated as an atomic transaction. |
-| **Tick** | A scheduled gameplay loop slice. Each tick processes one command per entity and uses Redis for coordination, rollback, and fairness. Ticks are not atomic across all commands — each command is executed as an independent transaction. |
-| **Saga** | A long-running, cross-service workflow composed of multiple local transactions. Used only for **non-gameplay**, out-of-band operations (e.g., account creation, game publishing). Sagas rely on compensating actions for rollback and eventual consistency. |
+| **Command** | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained gameplay unit** that may touch multiple services but is coordinated via Redis and idempotent domain handlers. |
+| **Transaction** | A unit of work that must either fully succeed or be rolled back **within a single service boundary** (for example, a PostgreSQL transaction in Entity Management). Gameplay commands are composed of one or more such local transactions plus idempotent retries; there is **no global, cross-service ACID transaction** for a command. |
+| **Tick** | A scheduled gameplay loop slice. Each tick processes at most one command per entity and uses Redis for coordination, rollback, and fairness. Ticks are not atomic across all commands — each command is executed as an independent composition of local transactions and retries. |
+| **Saga** | A long-running, cross-service workflow composed of multiple local transactions. Used only for **non-gameplay**, out-of-band operations (e.g., account creation, game publishing) or rare tick-adjacent workflows that must coordinate persistent state across services over time. Sagas rely on compensating actions for rollback and eventual consistency. |
 
 ---
 
@@ -22,17 +22,37 @@ All real-time gameplay logic — movement, combat, item use, AI — is executed 
 - Pulled from the command queue
 - Executed using deterministic game logic
 - Staged in Redis with rollback support via Lua
-- Committed only if successful
-- Automatically retried on failure (e.g., lock contention)
+- Applied via one or more **service-local transactions** guarded by effect identity
+- Automatically retried on failure (for example, lock contention or transient errors)
+
+From the player’s perspective, a command appears atomic (“either my move happens or it does not”), but the implementation relies on:
+
+- **Per-service atomicity** – each participating service wraps its own changes in a local database transaction.
+- **At-least-once delivery + idempotency** – tick effects may be retried; idempotent guards ensure repeated applications converge to the same logical outcome.
+- **Eventual cross-service convergence** – if different services commit at slightly different times, domain invariants converge as retries and reconciliation complete; there is no single ACID boundary spanning them.
 
 This model provides:
 
-- **Per-command atomicity**
+- **Per-command logical atomicity from the player’s perspective**
 - **Tick-level fairness and isolation**
-- **Crash-safe, replayable execution**
-- **No need for Saga orchestration**
+- **Crash-safe, replayable execution through idempotency**
+- **No need for Saga orchestration inside the tick loop**
 
-> 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md) for detail on how ticks provide transactional guarantees.
+> 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md) for detail on how ticks provide per-service transactional guarantees and cross-service convergence via idempotency.
+
+### When Gameplay Commands Must *Not* Depend on Global Atomicity
+
+Gameplay features must **not** assume that a command is a single, all-or-nothing ACID transaction across services. In particular:
+
+- Cross-service invariants (for example, “both inventories updated or neither is”) must be enforced via:
+  - Idempotent handlers and effect guards in each owning service.
+  - Clearly defined reconciliation behavior if some services succeed and others fail.
+- Designs must tolerate small windows where some, but not all, side effects of a command have committed, as long as retries and reconciliation converge to the intended state.
+
+If a proposed gameplay feature truly requires stronger semantics than this model (for example, a hard guarantee that a multi-service trade never produces a momentary imbalance), it should either:
+
+- Be redesigned to fit the idempotent, eventually consistent tick model, or
+- Be treated as a **tick-adjacent workflow** that uses the outbox/saga patterns below and accepts higher latency and operational complexity.
 
 ### Tick Effects Are At-Least-Once: Idempotency Is Mandatory
 

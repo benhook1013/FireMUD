@@ -84,15 +84,22 @@ The following Redis-focused incident flows build on the general recovery steps a
 ### Coordination AOF Tail-Loss SLO Breach
 
 1. **Detect**
-   - `tail_loss_ms` or `tail_loss_ticks` regularly exceed the 1–2 second envelope (or 2× `tick_interval_ms`) for one or more `<tenantId, regionId>` shards.
+   - `tail_loss_ms` or `tail_loss_ticks` regularly exceed the 1–2 second envelope (or 2× `tick_interval_ms`) for one or more `<tenantId, regionId>` shards. In Prometheus, this is typically exposed via `redis_coordination_tail_loss_ms` or an equivalent recording rule.
    - Region health shows `DEGRADED` or `COORDINATION_UNTRUSTWORTHY` for those shards.
 2. **Decide**
    - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
-   - For sustained violations or `COORDINATION_UNTRUSTWORTHY` regions, plan a region- or tenant-scoped coordination reset.
+   - For sustained violations or `COORDINATION_UNTRUSTWORTHY` regions:
+     - Treat this as a **tick SLO breach** for the affected `<tenantId, regionId>` shards.
+     - Plan both:
+       - A region- or tenant-scoped coordination reset, and
+       - A run of the tick effect ledger replay controller for the same scope to converge any lingering `SCHEDULED` rows (see `system-architecture-tick-failures-and-operations.md#tick-effect-ledger-and-replay-guarantees` and `#ledger-replay-controller`).
 3. **Act**
    1. Pause tick scheduling for affected `<tenantId, regionId>` scopes.
    2. Run the corresponding coordination reset Job (region or tenant scope) as described in [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model).
-   3. Verify region health returns to `HEALTHY` and `tail_loss_ms` drops back into the SLO envelope before resuming ticks.
+   3. Trigger the ledger replay controller for the same scope to drive stale `SCHEDULED` tick effects to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state.
+   4. Verify region health returns to `HEALTHY` and `tail_loss_ms` drops back into the SLO envelope before resuming ticks.
+
+Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/core-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
 
 ### Mis-Sharded or Mis-Keyed Tick/Coordination Keys
 

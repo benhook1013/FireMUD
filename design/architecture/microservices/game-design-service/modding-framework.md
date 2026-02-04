@@ -48,6 +48,16 @@ At runtime, plugins use the same **component-based scripting DSL and sandbox** a
 
 Plugin executions appear in `script_event_audit` with the same identifiers as regular scripts, plus plugin-specific metadata, and contribute to the same automation metrics, enabling operators to monitor plugin behavior without a separate observability pipeline.
 
+### Timer & Event Guarantees
+
+Plugins share the same **event and timer semantics** as core scripts:
+
+- All plugin triggers are at-most-once per `scriptEventId`; the scheduler never re-runs the plugin’s DSL graph for the same trigger, even if downstream services retry idempotent operations.
+- Timer-based handlers such as `onInterval` and `onTimerExpire` are **best-effort**. Individual firings may be skipped or delayed when per-script quotas, per-tenant budgets, or cluster ceilings are reached, and skipped firings are not backfilled later. Subsequent firings still follow the configured cadence as capacity allows.
+- Plugin logic must therefore be designed to tolerate missed or delayed events (for example, by recomputing from current world state rather than assuming every interval has executed) and to keep effects idempotent with respect to `scriptEventId` and `tickId`, following the same rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
+
+These guarantees ensure that plugins do not rely on stronger delivery semantics than the underlying scripting engine provides and that their behavior remains predictable under load.
+
 ### Validation Rules for Plugins
 
 From a validation perspective, plugins follow the same core rules as regular scripts, with additional restrictions driven by their tighter trust model:
@@ -80,6 +90,17 @@ Certain safety decisions are **platform-wide and not overridable by tenant admin
 - Plugin-level quotas and budgets may be stricter than for core scripts by default; tenant administrators can lower their own plugin activity (for example, by increasing intervals or disabling plugins) but cannot raise plugin limits beyond operator-defined ceilings.
 
 This ensures that even trusted tenant administrators cannot inadvertently weaken the global safety posture for plugins.
+
+### Plugin Component Policy Management
+
+Plugin component policy is managed centrally so operators can reason about which DSL components are allowed in plugins in each environment:
+
+- The authoritative plugin allowlist lives in the Automation & Scripting Service (or a shared policy store) and is configured per environment (for example, development, staging, production).
+- Operators can inspect the effective policy via an admin-only API such as `ListPluginComponentPolicies`, which returns the allowed and blocked component identifiers for a given environment or tenant. Logging & Admin surfaces this information in its UIs so platform owners can review policy before enabling new plugins.
+- Policy changes are treated as configuration deployments: they are versioned, rolled out through existing deployment pipelines, and can be audited alongside other configuration changes.
+- When policy is tightened, existing plugins that now reference blocked components are treated as invalid: their triggers are rejected with a dedicated outcome (for example, `plugin_component_blocked`) recorded in `script_event_audit` and surfaced via metrics so operators can see that enforcement, not quotas, is preventing execution.
+
+For metrics and outcome naming conventions around plugin policy enforcement, see `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
 Operationally, the **Logging & Admin Service** acts as the control plane for plugin lifecycle management. Enabling, disabling, draining, and rolling back plugin versions are all performed via Logging & Admin APIs that update the registry in the Automation & Scripting Service; tenants do not manipulate `activeVersionId` or `pluginState` directly inside game traffic.
 

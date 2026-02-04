@@ -6,9 +6,9 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 ### Terminology
 
-- **Tenant** – a single game instance, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
-- **Game instance** – synonymous with tenant in platform terminology: one running world/campaign identified by `tenantId`.
-- **Player session** – a single player’s live connection and gameplay context bound to a specific game instance. Player sessions are stored in Redis under `session:game:<tenantId>:<sessionId>` and are purged when the session ends.
+- **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
+- **Game instance** – a specific running instance of a tenant’s world, identified by a `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). In the initial deployment the platform runs at most one game instance per tenant, so some Redis keys and APIs use `tenantId` where `gameInstanceId` will be threaded in later.
+- **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<sessionId>` (tenant-scoped, and over time instance-scoped) and are purged when the session ends.
 - **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
 
 ### Responsibilities
@@ -35,9 +35,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   graceful degradation and halt behavior defined in
   [Redis Architecture – Graceful Degradation & Redis Outage Policy](../../system-architecture-redis.md#graceful-degradation--redis-outage-policy)
   instead of buffering authoritative commands only in memory. If coordination state must be cleared or repaired, operators follow the scoped reset flows in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) rather than issuing ad-hoc key deletions.
-  - Every session record includes a `tenantId` identifying the game instance.
-  Redis keys and database tables prefix this value so sessions from different
-  games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity.
+  - Every gameplay session record includes a `tenantId` identifying the owning tenant (and, via associated tables, the `gameInstanceId` when multiple instances per tenant are supported). Redis keys and database tables prefix this value so sessions from different games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Player session state for reconnect recovery lives in Redis using keys of the form
   `session:game:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions; see also [Session Keys and Gameplay Binding](../../system-architecture-redis.md#session-keys-and-gameplay-binding) and the coordination timeline `(region_epoch, tickId)` described in [Redis Coordination Invariants](../../system-architecture-redis.md#redis-coordination-invariants).
@@ -87,7 +85,7 @@ Game Session uses the following Redis key prefixes; the **authoritative catalog*
 
 | Key prefix | Role | Notes |
 | --- | --- | --- |
-| `session:game:<tenantId>:<sessionId>` | Coordination | Session state and reconnect metadata for gameplay sessions. |
+| `session:game:<tenantId>:<sessionId>` | Coordination | Session state and reconnect metadata for gameplay sessions (tenant-scoped, and indirectly tied to a `gameInstanceId`). |
 | `tick:{tenantRegionTag}:queue:<entityId>` | Coordination | Per-entity command queues within a tick region. |
 | `tick:{tenantRegionTag}:pending` | Coordination | Single in-flight tick payload per region. |
 | `tick:{tenantRegionTag}:lock:<entityId>` | Coordination | Entity locks during tick execution. |

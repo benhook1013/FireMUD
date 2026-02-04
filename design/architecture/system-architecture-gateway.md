@@ -140,6 +140,23 @@ For gameplay WebSocket sessions, FireMUD standardises a small set of close codes
 
 Gateway and Game Session implementations must choose one of these codes/reasons when closing gameplay WebSocket sessions for platform‑initiated reasons, and should log the mapped category and contributing metrics (for example `gateway.websocket.close_reason` and `gamesession.connection.closed{reason=...}`) so operations teams can distinguish idle timeouts, policy enforcement, backend outages, and internal errors.
 
+To keep behaviour consistent and avoid double-closing sessions, ownership of these close codes is divided as follows:
+
+- `logout` (`1000`) – Game Session owns explicit gameplay logouts and admin‑initiated session ends; Gateway may also use `1000` for graceful shutdown of its own listener when draining connections, but should not reinterpret Game Session’s logout decisions.
+- `idle_timeout` (`1001`) – The layer that observes the idle condition first closes the connection: Game Session for application‑level idle (for example no gameplay traffic from a client that is otherwise reachable), or Gateway/WebSocket container for network‑level idle (no frames or pongs within the configured idle window). Other layers treat the close as a peer shutdown and do not wrap it in a second close reason.
+- `policy_violation` (`1008`) – The layer that detects the violation closes with `policy_violation`. Gateway uses this for HTTP or WebSocket protocol abuse (for example frame shape violations on `/ws/game/**`); Game Session uses it for gameplay/content‑level abuse (for example sustained command‑rate or scripting violations); the TCP Proxy maps Telnet‑side `policy_violation` disconnects into this category via the Telnet reason taxonomy in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
+- `internal_error` (`1011`) – Any layer that encounters an unexpected server‑side error (not clearly attributable to the client and not covered by `backend_unavailable`) closes with `internal_error` and logs the underlying failure. Other layers treat it as a generic peer failure and avoid emitting a second, conflicting close reason for the same session.
+- `backend_unavailable` (`1013`) – Gateway owns closing WebSocket sessions when core gameplay backends are continuously unavailable beyond the configured grace window. Game Session surfaces its own health via metrics and health checks; Gateway uses that information plus its own routing failures to decide when to send `1013/backend_unavailable` as described in [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios). Telnet clients see the corresponding `backend_unavailable` Telnet reason from the TCP Proxy.
+
+### Backend-Unavailable Grace Window
+
+Spring Cloud Gateway applies a small grace window before closing WebSocket sessions due to sustained backend outages so that brief flaps do not cause unnecessary reconnects:
+
+- The `firemud.gateway.backendUnavailableGraceMs` configuration property controls how long (in milliseconds) Gateway tolerates continuous backend failures (for example, repeated `UNAVAILABLE` gRPC statuses or 5xx HTTP responses from Game Session) for gameplay routes before closing affected WebSocket sessions with `1013/backend_unavailable`. A recommended default is `3000–5000ms`, tuned alongside `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` so Telnet and Web clients experience comparable behaviour during incidents.
+- Within this grace window, Gateway keeps existing WebSocket sessions open and surfaces backend errors as per-command failures, allowing clients to remain connected while the platform recovers from short blips.
+- When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs`, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
+- Load balancers or CDNs in front of Gateway should be configured with idle and failure timeouts that do not undercut this grace window; otherwise, they may terminate connections before Gateway can emit the canonical `backend_unavailable` signal.
+
 ---
 
 ## Telnet / TCP Bridging

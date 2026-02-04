@@ -252,12 +252,10 @@ grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/P
 
 ### Tick Locking
 
-This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantRegionTag}:lock:<entityId>` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs follow the simplified formula from the Redis design:
+This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantRegionTag}:lock:<entityId>` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs come from the **shared tick/Redis helpers** that implement the canonical formulas defined in [Tick Concepts & Invariants](../../system-architecture-tick-concepts-and-invariants.md#tick-budget-ttls-and-region-health-conceptual):
 
 - The Game Session Service exposes `game.tick-interval-ms` as the primary pacing knob.
-- Internally it derives a soft budget and TTLs, for example:
-  - `tick_budget_ms = tick_interval_ms * 0.8`
-  - `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`
+- Internally it derives a soft budget and TTLs using the shared helpers (for example `tick_budget_ms = tick_interval_ms * 0.8`, `lock_ttl_ms = clamp(tick_budget_ms * 8, 500, 5_000)`).
 
 Entity Management treats `lock_ttl_ms` as an opaque value supplied by shared helpers; it does not define its own lock TTL configuration. This keeps locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
 

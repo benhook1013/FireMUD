@@ -35,6 +35,11 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 - For Coordination/Cache Redis outages, AOF problems, tail-loss SLO breaches, mis-sharded keys, and automation queue schema issues, see:
   - `design/architecture/system-architecture-redis-incident-runbook.md#redis-incident-scenarios`
 
+### Tick Incident Scenarios
+
+- For stalled regions, replay storms, or stuck tick effect ledger entries, see:
+  - `design/architecture/system-architecture-tick-incident-runbook.md`
+
 ### Minimal Coordination & Tick Operator Mental Model
 
 For a single-admin operator, most “what do I do now?” coordination/tick questions reduce to three named operations and a small set of dashboards/metrics:

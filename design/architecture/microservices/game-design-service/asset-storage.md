@@ -13,6 +13,8 @@ formats over time. The Game Design Service is not queried during gameplay. Each
 record remains tied to a `tenantId` so icons, UI images, and audio files are
 isolated per game.
 
+Logical world and entity templates (regions, rooms, items, NPCs, loot tables, scripts, etc.) remain stored in PostgreSQL schemas owned by the corresponding domain services and are not persisted as blobs in the asset store. The asset store is strictly for binary design assets plus version-scoped manifests exported by the Game Design Service.
+
 ## Table Structure
 
 The `game_assets` table stores the raw binary data for design-time uploads. Columns include:

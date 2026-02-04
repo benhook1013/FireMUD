@@ -7,7 +7,6 @@ Read the following documents, and follow references to any other design document
 - `design/architecture/infrastructure/environment-and-secrets-overview.md`
 - `design/architecture/infrastructure/environment-and-secrets.md`
 - `design/architecture/infrastructure/environment-and-secrets-catalog.md`
-- `design/architecture/infrastructure/environment-and-secrets-backup.md`
 - `design/architecture/infrastructure/schedule.md`
 - `design/architecture/system-architecture-cicd.md`
 - `design/architecture/system-architecture-deployment-runbook.md`

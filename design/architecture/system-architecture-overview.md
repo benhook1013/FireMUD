@@ -108,7 +108,7 @@ Within Redis, keys are further partitioned by responsibility and, in production,
     - `cache:*` – general-purpose caches for derived data, short-lived lookups, and infrequently updated views.  
     - `ratelimit:*` – per-account or per-IP rate limiting for APIs, login attempts, and abuse prevention.
 
-Coordination Redis and Cache/Rate-Limit Redis should be operated and scaled independently in production so cache or rate-limit spikes cannot degrade tick execution or session coordination.
+Coordination Redis and Cache/Rate-Limit Redis are **separate Redis clusters in production** so cache or rate-limit spikes cannot degrade tick execution or session coordination. In local development they may run on a single Redis instance using the documented key prefixes, but production environments must keep these roles isolated at the deployment level.
 
 See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md) for the detailed key structure, multi-tenant key design, and allowed patterns, and the [Service Responsibility Matrix](./service-responsibility-matrix.md) for which services participate in each Redis role.
 
@@ -128,8 +128,8 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 | **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides geometry and static world snapshots (topology and ambient world state only, not live entities/items/inventories) |
 | **[Game Logic Service](./microservices/game-logic-service/README.md)** | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
 | **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** | Triggers AI and scripted behaviors |
-| **[Social & Groups Service](./microservices/social-groups-service/README.md)** | Manages chat, mail, guilds, and social features |
-| **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service |
+| **[Social & Groups Service](./microservices/social-groups-service/README.md)** | Manages chat, mail, guilds, and social features, and enforces chat mutes/bans at message send time based on moderation decisions from Logging & Admin Service |
+| **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service; owns moderation policy definition and audit trails that downstream services enforce; manages per-tenant quota configuration consumed by Gateway, Game Session, and other services |
 | **[Game Design Service](./microservices/game-design-service/README.md)** | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services |
 
 > 🔗 See [Microservices Documentation](./microservices/README.md) for the full list of responsibilities and APIs.
@@ -187,7 +187,8 @@ This model avoids single-node bottlenecks for ticks or session handling; see [Ti
 Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live sessions is partitioned by `<tenantId, regionId>`:
 
 - A scheduler or consistent-hash layer maps each `<tenantId, regionId>` pair to a specific Game Session instance.
-- That instance holds the region lease in Redis and owns tick execution, command queues, and timers for the region.
+- That instance holds the region lease in Coordination Redis and owns tick execution, command queues, and timers for the region.
+- Spring Cloud Gateway uses a sticky routing key derived from the same `<tenantId, regionId>` (and, where available, `characterId`) so that a given gameplay WebSocket is consistently forwarded to the correct Game Session shard for its region.
 - Spring Cloud Gateway maintains **sticky WebSocket routing** for a given gameplay session to the Game Session shard that currently holds the region lease.
 - On reconnect, Gateway uses the region/session mapping stored in Redis to route the WebSocket connection back to the correct shard before gameplay resumes.
 
@@ -198,16 +199,22 @@ This sharding model aligns with the tick-region ownership and lease rules descri
 ## Authentication and Authorization Flow
 
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
-On disconnect, clients must reauthenticate to resume gameplay.
-Session state is stored in Redis and reused for recovery.
+On initial login, Game Session delegates full credential verification (including lockout and MFA rules) to the **Account Service**.
+On disconnect, clients must either present a valid short-lived session/resume token so Game Session can re-bind to the existing Redis-backed session without re-entering credentials, or perform a full `LOGIN` again if the resume token has expired or the account’s security state (for example, password reset, MFA change, ban) requires fresh authentication.
+Session state is stored in Coordination Redis and reused for recovery when a valid resume token is presented.
 
-> 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) for JWT format and session flow.
+> 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) and [Reconnection Strategy](./system-architecture-reconnection.md) for detailed JWT format, resume token semantics, and session flow.
 
 ---
 
 ## Observability and Monitoring
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for the full pipeline, including Fluent Bit, Prometheus, and related dashboards.
+
+From the perspective of admin and moderation tooling there are two broad classes of features:
+
+- **Core admin actions** – Feature flag toggles, bans/unbans, basic account and session controls, and other actions that primarily talk to domain microservices (for example, Account, Game Session, Social & Groups) via the Gateway. These are designed to remain available even if Elasticsearch, Prometheus, Jaeger, or Alertmanager are temporarily unavailable.
+- **Observability-driven workflows** – Log search, metrics and trace dashboards, and alert-centric investigations that depend on Elasticsearch, Prometheus, Jaeger, and Alertmanager being healthy. These surfaces may degrade or become read-only during observability outages but should not block core admin actions.
 
 > 🔗 See additional Redis metrics and SLO guidance in [Redis Operations & Migrations](./system-architecture-redis-operations.md).
 
@@ -281,6 +288,15 @@ World and room data flows through two distinct phases:
 Game Session Service controls **which published version is active** per tenant and region. Game Design Service can request or schedule version changes, but activation ultimately happens via Game Session and runtime configuration flows (see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)).
 
 ---
+
+### Multi-Tenancy Enforcement
+
+Multi-tenant isolation is enforced both at the data layer and at specific enforcement points in the runtime:
+
+- **Quota configuration source of truth** – Per-tenant quotas (for example, max concurrent sessions, max commands per second, and background job limits) are stored as configuration managed via the Logging & Admin Service; they are applied at runtime by the services listed below.
+- **Gateway enforcement** – Spring Cloud Gateway enforces per-tenant and per-account API rate limits for HTTP/WebSocket traffic using Cache/Rate-Limit Redis and shared rate-limit helpers.
+- **Game Session enforcement** – Game Session Service enforces per-tenant caps on active gameplay sessions and tick-region load, rejecting or deferring new logins when quotas are exceeded for a tenant or region.
+- **Downstream services** – Where additional quotas are needed (for example, chat message volume in Social & Groups), services reuse the same quota configuration and Cache/Rate-Limit Redis helpers rather than introducing ad hoc mechanisms.
 
 ## Related Documentation
 

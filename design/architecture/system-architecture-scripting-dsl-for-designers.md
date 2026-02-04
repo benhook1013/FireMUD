@@ -159,7 +159,7 @@ The platform performs **extensive validation** at design time and at publish tim
 - **Where to look when debugging**
   - For **editor-time issues**, fix the graph based on validation errors in the Game Design Service UI and re-run validation before publishing.
   - For **runtime issues**, start from the script’s recent entries in `script_event_audit` and the associated metrics in `design/architecture/system-architecture-scripting-quotas-and-operations.md`, then adjust quotas or disable/throttle the script using the operational flows described there.
-  - For **safe test runs**, use the dry-run or test execution tools exposed by the Game Design / Logging & Admin UIs, which call a non-committing test path in the Automation & Scripting Service. These runs exercise the same sandbox and validation logic but do not enqueue commands into tick queues; see the Automation & Scripting Service README for details.
+  - For **safe test runs**, use the dry-run or test execution tools exposed by the Game Design / Logging & Admin UIs, which call a non-committing test path in the Automation & Scripting Service. These runs exercise the same sandbox and validation logic but do not enqueue commands into tick queues; see the Automation & Scripting Service README for details. Test tools are **privileged** and subject to their own rate limits and budgets so they cannot overload the scripting cluster; avoid running unbounded batches of dry-runs against production tenants.
   - When working with support or operators, you can use `scriptEventId` as a “debug ticket” for a single trigger: the Game Design, Logging & Admin, and automation metrics views can all be filtered by `tenantId`, `scriptId`, and `scriptEventId` to follow one event end-to-end. Plugins use the same identifiers, adding `pluginId` / `pluginVersionId` so you can distinguish plugin activity from core scripts.
 
 For the detailed loop safety algorithm and runtime budget enforcement, see:
@@ -183,6 +183,14 @@ Key properties:
 - Scripts **do not execute inside the tick loop itself**; they run in the Automation & Scripting Service and contribute commands into the tick system.
 - The combination of tick-based scheduling and validation rules ensures that scripts **cannot hot-loop or starve other work**.
 - Determinism and replay semantics are defined in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and `design/architecture/system-architecture-ticks.md`; as a designer you can assume that given the same configuration and events, your script behaves predictably.
+
+### Timers and Reliability
+
+Timer-driven handlers such as `onInterval` and `onTimerExpire` are **best-effort, at-most-once** from the engine’s point of view:
+
+- When a timer becomes due, the scheduler tries to fire it subject to per-script quotas, per-tenant budgets, and cluster ceilings. Under heavy load or when limits are reached, individual firings may be **skipped** and are not automatically replayed later, even if the timer continues to run at its configured cadence.
+- Infrastructure hiccups (for example, Redis or gRPC outages) do not cause the same timer firing to be re-executed; the engine may retry idempotent downstream effects, but it does not re-run the DSL graph for a given `scriptEventId`.
+- As a result, timers should be treated as **hints**, not guaranteed ledgers. Design timer handlers so they can tolerate missed or delayed firings and recompute from current world state instead of assuming that every interval has executed exactly once.
 
 ---
 

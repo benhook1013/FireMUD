@@ -30,9 +30,17 @@ Canonical schemas, identifiers, and versioned template rows remain in the owning
 > **Note**
 
 Templates are **versioned** like any other design asset. Publishing a
-version copies these templates to the domain services using the
-`version_id` workflow described in
-[Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+version does **not** copy a separate design database into the domain
+services. Instead:
+
+- The Game Design Service persists `game_templates` rows and their revision history as design-time artifacts.
+- World Management, Entity Management, and related domain services already own the authoritative versioned templates keyed by `(tenantId, versionId)`; publish finalizes those Draft templates via the `version_id` workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- `GameTemplateDto.config` composes existing domain templates by reference and is validated at publish time; it never becomes a competing source of truth for world or entity graphs.
+
+Ownership can be summarized as:
+
+- **Game Design Service** – owns `game_templates` and all version/control metadata for templates.
+- **World Management / Entity Management / Automation & Scripting** – own world, entity, and script templates and their identifiers; game templates only reference these records via stable IDs.
 
 ## Creating Templates
 

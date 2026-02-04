@@ -80,6 +80,30 @@ A small set of automation/scheduler-specific prefixes live on Coordination Redis
 
 Durable automation schedules, quotas, and script configuration live in PostgreSQL; these coordination prefixes are latency and progress hints only and must not be treated as the primary record of “which scripts should run”. Designs that introduce new automation-related coordination prefixes must register them in the reset policy matrix and document how they recover from resets.
 
+### Automation Routing: Coordination vs Cache/Rate-Limit
+
+Automation workloads split into two broad classes, with different expectations and Redis roles:
+
+- **Gameplay-equivalent, fairness-critical automation**
+  - Examples: scripted commands that enter the same per-entity tick queues as player actions, “every N ticks” buffs or debuffs that affect combat state, automated movement or AI that must respect one-action-per-entity-per-tick fairness.
+  - Redis role: **Coordination Redis**.
+  - Prefixes: use the same coordination families as player commands (for example `tick:{tenantRegionTag}:queue:<entityId>`, `tick:{tenantRegionTag}:pending`, `timer:{tenantRegionTag}`, and scheduler checkpoints such as `script-scheduler:{tenantRegionTag}:lastTickId`).
+  - Guarantees:
+    - Subject to the same `(regionEpoch, tickId)` timeline, leases, and lock semantics as player commands.
+    - Must respect the “one action per entity per tick” invariant and other tick fairness rules from the tick architecture docs.
+  - Design rule: automation in this category must be reviewed like core gameplay logic and is **not** allowed to depend on TTL-only caches or best-effort queues for correctness.
+
+- **Best-effort, non-critical automation**
+  - Examples: analytics-style background work, non-critical notifications, opportunistic refreshes that can be dropped or reordered without visible gameplay impact.
+  - Redis role: **Cache/Rate-Limit Redis**.
+  - Prefixes: `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` and similar TTL-only queues and counters documented in the Redis Cache & Rate Limiting design.
+  - Guarantees:
+    - Treated as **TTL-only, reset-tolerant** hints: items may be dropped, duplicated, or processed late.
+    - Correctness (for example, “was this workflow triggered at least once?”) must come from durable trigger tables and idempotent domain logic, not from the queue contents.
+  - Design rule: features that require strong ordering, fairness relative to player actions, or at-least-once guarantees **must not** rely solely on `automation:queue:*`; they either belong in the coordination category above or should use tick-adjacent outbox/saga patterns.
+
+When designing new automation, authors must explicitly state which category it belongs to and which Redis role/prefixes it uses, and link to the relevant tick or cache sections. Reviews should push gameplay-equivalent automation toward coordination prefixes and reserve cache-based queues for truly best-effort workloads.
+
 ---
 
 ### Redis Usage by Service

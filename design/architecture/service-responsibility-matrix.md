@@ -50,6 +50,9 @@
 | Admin panel and feature flag toggling | | | | | | | | | ✔ | | |
 | Game moderation tools | | | | | | | | | ✔ | | |
 | Game moderation policy definition | | | | | | | | | ✔ | | |
+| Per-tenant quota configuration (sessions, rate limits, background jobs) | | | | | | | | | ✔ | | |
+| Enforcement of gameplay bans at login/command level | | | | ✔ | | | | | | | |
+| Enforcement of chat mutes/bans at message send time | | | | | | | | ✔ | | | |
 | Automated tick/coordination remediation (pause/resume/reset) | | | | | | | | | ✔ | | |
 | Game asset publishing & object storage | ✔ | | | | | | | | | | |
 | TCP/Telnet socket handling | | | | | | | | | | ✔ | |

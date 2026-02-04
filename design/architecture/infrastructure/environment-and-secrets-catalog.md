@@ -121,12 +121,12 @@ In Kubernetes deployments the certificates are mounted at `/tls`, and the enviro
 
 ## Authentication & JWT
 
-JWT tokens secure internal service calls. Production keys are provided via environment variables while development instances generate random secrets. When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for changes using `JwtSecretWatcher` so keys can be rotated without restarts. Certificate and secret watching is described in `../system-architecture-security.md#key-and-certificate-rotation`.
+JWT tokens secure internal service calls. Production keys are provided via Kubernetes Secrets and mounted key files, while development instances may generate random secrets. When `FIREMUD_AUTH_JWT_SECRET_PATH` is set, the service watches the file for changes using `JwtSecretWatcher` so keys can be rotated without restarts. Certificate and secret watching is described in `../system-architecture-security.md#key-and-certificate-rotation` and `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload. In staging and production this file is typically sourced from the `jwt-signing-keys` Secret. | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
 | `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | When `true`, logins over **plaintext Telnet** (raw TCP via the TCP Proxy) are allowed only for accounts that have 2FA enabled and explicitly opt in to plaintext Telnet login; other accounts must use TLS or the web client | `true` |
@@ -140,6 +140,8 @@ This value defines the maximum window during which a disconnected gameplay sessi
 FireMUD deliberately avoids introducing a second, independent “session TTL” configuration knob. The JWT lifetime (plus the safety margin) is the single control surface for the reconnection window; additional per-session TTL tuning is considered out of scope for this hobby/self-hosted deployment model.
 
 Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:game:<tenantId>:<sessionId>` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:game:<tenantId>:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`. For player-facing environments, prefer using the scoped session cleanup Job described in `../system-architecture-runbooks.md#redis-session-schema-and-ttl-cleanup` over ad-hoc `DEL` usage so cleanup remains repeatable and observable.
+
+In staging and production environments, JWT signing keys are stored in a `jwt-signing-keys` Secret and exposed to the Account Service via the file pointed to by `FIREMUD_AUTH_JWT_SECRET_PATH`. A corresponding JWKS document is served from a `jwt-jwks` ConfigMap or Secret. Rotation is handled by a dedicated `jwt-rotation` Kubernetes Job as described in `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`; this Job updates both the signing key Secret and JWKS so validators always see the current public keys.
 
 For local development and hobby setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any environment that hosts real players (staging, QA, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client. Recommended Telnet deployment patterns by environment are summarized in `../system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes`.
 

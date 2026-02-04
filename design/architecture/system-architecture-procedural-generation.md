@@ -138,14 +138,15 @@ The following rules align generators with the core runtime and tooling:
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the Automation & Scripting Service. Discovery uses Spring bean scanning, and scripted or DSL-based generators are supported.
 
-Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. These rules are treated as **runtime configuration** for future runs, but each individual generation run persists an **immutable snapshot** of the configuration it actually used:
+Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. These rules are treated as **per-tenant runtime configuration** that influence **future** runs, but each individual generation run persists an **immutable snapshot** of the configuration it actually used:
 
-- Rules are keyed by `tenantId` and updated in place via REST.
+- `generation_rule` rows are keyed by `tenantId` and updated in place via REST; they represent the *current* tuning for a tenant rather than a versioned design artifact.
 - World creation and runtime generation calls snapshot the effective parameters
-  they use (including the generator type, seed, and a serialized config blob
-  that carries an explicit `schemaVersion`) alongside the generated regions and
+  they use (including generator type, seed, and a serialized config blob
+  carrying an explicit `schemaVersion`) alongside the generated regions and
   rooms so that operators can later reconstruct the inputs used for a particular
-  world or instance, even if live rules have changed.
+  world or instance, even if live rules have changed since then.
+- For shards that require stricter determinism (for example competitive or audited worlds), callers may additionally persist a reference from instance metadata to the specific `generation_rule` revision that was snapshotted so it is clear which tenant-level rule state was in effect when a run was executed.
 
 When the shape of generator configuration evolves, schema changes must follow the version-aware migration rules in `system-architecture-database-migrations.md`. New fields should be added under a new `schemaVersion`, and World Management and related services must continue to understand existing non-Retired `schemaVersion` values until the corresponding versions have been retired or explicitly migrated.
 

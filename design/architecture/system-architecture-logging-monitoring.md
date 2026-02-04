@@ -46,10 +46,42 @@ This document describes how FireMUD collects logs, metrics, and traces across al
   - WebSocket bridge meters such as `tcpproxy.websocket.reconnects`, `tcpproxy.websocket.reconnect.delay`, and timers like `tcpproxy.command`, `tcpproxy.heartbeat`, and `tcpproxy.idleClose` to track how often the proxy must reconnect to Spring Cloud Gateway, how long backoff delays are, and where time is spent in the Telnet pipeline.
   - Lifecycle and integration meters such as `tcpproxy.disconnect.notify.failure` to surface best-effort `NotifyDisconnect` delivery problems to the Game Session Service; these complement Game Session’s own session-takeover and resume counters described in the Reconnection Strategy doc and the TCP Proxy design’s **Service Interactions** section.
   Operators should create Grafana panels and Alertmanager rules that highlight sustained non-zero `tcpproxy.connections.limit.exceeded`, sharp increases in `tcpproxy.telnet.discarded`, and recurring `tcpproxy.disconnect.notify.failure` spikes, since these typically indicate abusive clients, mis-tuned caps, TCP edge misconfiguration (for example bad PROXY headers), or issues on the Game Session side.
-- Distributed traces are exported via OTLP and correlated with logs using the same `traceId` value.
-- Metrics reuse the `traceId` label via the `MetricsInterceptor`, making it easy to correlate latency spikes with specific traces and log entries.
+- Distributed traces are exported via OTLP and correlated with logs using a shared `traceId` in spans and log entries; metrics do **not** include `traceId` as a label. Correlation between metrics and traces should rely on exemplars where available and on log search and Jaeger queries rather than high-cardinality metric labels.
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT` environment variable ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).
 - For the new data-driven `LOOK` path, see `../project-management/look-instrumentation.md` for the specific `gamesession.command.look.*` meters, log conventions, and tracing guidance that operators should monitor while the slice stabilizes.
+
+### Cardinality Guardrails for Metrics
+
+FireMUD’s metrics are designed around low- and medium-cardinality labels so dashboards and alerts remain reliable even at scale. To keep this consistent:
+
+- Allowed labels typically include `service`, `job`, `grpc_method`, `status`, `code`, `tenantId`, `regionId`, `redis_role`, `effect_type`, `outcome`, and other explicitly documented dimensions in the Redis, tick, and gRPC architecture docs.
+- Disallowed labels include per-request or per-entity identifiers such as `traceId`, `spanId`, `playerId`, `sessionId`, and arbitrary error messages or stack traces. These belong in logs and traces, not in metric label sets.
+- When in doubt, prefer coarser labels (for example `error_code` from a bounded enum or small string set) and aggregate multiple rare values into an `other` bucket rather than exposing them as unbounded labels.
+- New metrics must document their label sets in the relevant architecture or service README and confirm that they conform to these guardrails before being added to dashboards or alerts.
+
+### Player Experience SLIs and SLOs
+
+In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines, FireMUD tracks a small set of player-centric SLIs. These are expressed as Prometheus metrics with environment-specific SLO targets:
+
+- **Login success ratio**
+  - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{outcome="success"}` vs `login_requests_total`.
+  - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per `tenantId` and, where applicable, `regionId`.
+- **Command end-to-end latency**
+  - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `command`, `tenantId`, `regionId`.
+  - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per `tenantId`/`regionId`.
+- **Telnet/WebSocket path availability**
+  - SLI: success rate and error rate for Telnet and WebSocket upgrade/connection flows, derived from metrics such as `tcpproxy.connections.active`, `tcpproxy.connections.limit.exceeded`, and HTTP/gRPC status codes on the WebSocket bridge.
+  - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window; sustained deviations are treated as P0 incidents for the affected entry path.
+- **Chat delivery latency**
+  - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by `tenantId` and chat channel type.
+  - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
+
+Environment and service docs that introduce new player-facing flows should:
+
+- Reuse these SLIs where possible (for example by tagging `command_end_to_end_latency_ms` with a new `command` label), or
+- Add new SLIs to this section so that operators have a single, authoritative list of player-centric targets.
+
+Grafana dashboards under `design/observability/grafana` include a dedicated “Player Experience” dashboard that surfaces these SLIs for each environment and links back to the relevant runbooks when SLOs are breached.
 
 ### Degraded Modes and Observability Dependencies
 
@@ -67,6 +99,26 @@ New moderation features and admin tools must explicitly document:
 - Which dependencies are required for the feature to function.
 - How the feature behaves when observability systems are partially or fully unavailable.
 - Whether any new metrics, logs, or traces introduced for the feature are considered hard requirements for safe operation, or are best‑effort enrichments similar to existing dashboards.
+
+### Alert Taxonomy and Ownership
+
+Alertmanager routes alerts based on a small, consistent label set so ownership and severity are always clear:
+
+- Core labels:
+  - `service` – owning service or component (for example `redis-coordination`, `game-session`, `tcp-proxy-service`, `postgres-backup`).
+  - `component` – optional, for finer-grained subsystems (for example `tick`, `backup`, `coordination`).
+  - `severity` – one of `P0`, `P1`, or `P2`.
+  - `owner` – primary team or role responsible for triage (for example `platform`, `gameplay`, `web`, `infra`).
+  - `runbook` – path to the relevant documentation section (for example `design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach`).
+- Severity guidelines:
+  - **P0** – Player-visible outage or severe SLO breach for core flows (for example login unavailable, command latency outside SLO for a large fraction of players, sustained Redis tail-loss SLO breach affecting active regions).
+  - **P1** – Degraded but tolerable behavior that should be addressed promptly (for example elevated cache evictions, slower tail-loss that remains within SLO but trends badly, missed backup or verification thresholds in a single environment).
+  - **P2** – Non-urgent issues, capacity warnings, or minor errors that should be resolved during normal work.
+
+Environment-specific Alertmanager configurations may add routing rules and notification channels, but they should preserve these labels and the `runbook` annotation so that:
+
+- Logging & Admin can display alerts with clear ownership and links to the appropriate runbooks.
+- Operators can jump from an alert to the corresponding Grafana dashboard and architecture/runbook section without guesswork.
 
 ## Health Checks
 

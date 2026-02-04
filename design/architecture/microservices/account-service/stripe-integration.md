@@ -60,7 +60,7 @@ Stripe integration must preserve tenant isolation while allowing platform-level 
 
 - Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
 - Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata.  
-- Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` (for example, `platformAdmin`) as enforced by the Tenant Authorization Contract.  
+- Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` (typically `platformAdmin` for full reporting and `billingAdmin` for billing-safe reporting) as enforced by the Tenant Authorization Contract.  
 - Stripe API keys, webhook secrets, and any PCI-relevant configuration remain confined to the Account Service. Other services never communicate with Stripe directly.
 
 ## Service APIs

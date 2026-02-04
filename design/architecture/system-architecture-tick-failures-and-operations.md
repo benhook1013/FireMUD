@@ -101,6 +101,8 @@ Alerts fire when:
 
 These metrics complement the Redis- and lock-level health metrics described in the Redis architecture and operations docs.
 
+Operators diagnosing stalled regions, replay storms, or ledger backlogs should use these metrics in combination with the Tick Health & Ledger dashboard exported under `design/observability/grafana/tick-health-ledger.json` and the incident flows described in `system-architecture-tick-incident-runbook.md`.
+
 ### Ledger Replay Controller
 
 Responsibility for driving ledger rows to a terminal outcome lies with the Game Session Service:
@@ -326,6 +328,21 @@ Operationally:
 - Timeouts waiting for remote results are treated as equivalent to a failed remote leg; origin-ledger entries for those coordinating effects converge to `ABANDONED` with a timeout reason and a corresponding `PARTIAL` or `FAILED` high-level outcome.
 - Explicit `ABANDONED` outcomes from a target region (for example, entity no longer valid, region reset, or unrecoverable domain error) are treated the same way at the origin.
 - Compensation beyond simple local corrections (for example refunding currency, undoing non-idempotent external side effects) must be orchestrated via saga/outbox flows outside the tick loop, not by attempting cross-region rollback inside tick execution.
+
+### Cross-Region Follow-Ups and Region-Epoch Changes
+
+Region resets and epoch bumps intentionally sever the old coordination timeline for a `<tenantId, regionId>`. Cross-region follow-ups must behave predictably across those boundaries:
+
+- Follow-up rows and tick effects are always tied to a specific `(tenantId, regionId, region_epoch, tickId, effectKey)`; they **never** silently migrate to a new epoch.
+- When a target region’s `region_epoch` is bumped (via region/tenant/cluster reset):
+  - Any undrained follow-ups or `SCHEDULED` ledger rows for the old epoch are treated as **terminal for that epoch**.
+  - The ledger replay controller converges those rows to `ABANDONED` with a reset-specific reason (for example `RESET_REGION_SCOPED` or `RESET_TENANT_SCOPED`), rather than attempting to “replay them into the new epoch”.
+  - Target-region tick executors ignore old-epoch work based on epoch/tick guards in their coordination scripts; they only stage and apply effects for the current epoch.
+- Origin regions:
+  - Observe the `ABANDONED` outcomes (or timeouts that result in `ABANDONED`) for remote legs and compute the appropriate high-level command outcome (`PARTIAL` or `FAILED`).
+  - Surface player-facing feedback consistent with that outcome (for example “your cross-region trade failed due to region reset; your currency has been refunded”).
+
+Designs that genuinely need to carry cross-region work across region resets or epoch changes must be treated as **exceptional** and implemented using out-of-band saga/outbox workflows with their own reset/runbook stories, not as normal tick behavior.
 
 ## Remote Hint Markers and Resets
 
