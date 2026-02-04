@@ -195,7 +195,7 @@ These signals allow operators to treat backup and verification health as first-c
 
 ## Post-Restore Secret Hardening
 
-Restoring a production cluster from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
+Restoring a production or staging cluster from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
 
 Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates two flows:
 
@@ -217,12 +217,31 @@ The `post-restore-secret-hardening` Job runs after PostgreSQL and core services 
 - JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the JWKS ConfigMap/Secret, and, optionally, the Account Service Deployment.
 - Database rotation service accounts can only read/update the PostgreSQL credential Secrets and, optionally, restart the Deployments/StatefulSets that use them.
 
-Runbooks should treat this Job as a mandatory step in any production disaster recovery:
+Runbooks should treat this Job as a mandatory step in any production or staging disaster recovery:
 
 1. Restore PostgreSQL and Kubernetes manifests as described above.
 2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
 3. Confirm application health checks, login/session flows, and JWT validation.
-4. Only then route external traffic to the restored cluster.
+4. Only then route external or player traffic to the restored cluster.
+
+---
+
+## Planned DB Credential Rotation
+
+In addition to post-restore hardening, operators may periodically rotate application database credentials as part of routine security hygiene. Planned DB credential rotation reuses the same `db-credential-rotation` Job and Secrets described above but runs outside of a disaster recovery event.
+
+Recommended flow:
+
+1. Ensure recent PostgreSQL backups exist and are healthy (see the backup verification section).
+2. Schedule a low-traffic window and notify stakeholders of the planned rotation.
+3. Run the `db-credential-rotation` Job in the target namespace so it:
+   - Generates a new password for the application role(s) in PostgreSQL using admin credentials from `postgres-admin-credentials`.
+   - Updates the `postgres-credentials` Secret with the new password.
+   - Triggers a rolling restart of Deployments and StatefulSets that consume this Secret so services reconnect with the new credentials.
+4. Monitor application health checks, logs, and database connections for errors.
+5. If issues appear, revert to the previous known-good password and Secret value and repeat the rotation later with additional diagnostics.
+
+No CronJob is defined for automatic DB credential rotation; any such cadence should be explicitly chosen based on compliance requirements and operational experience.
 
 ---
 

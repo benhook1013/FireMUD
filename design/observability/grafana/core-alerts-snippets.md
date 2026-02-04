@@ -94,3 +94,74 @@ Example alerts for missed backups and verification runs:
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation.
 
+## Player Experience SLO Alerts
+
+These example rules enforce the player-centric SLOs defined in the Logging & Monitoring architecture doc. Thresholds and severities may be tuned per environment, but the underlying metric shapes should remain consistent.
+
+```yaml
+- alert: LoginSuccessRatioLow
+  expr: (
+    sum(rate(login_requests_total{outcome="success"}[15m]))
+      /
+    sum(rate(login_requests_total[15m]))
+  ) < 0.995
+  for: 15m
+  labels:
+    service: gateway
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-logging-monitoring.md#player-experience-slis-and-slos
+  annotations:
+    summary: Login success ratio below SLO
+    description: Login success ratio has fallen below 99.5% over the last 15 minutes.
+
+- alert: CommandLatencyP99High
+  expr: histogram_quantile(
+          0.99,
+          sum by (le) (rate(command_end_to_end_latency_ms_bucket[5m]))
+        ) > 0.25
+  for: 10m
+  labels:
+    service: gateway
+    severity: P1
+    owner: gameplay
+    runbook: design/architecture/system-architecture-logging-monitoring.md#player-experience-slis-and-slos
+  annotations:
+    summary: Command p99 latency above SLO
+    description: Player command end-to-end p99 latency has exceeded 250ms for core commands.
+
+- alert: ChatDeliveryLatencyP99High
+  expr: histogram_quantile(
+          0.99,
+          sum by (le) (rate(chat_delivery_latency_ms_bucket[5m]))
+        ) > 1
+  for: 10m
+  labels:
+    service: chat
+    severity: P1
+    owner: gameplay
+    runbook: design/architecture/system-architecture-logging-monitoring.md#player-experience-slis-and-slos
+  annotations:
+    summary: Chat delivery latency above SLO
+    description: Chat delivery p99 latency has exceeded 1s over the last 5 minutes for active regions.
+```
+
+## Observability Smoke Test (Non-Production)
+
+In non-production environments, it is often useful to verify alert routing end-to-end without triggering real P0/P1 alerts. A dedicated, test-only rule can be used for this purpose:
+
+```yaml
+- alert: ObservabilitySmokeTestAlert
+  expr: observability_smoke_test_metric > 0
+  for: 1m
+  labels:
+    service: observability-smoke-test
+    severity: test
+    owner: platform
+    runbook: design/architecture/system-architecture-testing.md#observability-tests
+  annotations:
+    summary: Observability smoke test alert
+    description: This test-only alert is triggered by CI or a synthetic probe to verify Alertmanager routing. It must not be enabled in production.
+```
+
+CI jobs or manual probes should temporarily set `observability_smoke_test_metric` above zero in a non-production environment to confirm that Alertmanager receives and routes this alert with the expected labels, without paging on-call engineers.

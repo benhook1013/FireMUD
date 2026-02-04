@@ -74,6 +74,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 - [ ] Multi‑key scripts operating on this prefix:
   - [ ] Only touch keys that share the same hash tag and slot.
   - [ ] Do not mix coordination and cache prefixes in one invocation.
+ - [ ] For tick-region coordination, epoch/tick metadata is read and written through the canonical `tick:{tenantRegionTag}:meta` hash key defined in the Redis architecture doc, not via ad-hoc per-script metadata keys.
 
 ### Tail-Loss and Reset Behavior
 

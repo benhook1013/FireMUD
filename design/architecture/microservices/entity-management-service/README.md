@@ -11,6 +11,8 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 - Own and manage all inventories and item containment; character location and instance metadata live in the World Management Service
 - Coordinate deferred writes through Game Session Service
 
+World Management is therefore the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Entity Management reads location via World Management gRPC APIs or shared projections but must not persist its own competing location fields or treat cached location as authoritative.
+
 ## Architecture / Design Notes
 
 - Uses JPA for persistence of entity data.

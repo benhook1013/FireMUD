@@ -146,7 +146,7 @@ This enables:
 
 ## JWT Format and Role Claims
 
-Internal JWTs are issued by the Account Service and used for backend gRPC authorization. Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are validated by the Logging & Admin Service or other admin consumers. The Gateway forwards tokens without validating them, and the Game Session Service forwards tokens on behalf of connected clients.
+Internal JWTs are issued by the Account Service and used for backend gRPC authorization and first-party admin/creator web UIs. Gameplay clients **never** store or transmit tokens. Admin UIs may supply JWTs, which are validated by the Logging & Admin Service or other admin consumers. The Gateway forwards tokens without validating them, and the Game Session Service forwards tokens on behalf of connected clients.
 
 ### Claims
 
@@ -165,6 +165,24 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
   - `"tenant-def"` → `["moderator"]`
 
 > Tokens are short-lived and internal only. Gameplay context (e.g., `playerId`, `tenantId`) is stored in Redis and sent via command envelopes.
+
+### Token Profiles and Audiences
+
+To keep trust boundaries clear, FireMUD distinguishes between two primary JWT profiles:
+
+- **Browser JWTs**
+  - Issued via the `/auth/login` HTTP endpoint on the Account Service after a successful login from a first-party admin/creator web UI.
+  - Intended audience: frontend/meta APIs (for example an `aud` claim such as `frontend` or `meta-ui`).
+  - Carried only by first-party SPAs behind the Gateway; stored in memory only and sent as `Authorization: Bearer <token>` on meta/control API calls.
+  - Lifetime: short (for example 15–30 minutes) and not automatically refreshed; when a Browser JWT expires or is revoked, UIs must treat this as a hard logout condition and require re-authentication.
+
+- **Service JWTs**
+  - Issued by the Account Service for backend callers (for example, Game Session, Logging & Admin, Game Design) via the gRPC `Authenticate` or equivalent internal flows.
+  - Intended audience: internal services (for example an `aud` claim such as `internal`).
+  - Carried only over mTLS-protected service-to-service links.
+  - Lifetime: also short-lived and backed by `session:auth:*` allowlist entries; services must not cache them beyond their expiry or ignore allowlist revocation.
+
+Meta/control services must validate both the signature and the expected audience/profile for incoming tokens and reject tokens with an unexpected `aud` (for example, a Browser JWT presented to a purely internal service endpoint that only accepts Service JWTs).
 
 ---
 
@@ -202,6 +220,7 @@ When adding a new public HTTP/gRPC route:
 
 - Classify it as either **public** (no auth), **tenant-scoped**, or **cross-tenant/admin**.
 - For tenant-scoped and cross-tenant/admin routes, require `AuthTokenInterceptor` and the Tenant Authorization Contract described above.
+- For tenant-scoped routes that must remain reachable when a tenant is `suspended` or `canceled` for billing (for example, updating payment methods, viewing invoices, exporting data), explicitly mark them as **billing-safe control-plane routes** using a shared mechanism such as an annotation or route metadata flag (for example, `@BillingSafe`).
 - Log and audit cross-tenant operations, especially when initiated by roles such as `platformAdmin`, so misuse or misconfiguration is observable.
 
 ## Mid-Session Role Updates
@@ -304,7 +323,7 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
 | Claims | `accountId`, `globalRoles[]`, `scopedRoles{}` |
 | Session State | Stored in Redis; bound to socket by Game Session Service |
 | Session TTL | Derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS` + `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` |
-| Reauthentication | Required after disconnect; resumes via Redis if valid |
+| Reauthentication | Required after disconnect; client re-issues `LOGIN`, and Game Session resumes via Redis if the underlying gameplay and auth session state are still valid |
 | Role Enforcement | Meta/control services only; gameplay services trust Game Session Service |
 | Role Updates | Refreshed in-session; no client interaction needed |
 | Multi-Client Behavior | One session per character; new login replaces old session |

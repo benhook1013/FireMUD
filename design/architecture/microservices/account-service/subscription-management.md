@@ -25,6 +25,21 @@ Subscriptions are modeled as **plans** that define resource limits and entitleme
 
 Entitlements exposed to other services are derived from the active subscription’s plan and status and are always scoped to a single tenant (`tenantId`).
 
+### Authorization Roles for Billing and Subscriptions
+
+To keep authorization consistent, subscription and billing operations map to the role model defined in the Authentication & Authorization design:
+
+- **Per-tenant operations** (for example, create/update/cancel subscription for a given `tenantId`, view billing history for that tenant):
+  - Allowed for:
+    - `tenantAdmin` for that `tenantId`, and
+    - Global `platformAdmin` and `billingAdmin` roles.
+- **Cross-tenant billing reports and analytics** (for example, listing subscriptions across many tenants, platform-wide billing dashboards):
+  - Allowed only for global roles:
+    - `platformAdmin` for full reporting, and
+    - `billingAdmin` for billing-focused reporting surfaces.
+
+Implementations must not introduce ad-hoc “owner” or “admin” concepts; they should rely on `tenantAdmin`, `platformAdmin`, and `billingAdmin` from the shared role model and the Tenant Authorization Contract.
+
 ## Lifecycle Flows
 
 The subscription lifecycle is modeled as a finite state machine:
@@ -86,7 +101,7 @@ Runtime services such as the Game Session Service and world-management component
 
 - On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlements(tenantId)` and enforce both availability and quotas before admitting new load.  
 - When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new logins.  
-- They cache entitlements for a bounded period and invalidate or refresh them when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events are received, rather than checking entitlements on every tick.
+- They cache entitlements for a bounded period (for example, at most 60 seconds) and **must** invalidate or refresh them immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events are received, rather than checking entitlements on every tick. Admission paths (new player logins and game instance start/restart flows) must always consult a fresh or recently refreshed entitlement snapshot and must not bypass revocation rules based solely on stale cache entries.
 
 ## Edge Cases and Failure Handling
 

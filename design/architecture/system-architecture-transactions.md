@@ -122,15 +122,15 @@ To keep responsibilities clear across design-time, domain, and runtime services:
 In particular:
 
 - Design-time writes to template tables are only allowed via domain services’ Draft APIs invoked from Game Design Service workflows.
-- Published templates for a given `(tenantId, versionId)` are immutable; changing behavior for a live game means creating a new version and new game instances (or, for script-only fixes, changing `scriptPatchVersion` at instance creation time as described in `microservices/game-design-service/version-control.md`).
+- Published templates for a given `(tenantId, versionId)` are immutable; changing behavior for a live game means creating a new version and new game instances (or, for script-only fixes, changing the **script patch selection** according to the hot-reload and pinning rules described below rather than editing templates in place).
 
 ### Live Script Patch Boundary
 
-Transactional guarantees for tick execution assume deterministic scripts for the `(versionId, scriptPatchVersion)` pair recorded on a game instance:
+Transactional guarantees for tick execution assume deterministic scripts for the `(versionId, scriptPatchVersion)` pair that was in effect when a given effect was applied:
 
-- Game Session Service binds each `gameInstanceId` to a specific `(runtime_version, scriptPatchVersion)` at instance creation.
-- Tick handlers and script runners must treat that pair as fixed; moving an instance to a new script patch is modeled as creating a new instance with a new `(runtime_version, scriptPatchVersion)` rather than hot-swapping scripts in place.
-- Operational tooling that starts or restarts instances is responsible for selecting the desired `scriptPatchVersion` and recording it alongside `runtime_version` for observability and audit.
+- The Game Session Service records the `scriptPatchVersion` that is active for each `gameInstanceId` and includes it in the context for every tick effect (for example via the EffectId metadata and per-effect audit/log records).
+- Tick handlers and script runners must treat `(versionId, scriptPatchVersion)` as part of the effect identity: replays and retries use the same pair that was originally logged for that effect, even if the instance later moves to a different patch.
+- Operational tooling is allowed to change the pinned `scriptPatchVersion` for a running instance at well-defined boundaries (for example between ticks or during maintenance), but that change only affects **future** effects. Previously applied effects remain tied to the patch version recorded alongside their EffectIds in logs and audit tables.
 
 ---
 

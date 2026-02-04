@@ -51,7 +51,7 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Watch `tick.execution_time_ms_p95` and `tick.execution_time_ms_p99` relative to `tick_interval_ms` and lock TTLs as described in `system-architecture-tick-concepts-and-invariants.md`.
   - If p99 execution time approaches the configured tick budget or a high fraction of lock TTL (for example, sustained `tick.execution_time_ms_p99 / lock_ttl_ms` near the “Degraded/Unsafe” thresholds), first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
 - Tail-loss envelopes:
-  - Monitor `tail_loss_ms` / `tail_loss_ticks` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
+  - Monitor tail-loss metrics such as `redis_coordination_tail_loss_ms{tenantId,regionId}` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
   - If coordination tail-loss regularly exceeds the 1–2 second envelope (or roughly `≤ 2 × tick_interval_ms`), prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
 - Cross-region backlog:
   - Use `remote_followups_due_total`, `remote_followups_drain_lag_ms`, and `remote_followups_backlog_over_budget_total` from `system-architecture-tick-execution-flows.md` to decide whether target regions are draining remote work fast enough.
@@ -73,7 +73,7 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
 - **Redis tail-loss envelope**
-  - Size Coordination Redis so that measured `tail_loss_ms` remains within the 1–2 second envelope (or roughly `≤ 2 × tick_interval_ms`) under expected peak load.
+  - Size Coordination Redis so that measured `redis_coordination_tail_loss_ms` remains within the 1–2 second envelope (or roughly `≤ 2 × tick_interval_ms`) under expected peak load.
   - If tail-loss regularly exceeds that envelope after scaling application services, prioritize Coordination Redis capacity (CPU, memory, AOF layout) or region density before adding more tick producers.
 
 Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and tail-loss metrics so operators can make informed scaling decisions in future iterations.

@@ -9,6 +9,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 - CI pipeline has produced a tagged image for each service to deploy.
 - Database migrations have been validated (see `design/architecture/system-architecture-database-migrations.md`).
 - Redis, PostgreSQL, and core infrastructure components (Gateway, TCP Proxy, Observability stack) are healthy.
+- The operator has `kubectl` access and a kubeconfig for the target Kubernetes cluster (staging or production) from a secure admin workstation or bastion host.
 
 ## Standard Deployment Flow
 

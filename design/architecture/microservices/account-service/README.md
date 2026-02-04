@@ -17,7 +17,10 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 ## Architecture / Design Notes
 
-- Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. JWTs are issued to backend services and first-party admin/creator web UIs; gameplay protocol clients (Telnet/WebSocket) never see or transmit these tokens.
+- Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. Two token profiles are issued:
+  - **Browser JWTs** for first-party admin/creator web UIs via `/auth/login`, with a frontend-oriented audience and short lifetime, and
+  - **Service JWTs** for backend services via internal authentication flows (for example, the `Authenticate` gRPC method), with an internal audience.
+  Gameplay protocol clients (Telnet/WebSocket) never see or transmit these tokens.
 - The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
 - Auth token allowlist entries are stored in Redis as described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
 - Creation events are logged to the Logging & Admin Service via a saga step.
@@ -228,6 +231,8 @@ The Account Service may create one tenant-scoped entry per tenant in `scopedRole
 
 See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for configuration details.
 
+Browser JWTs and Service JWTs share the same core claim structure (for example, `accountId`, `globalRoles`, `scopedRoles`) but differ in their intended audiences and issuance flows as described in the Authentication & Authorization design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
+
 ### Two-Factor Authentication
 
 Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
@@ -265,7 +270,28 @@ The Game Session Service translates these codes into the text-protocol `ERROR <C
 - `POST /accounts` – create a new account and profile.
 - `GET /accounts/{accountId}/export` – export all account data.
 - `DELETE /accounts/{accountId}` – remove an account permanently.
-- `POST /auth/login` – authenticate and establish a control-plane session for first-party admin/creator UIs by returning a short-lived JWT (and associated metadata) that the frontend stores in memory and sends on meta/control API calls. Gameplay clients do not call this endpoint directly; they authenticate exclusively via the text `LOGIN`/`LOGON` flow fronted by the Game Session Service.
+- `POST /auth/login` – authenticate and establish a control-plane session for first-party admin/creator UIs by returning a Browser JWT and associated metadata. The frontend stores this token in memory and sends it on meta/control API calls; gameplay clients do not call this endpoint directly and authenticate exclusively via the text `LOGIN`/`LOGON` flow fronted by the Game Session Service. The response body follows the shared envelope pattern:
+
+  ```json
+  {
+    "status": "SUCCESS",
+    "data": {
+      "token": "jwt-token-here",
+      "expiresAt": "2025-01-01T12:00:00Z",
+      "account": {
+        "accountId": "user-123",
+        "email": "demo@example.com"
+      },
+      "scopedRoles": {
+        "tenant-abc": ["tenantAdmin", "designer"],
+        "tenant-def": ["player"]
+      },
+      "globalRoles": ["platformAdmin"]
+    }
+  }
+  ```
+
+  Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.
@@ -297,15 +323,6 @@ Example login request:
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"demo","password":"secret","otp":"123456"}'
-```
-
-Example login response:
-
-```json
-{
-  "status": "SUCCESS",
-  "data": null
-}
 ```
 
 #### gRPC

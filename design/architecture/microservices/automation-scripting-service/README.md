@@ -7,7 +7,7 @@ The Automation & Scripting Service drives non-player character (NPC) behavior an
 ### Responsibilities
 
 - Executes sandboxed scripts triggered by world and player events
-- Provides a visual DSL for designers to build behaviors
+- Provides backend APIs and a sandboxed engine for the visual DSL editor in the Game Design Service
 - Stores persistent NPC memory and automation queues
 - Integrates with Game Session and World Management services for real-time updates
 
@@ -284,7 +284,7 @@ In addition to event-handling and test endpoints, the Automation & Scripting Ser
 - `ListScriptPatchStatuses(tenantId)` – lists known script patches and their status for a tenant so operators and tools can see which patches are eligible to be pinned.
 - `ScriptPatchStatusChanged` event – emitted whenever a patch transitions between lifecycle states for a tenant. Logging & Admin and Game Design subscribe to this event so UIs and dashboards stay in sync with runtime state.
 
-Game Session and Logging & Admin use these read-only APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a game (for example, `SetActiveScriptPatchVersion` or `RollbackScriptPatchVersion`) are defined on the Game Session or Logging & Admin APIs and are documented in the corresponding service architecture docs; the Automation & Scripting Service only enforces that incoming events reference patches in a `READY` state.
+Game Session and Logging & Admin use these read-only APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a game (for example, `SetActiveScriptPatchVersion` or `RollbackScriptPatchVersion`) are defined on the Game Session or Logging & Admin APIs and are documented in the corresponding service architecture docs; when such an operation succeeds, those services emit a `ScriptPatchRollbackRequested` (for rollbacks) or equivalent status-change event that Automation & Scripting consumes to update per-tenant patch lifecycle state (including transitions to `ROLLED_BACK`). The Automation & Scripting Service only enforces that incoming events reference patches in a `READY` state and records lifecycle changes that authoritative control-plane services request.
 
 ## Proto Files
 

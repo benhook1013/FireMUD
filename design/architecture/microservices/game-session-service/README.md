@@ -157,9 +157,9 @@ The Game Session Service acts as the **authoritative tick executor** for each `<
 ### gRPC APIs
 
 - `Ping` – basic connectivity check.
-- `StartSession` – spins up a game instance from a published version.
-- `StopSession` – stops a running session.
-- `RestartSession` – restarts a stopped session.
+- `StartSession` – spins up a game instance from a published version. Despite the name, this operates on **game instances**, not player gameplay sessions; gameplay sessions are per-player contexts backed by `session:game:*` keys.
+- `StopSession` – stops a running game instance.
+- `RestartSession` – restarts a stopped game instance.
 - `EnqueueCommand` – adds a player action to the next tick's queue.
 - `QueryState` – retrieves condensed session or player state for monitoring.
 - `ToggleFeatureFlag` – updates runtime flags for a tenant.

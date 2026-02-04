@@ -239,7 +239,7 @@ Additional resource-related environment variables may be introduced over time. N
 When diagnosing sandbox-related issues in production, operators should:
 
 - Check `script_event_audit` records for:
-  - `outcomeType` (`sandbox_error`, `infrastructure_error`, `quota_denied`)
+  - `outcome` (`sandbox_error`, `infrastructure_error`, `quota_denied`)
   - `reason` fields (`cpu_budget_exceeded`, `memory_budget_exceeded`, other sandbox reasons)
   - Associated `tenantId`, `scriptId`, and `tickId`
 - Inspect metrics such as:

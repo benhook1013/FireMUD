@@ -66,15 +66,19 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
 - **Login success ratio**
   - SLI: fraction of successful login attempts over total login attempts, for example `login_requests_total{outcome="success"}` vs `login_requests_total`.
   - SLO (production starting point): ≥ 99.5% success over a 15-minute rolling window, evaluated per `tenantId` and, where applicable, `regionId`.
+  - Instrumentation: emitted by Spring Cloud Gateway (and any protocol-bridging entry points such as the TCP Proxy) for login-related routes, with labels at least `{tenantId, regionId, outcome}`.
 - **Command end-to-end latency**
   - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `command`, `tenantId`, `regionId`.
   - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per `tenantId`/`regionId`.
+  - Instrumentation: emitted by Gateway (and optionally the TCP Proxy for Telnet) with labels `{command, tenantId, regionId}`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
 - **Telnet/WebSocket path availability**
   - SLI: success rate and error rate for Telnet and WebSocket upgrade/connection flows, derived from metrics such as `tcpproxy.connections.active`, `tcpproxy.connections.limit.exceeded`, and HTTP/gRPC status codes on the WebSocket bridge.
   - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window; sustained deviations are treated as P0 incidents for the affected entry path.
+  - Instrumentation: primarily derived from TCP Proxy and Gateway meters (`tcpproxy_connections_total`, `tcpproxy_connections_limit_exceeded`, WebSocket upgrade status counters), with labels `{tenantId}` and, where safe, coarse-grained client metadata.
 - **Chat delivery latency**
   - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by `tenantId` and chat channel type.
   - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
+  - Instrumentation: emitted by the chat/social service responsible for delivering chat events, with labels `{tenantId, channel_type}` and an explicit distinction between player-visible channels (global, zone, party) and system channels.
 
 Environment and service docs that introduce new player-facing flows should:
 
@@ -92,7 +96,7 @@ Moderation and admin workflows should remain usable even when parts of the obser
   - Clearly indicate which data sources are unavailable (for example, “logs currently unavailable”, “metrics degraded”, or “traces unavailable”).
   - Continue to expose core moderation and admin APIs based on authoritative game data wherever possible.
   - Hide or disable only those features that require the missing backend (for example, embedded dashboards or historical trace searches), rather than failing the entire moderation workflow.
-- **Alert routing:** If Alertmanager is unavailable, or email delivery is degraded, Logging & Admin should surface alert status inside its own UI and APIs so operators can still see pending alerts without relying solely on email or chat integrations.
+- **Alert routing:** If Alertmanager is unavailable, or email delivery is degraded, Logging & Admin should surface alert status inside its own UI and APIs so operators can still see pending alerts without relying solely on email or chat integrations. When Alertmanager is down, Logging & Admin may fall back to a small set of Prometheus recording rules that approximate critical alert conditions (for example, SLO breaches for tail-loss or player SLIs) and clearly label those views as “best-effort from Prometheus (Alertmanager unavailable)” so operators understand they are not seeing the full alert state.
 
 New moderation features and admin tools must explicitly document:
 
@@ -119,6 +123,11 @@ Environment-specific Alertmanager configurations may add routing rules and notif
 
 - Logging & Admin can display alerts with clear ownership and links to the appropriate runbooks.
 - Operators can jump from an alert to the corresponding Grafana dashboard and architecture/runbook section without guesswork.
+
+For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
+
+- Live triggers and automation work are reported via metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`, as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+- Dry-run and test executions are tracked separately via `automation_script_test_runs_total` and `automation_script_test_runtime_seconds` so operators can see when validation tools are consuming significant sandbox resources even though they bypass mainline ScriptQuota and tenant automation budgets.
 
 ## Health Checks
 

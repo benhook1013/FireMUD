@@ -44,6 +44,8 @@ Services connect to the shared PostgreSQL database using the following variables
 | `FIREMUD_POSTGRES_USER` | Username | `firemud` |
 | `FIREMUD_POSTGRES_PASSWORD` | Password | `firemud` |
 
+In production, these variables are normally sourced from a Secret such as `postgres-credentials`. Higher-privilege credentials (for example in a `postgres-admin-credentials` Secret) are used by Kubernetes Jobs like `db-credential-rotation` to rotate application passwords as described in `system-architecture-backup-recovery.md#post-restore-secret-hardening` and `system-architecture-backup-recovery.md#planned-db-credential-rotation`. Routine rotation uses explicit operator runbooks rather than an automatic schedule.
+
 ---
 
 ## Redis Coordination & Cache

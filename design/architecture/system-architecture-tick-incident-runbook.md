@@ -72,9 +72,9 @@ Each scenario below assumes that Redis and database metrics are wired according 
 ### Detect
 
 - Metrics and dashboards show:
-  - Elevated `gamesession.tick.replayed_total` relative to `gamesession.tick.executed_total` for one or more regions.
+  - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions.
   - `tick.effect_outcome_total{outcome="replay_ok"}` significantly higher than `tick.effect_outcome_total{outcome="first_apply"}` for specific `effect_type` or services.
-  - Redis tail-loss metrics (`redis.coordination_tail_loss_ms`) repeatedly approaching or breaching the SLO envelope, indicating frequent coordination replays.
+  - Redis tail-loss metrics (`redis_coordination_tail_loss_ms`) repeatedly approaching or breaching the SLO envelope, indicating frequent coordination replays.
 - Logs and traces:
   - Game Session and domain services log frequent idempotent replays or guard conflicts.
   - Jaeger traces for tick-driven flows show the same effect identities being attempted repeatedly.
@@ -161,4 +161,3 @@ For all of the scenarios above, Jaeger should be treated as a first-class diagno
 - For replay storms, search by effect identity attributes (for example `effectKey`, `effect_type`) and verify how often the same identity appears in recent traces.
 
 The Tracing architecture doc (`system-architecture-tracing.md`) includes example Jaeger queries and attribute conventions to make these investigations repeatable.
-

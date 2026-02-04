@@ -133,6 +133,14 @@ FireMUD treats reconnection as a **client responsibility**: after any disconnect
   - Telnet clients reconnect by establishing a new TCP connection to the TCP Proxy Service and issuing `LOGIN` (and any optional `SESSION`/MCP negotiation) again.
   - Web clients reconnect by opening a new WebSocket to `/ws/game/**` via Spring Cloud Gateway and issuing `LOGIN` again; they must not assume that any prior MCP or `SESSION` state has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
 
+### HTTP Handshake Failures on `/ws/game/**`
+
+When Web clients attempt to establish or re-establish WebSocket connections and receive HTTP errors instead of a successful upgrade, they must interpret those signals consistently with the close-code taxonomy:
+
+- HTTP `429` from `/ws/game/**` indicates that the client is being rate-limited or has otherwise hit a policy boundary at the edge path. Clients should treat this as equivalent to a `policy_violation` outcome: either stop reconnecting automatically or switch to a much longer backoff window (for example minutes rather than seconds) and surface the error clearly to the user or operator.
+- HTTP `503` from `/ws/game/**` indicates that Gateway currently considers gameplay backends unavailable, and should be treated as equivalent to `1013/backend_unavailable`. Clients should apply the same exponential backoff with jitter and overall retry caps described above for backend-unavailable WebSocket closures.
+- First-party clients and tools should implement a unified “edge error → backoff policy” table that maps both WebSocket close codes and HTTP handshake errors on `/ws/game/**` to concrete backoff behaviour so reconnect storms remain predictable during incidents.
+
 Clients that do not implement these backoff rules will still function, but first‑party tools and reference clients should treat this behaviour as the normative baseline so that production incidents do not amplify reconnect load.
 
 ## Failure Modes & Reconciliation Rules

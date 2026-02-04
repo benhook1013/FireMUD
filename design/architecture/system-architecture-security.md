@@ -61,6 +61,17 @@ Environment behavior:
 
 Rotation keeps `previous.key` in JWKS for a configurable overlap window so existing tokens continue to validate. A follow-up pruning step (either part of the same Job or a separate Job) drops keys whose timestamps fall outside this window. Metrics and logs record the last successful rotation time and any failures so operators can monitor the process.
 
+### JWT Key Compromise Response
+
+When a JWT signing key is suspected to be compromised, operators follow a more aggressive rotation and cleanup flow than the normal `jwt-rotation` run:
+
+- Immediately run a `jwt-rotation` Job to generate a new signing keypair, update the `jwt-signing-keys` Secret, and refresh the JWKS document so new tokens are signed with the fresh key and validators see the updated public keys.
+- Optionally tighten `FIREMUD_AUTH_JWT_EXPIRATION_MS` for a period so any remaining tokens that were issued before the compromise window expire sooner. This change only affects new tokens; existing tokens remain valid until they reach their original expiry.
+- For clusters or tenants where stronger invalidation is required, run the Redis session cleanup Job described in `environment-and-secrets-catalog.md#authentication--jwt` and `system-architecture-redis-reset-and-recovery.md` (for example, deleting `session:game:<tenantId>:*` keys for affected tenants) so reconnects require a fresh `LOGIN`.
+- Monitor authentication and authorization metrics and logs (failed validations, unexpected 401/403 patterns) during and after the rotation window to confirm that validators are using the new key material and that any anomalous access patterns subside.
+
+Normal rotations use the `jwt-rotation` Job without additional TTL changes or session cleanup. Compromise rotations must be tracked in incident records, including which tenants were affected, which keys were replaced, and whether any additional mitigations (like shortened TTLs or Redis cleanup) were applied.
+
 ---
 
 ## TLS Termination & Internal Encryption
@@ -209,6 +220,11 @@ Putting this together:
 | Admin Role Access | Product admin APIs are JWT-only with no special network-level restrictions; operator control-plane endpoints are internal-only and require mTLS client certificates |
 | Zero Trust | Enforced via mTLS and JWT-based validation |
 | 2FA | Available for admin and moderator accounts via TOTP codes and, when `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled, required for any account that logs in over plaintext Telnet |
+
+CI/CD trust boundaries:
+
+- CI workflows use environment-scoped credentials for Kubernetes clusters and registries. Development credentials are available to broader workflows; staging and production credentials are limited to deployment paths and protected branches/tags.
+- Any future GitHub Actions workflows that apply staging or production manifests must use per-environment credentials, GitHub Environments, and manual approvals so CI cannot modify production clusters without explicit operator consent.
 
 ---
 

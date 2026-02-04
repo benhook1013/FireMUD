@@ -152,12 +152,13 @@ The canonical `script_event_audit` schema includes:
   - `regionId` – region (where applicable) associated with the trigger.
   - `scriptId` – script definition that handled the trigger.
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
-  - `versionId` – effective script version or `scriptPatchVersion` applied at runtime.
+  - `scriptPatchVersion` – logical script patch identifier supplied by Game Session and Game Design and used to resolve the runtime script set.
+  - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
   - `tickId` – canonical tick identifier associated with the trigger.
 
 - **Outcome and reason**
-  - `outcome` – canonical classification such as `success`, `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, `skipped_disabled`, `skipped_reloading`, `dropped_quota`, `tenant_budget_exceeded`, `version_unavailable`, or `infrastructure_error`.
-  - `reason` – more detailed, free-form reason string for diagnosis (for example, `iteration_budget_exceeded`, `admin_hard_disable`, `tenant_budget_exceeded_background`, `cluster_limit_reached`).
+  - `outcome` – canonical classification such as `success`, `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, `skipped_disabled`, `skipped_reloading`, `dropped_quota`, `tenant_budget_exceeded`, `version_unavailable`, `plugin_component_blocked`, or `infrastructure_error`. Additional specific variants like `onload_failed` may be used when they map directly to documented lifecycle states.
+  - `reason` – more detailed, free-form reason string for diagnosis (for example, `iteration_budget_exceeded`, `admin_hard_disable`, `tenant_budget_exceeded_background`, `cluster_limit_reached`, `plugin_component_not_allowed_by_policy`).
 
 - **Operational details**
   - Timestamps and duration fields.
@@ -173,6 +174,8 @@ Metrics such as:
 - `script_quota_allowed_total`
 - `script_quota_denied_total`
 - `automation_tick_events_enqueued_total`
+- `automation_script_test_runs_total`
+- `automation_script_test_runtime_seconds`
 
 are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance.
 

@@ -8,7 +8,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes development/demo clusters** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook.
+- **Deploy to Kubernetes development/demo clusters** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
@@ -124,7 +124,7 @@ The firemud-base image provides a consistent OS and JVM setup across all service
 
 ## Deploying to Kubernetes
 
-Kubernetes rollouts for local and development clusters are triggered through the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow. The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and `values-local.yaml` by default. Cluster credentials and registry secrets must be configured beforehand. The example below mirrors the deployment steps. Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook.
+Kubernetes rollouts for local and development clusters are triggered through the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow. The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and `values-local.yaml` by default. Cluster credentials and registry secrets must be configured beforehand. The example below mirrors the deployment steps. Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook by operators using `kubectl` from a secured workstation or bastion host.
 
 ```yaml
 name: Manual Helm Deploy
@@ -189,8 +189,26 @@ automatically.
 FireMUD uses a simple promotion flow from pull requests through staging to production:
 
 - Feature branches are merged into `develop` after passing CI.
-- The `develop` branch is deployed to a staging cluster using Kubernetes manifests (for example `k8s/overlays/stage`) so operators and playtesters can validate changes in a prod-like environment.
+- The `develop` branch is deployed to a staging cluster using Kubernetes manifests (for example `k8s/overlays/stage`) so operators and playtesters can validate changes in a prod-like environment. This deployment is applied by operators using `kubectl apply -k k8s/overlays/stage`.
 - When a release is ready, `release-please` opens a release PR and creates a version tag (for example `v1.2.3`) that is merged to `main`. Images for this tag are built and pushed by the Docker image workflow.
-- Production deployments pull tagged images and apply the `k8s/overlays/prod` manifests using the standard deployment runbook.
+- Production deployments pull tagged images and apply the `k8s/overlays/prod` manifests using the standard deployment runbook. Production manifests are also applied by operators using `kubectl apply -k k8s/overlays/prod` from a secure admin environment.
 
 Rollbacks are handled by resuming a previously known-good image tag and re-applying the staging or production manifests with that tag. See the Deployment Runbook for the step-by-step operator flow.
+
+---
+
+## Deployment Credentials & Environments
+
+CI workflows and operators use distinct credentials for each Kubernetes environment:
+
+- **Development clusters**
+  - May use a kubeconfig or token that is available to a wider set of workflows (for example `manual-helm-deploy.yml` and preview environments).
+  - Intended for non-player-facing stacks where rapid iteration is more important than strict change control.
+- **Staging cluster**
+  - Uses credentials limited to staging deployment workflows and operator `kubectl` access.
+  - Credentials are not exposed to pull request workflows; only merges to `develop` and explicit operator actions can update the staging cluster.
+- **Production cluster**
+  - Uses credentials restricted to production deployment paths and operator `kubectl` access from approved workstations or bastion hosts.
+  - No GitHub Actions workflow currently applies production manifests directly; any future workflow that does so must use GitHub Environments and require manual approvals.
+
+Registry credentials (for GHCR) are shared across environments but access to pull images into each cluster is controlled by Kubernetes secrets and RBAC within that environment.

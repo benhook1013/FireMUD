@@ -1,14 +1,56 @@
 {
   "title": "Redis & Coordination Health",
-  "uid": "redis-coordination-health",
   "schemaVersion": 36,
   "version": 1,
   "timezone": "browser",
-  "panels": [],
-  "time": {
-    "from": "now-15m",
-    "to": "now"
-  },
-  "refresh": "30s"
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Coordination Tail-Loss (ms)",
+      "targets": [
+        {
+          "expr": "redis_coordination_tail_loss_ms",
+          "legendFormat": "{{tenantId}}/{{regionId}}",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Coordination AOF Size (bytes)",
+      "targets": [
+        {
+          "expr": "redis_aof_current_size_bytes",
+          "legendFormat": "aof_size",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Coordination Memory Usage (bytes)",
+      "targets": [
+        {
+          "expr": "redis_coordination_used_memory_bytes",
+          "legendFormat": "used_memory",
+          "refId": "A"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "Coordination Key Counts by Prefix",
+      "targets": [
+        {
+          "expr": "redis_coordination_keys_total",
+          "legendFormat": "{{prefix}}",
+          "refId": "A"
+        }
+      ],
+      "id": 4
+    }
+  ]
 }
-

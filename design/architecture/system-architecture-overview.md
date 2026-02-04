@@ -200,10 +200,10 @@ This sharding model aligns with the tick-region ownership and lease rules descri
 
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
 On initial login, Game Session delegates full credential verification (including lockout and MFA rules) to the **Account Service**.
-On disconnect, clients must either present a valid short-lived session/resume token so Game Session can re-bind to the existing Redis-backed session without re-entering credentials, or perform a full `LOGIN` again if the resume token has expired or the account’s security state (for example, password reset, MFA change, ban) requires fresh authentication.
-Session state is stored in Coordination Redis and reused for recovery when a valid resume token is presented.
+On disconnect, clients reconnect by issuing `LOGIN` again with credentials (and OTP when required). Game Session uses Coordination Redis to decide whether to resume an existing gameplay session (for example, when the previous session binding is still valid and not revoked) or start a fresh session when keys or auth state no longer permit resumption.
+Session state is stored in Coordination Redis and reused for recovery when the Redis-backed gameplay session and auth token allowlist entries are still valid.
 
-> 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) and [Reconnection Strategy](./system-architecture-reconnection.md) for detailed JWT format, resume token semantics, and session flow.
+> 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) and [Reconnection Strategy](./system-architecture-reconnection.md) for detailed JWT format and session flow.
 
 ---
 

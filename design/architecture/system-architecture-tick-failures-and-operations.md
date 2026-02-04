@@ -125,7 +125,10 @@ Common scenarios and invariants:
   - Redis: some recent `pending`/lock/queue keys for the last ticks may be missing.
   - PostgreSQL: effects applied before the crash remain; very recent, in-flight effects may or may not have been applied.
   - Invariants: no double-apply; some ticks may be lost or need manual reconstruction.
-  - Action: metrics and dashboards surface gaps or stuck regions; recovery tooling may mark missing ticks as `FAILED`/`SKIPPED` and clear inconsistent Redis state once operators have reviewed.
+  - Action:
+    - Metrics and dashboards surface gaps or stuck regions.
+    - Operators treat serious tail-loss as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for the affected `(tenantId, regionId, region_epoch)` combinations.
+    - The controller drives any lingering `SCHEDULED` effects in the tail-loss window to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state instead of introducing ad-hoc `FAILED`/`SKIPPED` tick markers.
 - **GC pause > `lock_ttl_ms` but < `lease_ttl_ms`**
   - Redis: locks may expire and be reacquired; `pending` remains; lease still held by original executor.
   - PostgreSQL: any effects applied before the pause remain consistent; replays of the same `(tenantId, regionId, tickId, effectKey)` are treated as no-ops by idempotent handlers.
@@ -164,7 +167,7 @@ In rare cases, a `tick:{tenantRegionTag}:pending` entry may remain present even 
   - Regions where `tick:{tenantRegionTag}:pending` has not advanced despite repeated recovery attempts.
 - Candidate stuck ticks are enqueued into a `tick_recovery` queue or table with metadata such as `<tenantId, regionId, tickId, firstSeenAt, lastRetryAt>`.
 - An automated recovery worker:
-  - Marks clearly terminal ticks as `FAILED` or `SKIPPED` in PostgreSQL using the same idempotency guards as normal handlers.
+  - Uses the same idempotent handlers and ledger/guard patterns as normal ticks to drive any effects associated with the stuck tick to terminal `APPLIED` or `ABANDONED` outcomes, and records any higher-level tick or command status (for example `FAILED`/`SKIPPED`) as a **derived view** over those effect-level results rather than as an independent convergence mechanism.
   - Clears `tick:{tenantRegionTag}:pending` and associated retry metadata via a dedicated, idempotent helper path.
   - Emits detailed logs and metrics for audit and dashboards.
 - Operator tooling allows manual override for complex cases (for example, suspected data corruption), with two typical modes:

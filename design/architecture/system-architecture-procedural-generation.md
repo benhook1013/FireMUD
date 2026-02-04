@@ -140,13 +140,14 @@ The following rules align generators with the core runtime and tooling:
 
 Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. These rules are treated as **per-tenant runtime configuration** that influence **future** runs, but each individual generation run persists an **immutable snapshot** of the configuration it actually used:
 
-- `generation_rule` rows are keyed by `tenantId` and updated in place via REST; they represent the *current* tuning for a tenant rather than a versioned design artifact.
+- `generation_rule` rows are keyed by `tenantId` and updated in place via REST; they represent the *current* default tuning for a tenant rather than a versioned design artifact.
 - World creation and runtime generation calls snapshot the effective parameters
   they use (including generator type, seed, and a serialized config blob
   carrying an explicit `schemaVersion`) alongside the generated regions and
   rooms so that operators can later reconstruct the inputs used for a particular
   world or instance, even if live rules have changed since then.
 - For shards that require stricter determinism (for example competitive or audited worlds), callers may additionally persist a reference from instance metadata to the specific `generation_rule` revision that was snapshotted so it is clear which tenant-level rule state was in effect when a run was executed.
+- Installations that need different tuning per version can enable an optional **override** table (for example `generation_rule_override`) keyed by `(tenantId, versionId)`. When an override exists for a given version, world-creation and runtime generation calls for that version must use the override plus snapshotting rules above; otherwise they fall back to the tenant-global `generation_rule` row.
 
 When the shape of generator configuration evolves, schema changes must follow the version-aware migration rules in `system-architecture-database-migrations.md`. New fields should be added under a new `schemaVersion`, and World Management and related services must continue to understand existing non-Retired `schemaVersion` values until the corresponding versions have been retired or explicitly migrated.
 

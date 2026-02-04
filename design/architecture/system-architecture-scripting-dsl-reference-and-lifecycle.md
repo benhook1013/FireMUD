@@ -271,10 +271,10 @@ The canonical states are:
 
 Typical transitions are:
 
-1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design.
+1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design. Patches whose publish Saga fails in Game Design (for example, ability schema mismatches) never enter this lifecycle; from Automation’s perspective they do not exist or remain invisible runtime-only.
 2. `ONLOAD_RUNNING → READY` when all `onLoad` executions for scripts in the patch succeed for the tenant.
 3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; the previous `activePatchVersion` remains in effect.
-4. `READY → ROLLED_BACK` when operators repin a game or tenant to an older patch using the control-plane APIs described in the Automation & Scripting Service README and the quotas and operations document.
+4. `READY → ROLLED_BACK` when operators repin a game or tenant to an older patch using the control-plane APIs described in the Automation & Scripting Service README and the quotas and operations document. In practice this is driven by control-plane services (Game Session or Logging & Admin) emitting a rollback/status-change event (for example, `ScriptPatchRollbackRequested`) that Automation & Scripting consumes to update lifecycle state; Automation does not unilaterally decide to roll back patches.
 
 Automation & Scripting exposes this lifecycle to other services via:
 

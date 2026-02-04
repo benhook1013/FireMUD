@@ -170,6 +170,8 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
 For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/playtesting-feedback.md).
 
+When restoring the staging cluster from backups, operators should follow the same post-restore secret hardening steps as production (see `system-architecture-backup-recovery.md#post-restore-secret-hardening`) so JWT keys and database credentials are rotated before opening the environment to playtests.
+
 ---
 
 ## Related Documentation

@@ -248,26 +248,30 @@ These metrics help decide when to run schema/TTL cleanup jobs and to verify that
 
 ### Coordination & Tick Metrics Catalog
 
-To make coordination and tick health observable in a consistent way across services, new features should reuse (or extend) the following metric names and tags:
+To make coordination and tick health observable in a consistent way across services, new features should reuse (or extend) the following metric names and tags. Names below use the Prometheus `snake_case` form expected in dashboards and alerts; dotted variants in other docs refer to the same metrics conceptually.
 
 - **Coordination Redis / tail-loss**
-  - `redis.coordination_tail_loss_ms{tenantId,regionId}` – observed tail-loss per `<tenantId, regionId>` compared to the SLO envelope.
-  - `redis.coordination_used_memory_bytes{role="coordination"}` – memory used by Coordination Redis.
-  - `redis.coordination_keys_total{role="coordination",prefix}` – approximate key counts per coordination prefix family (for example `tick`, `timer`, `retry`, `session`, `tick-executor-lease`).
+  - `redis_coordination_tail_loss_ms{tenantId,regionId}` – observed tail-loss per `<tenantId, regionId>` compared to the SLO envelope. This is the canonical metric for “tail_loss_ms” used in SLO examples and runbooks.
+  - `redis_coordination_used_memory_bytes{role="coordination"}` – memory used by Coordination Redis.
+  - `redis_coordination_keys_total{role="coordination",prefix}` – approximate key counts per coordination prefix family (for example `tick`, `timer`, `retry`, `session`, `tick-executor-lease`).
 - **Tick execution**
-  - `tick.execution_time_ms` – histogram of tick execution time per `<tenantId, regionId>`.
-  - `tick.status{tenantId,regionId}` – gauge or state metric indicating `RUNNING`, `PAUSED`, or `STALLED`.
-  - `tick.retry_queue_depth{tenantId,regionId}` – current depth of retry queues.
-  - `tick.command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
+  - `tick_execution_time_ms_bucket{tenantId,regionId,le}` – histogram of tick execution time per `<tenantId, regionId>`.
+  - Recording rules derived from this histogram should expose:
+    - `tick_execution_time_ms_p95{tenantId,regionId}` – p95 tick execution time.
+    - `tick_execution_time_ms_p99{tenantId,regionId}` – p99 tick execution time.
+  - `tick_lock_ttl_ms{tenantId,regionId}` – gauge or recording rule representing the effective lock TTL for ticks in each region.
+  - `tick_status{tenantId,regionId}` – gauge or state metric indicating `RUNNING`, `PAUSED`, or `STALLED`.
+  - `tick_retry_queue_depth{tenantId,regionId}` – current depth of retry queues.
+  - `tick_command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
 - **Tick effect ledger**
-  - `tick.effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
-  - `tick.effects_applied_total{tenantId,regionId}` – cumulative applied effects.
-  - `tick.effects_abandoned_total{tenantId,regionId,reason}` – cumulative abandoned effects by reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, `RESET_CLUSTER_SCOPED`, `EXPIRED`, `INVALID_TARGET`).
+  - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
+  - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.
+  - `tick_effects_abandoned_total{tenantId,regionId,reason}` – cumulative abandoned effects by reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, `RESET_CLUSTER_SCOPED`, `EXPIRED`, `INVALID_TARGET`).
 - **Split-brain / dual-leader detection**
-  - `redis.coordination_dual_leader_detected_total{tenantId,regionId}` – count of detected dual-leader events for a region.
-  - `redis.coordination_reset_total{scope}` – count of coordination resets by scope (`region`, `tenant`, `cluster`).
+  - `redis_coordination_dual_leader_detected_total{tenantId,regionId}` – count of detected dual-leader events for a region.
+  - `redis_coordination_reset_total{scope}` – count of coordination resets by scope (`region`, `tenant`, `cluster`).
 
-All these metrics should, where cardinality allows, include tags such as:
+All these metrics and recording rules should, where cardinality allows, include tags such as:
 
 - `tenantId`, `regionId`
 - `redis_role` (for example `coordination`, `cache`)

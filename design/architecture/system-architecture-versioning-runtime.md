@@ -45,6 +45,7 @@ Game versions go through a simple lifecycle:
 Administrative tooling (for example via the Game Design Service or Logging & Admin Service) should:
 
 - Prevent retiring a version while any `game_instances` still reference it.
+- Prevent retiring a version while any **game templates** still reference it as their underlying world/entity/script version; designers must migrate those templates to a successor version before retirement.
 - Ensure the `game_manifest` table and any launch manifests are updated when a version is retired so operators cannot accidentally start new instances against it.
 
 Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state.

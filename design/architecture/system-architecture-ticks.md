@@ -29,9 +29,14 @@ FireMUD uses a **hybrid tick model** to balance real-time responsiveness with de
 
 - Actions are queued per entity (players, NPCs, scripted automation).
 - At each tick, the region executor pulls at most one action per entity and resolves them in a fair order so player commands, AI, and automation are treated equivalently.
-- State changes are applied as an atomic “tick transaction” per region.
+- From the player’s perspective, state changes appear as a single, coherent “tick of work” per region, even though they are implemented as multiple service-local transactions plus idempotent retries.
 
-Conceptually, FireMUD treats time as **localized pulses** rather than a single global clock: each tick is a self-contained transaction for its region that composes safely with others.
+Conceptually, FireMUD treats time as **localized pulses** rather than a single global clock: each tick is a self-contained logical transaction for its region that composes safely with others. Internally, that logical transaction is realized as:
+
+- Per-service database transactions guarded by effect identity and idempotency, and
+- Replayable coordination via Redis and the tick effect ledger rather than a single cross-service ACID boundary.
+
+For the precise cross-service transaction model and when sagas are required, see `system-architecture-transactions.md`.
 
 See `system-architecture-tick-concepts-and-invariants.md` for the full description of fairness guarantees and queueing rules.
 

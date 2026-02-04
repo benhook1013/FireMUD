@@ -1,14 +1,56 @@
 {
   "title": "Player Experience",
-  "uid": "player-experience",
   "schemaVersion": 36,
   "version": 1,
   "timezone": "browser",
-  "panels": [],
-  "time": {
-    "from": "now-15m",
-    "to": "now"
-  },
-  "refresh": "30s"
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Login Success Ratio",
+      "targets": [
+        {
+          "expr": "sum(rate(login_requests_total{outcome=\"success\"}[5m])) / sum(rate(login_requests_total[5m]))",
+          "legendFormat": "login_success_ratio",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Command Latency (p99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
+          "legendFormat": "p99 {{command}}",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Telnet/WebSocket Path Availability",
+      "targets": [
+        {
+          "expr": "1 - (sum(rate(tcpproxy_connections_limit_exceeded[5m])) / sum(rate(tcpproxy_connections_total[5m])))",
+          "legendFormat": "availability",
+          "refId": "A"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "Chat Delivery Latency (p99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, channel_type) (rate(chat_delivery_latency_ms_bucket[5m])))",
+          "legendFormat": "p99 {{channel_type}}",
+          "refId": "A"
+        }
+      ],
+      "id": 4
+    }
+  ]
 }
-

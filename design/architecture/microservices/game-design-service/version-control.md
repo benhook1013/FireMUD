@@ -92,16 +92,16 @@ opaque JSON blobs or service-specific payloads.
 
 Script-only fixes are tracked as `scriptPatchVersion` values attached to a `baseVersionId`. Together, `(versionId, scriptPatchVersion)` define the effective script bundle for a game:
 
-- Game instances are created against a specific `(runtime_version, scriptPatchVersion)` pair recorded in the Game Session Service. That pair is treated as immutable for the lifetime of a given `gameInstanceId`.
-- Changing `scriptPatchVersion` for a game requires creating a new game instance bound to the new pair; existing instances continue to run with the script patch level they started with until they are shut down.
-- This model keeps tick execution deterministic and auditing straightforward: logs, metrics, and incident analysis can always attribute behavior to a concrete `(versionId, scriptPatchVersion)` combination.
+- The Game Session Service records the `scriptPatchVersion` that is currently pinned for each `gameInstanceId` and includes it in the context for every tick effect and script trigger.
+- The Automation & Scripting Service owns the runtime lifecycle (`PENDING_VALIDATION`, `READY`, `FAILED`, `ROLLED_BACK`) of each `<tenantId, scriptPatchVersion>` as described in `system-architecture-scripting-dsl-reference-and-lifecycle.md`. A patch may only be pinned for an instance once Automation & Scripting has marked it `READY` for that tenant.
+- Runtime services load and cache scripts based on the `(versionId, scriptPatchVersion)` that Game Session supplies for each effect; Automation & Scripting must not silently substitute a different patch if the supplied one is unknown or `FAILED`—such triggers are rejected and surfaced in audit logs and metrics.
 
-Rollbacks follow the same pattern:
+Rollouts and rollbacks:
 
-- Rolling back a script patch means starting new game instances with an earlier `scriptPatchVersion` for the same `baseVersionId`.
-- Historical records for prior instances remain associated with the `(versionId, scriptPatchVersion)` they actually ran, even after new instances start with a different patch level.
+- Rolling out a new script patch for a game consists of publishing the patch in Game Design Service, allowing Automation & Scripting Service to validate and mark it `READY`, and then having Game Session update the pinned `scriptPatchVersion` for one or more `gameInstanceId` values. Existing effects remain tied to the `(versionId, scriptPatchVersion)` pair recorded when they were applied; future effects observe the new patch.
+- Rolling back a script patch means pinning an earlier `scriptPatchVersion` for the same `baseVersionId` on the affected instances. Historical records for prior effects remain associated with the `(versionId, scriptPatchVersion)` values that were in effect at the time, even after instances start using a different patch level.
 
-Game Design Service owns the history and metadata for script revisions and patch versions, but runtime services load and cache scripts based on the `(versionId, scriptPatchVersion)` selected at instance creation time.
+Game Design Service owns the history and metadata for script revisions and patch versions; Automation & Scripting Service owns runtime readiness and execution; Game Session Service owns which `scriptPatchVersion` is pinned per instance and must record that choice alongside each effect for determinism and auditability.
 
 ## Benefits
 
