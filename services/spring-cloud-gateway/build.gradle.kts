@@ -26,7 +26,7 @@ dependencies {
     testImplementation(libs.spring.boot.starter.websocket)
     testImplementation(libs.spring.boot.starter.webflux)
     testImplementation("com.h2database:h2:2.4.240")
-    testRuntimeOnly("io.grpc:grpc-netty:1.78.0")
+    testRuntimeOnly("io.grpc:grpc-netty:1.79.0")
 }
 
 tasks.named<BootRun>("bootRun") {
