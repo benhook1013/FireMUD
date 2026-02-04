@@ -8,8 +8,9 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 ### Responsibilities
 
 - Registration and login flows, including password resets
-- Issuing short-lived JWT tokens for internal gRPC authorization between
-  meta/control services
+- Issuing short-lived JWT tokens for internal meta/control APIs, including:
+  - Browser JWTs for first-party admin/creator web UIs via `/auth/login`, and
+  - Service JWTs for backend gRPC callers via internal authentication flows
 - Tracking profiles, OAuth2 social logins, external account links, and achievements.
 - Managing subscription status and ban enforcement.
 - Self-service account recovery for compromised or lost credentials.
@@ -30,10 +31,9 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
   via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
-- Client authentication is initiated via the `LOGIN` command flow described in
-  [Authentication & Authorization](../../system-architecture-authentication.md).
-  Session tokens stored in Redis allow seamless reconnection by the Game Session
-  Service without re-entering credentials.
+- Gameplay client authentication is initiated via the `LOGIN` command flow described in
+  [Authentication & Authorization](../../system-architecture-authentication.md); gameplay clients never see JWTs and rely on the Game Session Service for session binding and reconnection using Redis.
+- Admin and creator UI authentication is initiated via the `/auth/login` HTTP endpoint, which issues Browser JWTs used for control-plane APIs as described in the Authentication & Authorization and Frontend architecture designs.
 - Owns brute-force defense and login abuse handling for the platform. The service monitors login attempts per account and per IP, applies throttling and temporary blacklisting policies, and emits structured signals (for example, `AUTH_ACCOUNT_LOCKED`) that the Game Session Service and other consumers honor when binding gameplay sessions. Suspicious activity triggers notification emails and audit events as described in
   [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Non-gameplay workflows such as account creation or billing updates are

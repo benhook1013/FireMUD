@@ -267,6 +267,10 @@ To make coordination and tick health observable in a consistent way across servi
   - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.
   - `tick_effects_abandoned_total{tenantId,regionId,reason}` – cumulative abandoned effects by reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, `RESET_CLUSTER_SCOPED`, `EXPIRED`, `INVALID_TARGET`).
+- **Service-level tick replay metrics**
+  - `gamesession_tick_replayed_total{tenantId,regionId}` – count of ticks that were replayed by the Game Session Service for each region (used to monitor how often idempotent recovery paths are exercised).
+  - `gamesession_tick_executed_total{tenantId,regionId}` – count of ticks executed by the Game Session Service (denominator for replay ratios).
+    These metrics are owned by Game Session but are treated as required for production deployments; additional services that want similar visibility should follow the same naming pattern (for example `<service>_tick_replayed_total` / `<service>_tick_executed_total`).
 - **Split-brain / dual-leader detection**
   - `redis_coordination_dual_leader_detected_total{tenantId,regionId}` – count of detected dual-leader events for a region.
   - `redis_coordination_reset_total{scope}` – count of coordination resets by scope (`region`, `tenant`, `cluster`).

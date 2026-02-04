@@ -90,10 +90,11 @@ From the perspective of the `(region_epoch, tickId)` timeline:
   - Executors may crash after staging but before all effects are applied; the next executor replays remaining SCHEDULED entries using ledger and idempotency rules.
   - AOF replay or tail-loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
 
-The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant:
+The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant and derives tick positions from durable state:
 
-- A region is considered busy while `tick:{tenantRegionTag}:pending` exists for its current `tickId`.
+- A region is considered busy while `tick:{tenantRegionTag}:pending` exists for any in-flight `tickId`.
 - The scheduler does not start a new tick for that `<tenantId, regionId>` until the `pending` entry has been cleared as part of a successful commit or explicitly handled during crash recovery.
+- The scheduler obtains the current `(region_epoch, tickId)` baseline for each region from PostgreSQL (for example, a `RegionStatus` table and/or the tick effect ledger); it **does not** use `tick:{tenantRegionTag}:meta.current_tick_id` to decide which tick to run next.
 - Additional work enqueued for the same region while a tick is in flight is modeled as retries or follow-up work for a later `tickId`, not as a second concurrent tick.
 
 If FireMUD later introduces limited intra-region parallelism (for example by sharding a single region into buckets of entities), this model will evolve to use **per-bucket pending keys** such as `tick:{tenantRegionTag}:bucket:<bucketId>:pending` plus matching idempotency and locking rules. Until such a change is explicitly designed, the invariant remains one `pending` entry and one in-flight tick per `<tenantId, regionId>`.

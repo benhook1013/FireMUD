@@ -120,7 +120,7 @@ The Account Service exposes subscription APIs and emits events so other services
 - `CancelSubscription` – Cancel a subscription at period end or immediately, moving it to `canceled` and emitting events.  
 - Domain events such as `SubscriptionStatusChanged` and `TenantBillingStateChanged` – Consumed by Game Session, world-management, and admin/logging services to adjust availability, quotas, and observability.
 
-All APIs are secured using JWT-based auth and the Tenant Authorization Contract. Callers must be authorized for the `tenantId` they are querying or modifying, and only platform-level roles (for example, `platformAdmin`) may access cross-tenant subscription data.
+All APIs are secured using JWT-based auth and the Tenant Authorization Contract. Callers must be authorized for the `tenantId` they are querying or modifying. Cross-tenant subscription data access is restricted to the global roles defined above for cross-tenant billing reports (typically `platformAdmin` and `billingAdmin`).
 
 For related context, see:
 

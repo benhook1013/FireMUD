@@ -25,7 +25,7 @@ For the design of the Telnet and protocol-bridging path, see:
    - Open the TCP Proxy Grafana dashboard and inspect:
      - `tcpproxy.connections.active` / `tcpproxy.connections.total` for unusual spikes or drops.
      - `tcpproxy.connections.limit.exceeded` for sustained non-zero values, which indicate global or per-IP caps are rejecting new connections.
-     - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, or repeated malformed `SESSION` envelopes.
+     - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, repeated malformed `SESSION` envelopes, or specific gateway-related issues such as `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` when the Telnet → Gateway buffer fills before Spring Cloud Gateway recovers.
      - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated reconnection attempts to Spring Cloud Gateway.
      - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
      - If Telnet client IP preservation relies on PROXY protocol, verify that `tcpproxy.telnet.discarded{reason="proxy_protocol"}` is not elevated; sustained `proxy_protocol` discard reasons often indicate a misconfigured Telnet edge proxy (for example PROXY headers sent to the wrong listener or malformed headers).
@@ -91,7 +91,7 @@ The TCP Proxy Service and WebSocket path enforce backpressure rather than silent
 When inspecting Telnet-side disconnects, prefer reasoning in terms of the standard Telnet disconnect reasons defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons) rather than ad-hoc message strings. In particular:
 
 - Treat `policy_violation` closes as non-retriable or very low-rate retriable; they usually indicate client behaviour that must change (scripts, bots, abusive traffic) rather than platform outages.
-- Treat `backend_unavailable` closes as indicators of core gameplay outages, comparable to WebSocket `1013` (`backend_unavailable`) from the gateway, and prioritise checking Game Session, Redis, and tick runtime health before tuning Telnet limits.
+- Treat `backend_unavailable` closes as indicators of core gameplay outages, comparable to WebSocket `1013` (`backend_unavailable`) from the gateway, and prioritise checking Game Session, Redis, and Gateway health (including whether the Telnet → Gateway buffer is filling, as indicated by `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`) before tuning Telnet limits or extending reconnect buffers.
 - Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.
 
 ### Web-Only WebSocket Degradation Playbook

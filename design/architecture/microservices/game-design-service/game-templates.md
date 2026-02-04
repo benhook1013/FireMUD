@@ -42,6 +42,13 @@ Ownership can be summarized as:
 - **Game Design Service** – owns `game_templates` and all version/control metadata for templates.
 - **World Management / Entity Management / Automation & Scripting** – own world, entity, and script templates and their identifiers; game templates only reference these records via stable IDs.
 
+### Runtime Defaults
+
+Game templates may optionally carry default runtime configuration alongside their structural wiring:
+
+- `GameTemplateDto.config` can include optional fields such as a default `scriptPatchVersion` or initial feature-flag presets that the Game Session Service uses when creating new `gameInstanceId` values from the template.
+- When these defaults are present, instance-creation flows should apply them explicitly; when they are absent, callers must provide the desired `scriptPatchVersion` and runtime flags at creation time. Templates must not implicitly select “latest READY patch” or other moving targets without operator input.
+
 ### Interaction with Version Lifecycle
 
 Game templates participate in the same version lifecycle as the domain templates they reference:

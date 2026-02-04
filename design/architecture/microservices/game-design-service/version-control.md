@@ -103,6 +103,10 @@ Rollouts and rollbacks:
 
 Game Design Service owns the history and metadata for script revisions and patch versions; Automation & Scripting Service owns runtime readiness and execution; Game Session Service owns which `scriptPatchVersion` is pinned per instance and must record that choice alongside each effect for determinism and auditability.
 
+Scope constraints:
+
+- Script-only patches are limited to script definitions and related Automation & Scripting metadata. They must not introduce or modify assets, world layouts, entity templates, or other non-script configuration; any change that requires updating templates or `game_assets` / `version_asset` mappings must be delivered via a full `PublishVersion` that produces a new `versionId`.
+
 ## Benefits
 
 - Designers can experiment on feature branches without affecting the main game line.

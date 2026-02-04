@@ -62,7 +62,12 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
 4. **Reconcile tick effect ledger state**
    - For the affected scope, `SCHEDULED` ledger rows tied to the old `region_epoch` converge to terminal outcomes (typically `ABANDONED` with a reset-specific reason) via a scoped tick-effect-ledger reconcile step in the reset tooling, as described in `system-architecture-tick-failures-and-operations.md`.
    - New executors do not resume old-epoch `SCHEDULED` rows; any re-drive or migration across epochs is performed only by dedicated maintenance tooling that explicitly re-creates effects in the new epoch.
-5. **Resume ticks on the new epoch**
+5. **Reset per-region metadata keys**
+   - Using the same maintenance CLI and key-builder helpers, initialize or update `tick:{tenantRegionTag}:meta` for each affected `<tenantId, regionId>` so that:
+     - `region_epoch` reflects the new epoch recorded in PostgreSQL.
+     - `current_tick_id` is set to the baseline value from RegionStatus (typically `0` immediately after a reset, or another explicit starting point when documented).
+   - This keeps Lua monotonic guards (`region_epoch`, `current_tick_id`) in Redis consistent with the durable timeline used by schedulers and operators.
+6. **Resume ticks on the new epoch**
    - Once Coordination Redis is clean for the scope and the ledger has no indefinitely SCHEDULED rows for the old epoch, the control plane resumes tick scheduling.
    - New ticks start from `(region_epoch+1, tickId=0)` for each affected region, and all subsequent coordination state is written under the new epoch.
 

@@ -110,7 +110,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     service: gateway
     severity: P0
     owner: platform
-    runbook: design/architecture/system-architecture-logging-monitoring.md#player-experience-slis-and-slos
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
   annotations:
     summary: Login success ratio below SLO
     description: Login success ratio has fallen below 99.5% over the last 15 minutes.
@@ -125,7 +125,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     service: gateway
     severity: P1
     owner: gameplay
-    runbook: design/architecture/system-architecture-logging-monitoring.md#player-experience-slis-and-slos
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
   annotations:
     summary: Command p99 latency above SLO
     description: Player command end-to-end p99 latency has exceeded 250ms for core commands.
@@ -140,7 +140,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     service: chat
     severity: P1
     owner: gameplay
-    runbook: design/architecture/system-architecture-logging-monitoring.md#player-experience-slis-and-slos
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#chat-delivery-latency-above-slo
   annotations:
     summary: Chat delivery latency above SLO
     description: Chat delivery p99 latency has exceeded 1s over the last 5 minutes for active regions.

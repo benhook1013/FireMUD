@@ -40,6 +40,11 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 - For stalled regions, replay storms, or stuck tick effect ledger entries, see:
   - `design/architecture/system-architecture-tick-incident-runbook.md`
 
+### Player Experience Incidents
+
+- For login success ratio drops, elevated command latency, or chat delivery latency issues, see:
+  - `design/architecture/system-architecture-player-experience-incident-runbook.md`
+
 ### Minimal Coordination & Tick Operator Mental Model
 
 For a single-admin operator, most “what do I do now?” coordination/tick questions reduce to three named operations and a small set of dashboards/metrics:

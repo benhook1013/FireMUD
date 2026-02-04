@@ -56,8 +56,7 @@ flowchart TD
     Gateway -- wss --> Session
 
     Admin -- gRPC mgmt (infra) --> Gateway
-    Admin -- admin APIs (via Gateway) --> Logging
-    Admin -- admin APIs (via Gateway) --> Session
+    Admin -- admin APIs (via Gateway) --> InternalServices
 
     Session -- gRPC --> Account
     Session -- gRPC --> World
@@ -69,7 +68,10 @@ flowchart TD
     Session -- gRPC --> Logging
 
     InternalServices --> DB
-    InternalServices --> CoordRedis
+    Session --> CoordRedis
+    Session --> CacheRedis
+    Entity --> CoordRedis
+    Script --> CoordRedis
     InternalServices --> CacheRedis
     InternalServices --> ES
     Design --> AssetStore

@@ -31,10 +31,10 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 - Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals are tuned per environment (typically 15s in development and 30s in production).
 - Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment, and a PostgreSQL exporter is available for database metrics. Redis dashboards surface Lua script latency, lock contention, retry queue depth, keyspace hits/misses, eviction rates, and latency percentiles for tick-related commands so operators can distinguish cache pressure from coordination issues. The minimum Redis SLOs and alert wiring are defined in the Tail-Loss observability and **Coordination Metrics & Thresholds Contract** sections of [Redis Operations & Migrations](./system-architecture-redis-operations.md#tail-loss-slo-observability), which summarize the core metrics and alerts that must be wired for each Redis role.
   - Additional application metrics track:
-    - Failed lock acquisitions per region (for example `redis.tick.lock_acquire_failed`) to highlight contention hotspots.
-    - The ratio of replayed ticks to total ticks (for example `gamesession.tick.replayed_total` vs `gamesession.tick.executed_total`) so operators can see when idempotent recovery paths are being exercised frequently.
-    - Tick runtime safety margins per region, such as `gamesession.tick.execution_time_ms` histograms with derived ratios `p95(lock.ttl_ratio)` / `p99(lock.ttl_ratio)` that compare tick execution time to `lock_ttl_ms`. Regions where `p99` runtime regularly exceeds a configured fraction of `lock_ttl_ms` (for example `0.5×` for warning, `0.75×` for critical) are treated as **degraded** and surfaced in dashboards.
-    - Lock refresh usage, via counters such as `redis.tick.lock_refresh_requests_total` and `redis.tick.lock_refresh_denied_total`, so operators can detect commands that routinely rely on the optional lock refresh helper instead of completing within the normal lock TTL.
+    - Failed lock acquisitions per region (for example `redis_tick_lock_acquire_failed`) to highlight contention hotspots.
+    - The ratio of replayed ticks to total ticks (for example `gamesession_tick_replayed_total` vs `gamesession_tick_executed_total`) so operators can see when idempotent recovery paths are being exercised frequently.
+    - Tick runtime safety margins per region, using `tick_execution_time_ms_bucket` and derived recording rules such as `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` alongside `tick_lock_ttl_ms` to compute safety ratios. Regions where `tick_execution_time_ms_p99 / tick_lock_ttl_ms` regularly exceeds a configured fraction of `tick_lock_ttl_ms` (for example `0.5×` for warning, `0.75×` for critical) are treated as **degraded** and surfaced in dashboards.
+    - Lock refresh usage, via counters such as `redis_tick_lock_refresh_requests_total` and `redis_tick_lock_refresh_denied_total`, so operators can detect commands that routinely rely on the optional lock refresh helper instead of completing within the normal lock TTL.
 - **Automation & Scripting metrics** surface scheduler, quota, and sandbox behavior:
   - Scheduler and budget meters such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `automation_script_queue_delay_seconds`, `automation_script_leadership_changes_total`, and `automation_script_tenant_budget_seconds{tenantId, tier}`.
   - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`.
@@ -123,6 +123,24 @@ Environment-specific Alertmanager configurations may add routing rules and notif
 
 - Logging & Admin can display alerts with clear ownership and links to the appropriate runbooks.
 - Operators can jump from an alert to the corresponding Grafana dashboard and architecture/runbook section without guesswork.
+
+### Alert Fallback Recording Rules
+
+When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
+
+- **Redis coordination tail-loss SLO breaches**
+  - Recording rule based on `redis_coordination_tail_loss_ms{tenantId,regionId}` that classifies regions as inside or outside the 1–2 second envelope.
+- **Tick execution safety ratios**
+  - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per region, using the recording rules defined in the Redis operations metrics catalog.
+- **Login success ratio**
+  - Recording rule mirroring the `LoginSuccessRatioLow` alert condition, based on `login_requests_total{outcome="success"}` vs `login_requests_total`.
+- **Command p99 latency**
+  - Recording rule mirroring the `CommandLatencyP99High` alert condition, based on `command_end_to_end_latency_ms_bucket`.
+
+Logging & Admin should:
+
+- Use these recording rules as the sole source of “active issues” when Alertmanager is unreachable, and clearly label the UI as “Alertmanager unavailable – showing fallback Prometheus conditions”.
+- Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
 
 For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
 

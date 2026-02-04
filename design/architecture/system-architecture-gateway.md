@@ -134,7 +134,7 @@ For gameplay WebSocket sessions, FireMUD standardises a small set of close codes
 
 - `1000` with reason `logout` – explicit, clean shutdown (for example, user-initiated logout or admin‑initiated session end where no error occurred).
 - `1001` with reason `idle_timeout` – idle-connection timeout where the gateway or Game Session has not observed traffic within its configured idle window.
-- `1008` with reason `policy_violation` – client behaviour that violates platform policies (for example, sustained command‑rate abuse, malformed frames, or repeated protocol violations).
+- `1008` with reason `policy_violation` – client behaviour that violates platform policies (for example, sustained command‑rate abuse, malformed frames, repeated protocol violations, or sustained slow-client behaviour at the network edge where send buffers repeatedly overflow or time out).
 - `1011` with reason `internal_error` – unexpected server‑side failures that are not attributable to the client and are not clearly a backend‑unavailable condition.
 - `1013` with reason `backend_unavailable` – Spring Cloud Gateway has concluded that backend services needed for gameplay are unavailable or overloaded beyond a short tolerance window (see [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios)).
 
@@ -202,6 +202,9 @@ Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecti
 - **WebSocket vs HTTP semantics**
   - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet/WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
   - Once a WebSocket connection is established to `/ws/game/**`, ongoing gameplay messages traverse the connection without additional gateway-level rate limiting; downstream services (especially Game Session Service) enforce per-session and per-command safety.
+- **Gameplay WebSocket handshake errors**
+  - HTTP `429` responses from `/ws/game/**` indicate that edge rate or connection limits have been exceeded (for example, RequestRateLimiter buckets or per-IP connection quotas). Gateway uses `429` only for these rate/policy conditions, and clients should treat this as equivalent to a `policy_violation` outcome as described in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
+  - HTTP `503` responses from `/ws/game/**` indicate that Gateway currently considers gameplay backends unavailable according to the `firemud.gateway.backendUnavailableGraceMs` logic described in [Backend-Unavailable Grace Window](./system-architecture-gateway.md#backend-unavailable-grace-window). In these cases Gateway may also close existing WebSocket sessions with `1013/backend_unavailable`, and clients should treat `503` as equivalent to `1013` for backoff behaviour, per [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
 - **Edge vs core responsibilities**
   - The **TCP Proxy Service** enforces **connection-level and per-socket safety** for Telnet clients: idle timeouts, per-IP connection caps, buffer depth limits, and basic abuse heuristics. It relies on Spring Cloud Gateway and Game Session Service for cross-tenant and content-aware rate limiting.
   - **Spring Cloud Gateway** enforces **request- and connection-creation limits** using the Cache/Rate‑Limit Redis instance configured via `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`, protecting backend services from floods of new connections or HTTP calls.

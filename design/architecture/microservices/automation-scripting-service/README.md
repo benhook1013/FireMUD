@@ -197,15 +197,15 @@ This behavior ensures that a script patch either becomes the new active version 
   - `scriptEventId` as a stable, caller-supplied identifier for the trigger.
   - `eventType` and versioning metadata such as `scriptPatchVersion`.
   - An envelope for the event payload, including any domain-specific fields.
-  Event ingress RPCs are **idempotent** with respect to `scriptEventId` within a `<tenantId>` (and, where applicable, `<regionId>`): repeated calls with the same identifiers must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
+  Event ingress RPCs are **idempotent** with respect to `scriptEventId` and the script that handles the event: repeated calls with the same `<tenantId, regionId, scriptId, scriptEventId>` must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
 
 ### Idempotency & Retries
 
 The Automation & Scripting Service relies on upstream callers (typically the Game Session Service) to generate **stable `scriptEventId` values** for each trigger. These identifiers serve as the canonical idempotency keys for event ingress:
 
-- Any RPC that accepts `scriptEventId` as part of its request (for example, the conceptual `TriggerScriptEvent` API and timer-driven internal scheduling) is **idempotent with respect to that ID**:
+- Any RPC that accepts `scriptEventId` as part of its request (for example, the conceptual `TriggerScriptEvent` API and timer-driven internal scheduling) is **idempotent with respect to the tuple `<tenantId, regionId, scriptId, scriptEventId>`**:
   - Re-sending the same request with the same `<tenantId, regionId, scriptId, scriptEventId>` must not cause the DSL body to run twice.
-  - The service records at most one `script_event_audit` row per `scriptEventId`.
+  - The service records at most one `script_event_audit` row per `<tenantId, regionId, scriptId, scriptEventId>`.
 - Downstream calls made from DSL components (for example, to Game Logic or World Management) must also carry a **stable idempotency token** derived from `<tenantId, regionId, scriptId, scriptEventId[, tickId]>` so infrastructure-level retries do not duplicate side effects. See `design/architecture/system-architecture-transactions.md` for recommended patterns.
 
 Transport-level retries:
@@ -348,7 +348,7 @@ In addition to live event handling, the Automation & Scripting Service exposes a
 
 - Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
 - Instead of enqueuing commands into `automation:queue:<tenantId>:<entityId>` or tick queues, test runs return the would-be commands to the caller for inspection.
-- Test executions are recorded in `script_event_audit` with a dedicated `eventType` (for example, `testRun`) or an `isDryRun` flag so they can be distinguished from live traffic.
+- Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised (for example, `onEnterRegion` or `onInterval`) so they can be distinguished from live traffic while still being grouped by logical event.
 - By default, dry runs **do not consume ScriptQuotaService windows or tenant automation budgets**, but they do contribute to sandbox failure metrics to keep behavior consistent and observable.
 - Separate **dry-run budgets** cap how much test traffic a tenant or principal can generate (for example, max runs per minute and max concurrent dry-runs) so test tools cannot overload the automation cluster even though they bypass mainline quotas.
 

@@ -68,6 +68,10 @@ theme resources directly from the CDN using this manifest; the Game Design
 Service is not involved. See [Game Design Service Architecture](README.md) for
 how these assets fit into published versions.
 
+### Interaction with Script-Only Patches
+
+Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. Because assets are always bound to `(tenantId, versionId)` and exported during full `PublishVersion` flows, any change that requires adding, removing, or updating assets must be shipped as part of a new `versionId`, not as a script-only patch.
+
 ### Asset Lifecycle and Publish Workflow
 
 The publish workflow uses a dedicated Saga step to export assets and update

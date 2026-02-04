@@ -116,7 +116,11 @@ FireMUD distinguishes between **configuration** and **secrets** but delivers bot
   - Examples: database passwords, JWT signing keys, TLS private keys, S3 access keys.
   - Always stored in Kubernetes `Secret` objects in production.
   - May be generated or randomized automatically for local development.
-  - Rotation is performed by updating the backing Secret and allowing watchers or rolling restarts to apply the new values.
+  - Rotation is performed by updating the backing Secret via the appropriate automation:
+    - TLS certificates are rotated automatically by cert-manager.
+    - JWT signing keys are rotated by Jobs such as `jwt-rotation` that update Secrets and JWKS and are picked up by `JwtSecretWatcher`.
+    - Database credentials are rotated by Jobs such as `db-credential-rotation` that update the relevant Secrets and restart consumers.
+  - Direct, ad hoc edits to Secrets should be treated as emergency measures only and reconciled back into the appropriate Job/runbook flow so future rotations remain automated and repeatable.
 
 Shared libraries support overriding default settings with environment variables using the `FIREMUD_` prefix (for example `FIREMUD_POSTGRES_HOST`, `FIREMUD_POSTGRES_PORT`). Each service merges these variables with its own `application.yml` profile.
 

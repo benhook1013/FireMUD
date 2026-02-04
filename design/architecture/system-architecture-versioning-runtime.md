@@ -88,7 +88,7 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 Script-only versions appear in version history and audit logs but do not trigger
 a data copy or world restart.
 Runtime services reload the affected scripts in
-memory and continue using the underlying `baseVersionId` for all other assets.
+memory and continue using the underlying `baseVersionId` for all other assets and templates. Script-only patches are **strictly limited to script definitions and related Automation & Scripting metadata**; any change that needs new or modified assets, world layouts, entity templates, or other non-script configuration must be delivered via a full `PublishVersion` flow that produces a new `versionId`.
 When a patch is published the Game Design Service calls the
 [`NotifyScriptVersionUpdate`](./microservices/automation-scripting-service/README.md#notifyscriptversionupdate)
 gRPC endpoint in the Automation & Scripting Service so modified scripts are
@@ -119,7 +119,10 @@ Rollback behavior follows the same cohesion rules:
 - Rolling back `runtime_version` for a game instance reverts templates and abilities to those for the selected `version_id`, and script/plugin patch selection follows the version/pinning rules in the scripting docs.
 - Rolling back a script-only or plugin-only patch affects only automation behavior for the current `version_id`; it does not change templates or abilities.
 
-Tooling in the Game Design and Logging & Admin services should surface these relationships so creators and operators can see, for a given game instance, which `version_id`, `scriptPatchVersion`, and plugin versions are in effect.
+Tooling in the Game Design and Logging & Admin services should surface these relationships so creators and operators can see, for a given game instance, which `version_id`, `scriptPatchVersion`, and plugin versions are in effect. Admin APIs in the Game Design or Logging & Admin services should also support:
+
+- Listing game templates that reference a given `versionId`, so that designers can migrate or delete them before retiring that version.
+- Bulk migration operations that rewrite `GameTemplateDto.config` references from an old `versionId` to a successor `versionId` in a controlled, auditable way.
 
 ### Schema Migrations vs Design Data
 
