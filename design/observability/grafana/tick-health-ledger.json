@@ -9,7 +9,7 @@
       "title": "Tick Status by Region",
       "targets": [
         {
-          "expr": "tick_status",
+          "expr": "tick_status == 1",
           "legendFormat": "{{tenantId}}/{{regionId}} = {{status}}",
           "refId": "A"
         }
@@ -66,6 +66,18 @@
         }
       ],
       "id": 4
+    },
+    {
+      "type": "graph",
+      "title": "Non-RUNNING Regions (count)",
+      "targets": [
+        {
+          "expr": "sum by (status) (tick_status{status!=\"RUNNING\"} == 1)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "id": 5
     }
   ]
 }
