@@ -175,6 +175,7 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Steps are gRPC calls to owning services
   - Helper `GrpcSagaSteps.callWithRetry` wraps gRPC calls with basic retry logic
   - All steps are **idempotent**
+  - Each step uses a durable idempotency guard recorded in the owning service’s database (for example keyed by `(tenantId, sagaInstanceId, stepName)` plus any workflow-specific scope such as `gameInstanceId`) so retries can safely no-op or reconcile without duplicating persistent rows.
   - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
   - Retried automatically or flagged for manual review
