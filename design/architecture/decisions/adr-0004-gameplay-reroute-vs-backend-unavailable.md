@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by ADR 0007
 
 ## Context
 
@@ -42,4 +42,4 @@ Spring Cloud Gateway is responsible for emitting the client-visible WebSocket cl
 - `design/architecture/system-architecture-protocol-bridging.md`
 - `design/architecture/system-architecture-overview.md`
 - `design/architecture/system-architecture-telnet-degraded-runbook.md`
-
+- `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`

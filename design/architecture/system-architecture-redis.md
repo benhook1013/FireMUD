@@ -330,6 +330,7 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `retry:{tenantRegionTag}` | Retry queue for failed actions. |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
 | `remote:<tenantId>:<entityId>` | Best‑effort hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). |
+| `route:{tenantRegionTag}:gamesession` | Gameplay shard routing view for `<tenantId, regionId> → shardTarget`, published by Game Session and consumed by Spring Cloud Gateway for `/ws/game/**` admission and reroute decisions. Exact value shape and admission-time routing-key transport are tracked in ADR 0006; this prefix must be registered in the coordination reset policy matrix before implementation. |
 | `automation:tick:{tenantScriptTag}:lock` / `queue` / `pending` | Per-script automation tick locks and staging (Automation & Scripting Service). |
 | `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler checkpoint for “every N ticks” triggers; used to resume interval counting after leader changes. Durable automation schedules and quotas live in PostgreSQL; this key is a coordination hint, not the source of truth for which scripts should eventually run. |
 

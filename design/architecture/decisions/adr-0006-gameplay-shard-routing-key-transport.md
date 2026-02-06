@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Withdrawn (superseded by ADR 0007)
 
 ## Context
 
@@ -43,4 +43,3 @@ Option A is recommended because it is transport-agnostic, does not require custo
 - `design/architecture/system-architecture-gateway.md` (Gameplay Sharding boundary + close taxonomy)
 - `design/architecture/system-architecture-authentication.md` (Tenant selection / enter-game)
 - `design/architecture/system-architecture-reconnection.md`
-

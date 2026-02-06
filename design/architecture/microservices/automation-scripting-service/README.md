@@ -35,7 +35,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ## Architecture / Design Notes
 
-- Executes scripts in response to world or player events received via **gRPC callbacks** from the Game Session Service and other domain services. Standard lifecycle events (`onSpawn`, `onEnterRegion`, `onCommand`, etc.) are delivered as unary gRPC calls (conceptually via a `TriggerScriptEvent`–style API), while tick-derived scheduling signals (for example, “every N ticks”) are driven by a **gRPC streaming tick heartbeat** originating from the Game Session Service. See [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and [Tick System and Runtime Design](../../system-architecture-ticks.md#tick-events--heartbeat-stream) for event and heartbeat details.
+- Executes scripts in response to world or player events received via **gRPC callbacks** from the Game Session Service and other domain services. Standard lifecycle events (`onSpawn`, `onEnterRegion`, `onCommand`, etc.) are delivered as unary gRPC calls via `TriggerScriptEvent`, while tick-derived scheduling signals (for example, “every N ticks”) are driven by a **gRPC streaming tick heartbeat** originating from the Game Session Service. See [System Architecture: Scripting & Automation](../../system-architecture-scripting.md#supported-script-events) and [Tick System and Runtime Design](../../system-architecture-ticks.md#tick-events--heartbeat-stream) for event and heartbeat details.
 - Scripts run inside a sandboxed engine to prevent malicious behavior.
 - Scripts are authored in a **component-based DSL** using a visual editor so
   designers can build behaviors without coding.
@@ -216,7 +216,7 @@ This behavior ensures that a script patch either becomes the new active version 
 
 The Automation & Scripting Service relies on upstream callers (typically the Game Session Service) to generate **stable `scriptEventId` values** for each trigger. These identifiers serve as the canonical idempotency keys for event ingress:
 
-- Any RPC that accepts `scriptEventId` as part of its request (for example, the conceptual `TriggerScriptEvent` API and timer-driven internal scheduling) is **idempotent with respect to Trigger Identity**:
+- Any RPC that accepts `scriptEventId` as part of its request (for example, `TriggerScriptEvent` and timer-driven internal scheduling) is **idempotent with respect to Trigger Identity**:
   - For entity-scoped external events, the idempotency key is at least `<tenantId, regionId, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId>`.
   - For tick-aligned scheduler events, the idempotency key also includes `regionEpoch` and a due point (for example `dueTickId` / `dueAt`) in the deterministic `scriptEventId` derivation.
   - Re-sending the same request with the same idempotency key must not cause the DSL body to run twice.

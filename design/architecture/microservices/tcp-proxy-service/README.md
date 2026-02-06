@@ -246,7 +246,7 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
   using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
 - If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway (for example because the gateway listener is unavailable or the Proxy → Gateway mTLS handshake fails), it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
-- If the WebSocket bridge drops at any point after the Telnet connection is established, the proxy fail-closes the Telnet socket. When the upstream close indicates a shard handoff (`1013/reroute`), the proxy emits a Telnet disconnect reason of `reroute`; otherwise it emits `backend_unavailable`. The proxy does not attempt to keep the Telnet socket open across upstream disconnects because doing so would require an explicit, secure “reattach without credentials” contract that is outside the Telnet text protocol and is not part of the target-state design.
+- If the WebSocket bridge drops at any point after the Telnet connection is established, the proxy fail-closes the Telnet socket with a Telnet disconnect reason of `backend_unavailable`. The proxy does not attempt to keep the Telnet socket open across upstream disconnects because doing so would require an explicit, secure “reattach without credentials” contract that is outside the Telnet text protocol and is not part of the target-state design.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
@@ -731,7 +731,7 @@ The WebSocket client certificate must include the `clientAuth` extended key usag
 TLS handshake failures are fail-closed: the proxy does not fall back to
 plaintext. Instead it logs errors and increments a dedicated metric
 (for example `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`),
-and Telnet connections fail-close if the proxy cannot maintain the Gateway link beyond a short reconnect window. See
+and Telnet connections fail-close if the proxy cannot establish the initial Proxy → Gateway bridge within `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, or if an established bridge drops at any point. See
 [System Architecture: Security](../../system-architecture-security.md) for
 certificate issuance and rotation details, and
 [Environment & Secrets – TLS & Certificates](../../infrastructure/environment-and-secrets-catalog.md#tls--certificates)

@@ -3,6 +3,7 @@ syntax = "proto3";
 package game_logic.v1;
 
 import "shared/v1/errors.proto";
+import "shared/v1/instance_refs.proto";
 
 option java_package = "net.firedevops.firemud.gamelogic.v1";
 option java_multiple_files = true;
@@ -36,11 +37,12 @@ message LookRequest {
   string tenant_id = 1;
   string session_id = 2;
   string player_id = 3;
-  string room_id = 4;
+  string room_id = 4 [deprecated = true];
+  shared.v1.RoomInstanceRef room_instance = 5;
 }
 
 message LookResult {
-  string room_id = 1;
+  string room_id = 1 [deprecated = true];
   string room_name = 2;
   string short_description = 3;
   string long_description = 4;
@@ -48,15 +50,20 @@ message LookResult {
   repeated RoomEntity entities = 6;
   map<string, string> ambient_state = 7;
   repeated string room_flags = 8;
+  shared.v1.RoomInstanceRef room_instance = 9;
+  string world_snapshot_id = 10;
+  string entity_snapshot_id = 11;
+  string look_snapshot_id = 12;
 }
 
 message BroadcastSayRequest {
   string tenant_id = 1;
   string session_id = 2;
   string player_id = 3;
-  string room_id = 4;
+  string room_id = 4 [deprecated = true];
   ChatAlias alias = 5;
   string text = 6;
+  shared.v1.RoomInstanceRef room_instance = 7;
 }
 
 message BroadcastSayResponse {
@@ -76,8 +83,9 @@ enum ChatAlias {
 
 message LookExit {
   string label = 1;
-  string target_room_id = 2;
+  string target_room_id = 2 [deprecated = true];
   string description = 3;
+  string target_room_instance_id = 4;
 }
 
 message RoomEntity {

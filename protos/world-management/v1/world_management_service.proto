@@ -3,6 +3,7 @@ syntax = "proto3";
 package world_management.v1;
 
 import "shared/v1/errors.proto";
+import "shared/v1/instance_refs.proto";
 
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
@@ -12,11 +13,13 @@ service WorldManagementService {
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
   rpc UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse);
+  rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
 }
 
 message GetRoomRequest {
   string tenant_id = 1;
-  string room_id = 2;
+  string room_id = 2 [deprecated = true];
+  shared.v1.RoomInstanceRef room_instance = 3;
 }
 
 message GetRoomResponse {
@@ -26,7 +29,8 @@ message GetRoomResponse {
 
 message GetRoomSnapshotRequest {
   string tenant_id = 1;
-  string room_id = 2;
+  string room_id = 2 [deprecated = true];
+  shared.v1.RoomInstanceRef room_instance = 3;
 }
 
 message GetRoomSnapshotResponse {
@@ -35,7 +39,7 @@ message GetRoomSnapshotResponse {
 }
 
 message RoomSnapshot {
-  string room_id = 1;
+  string room_id = 1 [deprecated = true];
   string tenant_id = 2;
   string room_name = 3;
   string short_description = 4;
@@ -43,15 +47,19 @@ message RoomSnapshot {
   repeated RoomExitSnapshot exits = 6;
   map<string, string> ambient_state = 7;
   repeated string room_flags = 8;
+  string game_instance_id = 9;
+  string room_instance_id = 10;
+  string world_snapshot_id = 11;
 }
 
 message RoomExitSnapshot {
   string exit_id = 1;
-  string target_room_id = 2;
+  string target_room_id = 2 [deprecated = true];
   string target_room_name = 3;
   string label = 4;
   string description = 5;
   int32 cost = 6;
+  string target_room_instance_id = 7;
 }
 
 message UpdateWorldStateRequest {
@@ -61,6 +69,20 @@ message UpdateWorldStateRequest {
 message UpdateWorldStateResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetDraftDesignDigestRequest {
+  string tenant_id = 1;
+  string version_id = 2;
+}
+
+message GetDraftDesignDigestResponse {
+  string tenant_id = 1;
+  string version_id = 2;
+  string applied_commit_id = 3;
+  string content_digest = 4;
+  int32 digest_schema_version = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message PingRequest {}

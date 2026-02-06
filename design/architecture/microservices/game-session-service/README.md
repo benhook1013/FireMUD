@@ -520,7 +520,7 @@ Each running game instance has a pinned `scriptPatchVersion` alongside its `runt
 - Script-generated commands accepted from the Automation & Scripting Service must carry the originating `scriptPatchVersion`, `scriptId`, and `scriptEventId`.
 - On execution, Game Session enforces a version fence: if a queued command’s `scriptPatchVersion` does not match the instance’s currently pinned value, it must not be executed and the drop must be observable for operators.
 
-Control-plane operations that change the pinned patch (used by Logging & Admin tooling) are admin-only and idempotent. Their required request/response fields and the associated event contracts are specified in `design/architecture/system-architecture-scripting-control-plane-api.md`. These APIs are not part of the minimal `protos/game-session/v1/game_session_service.proto` today and must be added explicitly to the control-plane surface over time.
+Control-plane operations that change the pinned patch (used by Logging & Admin tooling) are admin-only and idempotent. Their required request/response fields and the associated event contracts are specified in `design/architecture/system-architecture-scripting-control-plane-api.md` and are represented in `protos/game-session/v1/game_session_service.proto` under `GameSessionControlPlaneService`.
 
 For cross-service invariants, see `design/architecture/system-architecture-scripting-contracts.md`.
 

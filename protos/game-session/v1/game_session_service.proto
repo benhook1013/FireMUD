@@ -23,11 +23,26 @@ service GameSessionService {
   rpc GetTickStatus(GetTickStatusRequest) returns (GetTickStatusResponse);
 }
 
+// Operator/control-plane surface for pinning and rollback of script patch versions,
+// plus scoped tick pause/resume used for rollback safety.
+service GameSessionControlPlaneService {
+  rpc GetPinnedScriptPatchVersion(GetPinnedScriptPatchVersionRequest)
+      returns (GetPinnedScriptPatchVersionResponse);
+  rpc SetPinnedScriptPatchVersion(SetPinnedScriptPatchVersionRequest)
+      returns (SetPinnedScriptPatchVersionResponse);
+  rpc RollbackScriptPatchVersion(RollbackScriptPatchVersionRequest)
+      returns (RollbackScriptPatchVersionResponse);
+
+  rpc PauseTicksForScope(PauseTicksForScopeRequest) returns (PauseTicksForScopeResponse);
+  rpc ResumeTicksForScope(ResumeTicksForScopeRequest) returns (ResumeTicksForScopeResponse);
+}
+
 message StartSessionRequest {
   string tenant_id = 1;
   string runtime_version = 2;
   string script_patch_version = 3;
   string client_ip = 4;
+  string game_instance_id = 5;
 }
 
 message StartSessionResponse {
@@ -121,5 +136,77 @@ enum TickStatus {
 
 message GetTickStatusResponse {
   TickStatus status = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message GetPinnedScriptPatchVersionRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+}
+
+message GetPinnedScriptPatchVersionResponse {
+  string pinned_script_patch_version = 1;
+  int64 pinned_at_ms = 2;
+  string pinned_by = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+message SetPinnedScriptPatchVersionRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string target_script_patch_version = 3;
+  string control_plane_request_id = 4;
+  string actor_principal = 5;
+  string reason = 6;
+}
+
+message SetPinnedScriptPatchVersionResponse {
+  string previous_script_patch_version = 1;
+  string pinned_script_patch_version = 2;
+  string control_plane_request_id = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+message RollbackScriptPatchVersionRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string target_script_patch_version = 3;
+  string control_plane_request_id = 4;
+  string actor_principal = 5;
+  string reason = 6;
+}
+
+message RollbackScriptPatchVersionResponse {
+  string previous_script_patch_version = 1;
+  string pinned_script_patch_version = 2;
+  string control_plane_request_id = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+message PauseTicksForScopeRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  string control_plane_request_id = 4;
+  string actor_principal = 5;
+  string reason = 6;
+}
+
+message PauseTicksForScopeResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ResumeTicksForScopeRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  string control_plane_request_id = 4;
+  string actor_principal = 5;
+  string reason = 6;
+}
+
+message ResumeTicksForScopeResponse {
+  bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }
