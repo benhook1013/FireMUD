@@ -232,7 +232,7 @@ These metrics support AOF targets, tail-loss SLOs, and basic coordination health
   - Error metrics from Lua scripts that signal replay or lease/lock issues (for example, `STALE_LEASE`, `STALE_LOCK`), as described in `system-architecture-redis-lua-patterns.md`.
 - **Coordination key health**
   - Size and count metrics for core prefixes such as `tick:{tenantRegionTag}:pending`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `session:game:<tenantId>:<sessionId>`, used to enforce the size and complexity budgets later in this file.
-  - Oversize/over-budget counters referenced in the **Coordination Size and Complexity Budgets** section (for example, `redis.tick.pending_oversized_total`, `redis.tick.pending_effects_over_budget_total`, `redis.tick.command_queue_overflow_total`, `redis.tick.timers_over_budget_total`, `redis.session.payload_oversized_total`).
+  - Oversize/over-budget counters referenced in the **Coordination Size and Complexity Budgets** section (for example, `redis_tick_pending_oversized_total`, `redis_tick_pending_effects_over_budget_total`, `redis_tick_command_queue_overflow_total`, `redis_tick_timers_over_budget_total`, `redis_session_payload_oversized_total`).
 
 ### Session Schema and Cleanup Metrics
 
@@ -385,15 +385,15 @@ The metrics below form the **minimum contract** for Coordination Redis observabi
 
 | Metric | Threshold (example) | Duration | Tier | Operator action |
 | --- | --- | --- | --- | --- |
-| `redis.lua.script_load_failures` | ≥1 per shard | ~5m | Core | Mark affected shards degraded, pause ticks until scripts reload; investigate script registry/rollout issues. |
-| `redis.lua.script_missing_for_region` | ≥1 per region | Immediate | Core | Stop scheduling ticks for that `<tenantId, regionId>` until every master hosting the region has the script loaded. |
-| `redis.lua.script_runtime_p99` | >2× `tick_interval_ms` | ~3m | Core | Degrade the region, slow tick fan-out, and reject/shed new commands until latency recovers. |
-| `redis.tick.lock_ttl_exceeded_total` | >5 occurrences per region | ~5m | Core | Treat as a headroom breach; mark the region degraded, review workloads, and consider slowing ticks. |
-| `redis.coordination_oom_errors` | ≥1 | ~1m | Core | Critical incident — halt ticks for affected regions, investigate `maxmemory`/payload sizes, and restore headroom before resuming. |
-| `redis.tick.pending_stuck_total` | >0 for a region | ≥2 tick intervals | Core | Halt ticks for that region, inspect tick effect ledger, repair or reset coordination state, then resume. |
-| `redis.tick.command_queue_overflow_total` | ≥1 per entity | Immediate | Extended | Treat as per-entity overload; shed or deny further commands for that entity until queue depth returns within budget. |
-| `redis.tick.timers_over_budget_total` | >0 sustained per region | ~10m | Extended | Region has too many timers; either slow tick rate and/or reduce timer density via design changes. |
-| `redis.session.payload_oversized_total` | ≥1 per tenant | ~10m | Extended | Audit session payload shape; strip non-essential fields and enforce size limits before writing session state. |
+| `redis_lua_script_load_failures_total` | ≥1 per shard | ~5m | Core | Mark affected shards degraded, pause ticks until scripts reload; investigate script registry/rollout issues. |
+| `redis_lua_script_missing_for_region_total` | ≥1 per region | Immediate | Core | Stop scheduling ticks for that `<tenantId, regionId>` until every master hosting the region has the script loaded. |
+| `redis_lua_script_runtime_ms_p99` | >2× `tick_interval_ms` | ~3m | Core | Degrade the region, slow tick fan-out, and reject/shed new commands until latency recovers. |
+| `redis_tick_lock_ttl_exceeded_total` | >5 occurrences per region | ~5m | Core | Treat as a headroom breach; mark the region degraded, review workloads, and consider slowing ticks. |
+| `redis_coordination_oom_errors_total` | ≥1 | ~1m | Core | Critical incident — halt ticks for affected regions, investigate `maxmemory`/payload sizes, and restore headroom before resuming. |
+| `redis_tick_pending_stuck_total` | >0 for a region | ≥2 tick intervals | Core | Halt ticks for that region, inspect tick effect ledger, repair or reset coordination state, then resume. |
+| `redis_tick_command_queue_overflow_total` | ≥1 per entity | Immediate | Extended | Treat as per-entity overload; shed or deny further commands for that entity until queue depth returns within budget. |
+| `redis_tick_timers_over_budget_total` | >0 sustained per region | ~10m | Extended | Region has too many timers; either slow tick rate and/or reduce timer density via design changes. |
+| `redis_session_payload_oversized_total` | ≥1 per tenant | ~10m | Extended | Audit session payload shape; strip non-essential fields and enforce size limits before writing session state. |
 
 Deployments may tighten or relax these thresholds, but the **classes of behaviour** above—script unavailability, high script runtimes, repeated lock/TTL breaches, coordination `OOM`/evictions, stuck `pending` entries, and runaway queue/timer/session sizes—are treated as canonical red lines that justify automated degradation and paging.
 
@@ -411,24 +411,24 @@ New code is expected to honour both: never exceed the hard caps, and stay within
   - Target maximum staged effects per tick: on the order of **≤128** effect entries.
   - If either envelope is exceeded:
     - The tick executor logs a structured warning with `<tenantId, regionId, regionEpoch, tickId>` and approximate payload size/effect count.
-    - Metrics such as `redis.tick.pending_oversized_total` and `redis.tick.pending_effects_over_budget_total` are incremented.
+    - Metrics such as `redis_tick_pending_oversized_total` and `redis_tick_pending_effects_over_budget_total` are incremented.
     - The region may be marked **degraded**; command intake can be throttled or shed until the workload is reduced.
 - `tick:{tenantRegionTag}:queue:<entityId>` (per-entity command queue)
   - Global safety cap on queue depth per entity: **≤50–100** commands (exact value defined in shared configuration and applied uniformly).
   - When a queue reaches this cap:
     - New commands for that entity are **always** rejected or shed with a clear error (for example “queue full / region under load”) rather than growing unbounded queues.
-    - A `redis.tick.command_queue_overflow_total` metric is incremented, tagged by `<tenantId, regionId>`, so operators can see which regions are hitting the cap frequently.
+    - A `redis_tick_command_queue_overflow_total` metric is incremented, tagged by `<tenantId, regionId>`, so operators can see which regions are hitting the cap frequently.
 - `timer:{tenantRegionTag}` (per-region timer ZSET)
   - Global safety cap on timer cardinality per region: on the order of **a few thousand** timers (for example ≤10 000; exact value defined in shared configuration and applied uniformly).
   - Per-tick processing remains bounded by a configured `maxTimersPerTick` value; timers beyond that budget are processed in later ticks.
   - When cardinality or per-tick processing budgets are exceeded:
-    - The region is marked **degraded** and emits `redis.tick.timers_over_budget_total` metrics.
+    - The region is marked **degraded** and emits `redis_tick_timers_over_budget_total` metrics.
     - Additional timer insertions beyond the hard cap are **shed** with a clear error or dropped according to simple, documented rules (for example, rejecting new timers for low-priority effects first).
 - `session:game:<tenantId>:<sessionId>` (per-player session payload)
   - Target maximum serialized session value size: roughly **≤16–32 KB**.
   - Session payloads may contain routing, bindings, and lightweight metadata, but must not embed large blobs or full gameplay history.
   - When a session value exceeds the budget:
-    - The binding logic logs a warning and increments `redis.session.payload_oversized_total`.
+    - The binding logic logs a warning and increments `redis_session_payload_oversized_total`.
     - Implementations treat oversize sessions as an error in the caller; they may drop optional fields, reject binding, or force a fresh `LOGIN` rather than writing very large values.
 
 These budgets complement the AOF size and restart targets in this document. Environments may tune concrete numeric thresholds, but the contract remains the same: coordination keys stay small and bounded, and exceeding a budget results in **explicit logs + metrics + controlled failure modes**, not silent degradation or unbounded growth.

@@ -280,7 +280,7 @@ When a `NotifyDisconnect` call fails with a **transport-level** error (for examp
 - Within that window, the proxy applies exponential backoff between attempts and gives up permanently once the total elapsed time since Telnet socket close exceeds `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`.
 - After the window elapses, the proxy relies entirely on Game Session’s own liveness detection and Redis-backed timeouts; no further retries are attempted for that `{proxyConnectionId, disconnectSequence}`.
 
-When the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error` field is populated, the proxy **does not retry**: these are treated as logical, contract-level failures (for example “unknown session”) that Game Session has already decided how to handle. The proxy logs these errors, increments `grpc.app_error{code="..."}` and `tcpproxy.disconnect.notify.app_error{code="..."}`, and moves on without further attempts for that event.
+When the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error` field is populated, the proxy **does not retry**: these are treated as logical, contract-level failures (for example “unknown session”) that Game Session has already decided how to handle. The proxy logs these errors, increments `grpc_app_error_total{code="..."}` and `tcpproxy_disconnect_notify_app_error_total{code="..."}`, and moves on without further attempts for that event.
 
 This keeps retry behaviour simple while still surfacing most transient gRPC failures without risking long-lived retry storms.
 
@@ -404,7 +404,7 @@ Prometheus label cardinality bounded:
 - `tcpproxy.connection.duration` (a Micrometer `Timer`) records the wall-clock
   lifetime of sockets so dashboards can highlight long-running connections
   without embedding per-session identifiers in label values.
-- `grpc.app_error{code="<code>"}` is incremented whenever the
+- `grpc_app_error_total{code="<code>"}` is incremented whenever the
   `TcpProxyEventService` observes an error from `NotifyDisconnect`, with
   `code` drawn from a bounded enum.
 
@@ -568,15 +568,15 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
   - **Transport vs application failures are separated** so dashboards stay unambiguous and align with [gRPC API Style & Versioning](../../system-architecture-grpc.md#error-handling):
     - `tcpproxy.disconnect.notify.transport_failure{status="<grpc_status>"}` increments whenever a `NotifyDisconnect` attempt fails with a non-OK gRPC status (for example `UNAVAILABLE`, `DEADLINE_EXCEEDED`, TLS handshake failures). These are retried within the configured `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` window and counted once per failed attempt.
     - `tcpproxy.disconnect.notify.app_error{code="<code>"}` increments when the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error.code` field is not `OK`. These are treated as permanent, contract-level outcomes and are **not retried**.
-    - The shared `grpc.app_error{code="<code>"}` meter is reserved for application-level error codes (not transport statuses). It may be incremented alongside `tcpproxy.disconnect.notify.app_error` when the proxy receives a non-OK `NotifyDisconnectResponse.error.code`.
+    - The shared `grpc_app_error_total{code="<code>"}` meter is reserved for application-level error codes (not transport statuses). It may be incremented alongside `tcpproxy.disconnect.notify.app_error` when the proxy receives a non-OK `NotifyDisconnectResponse.error.code`.
 
 In Prometheus these Micrometer meters appear with the expected naming
 translation, for example:
 
 - `tcpproxy.connections.active` → `tcpproxy_connections_active`
-- `tcpproxy.connections.limit.exceeded` → `tcpproxy_connections_limit_exceeded`
-- `tcpproxy.telnet.discarded` → `tcpproxy_telnet_discarded`
-- `tcpproxy.websocket.reconnects` → `tcpproxy_websocket_reconnects`
+- `tcpproxy.connections.limit.exceeded` → `tcpproxy_connections_limit_exceeded_total`
+- `tcpproxy.telnet.discarded` → `tcpproxy_telnet_discarded_total`
+- `tcpproxy.websocket.reconnects` → `tcpproxy_websocket_reconnects_total`
 
 The example PromQL and Alertmanager rules in
 `design/observability/grafana/tcp-proxy-alerts-snippets.md` use these
@@ -601,7 +601,7 @@ When wiring alerts and runbooks for the TCP Proxy Service, focus on a small set 
   - Alert on sustained `tcpproxy.gateway.handshake.failures{reason!="timeout"}` and on long tails in `tcpproxy.websocket.reconnect.delay`; together these often indicate certificate, DNS, or listener misconfigurations between the proxy and Spring Cloud Gateway.
   - Cross-check these alerts with Gateway health and TLS/mTLS metrics from the Security and Logging & Monitoring docs so incidents are triaged at the correct layer (proxy vs gateway vs cluster networking).
 - **NotifyDisconnect health**
-  - Monitor `tcpproxy.disconnect.notify.transport_failure` and the associated `grpc.app_error{code="<code>"}` meter for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`, which may indicate Game Session outages or network issues on the internal gRPC path.
+  - Monitor `tcpproxy_disconnect_notify_transport_failure_total` and the associated `grpc_app_error_total{code="<code>"}` meter for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`, which may indicate Game Session outages or network issues on the internal gRPC path.
   - Treat sustained increases in permanent error codes (for example `INVALID_ARGUMENT`, `PERMISSION_DENIED`) as configuration or contract issues rather than transient incidents; runbooks should direct operators to inspect Game Session logs and configuration when this happens.
 
 Runbooks should always pair these TCP Proxy metrics with corresponding Spring Cloud Gateway and Game Session dashboards. Edge symptoms such as elevated discard counts or connection churn often originate from higher-layer changes (for example new rate limits or authentication flows), and resolving them in isolation at the proxy can mask the real cause.

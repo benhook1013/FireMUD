@@ -101,6 +101,21 @@ groups:
             and Game Session logs to distinguish transient transport issues from
             contract or authorization errors.
 
+      - alert: TcpProxyNotifyDisconnectAppErrors
+        expr: sum by (code) (rate(tcpproxy_disconnect_notify_app_error_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: P1
+          service: tcp-proxy-service
+          owner: platform
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend-and-partial-disconnect-symptoms
+        annotations:
+          summary: "TCP Proxy NotifyDisconnect app errors observed"
+          description: |
+            The TCP Proxy is receiving application-level errors (gRPC transport OK,
+            but NotifyDisconnectResponse.error is non-OK). Treat sustained non-OK
+            error codes as contract/configuration issues rather than transient transport incidents.
+
       - alert: TcpProxyGrpcAppErrorSpike
         expr: sum by (code) (rate(grpc_app_error_total{service="tcp-proxy-service"}[5m])) > 1
         for: 10m

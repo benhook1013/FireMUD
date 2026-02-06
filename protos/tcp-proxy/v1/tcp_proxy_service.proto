@@ -52,6 +52,9 @@ message PingResponse {
 message NotifyDisconnectRequest {
   // Optional, client-provided SESSION envelope values (when present on the Telnet connection).
   // These are advisory only; Game Session must validate any tenant/session claims against its own state.
+  //
+  // session_id is kept for backwards compatibility with earlier implementations; in the target
+  // gameplay architecture this value corresponds to a game instance identifier.
   string session_id = 1;
   string tenant_id = 2;
 
@@ -63,6 +66,10 @@ message NotifyDisconnectRequest {
   // Required, monotonically increasing sequence number scoped to proxy_connection_id. This allows Game Session
   // to deduplicate at-least-once delivery (including retries and out-of-order arrivals).
   uint64 disconnect_sequence = 4;
+
+  // Optional, explicit game instance identifier. When present, consumers should prefer this over session_id.
+  // This is the canonical identifier carried by the Telnet SESSION envelope in the target-state edge contract.
+  string game_instance_id = 5;
 }
 
 // Error is empty on success. When populated, it contains a logical failure

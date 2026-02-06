@@ -134,11 +134,11 @@ def _check_ms_thresholds(expr: str) -> str | None:
 def _check_grpc_app_error_scoping(expr: str) -> str | None:
     if "grpc_app_error" not in expr:
         return None
-    matcher = re.search(r"grpc_app_error(\{[^}]*\})", expr)
+    matcher = re.search(r"grpc_app_error(?:_total)?(\{[^}]*\})", expr)
     if not matcher:
-        return "expression references grpc_app_error without a `{...}` matcher; shared dashboards/snippets must scope by `service`"
+        return "expression references grpc_app_error_total without a `{...}` matcher; shared dashboards/snippets must scope by `service`"
     if "service=" not in matcher.group(1):
-        return "expression references grpc_app_error without a `service=...` matcher; shared dashboards/snippets must scope by `service`"
+        return "expression references grpc_app_error_total without a `service=...` matcher; shared dashboards/snippets must scope by `service`"
     return None
 
 

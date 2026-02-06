@@ -24,6 +24,7 @@ dependencies {
     implementation(libs.spring.boot.starter.validation)
     implementation(libs.spring.boot.starter.web)
     implementation(libs.spring.boot.starter.aop)
+    implementation(libs.spring.boot.starter.actuator)
     compileOnly(libs.grpc.spring.boot.starter)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)
@@ -53,4 +54,3 @@ publishing {
         }
     }
 }
-

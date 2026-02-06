@@ -124,9 +124,20 @@ public class TcpProxyEventClient implements AutoCloseable {
     shutdownChannel(previousChannel);
   }
 
-  public NotifyDisconnectResponse notifyDisconnect(String sessionId, String tenantId) {
-    NotifyDisconnectRequest request =
-        NotifyDisconnectRequest.newBuilder().setSessionId(sessionId).setTenantId(tenantId).build();
+  public NotifyDisconnectResponse notifyDisconnect(
+      String gameInstanceId, String tenantId, String proxyConnectionId, long disconnectSequence) {
+    NotifyDisconnectRequest.Builder builder =
+        NotifyDisconnectRequest.newBuilder()
+            .setProxyConnectionId(proxyConnectionId)
+            .setDisconnectSequence(disconnectSequence);
+    if (StringUtils.hasText(gameInstanceId)) {
+      builder.setSessionId(gameInstanceId);
+      builder.setGameInstanceId(gameInstanceId);
+    }
+    if (StringUtils.hasText(tenantId)) {
+      builder.setTenantId(tenantId);
+    }
+    NotifyDisconnectRequest request = builder.build();
     return stub.notifyDisconnect(request);
   }
 

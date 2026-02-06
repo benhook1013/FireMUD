@@ -19,11 +19,16 @@ import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.TickService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
+  private static final Logger logger =
+      LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
+
   private final GameInstanceRepository gameInstanceRepository;
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
@@ -42,17 +47,32 @@ public final class GameSessionControlPlaneGrpcService
     return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
-  private long parseSessionId(String gameInstanceId) {
+  private long parseTenantId(String tenantId) {
+    if (tenantId == null || tenantId.isBlank()) {
+      throw new IllegalArgumentException("tenant_id is required");
+    }
+    try {
+      return Long.parseLong(tenantId);
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("tenant_id must be a number");
+    }
+  }
+
+  private long parseGameInstanceId(String gameInstanceId) {
     if (gameInstanceId == null || gameInstanceId.isBlank()) {
       throw new IllegalArgumentException("game_instance_id is required");
     }
-    return Long.parseLong(gameInstanceId);
+    try {
+      return Long.parseLong(gameInstanceId);
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("game_instance_id must be a number");
+    }
   }
 
-  private GameInstance getInstanceOrThrow(long sessionId) {
+  private GameInstance getInstanceOrThrow(long gameInstanceId) {
     return gameInstanceRepository
-        .findById(sessionId)
-        .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+        .findById(gameInstanceId)
+        .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
   }
 
   @Override
@@ -61,8 +81,12 @@ public final class GameSessionControlPlaneGrpcService
       GetPinnedScriptPatchVersionRequest request,
       StreamObserver<GetPinnedScriptPatchVersionResponse> responseObserver) {
     try {
-      long sessionId = parseSessionId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(sessionId);
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
               .setPinnedScriptPatchVersion(
@@ -83,6 +107,14 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetPinnedScriptPatchVersion failed", ex);
+      GetPinnedScriptPatchVersionResponse response =
+          GetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -92,8 +124,12 @@ public final class GameSessionControlPlaneGrpcService
       SetPinnedScriptPatchVersionRequest request,
       StreamObserver<SetPinnedScriptPatchVersionResponse> responseObserver) {
     try {
-      long sessionId = parseSessionId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(sessionId);
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
 
       String previous = instance.getScriptPatchVersion();
       instance.setScriptPatchVersion(request.getTargetScriptPatchVersion());
@@ -115,6 +151,14 @@ public final class GameSessionControlPlaneGrpcService
       SetPinnedScriptPatchVersionResponse response =
           SetPinnedScriptPatchVersionResponse.newBuilder()
               .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("SetPinnedScriptPatchVersion failed", ex);
+      SetPinnedScriptPatchVersionResponse response =
+          SetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(error("INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -127,8 +171,12 @@ public final class GameSessionControlPlaneGrpcService
       RollbackScriptPatchVersionRequest request,
       StreamObserver<RollbackScriptPatchVersionResponse> responseObserver) {
     try {
-      long sessionId = parseSessionId(request.getGameInstanceId());
-      GameInstance instance = getInstanceOrThrow(sessionId);
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
 
       String previous = instance.getScriptPatchVersion();
       instance.setScriptPatchVersion(request.getTargetScriptPatchVersion());
@@ -153,6 +201,14 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("RollbackScriptPatchVersion failed", ex);
+      RollbackScriptPatchVersionResponse response =
+          RollbackScriptPatchVersionResponse.newBuilder()
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -161,11 +217,39 @@ public final class GameSessionControlPlaneGrpcService
   public void pauseTicksForScope(
       PauseTicksForScopeRequest request,
       StreamObserver<PauseTicksForScopeResponse> responseObserver) {
-    tickService.pauseTicks(request.getReason());
-    PauseTicksForScopeResponse response =
-        PauseTicksForScopeResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      long tenantId = parseTenantId(request.getTenantId());
+      if (!request.getRegionId().isBlank()) {
+        throw new IllegalArgumentException("region_id is not supported; set it empty");
+      }
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      tickService.pauseTicksForGameInstance(gameInstanceId, request.getReason());
+      PauseTicksForScopeResponse response =
+          PauseTicksForScopeResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PauseTicksForScopeResponse response =
+          PauseTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("PauseTicksForScope failed", ex);
+      PauseTicksForScopeResponse response =
+          PauseTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
@@ -173,10 +257,38 @@ public final class GameSessionControlPlaneGrpcService
   public void resumeTicksForScope(
       ResumeTicksForScopeRequest request,
       StreamObserver<ResumeTicksForScopeResponse> responseObserver) {
-    tickService.resumeTicks(request.getReason());
-    ResumeTicksForScopeResponse response =
-        ResumeTicksForScopeResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      long tenantId = parseTenantId(request.getTenantId());
+      if (!request.getRegionId().isBlank()) {
+        throw new IllegalArgumentException("region_id is not supported; set it empty");
+      }
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      tickService.resumeTicksForGameInstance(gameInstanceId, request.getReason());
+      ResumeTicksForScopeResponse response =
+          ResumeTicksForScopeResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ResumeTicksForScopeResponse response =
+          ResumeTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ResumeTicksForScope failed", ex);
+      ResumeTicksForScopeResponse response =
+          ResumeTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 }

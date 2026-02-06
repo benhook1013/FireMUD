@@ -9,6 +9,8 @@ import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
@@ -71,6 +73,7 @@ public class TickServiceImpl implements TickService {
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
   private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
+  private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
   private final AtomicInteger activeTicks = new AtomicInteger();
 
   private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
@@ -162,7 +165,7 @@ public class TickServiceImpl implements TickService {
       return;
     }
 
-    if (pauseRequested.get()) {
+    if (pauseRequested.get() || pausedGameInstances.contains(sessionId)) {
       logger.debug("Tick processing skipped while paused");
       return;
     }
@@ -262,6 +265,24 @@ public class TickServiceImpl implements TickService {
   public void resumeTicks(String reason) {
     pauseRequested.set(false);
     logger.info("Tick resume requested: {}", reason);
+  }
+
+  @Override
+  public void pauseTicksForGameInstance(Long gameInstanceId, String reason) {
+    if (gameInstanceId == null) {
+      throw new IllegalArgumentException("gameInstanceId is required");
+    }
+    pausedGameInstances.add(gameInstanceId);
+    logger.info("Tick pause requested for game instance {}: {}", gameInstanceId, reason);
+  }
+
+  @Override
+  public void resumeTicksForGameInstance(Long gameInstanceId, String reason) {
+    if (gameInstanceId == null) {
+      throw new IllegalArgumentException("gameInstanceId is required");
+    }
+    pausedGameInstances.remove(gameInstanceId);
+    logger.info("Tick resume requested for game instance {}: {}", gameInstanceId, reason);
   }
 
   @Override

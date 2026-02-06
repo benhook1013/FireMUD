@@ -93,7 +93,7 @@ class TelnetServerHandlerTest {
         Mockito.mock(TelnetServerHandler.WebSocketConnector.class);
     Mockito.doReturn(CompletableFuture.completedFuture(mock(WebSocket.class)))
         .when(connector)
-        .connect(anyString(), anyString(), anyString(), anyString(), any());
+        .connect(anyString(), anyString(), anyString(), anyString(), anyString(), any());
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -129,7 +129,7 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, session, tenant, listener) -> new CompletableFuture<>());
+            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     when(ctx.channel()).thenReturn(channel);
@@ -156,7 +156,7 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, session, tenant, listener) -> new CompletableFuture<>());
+            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     when(ctx.channel()).thenReturn(channel);
@@ -175,7 +175,7 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, session, tenant, listener) -> new CompletableFuture<>());
+            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -202,7 +202,7 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, session, tenant, listener) -> new CompletableFuture<>());
+            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -230,7 +230,7 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, session, tenant, listener) -> new CompletableFuture<>());
+            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -327,7 +327,7 @@ class TelnetServerHandlerTest {
         newHandler(
             registry,
             false,
-            (url, ip, session, tenant, listener) -> {
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
               captured.add(session);
               captured.add(tenant);
               WebSocket ws = mock(WebSocket.class);
@@ -811,6 +811,7 @@ class TelnetServerHandlerTest {
     public CompletableFuture<WebSocket> connect(
         String gatewayWsUrl,
         String clientIp,
+        String proxyConnectionId,
         String sessionId,
         String tenantId,
         WebSocket.Listener listener) {
@@ -847,6 +848,7 @@ class TelnetServerHandlerTest {
     public CompletableFuture<WebSocket> connect(
         String gatewayWsUrl,
         String clientIp,
+        String proxyConnectionId,
         String sessionId,
         String tenantId,
         WebSocket.Listener listener) {
@@ -884,6 +886,7 @@ class TelnetServerHandlerTest {
     public CompletableFuture<WebSocket> connect(
         String gatewayWsUrl,
         String clientIp,
+        String proxyConnectionId,
         String sessionId,
         String tenantId,
         WebSocket.Listener listener) {

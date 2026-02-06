@@ -47,6 +47,18 @@ public class DevIsolatedTickService implements TickService {
   }
 
   @Override
+  public void pauseTicksForGameInstance(Long gameInstanceId, String reason) {
+    logger.info(
+        "Tick pause requested for game instance {} (dev-isolated): {}", gameInstanceId, reason);
+  }
+
+  @Override
+  public void resumeTicksForGameInstance(Long gameInstanceId, String reason) {
+    logger.info(
+        "Tick resume requested for game instance {} (dev-isolated): {}", gameInstanceId, reason);
+  }
+
+  @Override
   public TickStatus getTickStatus() {
     return TickStatus.TICK_STATUS_RUNNING;
   }
