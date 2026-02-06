@@ -11,7 +11,8 @@
 | Room topology and static metadata (descriptions, flags, ambient properties) | | ✔ | | | | | | | | | |
 | Room dynamic world state (persistent environment flags, doors, hazards) | | ✔ | | | | | | | | | |
 | Room occupancy (entity locations in rooms) | | ✔ | | | | | | | | | |
-| Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
+| Navmesh and pathfinding metadata (storage/publishing) | | ✔ | | | | | | | | | |
+| Pathfinding and movement route computation (algorithms) | | | | | | ✔ | | | | | |
 | Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
 | Account-related email (verification, password reset, security alerts, subscription/billing notifications) | | | ✔ | | | | | | | | |
 | Operational and moderation notifications (alerts, moderation actions, admin digests) | | | | | | | | | ✔ | | |
@@ -38,7 +39,7 @@
 | Command parsing and alias resolution | | | | | | ✔ | | | | | |
 | Action execution (movement, attack, etc.) | | | | | | ✔ | | | | | |
 | Progression logic (XP, levels, effects) | | | | | | ✔ | | | | | |
-| Weather/ambient state persistence (weather, doors, hazards) | | ✔ | | | | | | | | | |
+| Weather and ambient state persistence (weather, time-of-day, ambient modifiers) | | ✔ | | | | | | | | | |
 | Environmental effects computation (weather, hazards, modifiers) | | | | | | ✔ | | | | | |
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
