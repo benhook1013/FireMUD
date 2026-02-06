@@ -30,6 +30,8 @@ The following variable is used by all Spring Boot services to select the appropr
 | -------- | ------- | ------- |
 | `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | `dev` |
 
+Kubernetes manifests and any shared environment must set `SPRING_PROFILES_ACTIVE=prod` explicitly. Do not rely on the default value outside of local development.
+
 ---
 
 ## PostgreSQL Credentials
@@ -183,6 +185,8 @@ All services export OpenTelemetry spans. The collector endpoint can be overridde
 | `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
 | `FLUENT_ELASTICSEARCH_HOST` | Hostname of the log storage backend | `elasticsearch` |
 | `FLUENT_ELASTICSEARCH_PORT` | Port for the log storage backend | `9200` |
+
+Local Docker Compose stacks that do not run an OpenTelemetry collector should set `OTEL_ENDPOINT` to an empty value to disable exporting spans (services still create traces, but they are not exported).
 
 Service design documents reference this table for the OpenTelemetry endpoint configuration.
 

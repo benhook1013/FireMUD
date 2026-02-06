@@ -388,13 +388,13 @@ For the current Telnet-to-gameplay vertical slice, the implementation intentiona
 
 ### Chat slice status
 
-- **Live:** `SAY`/`YELL`/`WHISPER` commands now route through `SayCommandHandler`, which enforces the shared session guard, forwards normalized payloads to Game Logic's `BroadcastSay`, and renders the canonical `OK SAY` transcript while emitting the `gamesession.command.say.*` meters documented in `design/project-management/look-instrumentation.md`.
+- **Live:** `SAY`/`YELL`/`WHISPER` commands now route through `SayCommandHandler`, which enforces the shared session guard, forwards normalized payloads to Game Logic's `BroadcastSay`, and renders the canonical `OK SAY` transcript while emitting the `gamesession.command.say.*` meters documented in `../../../project-management/look-instrumentation.md`.
 - **Stubbed:** Delivery relies on the Social & Groups Service stub used by the regression suites, which currently records webhook contexts and returns success so both Telnet and WebSocket regression runs observe deterministic `Delivered-To` lists (see `SayWebSocketCrossServiceTest` and `TelnetGatewayGameSessionAccountCrossServiceIntegrationTest`).
 - **Deferred:** Future slices will enrich the Social backend with NPC roleplay responses, listening-area heuristics, and localized channel filters once the core `BroadcastSay` path proves stable and well-instrumented.
 
 ### LOOK slice status
 
-- **Live:** Data-driven `LOOK` flows now route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in `design/project-management/look-instrumentation.md` before replying over Telnet or WebSocket.
+- **Live:** Data-driven `LOOK` flows now route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in `../../../project-management/look-instrumentation.md` before replying over Telnet or WebSocket.
 - **Stubbed:** Room/exit metadata and visible entities still derive from the seeded demo world migration and the `firemud.look.rooms` fixtures so transcripts and regression tests stay stable while the cross-service WebSocket/Telnet flows rely on the shared stub utilities.
 - **Deferred:** Dynamic lighting, line-of-sight filtering, script-driven room prose, and the optional reconnection replay of cached snapshots remain future work once instrumentation, metrics, and cross-service regression coverage stabilize.
 

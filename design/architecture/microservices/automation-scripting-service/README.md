@@ -147,7 +147,7 @@ Stage names and required audit fields (`finalStage`, `finalOutcome`, `finalReaso
 - Faction reputation influences NPC aggression states. NPCs may become **FLEEING** or **SURRENDERED** when low on health or morale, allowing players to resolve encounters non-lethally.
 - Web UI for creating and testing scripts using a component-based DSL.
 - Advanced AI modules support formations, squads, and complex behaviors.
-- Procedural population hooks populate rooms with NPCs and loot based on biome and depth.
+- Procedural population hooks populate rooms with NPCs and loot based on biome and depth by emitting idempotent, tick-driven commands; scripts do not persist world topology and do not directly mutate World Management instance rows.
 - `ScriptQuotaService` enforces fairness quotas and per-script resource limits.
 
 ### PvE Mechanics
@@ -255,7 +255,7 @@ values fall below configurable thresholds the NPC may become `FLEEING` or
 - **Internal:**
   - Game Session Service sends events that trigger scripts.
   - Game Logic Service for rule evaluation.
-  - World Management Service receives world-state updates from scripts.
+  - World Management Service receives world-state update commands from scripts (for example door/weather toggles) via tick-driven effects scoped by `RoomInstanceRef` and guarded by `EffectId`.
   - **External:** PostgreSQL for script storage and Redis for queuing automation tasks and enforcing quotas (using the Coordination and Cache/Rate-Limit roles above).
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),

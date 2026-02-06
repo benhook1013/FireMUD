@@ -18,8 +18,7 @@ Staging is treated as **disposable by default**: it does not run the production 
   - **3 monthly** dumps
 - The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
   a script (`pg-dump.sh`) that enforces the retention policy. Dumps are stored under `15min`, `daily`, `weekly`, and `monthly` directories. The environment
-  variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set;
-  otherwise uploads are skipped. In production, skipping uploads is treated as a misconfiguration: it is acceptable to keep short-term dumps on the PVC, but the backup pipeline is not considered healthy unless object storage uploads are enabled and verified. When defined, the script also uploads each dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
+  variable `PG_DUMP_BUCKET` must be set to enable uploads; `PG_DUMP_ENDPOINT` is optional and is used only when targeting an S3-compatible endpoint such as MinIO. If `PG_DUMP_BUCKET` is unset, uploads are skipped. In production, skipping uploads is treated as a misconfiguration: it is acceptable to keep short-term dumps on the PVC, but the backup pipeline is not considered healthy unless object storage uploads are enabled and verified. When uploads are enabled, the script uploads each dump to the specified bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests (`snapshotVolumes: false`). See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
 
@@ -137,8 +136,8 @@ This behavior is distinct from **failover**:
     3. Restart services so they pick up the restored database:
 
        ```bash
-       kubectl rollout restart deployment -n firemud
-       kubectl rollout restart statefulset -n firemud
+       kubectl rollout restart deployment -n <namespace>
+       kubectl rollout restart statefulset -n <namespace>
        ```
 
     4. If dumps live in `PG_DUMP_BUCKET`, download them first with:

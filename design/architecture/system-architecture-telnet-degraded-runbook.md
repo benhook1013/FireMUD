@@ -25,12 +25,12 @@ For the design of the Telnet and protocol-bridging path, see:
    - Open the TCP Proxy Grafana dashboard and inspect:
      - `tcpproxy.connections.active` / `tcpproxy.connections.total` for unusual spikes or drops.
      - `tcpproxy.connections.limit.exceeded` for sustained non-zero values, which indicate global or per-IP caps are rejecting new connections.
-     - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, repeated malformed `SESSION` envelopes, or specific gateway-related issues such as `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` when the Telnet → Gateway buffer fills before Spring Cloud Gateway recovers.
-     - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated reconnection attempts to Spring Cloud Gateway.
+     - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, repeated malformed `SESSION` envelopes, or upstream backpressure that forces the proxy to close connections (for example `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` when the Telnet → Gateway input buffer reaches its configured ceiling).
+     - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated Proxy → Gateway WebSocket bridge connection attempts and backoff delays (these correlate with Telnet disconnects because the proxy fail-closes when it cannot maintain the bridge).
      - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
      - If Telnet client IP preservation relies on PROXY protocol, verify that `tcpproxy.telnet.discarded{reason="proxy_protocol"}` is not elevated; sustained `proxy_protocol` discard reasons often indicate a misconfigured Telnet edge proxy (for example PROXY headers sent to the wrong listener or malformed headers).
 4. **Compare Telnet vs WebSocket flows**
-   - Pick a specific `{sessionId, tenantId}` (or user) and:
+   - Pick a specific `{gameInstanceId, tenantId}` (or user) when available and:
      - Use Logging & Admin Service / Kibana to find the Telnet-side logs (from the TCP Proxy) and confirm that `LOGIN`/`LOOK` commands are received, with credentials redacted.
      - Find the corresponding WebSocket session in Spring Cloud Gateway logs and the downstream Game Session logs to verify whether the commands reach the backend and whether responses are emitted.
    - If WebSocket flows succeed while Telnet flows stall or drop, the problem is likely in the TCP Proxy, Gateway WebSocket route, or mTLS between them.

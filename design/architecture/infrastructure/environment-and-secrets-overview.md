@@ -23,7 +23,7 @@ This section summarizes the **most important environment variables and rotation 
 
 | Variable | Purpose | Notes |
 | -------- | ------- | ----- |
-| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | Must be set explicitly in all environments. |
+| `SPRING_PROFILES_ACTIVE` | Spring profile (`dev` or `prod`) | Kubernetes manifests and any shared environment must set this explicitly (do not rely on defaults). |
 
 ### PostgreSQL (Authoritative Data)
 

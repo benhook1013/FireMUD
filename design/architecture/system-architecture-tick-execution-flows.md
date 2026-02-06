@@ -75,20 +75,24 @@ At each tick for a `<tenantId, regionId>`, the executor:
 
 ### Commit Point and Replay Semantics (Conceptual)
 
-The canonical “commit point” for a tick is defined jointly by Redis coordination state and the tick effect ledger:
+The canonical “commit point” for a tick is the same durable boundary used by the heartbeat watermark and `RegionStatus` (see the **Tick Commit Definition (Heartbeat Watermark)** section in `system-architecture-ticks.md`). Conceptually, tick commit proceeds through these phases:
 
 1. **Staging complete**
    - All effects selected for the tick have been written into `tick:{tenantRegionTag}:pending` and mirrored into the ledger with `status = SCHEDULED`.
 2. **Domain application**
    - Domain services process staged effects under idempotent rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)` and update authoritative PostgreSQL state in their own databases.
    - Game Session records the outcome of each effect in its tick effect ledger (`SCHEDULED` → `APPLIED` or `ABANDONED`) based on the domain calls’ return semantics. Domain services do not write to the Game Session ledger directly.
-3. **Cleanup**
-   - A final commit/cleanup script clears `pending` entries for the tick and releases any entity locks for that region.
+3. **Commit visibility**
+   - Once all ledger rows for that tick are terminal (`APPLIED` or `ABANDONED`), Game Session advances the durable commit watermark for the region (for example updating `RegionStatus.lastCommittedTickId` for the current `region_epoch`), and only then emits the tick heartbeat for that `(region_epoch, tickId)`.
+4. **Coordination cleanup**
+   - A final commit/cleanup script clears the `pending` entry for the tick and releases any entity locks for that region.
+   - Cleanup is a required part of “tick is no longer in flight”; if an executor crashes after commit visibility but before cleanup, crash recovery must clear/abandon the `pending` entry before any subsequent tick stages new work.
 
 From the perspective of the `(region_epoch, tickId)` timeline:
 
 - A tick is considered **committed** once:
   - All ledger rows for that `(tenantId, regionId, region_epoch, tickId)` have reached a terminal state (`APPLIED` or `ABANDONED`), and
+  - The durable commit watermark (for example `RegionStatus.lastCommittedTickId`) has advanced to that `(region_epoch, tickId)`, and
   - There is no remaining `pending` entry for that tick in Redis.
 - Any state before this point is **replayable**:
   - Executors may crash after staging but before all effects are applied; the next executor replays remaining SCHEDULED entries using ledger and idempotency rules.

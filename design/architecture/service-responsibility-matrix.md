@@ -26,8 +26,8 @@
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
 | Coordination Redis ownership (ticks, locks, timers, sessions) | | | | ✔ | | | | | | | |
-| Gameplay shard mapping publication (`<tenantId, regionId> → shard`) | | | | ✔ | | | | | | | |
-| Gameplay WebSocket shard routing (`/ws/game/**`) | | | | | | | | | | | ✔ |
+| Tick-region lease ownership and executor coordination (`<tenantId, regionId>`) | | | | ✔ | | | | | | | |
+| Gameplay WebSocket route definition and routing (`/ws/game/**`) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |
 | Tick & coordination health metrics (per region) | | | | ✔ | | | | | | | |

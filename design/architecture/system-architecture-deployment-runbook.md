@@ -29,7 +29,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
      - Capture the Git commit SHA and timestamp in the deployment notes/runbook record for the environment.
      - Stamp the SHA into the cluster so it is retrievable during incidents:
        - Preferred: annotate the namespace with the overlay SHA:
-         - `kubectl annotate namespace firemud firemud.io/overlay-sha=<git-sha> --overwrite`
+         - `kubectl annotate namespace <namespace> firemud.io/overlay-sha=<git-sha> --overwrite`
        - Alternative: create/update a dedicated ConfigMap (for example `firemud-deploy-info`) that stores `overlay_sha` and `applied_at` as data keys.
 5. **Monitor Rollout**
    - Watch deployment rollout status for each updated service.

@@ -62,6 +62,7 @@ When using a self-hosted MinIO cluster as the asset store:
    - Only **retired** versions (no `game_instances` rows reference the
      `version_id` as `runtime_version`, and the version is no longer listed as
      launchable in `game_manifest`) are eligible for asset deletion.
+   - Retired eligibility must also account for **design-time dependencies**: the version must not be referenced by any game templates. Operators should validate that no normalized `game_template_*_ref` rows in the Game Design Service still reference `(tenantId, versionId)` before deleting the corresponding object-store prefix.
    - Published assets are discovered via the `version_asset` mapping table in the
      Game Design Service. Operators must never delete individual objects that are
      still referenced by any `version_asset` row for a non-retired version.

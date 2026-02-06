@@ -188,7 +188,7 @@ When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP
 ### WebSocket Bridge Configuration
 
 The TCP Proxy Service acts as the bridge and speaks directly to Spring Cloud Gateway through the WebSocket route that also serves modern clients. The TCP Proxy Service uses the
-`GATEWAY_WS_URL` environment variable (default `ws://spring-cloud-gateway:8080/ws/game`) so the proxy always connects to the `/ws/game/**` predicate shown in the
+`GATEWAY_WS_URL` environment variable (no global default; the TCP Proxy’s `dev` profile may fall back to `ws://spring-cloud-gateway:8080/ws/game` when unset) so the proxy always connects to the `/ws/game/**` predicate shown in the
 [Gateway Architecture](./system-architecture-gateway.md) document (`Path=/api/session/**,/ws/game/**`). This keeps the Telnet flow and the web client flow aligned:
 they both traverse the same filters, metrics, and downstream `game-session-service` backend.
 

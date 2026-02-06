@@ -25,9 +25,15 @@ if [ -n "${PG_DUMP_BUCKET:-}" ]; then
     echo "aws CLI not found" >&2
     exit 1
   }
+
+  AWS_ENDPOINT_ARGS=()
+  if [ -n "${PG_DUMP_ENDPOINT:-}" ]; then
+    AWS_ENDPOINT_ARGS=(--endpoint-url "$PG_DUMP_ENDPOINT")
+  fi
+
   KEY=$(aws s3api list-objects-v2 --bucket "$PG_DUMP_BUCKET" \
         --prefix "15min/" \
-        --endpoint-url "${PG_DUMP_ENDPOINT:-}" \
+        "${AWS_ENDPOINT_ARGS[@]}" \
         --query 'sort_by(Contents,&LastModified)[-1].Key' --output text 2>/dev/null || echo None)
   if [ "$KEY" = "None" ]; then
     echo "No pg_dump files found in bucket $PG_DUMP_BUCKET" >&2

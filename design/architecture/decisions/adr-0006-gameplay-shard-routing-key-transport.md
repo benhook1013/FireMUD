@@ -4,6 +4,8 @@
 
 Withdrawn (superseded by ADR 0007)
 
+This ADR is retained for historical context, but it is not part of the current target-state edge contract. See `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`.
+
 ## Context
 
 The target-state architecture requires Gateway to route `/ws/game/**` WebSocket connections to the Game Session shard that owns the `<tenantId, regionId>` lease. Multiple documents describe:

@@ -9,6 +9,7 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
+import java.util.Locale;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,6 +26,10 @@ public class TracingConfig {
 
   @Bean
   public OpenTelemetry openTelemetry() {
+    if (isDisabledEndpoint(otelEndpoint)) {
+      return OpenTelemetry.noop();
+    }
+
     OtlpGrpcSpanExporter exporter =
         OtlpGrpcSpanExporter.builder().setEndpoint(otelEndpoint).build();
 
@@ -41,5 +46,13 @@ public class TracingConfig {
   @Bean
   public Tracer tracer(OpenTelemetry openTelemetry) {
     return openTelemetry.getTracer(serviceName);
+  }
+
+  private static boolean isDisabledEndpoint(String endpoint) {
+    if (endpoint == null) {
+      return true;
+    }
+    String normalized = endpoint.trim().toLowerCase(Locale.ROOT);
+    return normalized.isEmpty() || normalized.equals("none") || normalized.equals("disabled");
   }
 }

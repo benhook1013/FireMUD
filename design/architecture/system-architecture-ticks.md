@@ -77,7 +77,7 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
   - The `activeVersionId` pinned for that tick.
 - Consumers (for example, schedulers or reconnection logic) typically:
   - Acquire a small lease such as `tick-events-lease:{tenantRegionTag}` to avoid duplicate processing.
-  - Persist their last-processed stream offset (for example a Redis Stream entry ID) in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}` so they can resume from the correct position after restarts.
+  - Persist their last-processed stream offset (for example a Redis Stream entry ID) in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}` so they can resume from the last observed stream entry when offsets/history are available. If the offset is missing or the stream has been truncated/reset, consumers bootstrap from the canonical heartbeat/RegionStatus instead of assuming the stream is a complete history.
 - The event stream is a **best-effort coordination structure**, not a durable log of record:
   - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}`.
   - Production-like profiles that persist offsets use **Redis Streams** for this prefix so consumers can resume from an offset; pub/sub is reserved for fire-and-forget observers that never track offsets or history.
