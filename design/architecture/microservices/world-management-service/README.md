@@ -320,7 +320,13 @@ Expected response:
 
 ### World Events
 
-World events are persisted in the `world_event` table and processed periodically by `WorldEventService`. A weather change event updates the runtime weather field (for example `region_instance.weather`) for the affected `(tenantId, gameInstanceId)` before notifying other services.
+World events are persisted in the `world_event` table and processed periodically by `WorldEventService`.
+
+World event invariants:
+
+- Events are runtime-only and must be keyed by `(tenantId, gameInstanceId)` (they must not be stored as `(tenantId, versionId)` template artifacts).
+- Event application must be idempotent. Each event carries a stable event identity (or derives one from `(tenantId, gameInstanceId, eventId, eventType, scheduledTickId)`), and World Management must guard against double-application on retries or restarts.
+- A weather change event updates the runtime weather field (for example `region_instance.weather`) for the affected `(tenantId, gameInstanceId)` before notifying other services.
 
 ### Saga Participation
 
