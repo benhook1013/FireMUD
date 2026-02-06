@@ -246,7 +246,7 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
   using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
 - If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway (for example because the gateway listener is unavailable or the Proxy → Gateway mTLS handshake fails), it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
-- If the WebSocket bridge drops at any point after the Telnet connection is established, the proxy fail-closes the Telnet socket with the same `backend_unavailable` reason. The proxy does not attempt to keep the Telnet socket open across upstream disconnects because doing so would require an explicit, secure “reattach without credentials” contract that is outside the Telnet text protocol and is not part of the target-state design.
+- If the WebSocket bridge drops at any point after the Telnet connection is established, the proxy fail-closes the Telnet socket. When the upstream close indicates a shard handoff (`1013/reroute`), the proxy emits a Telnet disconnect reason of `reroute`; otherwise it emits `backend_unavailable`. The proxy does not attempt to keep the Telnet socket open across upstream disconnects because doing so would require an explicit, secure “reattach without credentials” contract that is outside the Telnet text protocol and is not part of the target-state design.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
@@ -359,7 +359,7 @@ Malformed or partially specified envelopes are treated as best-effort hints only
 
 #### Where `gameInstanceId` and `tenantId` come from
 
-- Cross-service tests and advanced clients typically obtain a `gameInstanceId` by calling the Game Session REST API (for example `POST /sessions`, which creates a game instance despite the legacy path name) and then send `SESSION <gameInstanceId> <tenantId>` when attaching to that instance. See:
+- Cross-service tests and advanced clients typically obtain `{gameInstanceId, tenantId}` from a first-party admission or session-management API (owned by Game Session and/or the control plane), then send `SESSION <gameInstanceId> <tenantId>` when attaching to that instance. Do not treat any specific endpoint shape as part of the Telnet protocol contract; only the identifiers and their validation rules matter to the edge. See:
   - `design/project-management/look-smoke-tests.md` (WebSocket and Telnet flows)
   - `design/project-management/look-cross-service-tests.md`
   - `design/architecture/system-architecture-authentication.md`

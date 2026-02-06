@@ -124,6 +124,8 @@ To avoid “DSL evaluated successfully but effects were silently dropped”, the
 
 This enables stage-aware outcomes in `script_event_audit`: the system can distinguish “DSL evaluation succeeded” from “handoff/enqueue succeeded”, and can re-drive delivery where appropriate without re-executing the DSL body for the same trigger.
 
+Stage names and required audit fields (`finalStage`, `finalOutcome`, `finalReason`, optional per-stage breakdown) are defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
+
 #### Redis Cluster Slotting Rules for Automation
 
 - Automation Lua scripts must never perform multi-key operations that span both `automation:*` and `tick:*` keys in a single invocation:
@@ -306,7 +308,7 @@ In addition to event-handling and test endpoints, the Automation & Scripting Ser
 - `ListScriptPatchStatuses(tenantId)` – lists known script patches and their status for a tenant so operators and tools can see which patches are eligible to be pinned.
 - `ScriptPatchStatusChanged` event – emitted whenever a patch transitions between lifecycle states for a tenant. Logging & Admin and Game Design subscribe to this event so UIs and dashboards stay in sync with runtime state.
 
-Game Session and Logging & Admin use these read-only APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a game (for example, `SetActiveScriptPatchVersion` or `RollbackScriptPatchVersion`) are defined on the Game Session or Logging & Admin APIs and are documented in the corresponding service architecture docs; when such an operation succeeds, those services emit a `ScriptPatchRollbackRequested` (for rollbacks) or equivalent status-change event that Automation & Scripting consumes to update per-tenant patch lifecycle state (including transitions to `ROLLED_BACK`). The Automation & Scripting Service only enforces that incoming events reference patches in a `READY` state and records lifecycle changes that authoritative control-plane services request.
+Game Session and Logging & Admin use these read-only APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface (and orchestrated by Logging & Admin) and must follow the API and event contracts in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` and the `ScriptPatchPinChanged` event). The Automation & Scripting Service uses pin-change events for visibility and admission alignment, but it does not become the source of truth for the pin; it enforces that incoming triggers reference patches that are `READY` for the tenant and records lifecycle changes that authoritative control-plane services request.
 
 ## Proto Files
 

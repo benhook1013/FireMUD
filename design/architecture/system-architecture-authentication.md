@@ -143,17 +143,17 @@ Login commands only carry account credentials (plus optional OTP). Accounts are 
 Binding an authenticated account to a specific tenant and character is modeled as a separate, explicit step from account login so that tenant authorization and billing rules are consistently enforced.
 
 - After `LOGIN` succeeds, the Game Session Service requires an explicit “enter game” flow using the canonical command:
-  - `ENTER_GAME <tenantIdOrSlug> [characterId]`
+  - `ENTER_GAME <tenantId> [characterId]`
   - `ENTER_GAME` (no args) is permitted only when the connection has an unambiguous, server-known selection hint (for example, a Telnet `SESSION <gameInstanceId> <tenantId>` envelope captured by the TCP Proxy Service on this connection and promoted as `X-Game-Instance-Id` / `X-Tenant-Id`, or a previously-selected tenant stored in the gameplay session binding).
   - The `characterId` argument is optional until character selection ships; in the interim, the Game Session Service binds to the default character identity (currently modeled as `playerId=accountId`) and treats the character identifier as an abstract, future-proof field.
   - The enter-game flow:
-    - Resolves the requested `tenantId` from the supplied identifier.
+    - Validates that the requested `tenantId` exists.
     - Verifies that the account is authorized to act on that `tenantId` using the Tenant Authorization Contract (roles from `globalRoles` and `scopedRoles`).
     - Consults the runtime entitlement contract `GetTenantEntitlements(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
     - Binds the socket to a gameplay session key for the chosen tenant and character identity, as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
-    - Mints a short-lived routing token bound to the selected `{tenantId, regionId, gameInstanceId}` and the authenticated account/character identity. This token is used only for gameplay WebSocket shard routing (not as authentication material) as described in [Gateway Architecture](./system-architecture-gateway.md#gameplay-shard-routing-contract).
+    - Ensures gameplay shard routing will land on the lease-owning Game Session shard for the character’s current `<tenantId, regionId>`. The routing-key transport (how Gateway determines the correct `<tenantId, regionId>` at WebSocket admission time) is tracked as an explicit open decision in [ADR 0006](./decisions/adr-0006-gameplay-shard-routing-key-transport.md) and must be implemented consistently across Gateway, Game Session, and first-party clients.
     - Returns canonical, stable error codes so clients can recover deterministically:
-      - `TENANT_NOT_FOUND` – the supplied identifier cannot be resolved to a tenant.
+      - `TENANT_NOT_FOUND` – the supplied `tenantId` does not exist.
       - `TENANT_ACCESS_DENIED` – the authenticated account is not authorized for the tenant under `scopedRoles` / `globalRoles`.
       - `TENANT_BILLING_BLOCKED` – the tenant is `suspended` or `canceled` and is not available for gameplay admission.
       - `TENANT_QUOTA_EXCEEDED` – entitlements allow gameplay but quota caps (for example maximum active sessions) would be exceeded.

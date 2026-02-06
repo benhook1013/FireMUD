@@ -26,8 +26,11 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
    - From a secure operator environment, apply the overlay (for example `kubectl apply -k k8s/overlays/prod`).
    - Treat the apply as an operational action that enacts the already-reviewed overlay change.
    - Record which overlay commit was applied so “what is deployed?” is answerable even when cluster state drifts:
-     - At minimum, capture the Git commit SHA and timestamp in the deployment notes/runbook record for the environment.
-     - Optionally, stamp the SHA into the cluster as an annotation (for example annotate the namespace or a dedicated ConfigMap) so operators can retrieve it via `kubectl` during incidents.
+     - Capture the Git commit SHA and timestamp in the deployment notes/runbook record for the environment.
+     - Stamp the SHA into the cluster so it is retrievable during incidents:
+       - Preferred: annotate the namespace with the overlay SHA:
+         - `kubectl annotate namespace firemud firemud.io/overlay-sha=<git-sha> --overwrite`
+       - Alternative: create/update a dedicated ConfigMap (for example `firemud-deploy-info`) that stores `overlay_sha` and `applied_at` as data keys.
 5. **Monitor Rollout**
    - Watch deployment rollout status for each updated service.
    - Verify pod readiness and liveness probes are passing.

@@ -74,7 +74,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
   annotations:
     summary: PostgreSQL backups have not succeeded recently
     description: No successful pg_dump backup has been recorded in the last 90 minutes. Investigate backup Jobs and storage endpoints.
@@ -86,7 +86,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
   annotations:
     summary: Backup verification has not succeeded recently
     description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
@@ -98,7 +98,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P1
     owner: platform
-    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
   annotations:
     summary: Tick pause window too long during backup
     description: The backup workflow is pausing ticks for longer than the expected budget. Investigate tick pause/resume controls and backup job behavior.

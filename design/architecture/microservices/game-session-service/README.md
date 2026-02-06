@@ -250,7 +250,7 @@ At the protocol level, commands are split into two groups:
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
-| `ENTER_GAME <tenantIdOrSlug> [characterId]` | Binds the authenticated connection to a tenant (and later a character) after `LOGIN`, enforcing tenant authorization and entitlements. | `ENTER_GAME tenant-abc` |
+| `ENTER_GAME <tenantId> [characterId]` | Binds the authenticated connection to a tenant (and later a character) after `LOGIN`, enforcing tenant authorization and entitlements. | `ENTER_GAME tenant-abc` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
@@ -277,7 +277,7 @@ Telnet and WebSocket clients share this line-based syntax, but Telnet sessions f
 
 **Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. Gameplay commands such as `LOOK` require a successful `ENTER_GAME` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
 
-After `LOGIN` succeeds, clients must issue `ENTER_GAME <tenantIdOrSlug> [characterId]` before any gameplay commands (such as `LOOK` or `SAY`). This enter-game step binds the authenticated connection to a tenant-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design. If a client attempts gameplay commands before entering a game, the service returns `ERROR GAME_NOT_ENTERED Use ENTER_GAME <tenantId> first` (or the equivalent canonical code) so clients can recover deterministically.
+After `LOGIN` succeeds, clients must issue `ENTER_GAME <tenantId> [characterId]` before any gameplay commands (such as `LOOK` or `SAY`). This enter-game step binds the authenticated connection to a tenant-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design. If a client attempts gameplay commands before entering a game, the service returns `ERROR GAME_NOT_ENTERED Use ENTER_GAME <tenantId> first` (or the equivalent canonical code) so clients can recover deterministically.
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
@@ -520,9 +520,7 @@ Each running game instance has a pinned `scriptPatchVersion` alongside its `runt
 - Script-generated commands accepted from the Automation & Scripting Service must carry the originating `scriptPatchVersion`, `scriptId`, and `scriptEventId`.
 - On execution, Game Session enforces a version fence: if a queued command’s `scriptPatchVersion` does not match the instance’s currently pinned value, it must not be executed and the drop must be observable for operators.
 
-Control-plane operations that change the pinned patch (used by Logging & Admin tooling) are admin-only and idempotent. Conceptually these include APIs such as `SetActiveScriptPatchVersion(tenantId, gameId, scriptPatchVersion)` and `RollbackScriptPatchVersion(tenantId, gameId, targetScriptPatchVersion)`. These operations must be defined explicitly in the Game Session control-plane API surface (they are not part of the minimal `protos/game-session/v1/game_session_service.proto` today).
-
-When such an operation succeeds, Game Session emits a status-change event (for example `ScriptPatchRollbackRequested` or an equivalent patch pinning event) so Automation & Scripting can update patch lifecycle state and adjust admission behavior.
+Control-plane operations that change the pinned patch (used by Logging & Admin tooling) are admin-only and idempotent. Their required request/response fields and the associated event contracts are specified in `design/architecture/system-architecture-scripting-control-plane-api.md`. These APIs are not part of the minimal `protos/game-session/v1/game_session_service.proto` today and must be added explicitly to the control-plane surface over time.
 
 For cross-service invariants, see `design/architecture/system-architecture-scripting-contracts.md`.
 

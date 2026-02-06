@@ -126,28 +126,26 @@ If PROXY protocol is not enabled (or source IP is not preserved), treat per-IP l
 
 ## Monitoring & Logging
 
-FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes. The Docker Compose environment omits these components by default, but operators may run a small local observability stack for debugging when needed (see `system-architecture-logging-monitoring.md` for expectations and signal conventions).
-Example manifests for the collector and dashboards live under [`k8s/monitoring`](../../../k8s/monitoring).
+FireMUD relies on a consistent observability stack across environments. Expectations for log fields, metric naming, and alert labels live in [Logging & Monitoring](../system-architecture-logging-monitoring.md).
 
-Docker Compose and Kubernetes rely on the following monitoring tools:
+### Kubernetes (Default)
 
-### Monitoring Stack
+The full observability stack is deployed in Kubernetes. Example manifests for the collector, Jaeger, and exporters live under [`k8s/monitoring`](../../../k8s/monitoring).
+
+Typical components:
 
 - Prometheus scrapes metrics from all services.
 - Grafana dashboards visualize performance metrics.
 - Alertmanager notifies on failures or latency spikes.
 - OpenTelemetry spans are emitted by services for distributed tracing.
 - Jaeger stores these traces for debugging and analysis.
+- Fluent Bit ships logs to Elasticsearch; Kibana is used for log queries.
 
-### Log Aggregation
+### Docker Compose (Optional)
 
-- **Fluent Bit** agents collect container logs from each pod.
-- **Elasticsearch** stores structured log data for long-term retention.
-- **Kibana** dashboards allow operators to query logs using identifiers such as `traceId` and `playerId`.
-  Filtering by `playerId` requires logging the active player context.
-  Log indices are kept for **14 days** in development and **90 days** in production by default.
+The Docker Compose environment omits the full observability stack by default. Operators may run a small local observability stack for debugging when needed, but Docker Compose is not treated as the canonical, prod-like observability deployment.
 
-See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for details on the observability stack.
+See [Logging & Monitoring](../system-architecture-logging-monitoring.md) for the signal conventions that apply regardless of environment.
 
 ---
 

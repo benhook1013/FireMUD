@@ -67,5 +67,6 @@ Dry-run executions are privileged and must not destabilize production:
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`
 - `design/architecture/system-architecture-scripting-quotas-and-operations.md`
 - `design/architecture/system-architecture-scripting-observability-contract.md`
+- `design/architecture/system-architecture-scripting-control-plane-api.md`
 - `design/architecture/microservices/automation-scripting-service/README.md`
 - `design/architecture/microservices/game-session-service/README.md`

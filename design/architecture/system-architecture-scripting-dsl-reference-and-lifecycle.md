@@ -463,6 +463,8 @@ Common outcome classes include:
 
 Outcome taxonomy must distinguish “DSL evaluated” from “commands were accepted into the tick system”. Do not record `success` for a trigger if the resulting commands were not accepted into the tick queues.
 
+For audit records, outcomes are **stage-aware** (admission vs DSL evaluation vs work-item persistence vs tick handoff) and are recorded as `finalStage` + `finalOutcome` / `finalReason` (and optionally a per-stage breakdown) as specified in `design/architecture/system-architecture-scripting-observability-contract.md`.
+
 Retry behavior:
 
 - Logical failures (`sandbox_error`, `validation_error`, `quota_denied`, `disabled_due_to_errors`, `version_unavailable`) are treated as **final** for a trigger; the scheduler does not re-run the script body for the same `scriptEventId`.

@@ -4,6 +4,8 @@ This document is the **hub** for FireMUD’s scripting and automation architectu
 
 For cross-service invariants (especially tick queue ownership and rollback safety), also treat `design/architecture/system-architecture-scripting-contracts.md` as a tie-breaker when other docs disagree.
 
+For control-plane operations (pinning/rollback of `scriptPatchVersion`, pause/resume, and required status events), see `design/architecture/system-architecture-scripting-control-plane-api.md`.
+
 It complements:
 
 - [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md)

@@ -479,7 +479,7 @@ Operator actions:
 3. Roll back the active script patch if necessary
    - If regressions are widespread or difficult to isolate, use Logging & Admin or Game Session tooling to repin the game back to the previous known-good `scriptPatchVersion` for the affected tenant and game instance. Concretely:
      - Query the Automation & Scripting Service via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` (or consume `ScriptPatchStatusChanged` events) to confirm which patches are `READY` or `FAILED` for the tenant.
-     - Call a control-plane API on the Game Session or Logging & Admin service such as `SetActiveScriptPatchVersion(tenantId, gameId, scriptPatchVersion)` or `RollbackScriptPatchVersion(tenantId, gameId, targetScriptPatchVersion)` to update the pinned version for the affected game instances.
+     - Call the Game Session control-plane APIs to update the pin (for example `SetPinnedScriptPatchVersion` or `RollbackScriptPatchVersion`) following the contract in `design/architecture/system-architecture-scripting-control-plane-api.md`.
    - Repinning does **not** attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch, and at-most-once guarantees for past triggers are preserved.
    - Repinning must also ensure rollback safety:
      - Queued automation work items and staging entries that carry the rolled-back `scriptPatchVersion` are drained/purged so they cannot enqueue or execute after repin.

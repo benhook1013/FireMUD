@@ -38,7 +38,8 @@
 | Command parsing and alias resolution | | | | | | ✔ | | | | | |
 | Action execution (movement, attack, etc.) | | | | | | ✔ | | | | | |
 | Progression logic (XP, levels, effects) | | | | | | ✔ | | | | | |
-| Environmental effects (weather, etc.) | | | | | | ✔ | | | | | |
+| Weather/ambient state persistence (weather, doors, hazards) | | ✔ | | | | | | | | | |
+| Environmental effects computation (weather, hazards, modifiers) | | | | | | ✔ | | | | | |
 | Economy logic (trading, shops, pricing) | | | | | | ✔ | | | | | |
 | AI-driven actions and behaviors | | | | | | | ✔ | | | | |
 | Triggered script execution | | | | | | | ✔ | | | | |

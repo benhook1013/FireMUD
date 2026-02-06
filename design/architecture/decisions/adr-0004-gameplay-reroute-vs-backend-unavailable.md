@@ -1,0 +1,45 @@
+# ADR 0004: Gameplay `reroute` vs `backend_unavailable` Close Taxonomy
+
+## Status
+
+Accepted
+
+## Context
+
+Multiple architecture documents used inconsistent client-visible outcomes for lease moves and shard handoff events:
+
+- Some sections treated lease moves as `1013/backend_unavailable`, which conflates normal shard handoff with real outages and pushes clients into long exponential backoff.
+- Other sections implied a distinct “reroute” category but did not standardize the close reason or how Telnet disconnects map to it.
+
+The system needs a deterministic, operator-visible way to distinguish “move to a new shard owner” from “core gameplay backend is down.”
+
+## Decision
+
+FireMUD standardizes two distinct `1013` categories for gameplay connections:
+
+- `1013/reroute`
+  - Used when the gameplay shard mapping for a session’s `<tenantId, regionId>` has moved (lease transfer, planned drain, shard handoff).
+  - Intended semantics: reconnect promptly so the next connection is admitted to the new shard owner.
+  - Client guidance: use only a small randomized delay (for example 0–250ms) to avoid stampedes; do not apply long exponential backoff solely due to reroute.
+  - Telnet mapping: TCP Proxy emits a Telnet disconnect reason token `reroute`.
+
+- `1013/backend_unavailable`
+  - Used only for sustained gameplay-backend outages or overload conditions beyond the configured grace window.
+  - Intended semantics: core gameplay admission is currently unhealthy; clients should reconnect with exponential backoff.
+  - Telnet mapping: TCP Proxy emits a Telnet disconnect reason token `backend_unavailable`.
+
+Spring Cloud Gateway is responsible for emitting the client-visible WebSocket close frame and for metric-tagging the category. Game Session signals reroute intent via upstream behavior (for example closing the upstream WebSocket with `1013/reroute` or returning explicit reroute metadata on mapping-sensitive operations).
+
+## Consequences
+
+- Metrics, dashboards, and runbooks must treat `reroute` volume as a normal scaling/handoff signal, and `backend_unavailable` as an outage signal.
+- Any implementation that currently uses `backend_unavailable` to represent lease moves must be updated to emit `reroute` instead.
+
+## References
+
+- `design/architecture/system-architecture-gateway.md`
+- `design/architecture/system-architecture-reconnection.md`
+- `design/architecture/system-architecture-protocol-bridging.md`
+- `design/architecture/system-architecture-overview.md`
+- `design/architecture/system-architecture-telnet-degraded-runbook.md`
+

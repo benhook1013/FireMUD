@@ -33,7 +33,7 @@ Logging & Admin is the operator-facing control plane for:
 
 - Enabling/disabling and draining automation scripts (through the Game Design and Automation & Scripting control-plane APIs).
 - Enabling/disabling and rolling back plugins (as described in `design/architecture/microservices/game-design-service/modding-framework.md`).
-- Repinning and rolling back `scriptPatchVersion` for running game instances by calling Game Session control-plane APIs (for example `SetActiveScriptPatchVersion` / `RollbackScriptPatchVersion`) and surfacing the results alongside audit and automation health signals.
+- Repinning and rolling back `scriptPatchVersion` for running game instances by calling the Game Session control-plane APIs and following the rollback protocol specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
 
 Logging & Admin does not write to Redis directly. It drives all runtime changes through documented service APIs and records audit trails so operators can explain why automation behavior changed.
 

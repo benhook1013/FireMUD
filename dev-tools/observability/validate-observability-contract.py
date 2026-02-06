@@ -29,6 +29,34 @@ def _extract_fenced_blocks(markdown: str, language: str) -> list[str]:
     pattern = re.compile(rf"```{re.escape(language)}\n(.*?)\n```", re.DOTALL)
     return [match.group(1) for match in pattern.finditer(markdown)]
 
+def _github_anchor_from_heading(heading: str) -> str:
+    base = heading.strip().lower()
+    base = re.sub(r"[`*_~]", "", base)
+    base = re.sub(r"[^a-z0-9\s-]", "", base)
+    base = re.sub(r"\s+", "-", base)
+    base = re.sub(r"-+", "-", base)
+    return base
+
+
+def _github_anchors_for_markdown(path: Path) -> set[str]:
+    used: dict[str, int] = {}
+    anchors: set[str] = set()
+    for line in _read_text(path).splitlines():
+        match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if not match:
+            continue
+        heading = match.group(2).strip()
+        base = _github_anchor_from_heading(heading)
+        if base in used:
+            suffix = used[base]
+            used[base] = suffix + 1
+            anchor = f"{base}-{suffix}"
+        else:
+            used[base] = 1
+            anchor = base
+        anchors.add(anchor)
+    return anchors
+
 
 def _split_alert_rules(yaml_text: str) -> list[list[str]]:
     lines = yaml_text.splitlines()
@@ -132,6 +160,15 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             runbook = labels.get("runbook", "")
             if not runbook.startswith("design/") or ".md" not in runbook or "#" not in runbook:
                 findings.append(Finding(path=path, message=f"alert rule runbook label must be a design doc anchor (design/...md#section); got {runbook!r}"))
+            else:
+                runbook_path_s, anchor = runbook.split("#", 1)
+                runbook_path = REPO_ROOT / runbook_path_s
+                if not runbook_path.exists():
+                    findings.append(Finding(path=path, message=f"alert rule runbook file does not exist: {runbook!r}"))
+                else:
+                    anchors = _github_anchors_for_markdown(runbook_path)
+                    if anchor not in anchors:
+                        findings.append(Finding(path=path, message=f"alert rule runbook anchor does not exist: {runbook!r}"))
 
             alert_class = labels.get("alert_class")
             if alert_class == "test" and severity != "P2":

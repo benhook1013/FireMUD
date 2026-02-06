@@ -47,7 +47,11 @@ Operational constraints:
 - Tick pausing is part of the production backup path, so it must be bounded and observable. Backup tooling should track:
   - How long it takes for a scope to transition to `PAUSED` (pause latency).
   - How long the scope remains paused (pause duration), even though the dump itself does not require ticks to stay paused.
-- If a pause does not reach `PAUSED` within a small, documented budget (typically on the order of a small number of tick intervals), the backup Job should fail fast (skip the dump) and alert operators rather than silently holding the game in a paused state or producing an inconsistent backup.
+- Pause scope should be limited to the smallest safe blast radius (prefer tenant- or region-scoped pausing over global pausing) so backups do not create unnecessary player impact.
+- If a pause does not reach `PAUSED` within a documented budget, the backup Job should fail fast (skip the dump) and alert operators rather than silently holding the game in a paused state or producing an inconsistent backup.
+  - Recommended budget: `max_pause_wait = max(10s, 2 * tick_interval_ms)` for the affected scope.
+  - Recommended alert threshold: page if `max_pause_wait` is exceeded for any production backup attempt, or if the scope remains `PAUSED` for longer than a small multiple of `max_pause_wait` (indicating the resume step failed).
+  - Backup tooling should expose pause metrics with unambiguous units (for example `backup_tick_pause_wait_seconds` and `backup_tick_pause_duration_seconds`) and include `tenantId`/`regionId` labels only when the pause scope is already bounded to avoid high cardinality.
 
 For convenience, `dev-tools/backups/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
 

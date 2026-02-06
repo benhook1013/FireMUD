@@ -92,7 +92,7 @@ groups:
           severity: P1
           service: tcp-proxy-service
           owner: platform
-          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend--partial-disconnect-symptoms
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend-partial-disconnect-symptoms
         annotations:
           summary: "TCP Proxy NotifyDisconnect failures observed"
           description: |
@@ -108,7 +108,7 @@ groups:
           severity: P1
           service: tcp-proxy-service
           owner: platform
-          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend--partial-disconnect-symptoms
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend-partial-disconnect-symptoms
         annotations:
           summary: "Spike in gRPC app errors on TCP Proxy paths"
           description: |

@@ -73,7 +73,7 @@ services so Docker Compose environments work out of the box.
 - `/api/social/**` → Social Groups Service.
 - `/api/world/**` → World Management Service.
 
-Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions follow identical login and reconnection flows: the Game Session Service always sees the same `SESSION` envelope headers and `LOGIN`/gameplay commands regardless of transport. For the full Telnet protocol rules, including optional `SESSION` usage, see the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
+Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions share the same login and reconnection flow once connected: the Game Session Service sees the same gameplay command stream regardless of transport, while the Telnet path may additionally provide optional `SESSION`-derived headers as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
 
 ## Dependencies
 

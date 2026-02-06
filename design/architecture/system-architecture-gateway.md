@@ -137,6 +137,7 @@ Gateway is the gameplay admission surface for `/ws/game/**`, but it is not the o
 - **Game Session owns sharding state** – Game Session owns lease acquisition/transfer and publishes the routing view in Coordination Redis.
 - **Gateway consumes (does not invent) mapping** – Gateway reads the published mapping and routes each gameplay WebSocket connection deterministically to the shard target for that `<tenantId, regionId>`.
 - **No independent routing plane** – Gateway must not introduce a separate routing plane, connection-affinity rules, or gateway-minted shard tokens. Any shard-hint material provided by clients (for example Telnet `SESSION` envelopes promoted into headers) remains advisory and is validated by Game Session.
+- **Lease-move semantics** – When the mapping for an established gameplay session moves, Gateway closes the client WebSocket with `1013/reroute` so the client reconnects and is admitted to the new shard owner. `1013/backend_unavailable` remains reserved for sustained outages rather than normal handoff.
 
 ### WebSocket Liveness and Idle Timeouts
 
@@ -174,9 +175,9 @@ Spring Cloud Gateway applies a small grace window before closing WebSocket sessi
 - Gateway starts the backend-unavailable timer when a route first enters this “all failed” state. Within the `firemud.gateway.backendUnavailableGraceMs` window, Gateway keeps existing WebSocket sessions open so brief flaps do not force every idle client to reconnect immediately.
 - When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs` without any successful calls or healthy checks, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable` and reject new `/ws/game/**` connections with HTTP `503` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
 - Load balancers or CDNs in front of Gateway should be configured with idle and failure timeouts that do not undercut this grace window; otherwise, they may terminate connections before Gateway can emit the canonical `backend_unavailable` signal.
- - **Established-session input handling while backend is unavailable** – Gateway is a WebSocket proxy and does not generate gameplay-protocol error frames when the upstream Game Session hop is down. To avoid silently discarding gameplay commands while a connection appears healthy:
-   - If an established `/ws/game/**` session is in the backend-unavailable grace window and the client attempts to send a gameplay message while the upstream is unavailable, Gateway closes that session immediately with `1013/backend_unavailable` (and logs/records metrics for the close reason).
-   - If the backend-unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs`, Gateway closes remaining affected sessions with `1013/backend_unavailable` even if they are idle, so clients receive a clear canonical signal instead of sitting on half-open connections indefinitely.
+- **Established-session input handling while backend is unavailable** – Gateway is a WebSocket proxy and does not generate gameplay-protocol error frames when the upstream Game Session hop is down. To avoid silently discarding gameplay commands while a connection appears healthy:
+  - If an established `/ws/game/**` session is in the backend-unavailable grace window and the client attempts to send a gameplay message while the upstream is unavailable, Gateway closes that session immediately with `1013/backend_unavailable` (and logs/records metrics for the close reason).
+  - If the backend-unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs`, Gateway closes remaining affected sessions with `1013/backend_unavailable` even if they are idle, so clients receive a clear canonical signal instead of sitting on half-open connections indefinitely.
 
 ### Gateway Restart Semantics
 

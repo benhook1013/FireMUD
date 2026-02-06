@@ -76,7 +76,7 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
   - Instrumentation: emitted by Gateway (and optionally the TCP Proxy for Telnet) with labels `{command, tenantId, regionId}`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
 - **Telnet/WebSocket path availability**
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
-  - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window; sustained deviations are treated as P0 incidents for the affected entry path.
+  - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window, evaluated per `tenantId` and `path`; sustained deviations are treated as P0 incidents for the affected entry path.
   - Instrumentation:
     - Edge services (TCP Proxy and Gateway) must emit `entrypath_connection_attempts_total{tenantId,path,outcome}` where:
       - `path` is a bounded enum (for example `telnet` or `websocket`).
@@ -94,6 +94,19 @@ Environment and service docs that introduce new player-facing flows should:
 - Add new SLIs to this section so that operators have a single, authoritative list of player-centric targets.
 
 Grafana dashboards under `design/observability/grafana` include a dedicated “Player Experience” dashboard that surfaces these SLIs for each environment and links back to the relevant runbooks when SLOs are breached.
+
+### Player Experience Metrics Catalog (Contract)
+
+The metrics below are treated as the canonical Prometheus-facing shapes for player experience SLIs/SLOs. Services may emit additional drilldown metrics, but dashboards and alerts should prefer these names and label sets:
+
+- Login:
+  - `login_requests_total{tenantId,regionId,outcome}` where `outcome` is a bounded enum (for example `success`, `invalid_credentials`, `rate_limited`, `upstream_error`, `timeout`, `unknown`).
+- Commands:
+  - `command_end_to_end_latency_ms_bucket{tenantId,regionId,command,le}` with `command` drawn from a documented, bounded command set for core SLO coverage.
+- Entry-path availability:
+  - `entrypath_connection_attempts_total{tenantId,path,outcome}` with bounded enums for `path` and `outcome` as described above.
+- Chat:
+  - `chat_delivery_latency_ms_bucket{tenantId,channel_type,le}` with `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
 
 ### Degraded Modes and Observability Dependencies
 
@@ -154,7 +167,7 @@ Logging & Admin should:
 
 For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
 
-- Live triggers and automation work are reported via metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`, as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+- Live triggers and automation work are reported via metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`, as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md` and `design/architecture/system-architecture-scripting-observability-contract.md`.
 - Dry-run and test executions are tracked separately via `automation_script_test_runs_total` and `automation_script_test_runtime_seconds` so operators can see when validation tools are consuming significant sandbox resources even though they bypass mainline ScriptQuota and tenant automation budgets.
 - Do not label metrics with high-cardinality identifiers such as `scriptEventId`; use logs/traces and `script_event_audit` queries for per-event correlation.
 

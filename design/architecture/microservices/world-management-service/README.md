@@ -87,11 +87,11 @@ All spatial effects must carry the target `RoomInstanceRef` and a canonical tick
 - All world tables are keyed by `tenantId`; background jobs and gRPC queries
   include this filter so one game's world data never mixes with another's. See
   [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
-- Gameplay gRPC operations do not validate JWTs directly. The Game Session
-  Service binds player identity from Redis into `SessionContext`. It may request
-  an updated JWT from the Account Service when roles change but does not perform
-  token validation during gameplay. All traffic still uses mutual TLS as described in the
-  [Security Architecture](../../system-architecture-security.md).
+- Runtime gameplay gRPC operations do not validate JWTs directly. The Game Session Service binds player identity from Redis into `SessionContext`. It may request an updated JWT from the Account Service when roles change but does not perform token validation during gameplay. All traffic still uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
+- Design-time writes are a separate surface:
+  - World Management exposes **design APIs** used by the Game Design Service to mutate Draft template rows keyed by `(tenantId, versionId)`.
+  - These design APIs must validate JWTs and enforce designer/admin authorization for the target `tenantId` and Draft `versionId` (consistent with the Game Design Service control-plane auth model).
+  - Design APIs must reject any attempt to write templates for Published/Active/Failed versions.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints include the shared `LoggingInterceptor`, `MetricsInterceptor`, and
   `TracingInterceptor` so logs, metrics, and traces are emitted consistently.
@@ -317,6 +317,14 @@ Expected response:
   "message": "pong"
 }
 ```
+
+#### Design-Time APIs
+
+World Management also exposes **design-time** APIs used by the Game Design Service to write Draft template rows keyed by `(tenantId, versionId)` (for example creating/updating `room_template` rows and version-scoped topology bindings).
+
+- Auth: design-time APIs must validate JWTs and enforce designer/admin authorization for the target `tenantId`.
+- Mutability: design-time writes are allowed only for Draft versions; attempts to write templates for Published/Active/Failed versions must fail fast.
+- Runtime isolation: runtime gameplay flows and world-creation Sagas must never call design APIs.
 
 ### World Events
 
