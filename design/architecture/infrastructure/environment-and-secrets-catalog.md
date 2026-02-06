@@ -204,6 +204,8 @@ Published game assets are uploaded to an S3-compatible bucket. The following var
 | `ASSET_STORE_ACCESS_KEY` | Access key credential | *(none)* |
 | `ASSET_STORE_SECRET_KEY` | Secret key credential | *(none)* |
 
+In Kubernetes environments, these values should be sourced from a per-environment Secret and must not be shared between staging and production. After any cluster restore, operators should confirm the restored environment is bound to the correct asset-store credentials and that staging cannot publish to production buckets.
+
 ---
 
 ## Backup & Restore Variables
@@ -215,6 +217,8 @@ Operational scripts and CronJobs rely on the following variables when uploading 
 | `PG_DUMP_BUCKET` | Object storage bucket for pg_dump files | *(none)* |
 | `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
 | `FIREMUD_K8S_NAMESPACE` | Target namespace for restore scripts | `firemud` |
+
+In Kubernetes environments, object-store credentials should be stored in per-environment Secrets and must not be shared between staging and production. `PG_DUMP_ENDPOINT` is required only for S3-compatible endpoints such as MinIO; when unset, tooling uses the AWS default endpoint behavior.
 
 See `../system-architecture-backup-recovery.md` for schedules and retention policies.
 
