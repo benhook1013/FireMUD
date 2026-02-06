@@ -33,6 +33,8 @@ public class GatewayHeaderTrustProperties {
 
   public static final class TcpProxy {
     private List<String> trustedClientCertFingerprintsSha256 = new ArrayList<>();
+    private List<String> trustedClientCertDnsSans = new ArrayList<>();
+    private List<String> trustedClientCertUriSans = new ArrayList<>();
     private boolean allowInsecureHeadersFromTrustedCidrs;
     private List<String> insecureTrustedCidrs = new ArrayList<>();
 
@@ -46,6 +48,22 @@ public class GatewayHeaderTrustProperties {
           trustedClientCertFingerprintsSha256 == null
               ? new ArrayList<>()
               : trustedClientCertFingerprintsSha256;
+    }
+
+    public List<String> getTrustedClientCertDnsSans() {
+      return trustedClientCertDnsSans;
+    }
+
+    public void setTrustedClientCertDnsSans(List<String> trustedClientCertDnsSans) {
+      this.trustedClientCertDnsSans = trustedClientCertDnsSans == null ? new ArrayList<>() : trustedClientCertDnsSans;
+    }
+
+    public List<String> getTrustedClientCertUriSans() {
+      return trustedClientCertUriSans;
+    }
+
+    public void setTrustedClientCertUriSans(List<String> trustedClientCertUriSans) {
+      this.trustedClientCertUriSans = trustedClientCertUriSans == null ? new ArrayList<>() : trustedClientCertUriSans;
     }
 
     public boolean isAllowInsecureHeadersFromTrustedCidrs() {
@@ -65,4 +83,3 @@ public class GatewayHeaderTrustProperties {
     }
   }
 }
-
