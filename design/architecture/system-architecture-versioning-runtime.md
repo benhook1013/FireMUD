@@ -96,6 +96,13 @@ reloaded in memory. The Game Session Service records the active
 `script_patch_version` with each running game instance for recovery. See
 [Scripting & Automation](./system-architecture-scripting.md) for more details.
 
+Patch selection must be explicit and pinned:
+
+- Runtime must never implicitly select “latest READY patch” for an instance. The pinned `scriptPatchVersion` for a running `(tenantId, gameInstanceId)` is the only script patch that may be referenced by gameplay triggers.
+- Plugin enablement and active `pluginVersionId` selection must also be explicit per `(tenantId, gameInstanceId)`; automation must not implicitly activate “latest” plugin versions for a running instance.
+- Pin/rollback APIs and their required events are specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
+- Trigger Identity required fields (including `gameInstanceId` and when `regionEpoch` is required) are specified in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
+
 ### Cross-Asset Version Cohesion
 
 Several kinds of design-time assets participate in a published game version:

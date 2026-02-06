@@ -53,7 +53,9 @@ class TcpProxyGrpcServiceTest {
         NotifyDisconnectResponse.newBuilder()
             .setError(ErrorDetail.newBuilder().setCode("OK").setMessage("ok").build())
             .build();
-    Mockito.when(eventService.notifyDisconnect(Mockito.anyString(), Mockito.anyString()))
+    Mockito.when(
+            eventService.notifyDisconnect(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(upstream);
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -63,6 +65,8 @@ class TcpProxyGrpcServiceTest {
         net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.newBuilder()
             .setSessionId("abc")
             .setTenantId("tenant")
+            .setProxyConnectionId("conn-1")
+            .setDisconnectSequence(1)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -87,7 +91,9 @@ class TcpProxyGrpcServiceTest {
   void notifyDisconnectReturnsInternalOnFailure() {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
-    Mockito.when(eventService.notifyDisconnect(Mockito.anyString(), Mockito.anyString()))
+    Mockito.when(
+            eventService.notifyDisconnect(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenThrow(new RuntimeException("boom"));
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -97,6 +103,8 @@ class TcpProxyGrpcServiceTest {
         net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.newBuilder()
             .setSessionId("abc")
             .setTenantId("tenant")
+            .setProxyConnectionId("conn-1")
+            .setDisconnectSequence(1)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -120,7 +128,9 @@ class TcpProxyGrpcServiceTest {
   void notifyDisconnectInjectsErrorDetailWhenDomainSkipsIt() {
     PingService pingService = Mockito.mock(PingService.class);
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
-    Mockito.when(eventService.notifyDisconnect(Mockito.anyString(), Mockito.anyString()))
+    Mockito.when(
+            eventService.notifyDisconnect(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(NotifyDisconnectResponse.getDefaultInstance());
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -130,6 +140,8 @@ class TcpProxyGrpcServiceTest {
         net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.newBuilder()
             .setSessionId("abc")
             .setTenantId("tenant")
+            .setProxyConnectionId("conn-1")
+            .setDisconnectSequence(1)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -157,7 +169,9 @@ class TcpProxyGrpcServiceTest {
         NotifyDisconnectResponse.newBuilder()
             .setError(ErrorDetail.newBuilder().setCode("OK").setMessage("ok").build())
             .build();
-    Mockito.when(eventService.notifyDisconnect(Mockito.anyString(), Mockito.anyString()))
+    Mockito.when(
+            eventService.notifyDisconnect(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(upstream);
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -166,6 +180,8 @@ class TcpProxyGrpcServiceTest {
         net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.newBuilder()
             .setSessionId("sess-123")
             .setTenantId("tenant-xyz")
+            .setProxyConnectionId("conn-1")
+            .setDisconnectSequence(1)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -180,7 +196,7 @@ class TcpProxyGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    Mockito.verify(eventService).notifyDisconnect("sess-123", "tenant-xyz");
+    Mockito.verify(eventService).notifyDisconnect("sess-123", "tenant-xyz", "conn-1", 1L);
   }
 
 
@@ -192,7 +208,9 @@ class TcpProxyGrpcServiceTest {
         NotifyDisconnectResponse.newBuilder()
             .setError(ErrorDetail.newBuilder().setMessage("").build())
             .build();
-    Mockito.when(eventService.notifyDisconnect(Mockito.anyString(), Mockito.anyString()))
+    Mockito.when(
+            eventService.notifyDisconnect(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(upstream);
 
     TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
@@ -202,6 +220,8 @@ class TcpProxyGrpcServiceTest {
         net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.newBuilder()
             .setSessionId("abc")
             .setTenantId("tenant")
+            .setProxyConnectionId("conn-1")
+            .setDisconnectSequence(1)
             .build(),
         new StreamObserver<>() {
           @Override

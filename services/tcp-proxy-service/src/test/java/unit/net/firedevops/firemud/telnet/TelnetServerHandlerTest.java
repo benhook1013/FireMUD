@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -15,6 +16,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.concurrent.DefaultEventExecutor;
 import io.netty.util.concurrent.EventExecutor;
@@ -638,7 +640,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
-            (url, ip, session, tenant, listener) -> {
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
               listener.onOpen(new RecordingWebSocket());
               return CompletableFuture.completedFuture(new RecordingWebSocket());
             },
@@ -655,13 +657,14 @@ class TelnetServerHandlerTest {
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.channelInactive(ctx);
 
-    Mockito.verify(eventService, Mockito.timeout(500)).notifyDisconnect("sess-1", "tenant-1");
+    Mockito.verify(eventService, Mockito.timeout(500))
+        .notifyDisconnect(eq("sess-1"), eq("tenant-1"), anyString(), anyLong());
     executor.shutdownGracefully();
   }
 
 
   @Test
-  void websocketDropsIncreaseBackoffAndMetrics() {
+  void gatewayDisconnectFailClosesTelnet() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AtomicInteger connectAttempts = new AtomicInteger();
     AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
@@ -694,7 +697,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
-            (url, ip, session, tenant, listener) -> {
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
               listenerRef.set(listener);
               if (connectAttempts.getAndIncrement() == 0) {
                 RecordingWebSocket ws = new RecordingWebSocket();
@@ -710,10 +713,13 @@ class TelnetServerHandlerTest {
             0);
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture future = mock(ChannelFuture.class);
+    when(future.addListener(any())).thenReturn(future);
     Channel channel = mock(Channel.class);
     when(ctx.channel()).thenReturn(channel);
     when(ctx.executor()).thenReturn(executor);
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(future);
 
     handler.channelActive(ctx);
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
@@ -721,22 +727,8 @@ class TelnetServerHandlerTest {
     WebSocket.Listener listener = listenerRef.get();
     listener.onClose(initialSocket.get(), 1001, "closing");
 
-    handler.channelRead0(ctx, "move");
-    handler.channelRead0(ctx, "attack");
-    assertEquals(2, handler.getBufferedSize());
-
-    ScheduledTask firstReconnect = takeReconnectTask(scheduledTasks);
-    assertEquals(TimeUnit.SECONDS.toMillis(1), firstReconnect.delayMillis());
-    firstReconnect.command().run();
-
-    ScheduledTask secondReconnect = takeReconnectTask(scheduledTasks);
-    assertEquals(TimeUnit.SECONDS.toMillis(2), secondReconnect.delayMillis());
-    assertEquals(2, handler.getBufferedSize());
-
-    assertEquals(2.0, registry.counter("tcpproxy.websocket.reconnects").count());
-    double totalMillis =
-        registry.get("tcpproxy.websocket.reconnect.delay").timer().totalTime(TimeUnit.MILLISECONDS);
-    assertEquals(TimeUnit.SECONDS.toMillis(3), totalMillis, 0.5);
+    verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
+    verify(future).addListener(any());
   }
 
 

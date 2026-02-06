@@ -83,13 +83,14 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
 - The event stream is a **best-effort coordination structure**, not a durable log of record:
   - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}`.
   - Production-like profiles that persist offsets use **Redis Streams** for this prefix so consumers can resume from an offset; pub/sub is reserved for fire-and-forget observers that never track offsets or history.
+  - Producers must cap stream retention (for example via `XADD ... MAXLEN ~ tick_events_maxlen`) so `tick-events:*` cannot grow without bound; consumers must treat “offset too old / trimmed” as normal truncation and re-bootstrap from the heartbeat/RegionStatus baseline.
   - Events may be dropped, duplicated, or reordered relative to the heartbeat; correctness must not rely on seeing every past event.
   - Events represent **tick start notifications** (a “tick began” signal), not a commit guarantee:
     - A tick may begin and later be retried or abandoned due to failures; consumers must use the heartbeat/RegionStatus as the commit watermark.
   - It is classified as **reset-tolerant** in the Redis reset policy matrix: region/tenant/cluster resets may drop both the event stream and any stored offsets without violating correctness.
   - Consumers must treat missing or truncated history as a signal to re-establish their baseline from the canonical gRPC heartbeat and domain state rather than assuming every past event is available.
 
-This event stream powers “every N ticks” scheduling in Automation & Scripting, reconnection timer replay hints, and other out-of-band reporting. Tick execution itself never depends on these observers.
+This event stream is an observer/wakeup hint used for reconnection timer replay hints and other out-of-band reporting. “Every N ticks” scheduling correctness comes from the committed heartbeat/RegionStatus timeline plus durable PostgreSQL schedules; tick events may reduce latency by prompting quicker work discovery, but missing or duplicated events must not change which schedules eventually fire.
 
 Durable automation schedules and quotas live in PostgreSQL (see the scripting DSL and Automation & Scripting service docs); Redis structures such as `tick-events:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` are coordination hints only. Losing or resetting those keys must not change which automation jobs are eventually executed, only when they are next discovered.
 
@@ -109,7 +110,7 @@ For any consumer or operator that needs to locate “where a region is” on the
   - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
   - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
   - Backlog indicators (optional but recommended): retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
-  - Update rule: `lastCommittedTickId` advances only after a tick is committed; it is monotonic within an epoch and resets only when `regionEpoch` is bumped by a scoped reset or explicit timeline-severing maintenance.
+  - Update rule: `lastCommittedTickId` advances only after a tick is committed; it is monotonic within an epoch and resets only when `regionEpoch` is bumped by a scoped reset or explicit timeline-severing maintenance. In steady state it advances by exactly `+1` per committed tick; any “fast-forward” is allowed only via explicit, audited maintenance tooling and must never regress within an epoch.
 - **Follow** via streaming heartbeats:
   - After bootstrapping, consumers attach to `StreamTickHeartbeats` and treat the combination of the bootstrap status and the live heartbeat as the authoritative progression of the timeline.
   - If the heartbeat stream drops or a reset bumps `regionEpoch`, consumers use the new `(regionEpoch, tickId)` from the stream plus durable state to re-establish their position.
@@ -294,6 +295,7 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 - Stored and scheduled via Redis timer keys.
 - Aligned with the tick heartbeat and tick cadence.
 - Subject to time-scaling rules that speed up or slow down perceived time while preserving ordering.
+- Evaluated against absolute wall-clock `due_ms` values using caller-supplied `now_ms` in Lua (never Redis `TIME`); changing `tick_interval_ms` does not rescale already-scheduled timers.
 
 Tick-region timers and retry queues are **volatile coordination structures**, not durable schedules. After coordination resets or data loss, only timers/schedules that are also represented durably elsewhere (for example PostgreSQL-backed automation schedules or other explicit domain state) are expected to be recovered or re-derived. Gameplay features that require timers to survive resets must store the underlying intent durably and treat Redis timer entries as derived coordination indexes rather than as the only record of the timer.
 

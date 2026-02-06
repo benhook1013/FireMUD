@@ -29,7 +29,7 @@ Every coordination script belongs to a **script category** that constrains which
 | Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | Single-key or small multi-key scripts; all lock keys share the same `{tenantRegionTag}` as their corresponding `pending` structures. |
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
-| Session CAS / bindings | `session:game:<tenantId>:<sessionId>`, `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
+| Session CAS / bindings | `session:game:<tenantId>:<gameInstanceId>:<sessionId>`, `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
 | Maintenance / cleanup | Region-local maintenance keys under `tick:{tenantRegionTag}:*` or `timer:{tenantRegionTag}` | Shard-local scans and deletes constrained to one `{tenantRegionTag}` at a time; no cross-slot operations. |
 | Automation helpers (coordination role only) | `script-scheduler:{tenantRegionTag}:lastTickId` and similar | Shard-local scripts that operate on per-region scheduler metadata; must not touch Cache/Rate-Limit prefixes. |
 
@@ -62,6 +62,34 @@ Before authoring or reviewing a new script, use this quick checklist:
   - A fresh run from an initial state.
   - A pure replay with the same `KEYS`/`ARGV` and no intervening changes.
   - A replay after partial success (for example, some keys pre-populated) to prove the script does not double-apply effects.
+
+## Outcome Codes and Caller Contract (Required)
+
+Redis Lua scripts are invoked from timeout, retry, and failover paths. To keep callers safe and to prevent “did this mutate?” ambiguity, every coordination script must return an explicit, low-cardinality **outcome code** as its primary result, and that outcome must imply a clear caller action.
+
+The Lua Script Registry is the source of truth for each script’s specific outcomes, but outcomes must fit these shared categories and semantics:
+
+- **Success / applied**
+  - Examples: `"ACQUIRED"`, `"STAGED"`, `"ENQUEUED"`, `"UPDATED"`.
+  - Meaning: the script performed its intended mutation (or a deterministic, idempotent update) and the caller may proceed to the next phase.
+- **Replay / already-done (non-mutating)**
+  - Examples: `"ALREADY_HELD"`, `"ALREADY_STAGED"`, `"NOOP"`.
+  - Meaning: the script observed that the intended work is already reflected in Redis state and performed no logical new work; callers must treat this as success and continue without attempting alternate paths that would create duplicates.
+- **Stale leadership / stale timeline (non-mutating, retry by reacquiring)**
+  - Examples: `"STALE_LEASE"`, `"STALE_EPOCH"`, `"STALE_LOCK"`, `"OUT_OF_DATE_TICK"`.
+  - Meaning: the caller’s lease/epoch/lock/tick assumptions do not match Redis’ current coordination state. Callers must stop acting under the stale context, reacquire the relevant lease/lock, and re-bootstrap from the authoritative timeline (RegionStatus/ledger + heartbeat) before retrying.
+- **Validation failure (non-mutating, do not retry blindly)**
+  - Examples: `"UNSUPPORTED_SCHEMA_VERSION"`, `"INVALID_ARGS"`, `"FORBIDDEN_PREFIX"`.
+  - Meaning: a contract mismatch or programming/configuration error. Callers must not spin retries; they should surface an alert, increment a dedicated metric, and follow the rollout/reset guidance for the script’s `compatibility_level` and `reset_sensitivity`.
+- **Contention / capacity (non-mutating, bounded retry or defer)**
+  - Examples: `"LOCK_HELD_BY_OTHER"`, `"QUEUE_FULL"`, `"BUDGET_EXCEEDED"`.
+  - Meaning: the script refused to mutate due to current contention or a fairness/capacity guard. Callers must apply the documented backoff/defer policy (typically “retry in a later tick” rather than tight-looping).
+
+Hard requirements:
+
+- Outcomes that are documented as **non-mutating** must perform no writes, not even TTL refreshes or counters, so callers can safely retry without compounding state.
+- Every script must define which outcomes are retryable and under what conditions, and CI must verify that retryable non-mutating outcomes are truly side-effect-free.
+- Callers must treat unknown outcomes as fatal (log, metric, alert) rather than guessing whether a mutation occurred.
 
 ### Determinism Requirements
 
@@ -130,7 +158,7 @@ These checks are enforced via the Lua Script Registry descriptors, generated key
 
 #### Session-only scripts
 
-Session scripts operate only on `session:game:<tenantId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
+Session scripts operate only on `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
 
 - **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `playerId`/`tenantId` or token hash provided in `ARGV`.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).

@@ -14,7 +14,7 @@ The target-state architecture requires Gateway to route `/ws/game/**` WebSocket 
 - Gateway consuming that mapping for routing,
 - `1013/reroute` on lease moves.
 
-However, the documentation does not specify a concrete, end-to-end mechanism for how Gateway determines the correct `<tenantId, regionId>` for a new WebSocket connection at admission time, especially for initial connections before `LOGIN`/`ENTER_GAME` has bound a session.
+However, the documentation does not specify a concrete, end-to-end mechanism for how Gateway determines the correct `<tenantId, regionId>` for a new WebSocket connection at admission time, especially for initial connections before `LOGIN`/lobby selection (`PLAY`) has bound a session.
 
 Without an explicit routing-key transport, shard routing cannot be implemented consistently and the system risks either misrouting gameplay connections or reintroducing hidden affinity that conflicts with lease ownership.
 
@@ -22,8 +22,8 @@ Without an explicit routing-key transport, shard routing cannot be implemented c
 
 Adopt an explicit two-phase admission model:
 
-1. **Admission connection (unsharded):** new `/ws/game/**` connections are admitted to a stable “gameplay admission” surface that can process `LOGIN` + `ENTER_GAME` without requiring pre-known region routing.
-2. **Region-bound connection (sharded):** once `ENTER_GAME` selects a character and the platform can deterministically resolve the character’s current `<tenantId, regionId>`, the system provides the client a routing key and requests reconnect so the next connection is routed directly to the lease-owning shard.
+1. **Admission connection (unsharded):** new `/ws/game/**` connections are admitted to a stable “gameplay admission” surface that can process `LOGIN` + lobby selection (`PLAY`) without requiring pre-known region routing.
+2. **Region-bound connection (sharded):** once lobby selection binds a character and the platform can deterministically resolve the character’s current `<tenantId, regionId>`, the system provides the client a routing key and requests reconnect so the next connection is routed directly to the lease-owning shard.
 
 The open decision is the exact **routing key transport** used for phase (2). Candidate options:
 
@@ -37,7 +37,7 @@ Option A is recommended because it is transport-agnostic, does not require custo
 
 - Docs must not imply that shard routing is possible without specifying how the routing key is carried by clients or derived by Gateway.
 - Client reconnection guidance must treat `1013/reroute` as a normal, fast-retriable outcome during phase transitions and lease moves.
-- If Option A or B is adopted, the gameplay protocol must define the “enter-game response includes routing key” shape (for example a distinct `OK ENTER_GAME` line that includes `ROUTE <routingKey>`), and the Gateway must treat the routing key as routing material only (not authentication).
+- If Option A or B is adopted, the gameplay protocol must define the “world selection response includes routing key” shape (for example a distinct `OK PLAY` line that includes `ROUTE <routingKey>`), and the Gateway must treat the routing key as routing material only (not authentication).
 
 ## References
 

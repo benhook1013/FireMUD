@@ -176,7 +176,12 @@ Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevan
 
 then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
 
-Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management and accessed via gRPC or a refreshed projection) matches the target `RoomInstanceRef`. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
+Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
+
+- Entity Management calls World Management’s `ListRoomOccupants(RoomInstanceRef)` to obtain the authoritative occupant `entityId` set for the room/instance.
+- Entity Management then joins those `entityId` values to its own runtime entity rows to materialize display data.
+
+Entity Management must not maintain a competing “room occupancy index” that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 

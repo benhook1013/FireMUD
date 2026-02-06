@@ -40,7 +40,7 @@ The tick system adopts the same **coordination timeline** concept as the Redis a
 
 - `tickId` is monotonic and uniquely identifies each committed tick for that region.
 - All **region-scoped tick coordination keys** in Redis (for example `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
-- Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
+- Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
 - When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
@@ -118,6 +118,7 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 
 - Stored in per-region sorted sets such as `timer:{tenantRegionTag}`, where the score is an absolute millisecond timestamp and each member encodes the target entity/effect.
 - Evaluated using a single, consistent application time source (NTP-synchronized wall clock); Redis server time is not used for timer comparisons.
+- Treated as absolute wall-clock due times: changing `tick_interval_ms` does not rescale existing timer scores, and any time-scaling logic must be applied when scheduling (producing a new `due_ms`), not by rewriting past timers.
 - Drained with bounded work per tick (for example, up to `game.tick-max-timers` timers per region per tick) so delayed or bursty timers do not turn a single tick into unbounded work.
 - Implemented using deterministic, idempotent Lua scripts that accept `now_ms` as a caller-supplied `ARGV` value; scripts must not call Redis `TIME`, and AOF replay reuses the same `ARGV` values.
 

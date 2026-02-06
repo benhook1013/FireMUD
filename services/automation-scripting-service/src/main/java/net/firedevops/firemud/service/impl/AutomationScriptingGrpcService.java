@@ -10,6 +10,9 @@ import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRe
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
+import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.dto.ScriptDefinitionDto;
@@ -58,6 +61,26 @@ public class AutomationScriptingGrpcService
       responseObserver.onError(
           Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
     }
+  }
+
+  @Override
+  @Timed(value = "automationGrpc.triggerScriptEvent")
+  public void triggerScriptEvent(
+      TriggerScriptEventRequest request,
+      StreamObserver<TriggerScriptEventResponse> responseObserver) {
+    TriggerScriptEventResponse response =
+        TriggerScriptEventResponse.newBuilder()
+            .setAdmitted(false)
+            .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED)
+            .setAdmissionReason("not_implemented")
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("NOT_IMPLEMENTED")
+                    .setMessage("TriggerScriptEvent is not implemented yet")
+                    .build())
+            .build();
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 
   @Override

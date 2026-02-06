@@ -149,7 +149,16 @@ The following rules align generators with the core runtime and tooling:
    - Population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus the runtime scope (`RoomInstanceRef` for runtime, `(tenantId, versionId)` plus template ids for design-time) so downstream services can safely no-op on replays.
    - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), the system retries until convergence using the original identities. It must not attempt to “undo” already-persisted topology or “roll back” created entities by issuing compensating deletes from within the tick loop.
    - The only supported destructive rollback is deleting an entire **ephemeral** instance as a unit (for example a short-lived dungeon instance), after verifying it is no longer referenced by active sessions.
-7. **Validation and Errors** – World Management validates generation requests, validates generator outputs, and persists results atomically for the affected template or instance scope. On failure it returns a `GenerationErrorDetail` and guarantees no partial persistence.
+7. **Validation and Errors** – World Management validates generation requests, validates generator outputs, and guarantees **no partial persistence** for the affected template or instance scope.
+
+   Persistence must use a staged/finalize model so large graphs can be written safely without relying on oversized single transactions:
+
+   - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
+   - World Management writes all generated rooms/exits/metadata into staging rows keyed by `(tenantId, generationRunId)` and records an immutable config snapshot (`seed`, `generatorType`, `schemaVersion`, and serialized parameters).
+   - A single finalize transaction atomically:
+     - Marks the staged run as committed (or swaps it into the active template/instance scope), and
+     - Makes the generated topology visible to readers.
+   - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged (staged rows may be left for diagnostics or garbage-collected by `generationRunId`).
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 

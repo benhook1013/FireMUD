@@ -19,6 +19,17 @@ kubectl apply -n firemud -f base/world-management-service.yaml
 kubectl apply -n firemud -f base/spring-cloud-gateway.yaml
 ```
 
+## Kustomize overlays (staging/production)
+
+Staging and production deployments are applied via Kustomize overlays:
+
+```bash
+kubectl apply -k k8s/overlays/stage
+kubectl apply -k k8s/overlays/prod
+```
+
+The staging overlay is intentionally treated as disposable by default and does not include production backup schedules.
+
 The file `base/firemud-db-env.yaml` defines the shared `firemud-config`
 `ConfigMap` and `firemud-secret` `Secret` used by these deployments.
 

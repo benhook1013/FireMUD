@@ -28,7 +28,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Gateway restarts disconnect gameplay WebSocket clients; clients reconnect by opening a new `/ws/game/**` WebSocket and issuing `LOGIN` again as described in [Reconnection Strategy](../../system-architecture-reconnection.md). Telnet clients are also disconnected because the TCP Proxy Service fail-closes Telnet sockets when its WebSocket bridge to Spring Cloud Gateway drops; clients reconnect and re-`LOGIN`.
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
-- Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Game-Instance-Id`) to backend services, but only after applying the gateway’s header trust and canonicalization rules. In particular, Spring Cloud Gateway strips spoofable tenant/game-instance headers from public ingress and only forwards `X-Tenant-Id` / `X-Game-Instance-Id` when they are produced from trusted inputs (for example `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy → Gateway hop) as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Header Trust Model](../../system-architecture-gateway.md#header-trust-model). All tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+- Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Game-Instance-Id`) to backend services, but only after applying the gateway’s header trust and canonicalization rules. In particular, Spring Cloud Gateway strips spoofable tenant/game-instance headers from public ingress and only forwards `X-Tenant-Id` / `X-Game-Instance-Id` when they are produced from trusted inputs (for example `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy → Gateway hop) as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Header Trust Model](../../system-architecture-gateway.md#header-trust-model). This enforcement is implemented by `HeaderTrustFilter` and configured via `firemud.gateway.header-trust.*`. All tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - External TLS is terminated by the load balancer; Spring Cloud Gateway routes to backend services over in-cluster `http://` / `ws://` endpoints, while internal service-to-service traffic uses mTLS gRPC as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
@@ -120,7 +120,6 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
 | `FIREMUD_SERVICES_*` | Service discovery overrides for backend targets reached from the gateway | Described in [Service Discovery](../../infrastructure/environment-and-secrets.md#service-discovery) |
 | `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis endpoint used by the gateway’s `RequestRateLimiter` filter | Described in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) |
 | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` | TLS certificate and key paths for gRPC/mTLS and the Telnet WebSocket bridge | Described in [gRPC TLS Certificates](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates) |
-| `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Shared authentication configuration (JWT signing and derived session TTL); not used by Spring Cloud Gateway to validate JWTs | Described in [Authentication Variables](../../infrastructure/environment-and-secrets.md#authentication-variables) |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for traces | Described in [Observability](../../infrastructure/environment-and-secrets.md#observability) |
 
 ### Redis Role and Prefixes
@@ -139,7 +138,7 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
 > - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
 > - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
 
-The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are consumed by `AuthConfig` to materialize a `JwtUtil` instance and hot-reload secrets via `JwtSecretWatcher`. Spring Cloud Gateway does **not** use this utility to validate or parse JWTs for gameplay or admin traffic; admin and other meta/control services perform JWT validation themselves, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
+The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. Spring Cloud Gateway does **not** validate or parse JWTs for gameplay or admin traffic and does not require JWT signing material. Admin and other meta/control services perform JWT validation themselves, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
 
 When internal WebSocket clients such as the TCP Proxy Service connect over
 `wss://` to `/ws/game/**`, the host they use in `GATEWAY_WS_URL` must match a
@@ -201,7 +200,16 @@ curl -X DELETE http://localhost:8080/routes/demo
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`gateway_management_service.proto`](../../../../protos/spring-cloud-gateway/v1/gateway_management_service.proto).
 
 ```bash
+# Local development only (no mTLS)
 grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementService/Ping
+
+# Production / operator contexts (mTLS)
+grpcurl \
+  -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  spring-cloud-gateway:6565 \
+  spring_cloud_gateway.v1.GatewayManagementService/Ping
 ```
 
 - [Logging & Monitoring](../../system-architecture-logging-monitoring.md)

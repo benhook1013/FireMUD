@@ -23,7 +23,7 @@ This document covers:
 - Pinning and rolling back `scriptPatchVersion` for a running `gameInstanceId`.
 - Patch lifecycle visibility (`READY` / `FAILED` / `ROLLED_BACK`) as an operator-facing contract.
 - Operational interactions needed for safe rollback (pause/resume, drain/purge).
-- Plugin lifecycle operations that are part of the same operational surface as scripts.
+- Plugin lifecycle operations (enable/disable/rollback) scoped to a running `gameInstanceId`, as part of the same operational surface as scripts.
 
 This document does not define the designer-facing DSL, sandbox internals, or per-trigger runtime semantics (see the scripting DSL reference and sandbox runtime docs).
 
@@ -216,6 +216,15 @@ All events must be:
 - Idempotent for consumers (carry `controlPlaneRequestId` and stable identity fields).
 - Emitted only after the producing service commits its state change.
 
+### Event Transport Contract (Required)
+
+To keep control-plane behavior predictable, transport and ordering guarantees must be explicit:
+
+- **Partition key**: control-plane events must be partitioned by `tenantId` + `gameInstanceId` so ordering is stable for a single running instance.
+- **Ordering**: consumers may assume per-partition order, but must not assume global order across tenants or instances.
+- **Replay**: new consumers must be able to replay at least N days of control-plane events (or reconstruct state from durable service APIs) so operator UIs can be rebuilt without data loss.
+- **Idempotency**: consumers must treat `controlPlaneRequestId` as the primary idempotency key for operator-driven events and must be safe under at-least-once delivery.
+
 ### `ScriptPatchPinChanged` (Game Session → Event Bus)
 
 Emitted whenever the pinned patch changes.
@@ -255,6 +264,7 @@ Emitted when operator actions change plugin active versions or disablement state
 Fields:
 
 - `tenantId`
+- `gameInstanceId`
 - `pluginId`
 - `previousPluginVersionId` / `newPluginVersionId` (when applicable)
 - `newState` (`ENABLED` | `DISABLED` | `DRAINING`)

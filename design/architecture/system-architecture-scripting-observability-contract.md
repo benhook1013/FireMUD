@@ -4,6 +4,8 @@ This document defines the **authoritative** observability contract for scripting
 
 If other documents conflict on metric names/labels or audit field semantics, treat this document as the tie-breaker.
 
+For the normative “single source of truth” tables (Trigger Identity required fields, audit stages/outcomes, timer semantics, and metric label sets), see `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
+
 ## Correlation Rules (High Cardinality)
 
 - `scriptEventId` is for `script_event_audit`, logs, and traces.
@@ -18,6 +20,7 @@ Audit records must include at least:
 
 - Identity and versioning
   - `tenantId`
+  - `gameInstanceId`
   - `regionId`
   - `regionEpoch` (when the trigger is tick-aligned)
   - `entityId` (for entity-scoped events)

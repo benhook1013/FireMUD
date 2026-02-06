@@ -34,7 +34,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - `timer:{tenantRegionTag}`
     - `retry:{tenantRegionTag}`
     - `tick-executor-lease:{tenantRegionTag}`
-    - `session:game:<tenantId>:<sessionId>`
+    - `session:game:<tenantId>:<gameInstanceId>:<sessionId>`
     - Automation coordination prefixes that follow shard‑local rules.
 
 - **Cache/Rate‑Limit Redis**

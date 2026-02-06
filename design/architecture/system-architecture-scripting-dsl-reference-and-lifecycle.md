@@ -52,7 +52,7 @@ For designer-oriented guidance on building and debugging scripts in the visual e
 
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `<tenantId, regionId>` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantRegionTag}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
 - **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation:queue:<tenantId>:<entityId>`, stages them under `automation:tick:{tenantScriptTag}:...`, and hands the resulting commands to the Game Session Service so Game Session can enqueue **tick commands** into per-entity tick queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
-- **Automation queue** – a per-tenant, per-entity Redis queue (`automation:queue:<tenantId>:<entityId>`) that holds **post-handler script work items** (domain commands plus script metadata such as `scriptEventId`, `scriptId`, and version information) after sandboxed DSL execution and before automation ticks batch and hand off the resulting commands to Game Session for enqueue into per-entity tick queues.
+- **Automation queue** – a per-tenant, per-entity Redis queue (`automation:queue:<tenantId>:<entityId>`) that holds **derived work-item indexes/pointers** after sandboxed DSL execution and durable persistence. It is reset-tolerant and rebuildable from the durable outbox; it must not be treated as an authoritative log of pending work.
 - **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `(regionEpoch, tickId)` progression per `<tenantId, regionId>`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details and the `(regionEpoch, tickId)` coordination timeline.
 
 ---
@@ -71,11 +71,13 @@ These definitions summarize how common versioning concepts are used in scripting
 
 The scripting pipeline uses a small set of terms repeatedly; the table below summarizes them and how they relate:
 
+Normative Trigger Identity required fields (including `gameInstanceId` and when `regionEpoch` is required) are defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`.
+
 | Step | Term | Description | Stored as / example |
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata). | Enqueued in `automation:queue:<tenantId>:<entityId>` and staged under `automation:tick:{tenantScriptTag}:...`. |
+| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata) persisted durably (outbox). | Indexed via `automation:queue:<tenantId>:<entityId>` and staged under `automation:tick:{tenantScriptTag}:...`. |
 | 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
 Triggers lead to DSL runs, which produce script work items in the automation queues, which automation ticks turn into tick commands for the Game Session Service.
@@ -91,8 +93,7 @@ Triggers lead to DSL runs, which produce script work items in the automation que
   - For **scheduler-originated events** such as `onInterval` and `onTimerExpire`, the **Automation & Scripting Service scheduler** creates the `scriptEventId` when the timer or interval becomes due.
 
 - **Uniqueness scope**
-  - For entity-scoped events, uniqueness must be enforced at least within `<tenantId, regionId, entityId, scriptId, eventType, scriptPatchVersion>`.
-  - For scheduler events, uniqueness must additionally include the due point (for example `dueTickId` or a due timestamp) and `regionEpoch` when the scheduler is tick-aligned.
+  - Uniqueness is enforced over the full **Trigger Identity** field set, including `gameInstanceId` and (for gameplay/tick-aligned triggers) `regionEpoch`. The authoritative field list and required due-point rules for scheduler triggers live in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`.
   - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from stable tuples such as `<tenantId, regionId, regionEpoch, entityId, scriptId, scriptEventId, tickId, scriptPatchVersion>` depending on the call path.
 
 - **Deterministic scheduler IDs**
@@ -149,7 +150,7 @@ See the Automation & Scripting Service README and service protos for the full, u
 - **Interaction with reloads and recovery**
   - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, scriptPatchVersion>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose patch has already been initialized for that tenant.
   - `onLoad` triggers are enqueued only while the patch is tracked as `pendingPatchVersion` with lifecycle `ONLOAD_RUNNING`; `activePatchVersion` remains on the previous patch until all `onLoad` handlers succeed and the lifecycle transitions to `READY`. Scripts never run `onLoad` against a patch that is already the active `scriptPatchVersion` for a tenant.
-  - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and a canonical `outcome` / `reason` pair so operators can verify that initialization ran for a given script and patch.
+- Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`, plus any per-stage breakdown) so operators can verify that initialization ran for a given script and patch and see exactly where it failed (admission vs DSL eval vs persistence vs tick handoff).
 
 ---
 
@@ -292,7 +293,7 @@ Automation & Scripting exposes this lifecycle to other services via:
 When a trigger arrives at the Automation & Scripting Service:
 
 - If the supplied `scriptPatchVersion` is `READY` for the tenant, the scheduler proceeds normally (subject to quotas, sandbox limits, and error handling).
-- If the patch is unknown or in a non-ready state (for example, `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `FAILED`), the trigger is rejected with `outcome=version_unavailable` (or a more specific variant such as `onload_failed`), and a drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
+- If the patch is unknown or in a non-ready state (for example, `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `FAILED`), the trigger is rejected at admission: `script_event_audit.finalStage=ADMISSION` with `finalOutcome=version_unavailable` (or a more specific variant such as `onload_failed`) and an explicit `finalReason`. A drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
 - Automation & Scripting never silently falls back to an older patch for that trigger; callers must fix the pinned version, repin explicitly, or republish.
 
 ---
@@ -468,7 +469,7 @@ For audit records, outcomes are **stage-aware** (admission vs DSL evaluation vs 
 Retry behavior:
 
 - Logical failures (`sandbox_error`, `validation_error`, `quota_denied`, `disabled_due_to_errors`, `version_unavailable`) are treated as **final** for a trigger; the scheduler does not re-run the script body for the same `scriptEventId`.
-- Reload backpressure outcomes (for example `skipped_reloading`) are not treated as final for low-rate external events; callers may retry the same Trigger Identity until admitted or until their bounded retry policy expires.
+- Reload backpressure outcomes (for example `finalOutcome=skipped_reloading` at `finalStage=ADMISSION`) are not treated as final for low-rate external events; callers may retry the same Trigger Identity until admitted or until their bounded retry policy expires.
 - Infrastructure errors **may be retried** by lower layers following platform-wide retry policies and idempotency contracts, but those retries operate only on idempotent downstream operations, not on the DSL body.
 
 When script components call other services over gRPC, they must pass a stable idempotency key derived from Trigger Identity plus tick context when applicable (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch`) and rely on the transaction strategies in `design/architecture/system-architecture-transactions.md` so those downstream operations can be safely retried without duplicating effects.
@@ -490,7 +491,7 @@ See `design/architecture/system-architecture-scripting-contracts.md#3-version-fe
 Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the same **at-most-once per trigger** semantics as other events:
 
 - When a timer becomes due, the scheduler attempts to admit the corresponding trigger subject to per-script quotas, per-tenant budgets, cluster ceilings, and automation tick budgets.
-- If a timer trigger is skipped because of quotas or budgets (for example, tenant budget exhaustion or cluster ceilings), or because the associated patch is `FAILED` or `version_unavailable`, the scheduler records the skip in `script_event_audit` with a canonical outcome (for example, `quota_denied`, `tenant_budget_exceeded`, `version_unavailable`) and updates the corresponding metrics. The skipped firing is **not automatically re-run later**, although subsequent firings based on the cadence may still occur.
+- If a timer trigger is skipped because of quotas or budgets (for example, tenant budget exhaustion or cluster ceilings), or because the associated patch is `FAILED` or `version_unavailable`, the scheduler records the skip in `script_event_audit` with `finalStage=ADMISSION`, a canonical `finalOutcome` (for example, `quota_denied`, `tenant_budget_exceeded`, `version_unavailable`), and an explicit `finalReason`, and updates the corresponding metrics. The skipped firing is **not automatically re-run later**, although subsequent firings based on the cadence may still occur.
 - If a timer trigger fails with `infrastructure_error` (for example, Redis timeouts, gRPC transport failures) after admission, the DSL body is not re-executed for the same `scriptEventId`. Downstream operations may be retried in an idempotent fashion as part of infrastructure-level retries, but the engine does not replay the handler logic.
 - The scheduler’s responsibility is to *attempt* to fire timers that fit within configured budgets and capacity; there is no guarantee of eventual execution for every individual interval or timer firing.
 
@@ -513,10 +514,10 @@ Failure handling:
 - If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant and allow it to become the `activePatchVersion` during the next reload transition.
 - If `onLoad` fails with a logical or sandbox-level error (for example, misconfiguration, quota denial, sandbox guard), the patch is marked `FAILED` for that tenant:
   - The previous `activePatchVersion` remains in use for live execution.
-  - Events referencing the failed patch are rejected explicitly with `outcome=version_unavailable` (or a more specific variant such as `onload_failed`) and corresponding metrics.
+  - Events referencing the failed patch are rejected explicitly at admission with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=version_unavailable` (or a more specific variant such as `onload_failed`), and corresponding metrics.
   - No automatic retries of the `onLoad` handler occur; an operator or designer must fix the underlying configuration and republish.
 - If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations. If retries are exhausted, the patch is treated as `FAILED` for that tenant as above.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final `outcome` and `reason`, so operators can verify initialization state for each patch and tenant.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome (`finalStage`, `finalOutcome`, `finalReason`), so operators can verify initialization state for each patch and tenant.
 
 In practice, individual `onLoad` executions are keyed by `<tenantId, scriptId, scriptPatchVersion>`, and patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of these per-script runs: a patch becomes `READY` for a tenant only after all `onLoad` handlers for scripts in that patch have completed successfully, and any script-level `onLoad` failure leaves the patch in a `FAILED` state with the previous `activePatchVersion` remaining in use.

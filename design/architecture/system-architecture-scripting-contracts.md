@@ -4,6 +4,8 @@ This document defines the **non-negotiable contracts** that make the scripting D
 
 When other docs conflict on these points, treat this document as the tie-breaker.
 
+For the normative “single source of truth” tables (Trigger Identity required fields, audit stages/outcomes, timer semantics, and metric label sets), see `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
+
 ## Contracts
 
 ### 1) Tick Queue Ownership (`tick:*`)
@@ -37,8 +39,8 @@ To make script patch rollback meaningful:
 
 `scriptEventId` is the primary idempotency token for “run a handler for this trigger”.
 
-- **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must treat the unique trigger identity as including at least `tenantId`, `regionId`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, and `scriptEventId`. If the event is tied to the tick timeline, `regionEpoch` must be included as well.
-- **Scheduler events** (`onInterval`, `onTimerExpire`) must use deterministic identities that include the due point (for example `dueTickId` or a due timestamp) plus `regionEpoch` and `scriptPatchVersion` so leader catch-up and retries do not double-fire.
+- **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must treat the unique trigger identity as including at least `tenantId`, `gameInstanceId`, `regionId`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, and `scriptEventId`. For gameplay/runtime triggers, `regionEpoch` is required to fence across scoped coordination resets as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
+- **Scheduler events** (`onInterval`, `onTimerExpire`) must use deterministic identities that include the due point plus `regionEpoch` and `scriptPatchVersion` so leader catch-up and retries do not double-fire. For tick-cadence scheduling (for example `onInterval` configured in ticks), the due point must be expressed as `dueTickId` in the canonical tick timeline. For wall-clock timers, the due point must be expressed as an absolute `dueTimestampMs` (and still include `regionEpoch` to fence across coordination resets).
 
 Callers must reuse the same `scriptEventId` on retries.
 

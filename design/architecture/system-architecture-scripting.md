@@ -202,3 +202,5 @@ This hub intentionally keeps only high-level flows and routing; detailed topics 
   - `design/architecture/microservices/automation-scripting-service/README.md`
 
 For logging, metrics, and observability, see `design/architecture/system-architecture-logging-monitoring.md` and `design/architecture/system-architecture-scripting-observability-contract.md`. For Redis keys and tick system behavior, see `design/architecture/system-architecture-redis.md` and `design/architecture/system-architecture-ticks.md`.
+
+For normative contract tables that other docs must not drift from (Trigger Identity required fields, audit stages/outcomes, timer semantics, and metric label sets), see `design/architecture/system-architecture-scripting-normative-contract-tables.md`.

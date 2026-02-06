@@ -41,7 +41,7 @@ class TelnetSessionContextTest {
     boolean captured = sessionContext.captureFromEnvelope("SESSION sess-1 tenant-alpha");
 
     assertTrue(captured);
-    assertEquals("sess-1", sessionContext.sessionId());
+    assertEquals("sess-1", sessionContext.gameInstanceId());
     assertEquals("tenant-alpha", sessionContext.tenantId());
     assertTrue(sessionContext.isReady());
 
@@ -50,7 +50,7 @@ class TelnetSessionContextTest {
     ILoggingEvent event = events.get(0);
     assertEquals(Level.INFO, event.getLevel());
     assertEquals(
-        "Captured Telnet session sess-1 for tenant tenant-alpha", event.getFormattedMessage());
+        "Captured Telnet gameInstance sess-1 for tenant tenant-alpha", event.getFormattedMessage());
   }
 
   @Test
@@ -58,7 +58,7 @@ class TelnetSessionContextTest {
     boolean captured = sessionContext.captureFromEnvelope("SESSION colon-sess:tenant-beta");
 
     assertTrue(captured);
-    assertEquals("colon-sess", sessionContext.sessionId());
+    assertEquals("colon-sess", sessionContext.gameInstanceId());
     assertEquals("tenant-beta", sessionContext.tenantId());
     assertTrue(sessionContext.isReady());
 
@@ -67,7 +67,7 @@ class TelnetSessionContextTest {
     ILoggingEvent event = events.get(0);
     assertEquals(Level.INFO, event.getLevel());
     assertEquals(
-        "Captured Telnet session colon-sess for tenant tenant-beta", event.getFormattedMessage());
+        "Captured Telnet gameInstance colon-sess for tenant tenant-beta", event.getFormattedMessage());
   }
 
   @Test
@@ -75,7 +75,7 @@ class TelnetSessionContextTest {
     boolean captured = sessionContext.captureFromEnvelope("SESSION only-session");
 
     assertFalse(captured);
-    assertNull(sessionContext.sessionId());
+    assertNull(sessionContext.gameInstanceId());
     assertNull(sessionContext.tenantId());
     assertFalse(sessionContext.isReady());
 
@@ -92,7 +92,7 @@ class TelnetSessionContextTest {
     boolean captured = sessionContext.captureFromEnvelope("SESSION :tenant");
 
     assertFalse(captured);
-    assertNull(sessionContext.sessionId());
+    assertNull(sessionContext.gameInstanceId());
     assertNull(sessionContext.tenantId());
     assertFalse(sessionContext.isReady());
 
@@ -101,7 +101,7 @@ class TelnetSessionContextTest {
     ILoggingEvent event = events.get(0);
     assertEquals(Level.WARN, event.getLevel());
     assertEquals(
-        "Ignoring session envelope missing sessionId or tenantId: SESSION :tenant",
+        "Ignoring session envelope missing gameInstanceId or tenantId: SESSION :tenant",
         event.getFormattedMessage());
   }
 }

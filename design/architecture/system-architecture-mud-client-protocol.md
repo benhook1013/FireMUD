@@ -14,10 +14,9 @@ The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for
 
 ## Overview
 
-The TCP Proxy Service negotiates MCP with connecting clients and falls back to plain Telnet when unsupported.
-When MCP is enabled, structured messages (optionally containing JSON payloads) are exchanged inside MCP packages over the same Telnet connection.
-The TCP Proxy Service treats MCP control lines as application-level text: it sanitizes and frames the Telnet transport, then forwards MCP traffic over the WebSocket bridge to the canonical gameplay route. MCP package semantics are handled by the backend session layer (Spring Cloud Gateway → Game Session Service), so Telnet and native WebSocket clients converge on the same runtime behavior.
-From the client’s perspective, all interaction still happens over a single MCP-aware Telnet session, but clients can render additional UI elements based on the structured data they receive.
+FireMUD negotiates MCP over the same line-based gameplay text stream that carries normal commands and responses. On the Telnet path, the TCP Proxy Service sanitizes and frames the Telnet transport, then forwards MCP control lines (`#$#...`) and payloads verbatim over the WebSocket bridge to the canonical gameplay route.
+
+MCP package semantics are terminated by the backend session layer (Spring Cloud Gateway → Game Session Service): the edge is responsible for transport safety and MCP abuse budgets, while Game Session and downstream domain services decide which MCP packages exist and what they mean. Any client that can speak FireMUD’s line-based gameplay protocol may use MCP (including Telnet clients via the TCP Proxy and native WebSocket clients); clients that do not negotiate MCP remain on the plain-text channel.
 
 ## Protocol Handshake
 
@@ -82,6 +81,7 @@ The exact counter and timer names for these budgets live in the TCP Proxy Servic
 MCP support is being rolled out incrementally:
 
 - The underlying line-based Telnet transport and control-line parsing (`#$#...`) are implemented in the TCP Proxy Service.
+- Some environments temporarily enable a proxy-side MCP “server greeting” (`#$#mcp version: ...`) as a compatibility shim during rollout. The target-state design is that the backend session layer is the MCP endpoint and emits the canonical server greeting and package advertisements; the proxy remains a transport bridge and does not define package semantics.
 - The `mcp-negotiate` handshake and the `mcp-cord` package are supported for basic cord creation and message routing.
 - Higher-level FireMUD-specific MCP packages (for example status panels, map feeds, or structured notifications) are introduced gradually and may evolve as the platform matures.
 
@@ -109,7 +109,7 @@ MCP-aware clients should also follow the general reconnection backoff guidance f
 
 ## Example Workflow
 
-1. Client connects and negotiates MCP support with the TCP Proxy Service.
+1. Client connects and negotiates MCP support with FireMUD over the gameplay text stream (via the TCP Proxy Service on the Telnet path).
 2. The client opens a dedicated cord for a status panel using `mcp-cord-open`.
 3. The server periodically sends `firemud-status-panel` updates on that cord with structured information about health, mana, and location.
 4. The client renders the status panel and updates it when new MCP messages arrive, while normal gameplay continues over the text stream.

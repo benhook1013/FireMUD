@@ -143,8 +143,9 @@ message TriggerScriptEventRequest {
   string game_instance_id = 2;
   string region_id = 3;
 
-  // Required for tick-aligned scheduler triggers; should be omitted for entity-scoped
-  // external events that are not aligned to a specific region timeline.
+  // Required for gameplay/runtime triggers and scheduler triggers so triggers are fenced
+  // across scoped coordination resets. External/out-of-band triggers that omit region_epoch
+  // must define their own consistency model explicitly.
   int64 region_epoch = 4;
 
   string entity_id = 5;

@@ -372,6 +372,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
     Timer.Sample sample = Timer.start(meterRegistry);
     try {
+      if (closing) {
+        return;
+      }
       String sanitized = sanitize(ctx, msg);
       if (sanitized == null) {
         return;

@@ -38,10 +38,11 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 2. **`onEnterRegion` event is emitted**
    - After the move is committed and the player is now in the new region, the Game Session Service emits an `onEnterRegion` **script event** to the Automation & Scripting Service over gRPC.
    - Conceptually this is a unary `TriggerScriptEvent` call on the Automation & Scripting Service that carries:
-     - `tenantId` and `regionId`.
+     - `tenantId`, `gameInstanceId`, and `regionId`.
      - Target `entityId` (for example, an NPC guarding the room).
      - `eventType=onEnterRegion`.
      - The currently pinned `scriptPatchVersion` for that game.
+     - `regionEpoch` so the trigger is fenced across scoped coordination resets.
    - For low-rate lifecycle events such as `onEnterRegion`, `onSpawn`, and `onCommand`, simple unary gRPC calls are sufficient; high-volume time-based scheduling comes from the tick heartbeat stream described in the tick architecture.
 
 3. **Bindings and quotas**
@@ -56,7 +57,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
      - Scheduling follow-up timers (for example, delayed emotes or encounter escalation).
 
 5. **Automation queue staging**
-   - Actions produced by the handler are converted into domain commands and recorded as script work items in `automation:queue:<tenantId>:<entityId>` for the affected entity.
+   - Actions produced by the handler are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:<tenantId>:<entityId>` for the affected entity.
    - Each work item carries the originating `scriptEventId`, `scriptId`, version metadata, and region context.
 
 6. **Automation ticks and tick command enqueue**
@@ -66,7 +67,7 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 7. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so `onEnterRegion` effects follow the same fairness and conflict-resolution rules as player actions.
    - Metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` are updated throughout this flow; see the metrics glossary in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for names and label conventions.
-   - An audit record is written to `script_event_audit` with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, plus an `outcome` / `reason` pair, enabling replay and troubleshooting as described in the same quotas and operations document.
+   - An audit record is written to `script_event_audit` with identifiers such as `scriptEventId`, `scriptId`, `tenantId`, `tickId`, plus stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can distinguish “DSL evaluated” from “accepted into tick queues”, enabling replay and troubleshooting as described in the same quotas and operations document.
 
 If the `scriptPatchVersion` pinned by the Game Session Service for a given game is later marked failed or unknown for that tenant, subsequent `onEnterRegion` triggers referencing it follow the reload failure behavior described in `design/architecture/system-architecture-scripting-quotas-and-operations.md` instead of the happy-path flow.
 
@@ -91,13 +92,13 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
 
 4. **Sandbox execution and command enqueue**
    - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.
-   - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and recorded as script work items in `automation:queue:<tenantId>:<entityId>` for the affected entity.
+   - Actions produced by the handler (for example, “move to the next patrol room,” “play an emote,” “schedule an `onTimerExpire` follow-up”) are converted into domain commands and persisted as a durable script work item (outbox), then indexed into `automation:queue:<tenantId>:<entityId>` for the affected entity.
    - Each work item carries the originating `scriptEventId`, `scriptId`, version metadata, and the **current region** for the entity at enqueue time.
 
 5. **Execution, audit, and observability**
    - `ScriptTickService` later drains `automation:queue`, stages these events under `automation:tick:{tenantScriptTag}:...`, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
-   - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using recorded `outcome` and `reason` fields alongside identifiers like `scriptEventId`, `scriptId`, and `tickId`; see the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
+   - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work that is accepted into tick queues, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using stage-aware fields (`finalStage`, `finalOutcome`, `finalReason`) alongside identifiers like `scriptEventId`, `scriptId`, and `tickId`; see the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
 
 As with `onEnterRegion`, reload failures or version issues are surfaced via specific outcomes (for example, `skipped_reloading`, `version_unavailable`) and corresponding metrics, detailed in the quotas and operations document.
 

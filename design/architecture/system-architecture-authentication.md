@@ -49,7 +49,7 @@ Token validity semantics:
 Coordination Redis outage behavior must be deterministic:
 
 - **Control-plane APIs (HTTP/gRPC)** – Requests that require allowlist checks fail closed while Coordination Redis is unavailable, returning a clear infrastructure error (for example `AUTH_UNAVAILABLE` / `SERVICE_UNAVAILABLE`) rather than silently bypassing authorization.
-- **Gameplay admission (`LOGIN` / `ENTER_GAME`)** – New admissions fail closed while Coordination Redis is unavailable because allowlist and gameplay session binding state cannot be established reliably.
+- **Gameplay admission (`LOGIN` / lobby selection via `PLAY`)** – New admissions fail closed while Coordination Redis is unavailable because allowlist and gameplay session binding state cannot be established reliably.
 - **Already-entered gameplay sessions** – Ongoing gameplay behavior follows the Redis outage/degradation policy defined in `system-architecture-redis.md` and `system-architecture-redis-operations.md`. Game Session must not “assume authorization” in the absence of Redis; if coordination state needed to process commands safely is unavailable, it must degrade or halt according to the Redis policy instead of inventing local-only session authority.
 
 ---
@@ -123,7 +123,7 @@ All clients — whether connecting via Telnet or WebSocket — authenticate usin
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
-Telnet-specific behaviors (such as the optional `SESSION <gameInstanceId> <tenantId>` envelope used by advanced clients) reuse this same canonical login flow. The envelope is an advisory attach hint captured by the TCP Proxy Service and forwarded as gateway-owned headers; it is not authentication material and never bypasses the canonical `LOGIN` + `ENTER_GAME` authorization and entitlement checks. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
+Telnet-specific behaviors (such as the optional `SESSION <gameInstanceId> <tenantId>` envelope used by advanced clients) reuse this same canonical login flow. The envelope is an advisory attach hint captured by the TCP Proxy Service and forwarded as gateway-owned headers; it is not authentication material and never bypasses the canonical `LOGIN` + lobby selection (`WORLDS`/`CHARS`/`PLAY`) authorization and entitlement checks. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
 
 ### Mapping to the Account Service
 
@@ -134,30 +134,39 @@ Telnet-specific behaviors (such as the optional `SESSION <gameInstanceId> <tenan
 3. The Account Service validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `AUTH_PLAINTEXT_TCP_NOT_PERMITTED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, `ERROR 2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `ERROR PLAINTEXT_TCP_NOT_PERMITTED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded. For plaintext Telnet logins, the combination of `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and the per-account “allow plaintext Telnet login” flag follows the safety matrix defined in the Security Architecture’s **Plaintext Telnet safety matrix** section; implementations must treat any combination outside the allowed cells as a hard denial (`AUTH_PLAINTEXT_TCP_NOT_PERMITTED` or `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`) rather than silently weakening security.
 4. Success responses cause the Game Session Service to create/refresh Redis-backed gameplay session bindings and the Account Service to create the corresponding `session:auth:*` allowlist entries. The Game Session Service binds the socket to an authenticated account context and emits `OK LOGIN Logged in as <username>` on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
 
-Gameplay commands such as `LOOK` and `SAY` are gated by both the authentication handshake (`LOGIN`) and the tenant-selection step (`ENTER_GAME`). Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, and any gameplay command received before a tenant is selected is rejected with a dedicated “enter game first” error. Except in explicitly documented development/test bypass modes that grant temporary access, these commands are not processed for anonymous or unscoped sessions, keeping the gameplay queue free of unauthenticated traffic.
+Gameplay commands such as `LOOK` and `SAY` are gated by both the authentication handshake (`LOGIN`) and the lobby selection step (`PLAY`). Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, and any gameplay command received before a world is selected is rejected with a dedicated error (for example `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first`). Except in explicitly documented development/test bypass modes that grant temporary access, these commands are not processed for anonymous or unscoped sessions, keeping the gameplay queue free of unauthenticated traffic.
 
 Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and not tied to a single game or tenant; the same account is used across all worlds as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model).
 
-### Tenant Selection for Gameplay
+### Tenant Selection for Gameplay (Lobby Selection)
 
-Binding an authenticated account to a specific tenant and character is modeled as a separate, explicit step from account login so that tenant authorization and billing rules are consistently enforced.
+FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`) and gameplay identity (`characterId` / `playerId`) before gameplay commands are accepted.
 
-- After `LOGIN` succeeds, the Game Session Service requires an explicit “enter game” flow using the canonical command:
-  - `ENTER_GAME <tenantId> [characterId]`
-  - `ENTER_GAME` (no args) is permitted only when the connection has an unambiguous, server-known selection hint (for example, a Telnet `SESSION <gameInstanceId> <tenantId>` envelope captured by the TCP Proxy Service on this connection and promoted as `X-Game-Instance-Id` / `X-Tenant-Id`, or a previously-selected tenant stored in the gameplay session binding).
-  - The `characterId` argument is optional until character selection ships; in the interim, the Game Session Service binds to the default character identity (currently modeled as `playerId=accountId`) and treats the character identifier as an abstract, future-proof field.
-  - The enter-game flow:
-    - Validates that the requested `tenantId` exists.
-    - Verifies that the account is authorized to act on that `tenantId` using the Tenant Authorization Contract (roles from `globalRoles` and `scopedRoles`).
-    - Consults the runtime entitlement contract `GetTenantEntitlements(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
-    - Binds the socket to a gameplay session key for the chosen tenant and character identity, as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
-    - Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
-    - Returns canonical, stable error codes so clients can recover deterministically:
-      - `TENANT_NOT_FOUND` – the supplied `tenantId` does not exist.
-      - `TENANT_ACCESS_DENIED` – the authenticated account is not authorized for the tenant under `scopedRoles` / `globalRoles`.
-      - `TENANT_BILLING_BLOCKED` – the tenant is `suspended` or `canceled` and is not available for gameplay admission.
-      - `TENANT_QUOTA_EXCEEDED` – entitlements allow gameplay but quota caps (for example maximum active sessions) would be exceeded.
-      - `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account (reserved for when character selection ships).
+Players must never be asked to type raw internal identifiers such as `tenantId` GUIDs or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, world names, or numbered menu indices; character names or indices) and resolves them server-side into stable internal identifiers.
+
+After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
+
+- `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus a stable world slug for each entry).
+- `CHARS <world>` – list characters for the selected world (`<world>` is a world index from `WORLDS` or a world slug).
+- `PLAY <world> [character]` – enter gameplay by selecting a world and optional character.
+
+The `PLAY` flow:
+
+- Resolves `<world>` to a canonical `tenantId` (opaque GUID) and validates it exists.
+- Verifies that the account is authorized to act on that `tenantId` using the Tenant Authorization Contract (roles from `globalRoles` and `scopedRoles`).
+- Consults the runtime entitlement contract `GetTenantEntitlements(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
+- Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId}`. Until character selection ships, the service may bind to a default character identity derived from `accountId`, but the binding model must still treat `characterId` as a distinct identifier for forward compatibility.
+- Records a `gameInstanceId` in the binding. Single-instance deployments use a stable default such as `"primary"`; later multi-instance selection must remain menu/slug based and must not require typing raw instance IDs.
+- Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
+- Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
+
+`PLAY` returns canonical, stable error codes so clients can recover deterministically:
+
+- `WORLD_NOT_FOUND` – the supplied world selection cannot be resolved to a tenant.
+- `WORLD_ACCESS_DENIED` – the authenticated account is not authorized for the tenant under `scopedRoles` / `globalRoles`.
+- `TENANT_BILLING_BLOCKED` – the tenant is `suspended` or `canceled` and is not available for gameplay admission.
+- `TENANT_QUOTA_EXCEEDED` – entitlements allow gameplay but quota caps (for example maximum active sessions) would be exceeded.
+- `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account (reserved for when character selection ships).
 - Any subsequent attempt to switch tenants or characters for a socket must go through the same tenant-selection flow so that role checks and entitlements are re-evaluated; there is no implicit cross-tenant switching based solely on the initial `LOGIN`.
 
 Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when auth token sessions have expired or been revoked. If a valid gameplay session key exists (`accountId + playerId + tenantId`) and the corresponding auth token sessions are still present, the Game Session Service resumes gameplay seamlessly on reconnect.

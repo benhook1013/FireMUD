@@ -160,7 +160,7 @@ The detailed scripting rules and categories (region-lease scripts, session-only 
 
 Redis stores transient gameplay session state for each connected player under keys of the form:
 
-- `session:game:<tenantId>:<sessionId>`
+- `session:game:<tenantId>:<gameInstanceId>:<sessionId>`
 
 These keys capture:
 
@@ -176,7 +176,7 @@ Key properties:
 - `sessionId` is an opaque, server-generated identifier (for example, a UUID or fixed-length hash) chosen so key length stays bounded and independent of the raw JWT or account token.
 - Session entries use a **derived session TTL** computed from authentication settings (see `infrastructure/environment-and-secrets.md#authentication`):
   - A logical expiry timestamp is stored inside the session value.
-  - The Redis TTL for `session:game:<tenantId>:<sessionId>` is set to the same derived duration when the session is created or refreshed.
+  - The Redis TTL for `session:game:<tenantId>:<gameInstanceId>:<sessionId>` is set to the same derived duration when the session is created or refreshed.
 - The logical expiry timestamp is the **authoritative bound** on reconnection:
   - Reconnect/resume attempts are rejected as expired once the logical expiry has passed, even if the Redis TTL has not yet removed the key (for example, due to AOF replay or failover drift).
   - When either the key is missing or the logical expiry has passed, the session is treated as non-resumable and requires a fresh `LOGIN`.
@@ -329,8 +329,10 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `tick:{tenantRegionTag}:queue:<entityId>` | Per‑entity command queue within a region. |
 | `retry:{tenantRegionTag}` | Retry queue for failed actions. |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
-| `remote:<tenantId>:<entityId>` | Best‑effort hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). |
+| `remote:<tenantId>:<entityId>` | Best‑effort, TTL-bounded hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). Expiry/missing keys affect latency only. |
 | `route:{tenantRegionTag}:gamesession` | Reserved for a potential future gameplay routing view for `<tenantId, regionId> → shardTarget`. Per ADR 0007, lease-aware edge admission and a client-visible shard handoff signal are not part of the current edge contract; do not implement Gateway consumption of this mapping without a dedicated sharding/routing design update. |
+| `tick-events:{tenantRegionTag}` and `tick-events-offset:{tenantRegionTag}` | Best-effort per-region tick event stream and consumer offset (typically Redis Stream entry ID). Streams are retention-capped; consumers treat trimmed history as normal truncation and bootstrap from committed heartbeats/RegionStatus. |
+| `tick-events-lease:{tenantRegionTag}` | Best-effort lease to avoid duplicate tick-event consumption work by observers. Safe to drop; consumers reacquire after restarts/resets. |
 | `automation:tick:{tenantScriptTag}:lock` / `queue` / `pending` | Per-script automation tick locks and staging (Automation & Scripting Service). |
 | `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler checkpoint for “every N ticks” triggers; used to resume interval counting after leader changes. Durable automation schedules and quotas live in PostgreSQL; this key is a coordination hint, not the source of truth for which scripts should eventually run. |
 

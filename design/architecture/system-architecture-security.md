@@ -17,8 +17,8 @@ Kubernetes Secrets has been selected as the platform's unified secret storage so
 
 - cert-manager issues the mTLS certificates used between services. These TLS certificates are rotated automatically by cert-manager.
 - JWT signing keys are stored as Secrets and rotated by dedicated Kubernetes Jobs that update both the signing key Secret and the JWKS document. See [JWT Key & JWKS Rotation Workflow](#jwt-key--jwks-rotation-workflow) and [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for how services consume these Secrets.
-- All services support **hot reload** of mounted secrets using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the `firemud-common` library. JWT secrets can be mounted from a file defined by `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) and [Shared Libraries](./system-architecture-shared-libraries.md) for variable definitions and watchers.
-- The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH` control the file locations that these watchers monitor.
+- All services support **hot reload** of mounted TLS materials using the `TlsCertificateWatcher` and `GrpcServerTlsReloader` utilities from the `firemud-common` library. Services that consume JWT signing key material (primarily the Account Service) hot-reload that key file via `JwtSecretWatcher` so signing-key rotation does not require restarts.
+- The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` control the TLS file locations that the TLS watchers monitor. The Account Service additionally uses `FIREMUD_AUTH_JWT_SECRET_PATH` to point `JwtSecretWatcher` at the mounted signing-key file.
 - During rotation, services reload credentials when files change.
 - The JWKS endpoint serves a key file that is mounted into the Account Service pod (for example from a `jwt-jwks` ConfigMap or Secret). The same JWT rotation Jobs that update signing key Secrets also regenerate this JWKS document so validators always see the current public keys.
 
@@ -28,7 +28,7 @@ JWT signing keys and JWKS metadata are rotated inside the Kubernetes cluster usi
 
 - Keep signing keys in Kubernetes Secrets, never in the repository.
 - Allow safe, repeatable rotation with a short overlap period for old tokens.
-- Let services hot-reload keys via `JwtSecretWatcher` without code changes.
+- Let the Account Service hot-reload signing keys via `JwtSecretWatcher` without code changes.
 
 Data model:
 
@@ -130,6 +130,10 @@ This matrix is the authoritative reference for configuring the Proxy → Gateway
 - Traffic flow is controlled via **NetworkPolicies**, which whitelist internal service access.
    A baseline policy restricts **ingress** for all microservice pods (except the Gateway and TCP proxy) so they only accept traffic from other pods in the namespace. The manifests are provided under [`k8s/network-policies/`](../../k8s/network-policies).
 - **Zero-trust** principles are enforced through mTLS and JWT-based validation, providing a foundation for ongoing hardening efforts.
+- Spring Cloud Gateway is the canonicalization point for gateway-owned identity headers:
+  - It strips inbound `X-Client-IP`, `X-Tenant-Id`, and `X-Game-Instance-Id` from public ingress and rewrites them to canonical values before forwarding to backend services.
+  - For HTTP/WebSocket clients, it derives the canonical `X-Client-IP` from load-balancer forwarded headers (`Forwarded`, `X-Forwarded-For`, `X-Real-IP`) only when the immediate peer address is a configured trusted proxy CIDR. Otherwise it falls back to the direct TCP peer address. The trusted-proxy CIDRs are configured on the gateway via `firemud.gateway.header-trust.forwarded-client-ip.trusted-proxy-cidrs`.
+  - For Telnet traffic, it promotes `X-Proxy-*` inputs into canonical headers only on the authenticated TCP Proxy → Gateway hop as described in [Gateway Architecture](./system-architecture-gateway.md#header-trust-model).
 
 ---
 

@@ -14,6 +14,8 @@ service WorldManagementService {
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
   rpc UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse);
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
+  rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
+  rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
 }
 
 message GetRoomRequest {
@@ -69,6 +71,30 @@ message UpdateWorldStateRequest {
 message UpdateWorldStateResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message ListRoomOccupantsRequest {
+  shared.v1.RoomInstanceRef room_instance = 1;
+}
+
+message ListRoomOccupantsResponse {
+  shared.v1.RoomInstanceRef room_instance = 1;
+  repeated string occupant_entity_ids = 2;
+  string occupant_snapshot_id = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+message ApplyRoomAmbientStatePatchRequest {
+  shared.v1.RoomInstanceRef room_instance = 1;
+  string effect_id = 2;
+  map<string, string> ambient_state_patch = 3;
+}
+
+message ApplyRoomAmbientStatePatchResponse {
+  shared.v1.RoomInstanceRef room_instance = 1;
+  bool success = 2;
+  string world_snapshot_id = 3;
+  shared.v1.ErrorDetail error = 4;
 }
 
 message GetDraftDesignDigestRequest {

@@ -41,7 +41,7 @@ When Coordination Redis recovers after an outage or severe degradation:
 - **Leases**
   - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
 - **Sessions**
-  - If `session:game:<tenantId>:<sessionId>` keys survive, reconnect flows behave normally.
+- If `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys survive, reconnect flows behave normally.
   - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).
 
 ## Cache/Rate-Limit Redis Issues
@@ -61,14 +61,14 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
 
 1. **Detect the issue**
    - Watch `session.cas_unsupported_schema_total` and reconnect error rates for non-zero values outside brief rollout windows.
-   - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:game:<tenantId>:<sessionId>` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
-2. **Align deployments**
+   - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys, session payloads have been corrupted, or a major TTL reduction has left an undesirable tail of long-lived sessions.
+1. **Align deployments**
    - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis architecture docs).
-3. **Run the session cleanup Job**
+1. **Run the session cleanup Job**
    - Use the session schema/TTL cleanup Job described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis.md#session-schema-cleanup-and-large-keyspaces):
      - Scope the Job to one tenant at a time by prefix (for example `session:game:<tenantId>:*`).
      - Configure it to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
-4. **Verify recovery**
+1. **Verify recovery**
    - Monitor `session.cas_unsupported_schema_total`, reconnect error rates, and Redis key counts for the affected tenant(s) to confirm the issue has cleared.
    - Affected players may need to log in again; no authoritative PostgreSQL data is lost.
 

@@ -22,7 +22,6 @@ import reactor.test.StepVerifier;
     properties = {
       "spring.flyway.enabled=false",
       "firemud.database.enabled=false",
-      "firemud.auth.jwt-secret=test-jwt-secret-test-jwt-secret-test-jwt-secret-test-jwt-secret",
       "grpc.server.security.enabled=false",
       "grpc.server.port=0",
       "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration",
@@ -105,7 +104,7 @@ class DevEchoWebSocketIntegrationTest {
             .then(replySink.asMono())
             .timeout(Duration.ofSeconds(5));
 
-    StepVerifier.create(response).expectNext("203.0.113.9").verifyComplete();
+    StepVerifier.create(response).expectNextMatches(ip -> "127.0.0.1".equals(ip) || "::1".equals(ip)).verifyComplete();
   }
 
   @TestConfiguration

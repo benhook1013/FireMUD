@@ -13,3 +13,20 @@ spring:
   sql:
     init:
       mode: never
+
+firemud:
+  gateway:
+    header-trust:
+      forwarded-client-ip:
+        trusted-proxy-cidrs:
+          - 127.0.0.1/32
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+      tcp-proxy:
+        allow-insecure-headers-from-trusted-cidrs: true
+        insecure-trusted-cidrs:
+          - 127.0.0.1/32
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16

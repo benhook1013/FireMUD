@@ -21,7 +21,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @Component
 public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private static final Logger logger = LoggerFactory.getLogger(GameSessionWebSocketHandler.class);
-  private static final String SESSION_HEADER = "X-Session-Id";
+  private static final String GAME_INSTANCE_HEADER = "X-Game-Instance-Id";
+  private static final String LEGACY_SESSION_HEADER = "X-Session-Id";
   private static final String TENANT_HEADER = "X-Tenant-Id";
   private static final String SOLO_TICK_HEADER = "X-Requires-Solo-Tick";
 
@@ -73,7 +74,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private String resolveSessionId(WebSocketSession session) {
-    return session.getHandshakeHeaders().getFirst(SESSION_HEADER);
+    String gameInstanceId = session.getHandshakeHeaders().getFirst(GAME_INSTANCE_HEADER);
+    if (StringUtils.hasText(gameInstanceId)) {
+      return gameInstanceId;
+    }
+    return session.getHandshakeHeaders().getFirst(LEGACY_SESSION_HEADER);
   }
 
   private String resolveTenantId(WebSocketSession session) {

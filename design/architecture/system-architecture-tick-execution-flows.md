@@ -45,7 +45,7 @@ Within a region’s tick, each command proceeds through several phases:
    - For cross-region commands, the origin region:
      - Applies local-only effects first (for example, text feedback, animations).
      - Records durable follow-up work in PostgreSQL for the target entities (tick effect ledger / follow-up tables), with a stable effect identity.
-     - Optionally writes a best-effort Redis hint marker such as `remote:<tenantId>:<targetEntityId>` to reduce latency when the target region drains follow-ups.
+     - Optionally writes a best-effort Redis hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency when the target region drains follow-ups.
    - The target region later drains these follow-ups into its own tick pipeline and applies them under its lease and locks.
 5. **Completion / Finalization (optional)**
    - Many commands do not need global awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
@@ -176,10 +176,10 @@ To illustrate how cross-region flows compose from the phases above, consider a *
    - No HP or inventory state is changed yet; this phase only determines the target and target region.
 3. **Damage Leg (target region)**
    - The origin region records durable follow-up work for the target entity in PostgreSQL (tick effect ledger / follow-up tables), attributed to `<tenantId, regionB>` and keyed by a stable effect identity.
-   - It may also write a best-effort hint marker such as `remote:<tenantId>:<targetEntityId>` to reduce latency, but correctness does not depend on that marker.
+   - It may also write a best-effort hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency, but correctness does not depend on that marker.
    - In the next tick for `<tenantId, regionB>`, the target region’s executor:
      - Computes the damage amount as a percentage of the target’s authoritative current HP.
-     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<targetEntityId>`) and applies damage via Entity Management using the normal `(tenantId, regionId, region_epoch, tickId, effectKey)` idempotency rules.
+     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<entityId>` for the target entity) and applies damage via Entity Management using the normal `(tenantId, regionId, region_epoch, tickId, effectKey)` idempotency rules.
      - Emits a result back to region A containing `casterEntityId` and the actual `damageApplied`.
 4. **Heal Leg (origin region)**
    - When region A receives the lifesteal result, it enqueues a local “apply lifesteal heal” command for the caster.

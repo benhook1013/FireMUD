@@ -69,7 +69,7 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 - WebSocket loss (Web clients)
 - If two-factor authentication is enabled, include the one-time `otp` value with the `LOGIN` command. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication).
 
-After `LOGIN` succeeds, clients must re-establish gameplay scope by issuing `ENTER_GAME <tenantId> [characterId]` (or `ENTER_GAME` with no args when an unambiguous selection hint is present), as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay). Advanced Telnet tools that use a `SESSION <gameInstanceId> <tenantId>` envelope must resend that envelope on the new TCP connection before `LOGIN` if they want those hints applied.
+After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a world and character via the lobby commands (`WORLDS` / `CHARS` / `PLAY`) as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). Advanced Telnet tools that use a `SESSION <gameInstanceId> <tenantId>` envelope must resend that envelope on the new TCP connection before `LOGIN` if they want those hints applied, but selection still uses `PLAY` and never bypasses authorization/entitlement checks.
 
 Redis-backed session state enables seamless resumption if valid, or fresh login if expired.
 Session entries in Redis expire after a derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).

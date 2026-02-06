@@ -81,6 +81,11 @@ To prevent cross-instance collisions and make retries safe, spatial tick effects
 - Game Session persists (or can deterministically reconstruct) the intended pre/post state for the effect so a reconciliation pass can re-drive the missing side if one service commits and another fails.
 - Reconciliation behavior is documented per effect type. The default policy is “retry until convergence” using the original `EffectId`, not “best-effort compensate” with a new effect identity.
 
+Ambient world mutations (doors, hazards, weather) are treated as spatial effects for replay and idempotency purposes:
+
+- All durable ambient mutations must be issued as effect-shaped commands carrying `EffectId` plus the appropriate instance scope (`RoomInstanceRef` for room-scoped changes).
+- Operator tooling and scripts must not bypass this contract by writing instance tables directly; they emit the same effect-shaped commands so retries and crash recovery remain safe.
+
 ### Tick-Adjacent Workflows (Outbox Boundary)
 
 Some player actions conceptually trigger both in-world effects and “business” side effects such as billing, email, or external webhooks. These **tick-adjacent workflows** must still respect the tick replay model:

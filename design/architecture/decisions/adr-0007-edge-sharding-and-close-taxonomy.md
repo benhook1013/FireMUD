@@ -13,7 +13,7 @@ Several documents and proposals assumed two target-state capabilities at the edg
 
 These assumptions introduce multiple gaps and contradictions:
 
-- No end-to-end admission contract exists for how a new WebSocket connection supplies a routing key before `LOGIN`/`ENTER_GAME` establishes session context.
+- No end-to-end admission contract exists for how a new WebSocket connection supplies a routing key before `LOGIN`/lobby selection (`PLAY`) establishes session context.
 - The close taxonomy implies clients can reliably distinguish lease moves from outages, but the platform does not yet have a concrete, secure, and observable shard handoff mechanism that works uniformly across WebSocket and Telnet paths.
 - Treating shard handoff as an edge-visible first-class event makes operational and client behavior depend on an under-specified routing plane, increasing the risk of split-brain routing and mismatched semantics across docs and implementations.
 

@@ -246,11 +246,14 @@ At the protocol level, commands are split into two groups:
 
 - **System commands** – session and connectivity operations fully owned by the Game Session Service (for example, `LOGIN`, `LOGON`, `PING`, and simple state/introspection queries that do not touch gameplay rules). These commands are interpreted and completed entirely within this service.
 - **Gameplay commands** – all other text commands that express in-world actions (for example, `LOOK`, `SAY`, `YELL`, `WHISPER`, movement, combat). Game Session validates the session and authorization, normalizes the input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics or business rules for these commands.
+
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
-| `ENTER_GAME <tenantId> [characterId]` | Binds the authenticated connection to a tenant (and later a character) after `LOGIN`, enforcing tenant authorization and entitlements. | `ENTER_GAME tenant-abc` |
+| `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug). | `WORLDS` |
+| `CHARS <world>` | Lists characters for a world (`<world>` is a world slug or a menu index from `WORLDS`). | `CHARS demo` |
+| `PLAY <world> [character]` | Binds the authenticated connection to a world and character after `LOGIN`, enforcing tenant authorization and entitlements. `<world>` is a slug or menu index; `[character]` is optional name/index. | `PLAY demo 1` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
@@ -275,9 +278,9 @@ This small command table defines the initial MVP gameplay command set delivered 
 
 Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. OTP values are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
 
-**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. Gameplay commands such as `LOOK` require a successful `ENTER_GAME` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
+**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. Gameplay commands such as `LOOK` require a successful `PLAY` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
 
-After `LOGIN` succeeds, clients must issue `ENTER_GAME <tenantId> [characterId]` before any gameplay commands (such as `LOOK` or `SAY`). This enter-game step binds the authenticated connection to a tenant-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design. If a client attempts gameplay commands before entering a game, the service returns `ERROR GAME_NOT_ENTERED Use ENTER_GAME <tenantId> first` (or the equivalent canonical code) so clients can recover deterministically.
+After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design. If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
@@ -299,8 +302,12 @@ OK LOGIN Enter password:
 swordfish
 OK LOGIN Logged in as demo@example.com
 
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+
+PLAY demo
+OK PLAY Entered world: Demo World
 ```
 
 The transcript above presents the planned prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
@@ -318,8 +325,12 @@ WebSocket success (parameterized command with optional OTP omitted):
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+
+PLAY demo
+OK PLAY Entered world: Demo World
 ```
 
 WebSocket failure (account locked):
@@ -331,11 +342,11 @@ ERROR ACCOUNT_LOCKED Account locked after repeated failures
 
 ### LOOK transcripts
 
-Telnet `LOOK` (after `ENTER_GAME`):
+Telnet `LOOK` (after `PLAY`):
 
 ```text
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+PLAY demo
+OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
@@ -351,8 +362,8 @@ Entities:
 WebSocket `LOOK` (same authenticated player, different transport):
 
 ```text
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+PLAY demo
+OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
@@ -428,8 +439,8 @@ Examples:
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+PLAY demo
+OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK

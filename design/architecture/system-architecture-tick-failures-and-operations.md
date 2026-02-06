@@ -178,8 +178,8 @@ In rare cases, a `tick:{tenantRegionTag}:pending` entry may remain present even 
 
 Retry and timer queues are protected against unbounded growth:
 
-- Retry queues (`retry:{tenantRegionTag}`) are ZSETs keyed by next-eligible execution time; scripts process at most `N` entries per invocation and enforce a maximum retry budget per action.
-- Timer keys (`timer:{tenantRegionTag}`) are ZSETs keyed by due time; scripts pop at most `N` timers per call and delete processed members.
+- Retry queues (`retry:{tenantRegionTag}`) are ZSETs keyed by `next_eligible_ms` (absolute wall-clock milliseconds); scripts accept `now_ms` as a caller-supplied `ARGV` value (never Redis `TIME`), process at most `N` entries per invocation, and enforce a maximum retry budget per action.
+- Timer keys (`timer:{tenantRegionTag}`) are ZSETs keyed by `due_ms` (absolute wall-clock milliseconds); scripts accept `now_ms` as a caller-supplied `ARGV` value (never Redis `TIME`), pop at most `N` timers per call, and delete processed members.
 - Defensive limits (for example, maximum timers per region) trigger alerts or throttling if exceeded so bugs cannot create unbounded timer or retry growth.
 
 Entity Management provides the reference example for per-aggregate tick idempotency; see `microservices/entity-management-service/README.md#tick-idempotency`.
@@ -288,8 +288,8 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
 - **Region-scoped reset**
   - Timeline impact:
     - For the affected `<tenantId, regionId>`, region-scoped tick coordination keys for the current `region_epoch` (for example `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) are dropped according to the reset policy matrix.
-    - Tenant-scoped coordination such as `session:game:<tenantId>:<sessionId>` remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict sessions.
-    - A new `region_epoch` is established; subsequent ticks for that region advance from `(region_epoch+1, tickId=0)` on the coordination timeline described in `system-architecture-redis.md`.
+    - Tenant-scoped coordination such as `session:game:<tenantId>:<gameInstanceId>:<sessionId>` remains in place unless a broader tenant- or cluster-scoped reset is explicitly invoked; region resets are not expected to evict sessions.
+    - A new `region_epoch` is established; subsequent ticks for that region advance on the **new (bumped) `region_epoch`** starting at `tickId=0` on the coordination timeline described in `system-architecture-redis.md`.
   - Ledger behavior:
     - Tick effect ledger rows with `status = SCHEDULED` for the affected `<tenantId, regionId, region_epoch>` must not remain indefinitely pending.
     - The **default policy** is to mark those rows `ABANDONED` with a reset reason (for example `RESET_REGION_SCOPED`) via the scoped ledger reconcile step in the coordination reset tooling, so operators can see exactly which work was discarded.
@@ -365,7 +365,7 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
 - **Identity and scoping**
   - Each follow-up is tied to a specific target region timeline and effect identity, including at minimum:
     - `tenant_id`, `target_region_id`, `target_region_epoch`
-    - `due_tick_id` (or a due-time field that is mapped deterministically to tick eligibility)
+    - `due_tick_id` in the target region timeline (preferred; do not use wall-clock due-time fields for cross-region follow-up eligibility)
     - `effect_key` (stable, deterministic) and any additional EffectId projection fields needed for traceability.
 - **Uniqueness / de-duplication**
   - The follow-up table must prevent duplicate scheduling of the same logical follow-up for the same target timeline (for example via a unique key that includes `(tenant_id, target_region_id, target_region_epoch, effect_key)` or an equivalent projection that matches the feature’s semantics).
@@ -381,11 +381,14 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
 
 ## Remote Hint Markers and Resets
 
-Cross-region flows may use best-effort Redis hint markers such as `remote:<tenantId>:<entityId>` or `remote:<tenantId>:<targetEntityId>` to reduce latency when draining remote follow-ups. Operationally:
+Cross-region flows may use best-effort Redis hint markers such as `remote:<tenantId>:<entityId>` (for target entities) to reduce latency when draining remote follow-ups. Operationally:
 
 - These markers are **latency hints only**:
   - They may be overwritten, duplicated, or lost.
   - Correctness is derived from durable follow-up rows in PostgreSQL, not from the presence of `remote:*` keys.
+- The marker key must be TTL-bounded so the hint keyspace cannot grow without bound:
+  - Canonical write form: `SET remote:<tenantId>:<entityId> 1 PX remote_hint_ttl_ms`.
+  - TTL refresh happens when new durable follow-ups are recorded for that target entity (and optionally while backlog remains due); expiry is treated as normal and must not be interpreted as “no work exists”.
 - Region-level coordination resets do not attempt to delete `remote:*` keys because these keys are tenant-scoped rather than region-scoped.
 - Tenant- and cluster-scoped coordination resets may drop `remote:*` keys alongside other coordination state for the affected tenant; losing them remains safe because they only affect how quickly remote follow-ups are noticed, not whether those follow-ups eventually apply.
 - After a region reset, the next tick executor:

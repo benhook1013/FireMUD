@@ -9,7 +9,7 @@ The World Management Service stores and manages game world topology and content 
 - Persist region, zone, and room data with tenant isolation
 - Execute scheduled world events.
 - Provide procedural generation support.
-- Expose geometry and region metadata; pathfinding is handled by the Movement/Travel subsystem (Game Logic Service) via gRPC with navmesh support.
+- Expose geometry and region metadata; pathfinding algorithms are handled by the Movement/Travel subsystem (Game Logic Service) via gRPC. World Management stores and publishes versioned navmesh/path graph artifacts as part of the `(tenantId, versionId)` template bundle so Game Logic can load consistent inputs.
 - Notify Game Session and Automation services when the world changes
 - Track character locations and instance occupancy
 - Do not store or manage live item or inventory state; room inventory and ground items are derived from Entity Management queries scoped by room/instance identifiers.
@@ -71,6 +71,8 @@ Movement, drops, pickups, and room presence are cross-service by design:
 - Entity Management is authoritative for containment and item instances, including synthetic room-ground containers keyed by the same runtime `RoomInstanceRef`.
 
 All spatial effects must carry the target `RoomInstanceRef` and a canonical tick `EffectId`. Both services must implement durable idempotency guards so partial success can be retried safely until convergence. See [Transaction Strategies](../../system-architecture-transactions.md) and [Identifier Glossary](../../system-architecture-identifier-glossary.md).
+
+Ambient world mutations (doors, hazards, weather) follow the same rule: they are applied only via effect-shaped commands carrying `EffectId` + `RoomInstanceRef`. Operators and scripts must not write World Management instance tables directly.
 
 ## Architecture / Design Notes
 
@@ -134,7 +136,7 @@ All spatial effects must carry the target `RoomInstanceRef` and a canonical tick
 - Persistent world state with incremental saves (rooms, regions, instances, and environmental state), excluding live entities, item instances, and inventories which are persisted by the Entity Management Service.
 - Procedural generation tools for rooms and terrain.
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
-- The Movement/Travel subsystem in the Game Logic Service performs Dijkstra-based pathfinding using the `room_exit` table and exposes results via gRPC.
+- The Movement/Travel subsystem in the Game Logic Service performs pathfinding using the `room_exit` graph (and, where applicable, precomputed navmesh artifacts stored and published by World Management) and exposes results via gRPC.
 - Event scheduling for world-wide holidays or timed modifiers. A `world_event` table
   stores pending events and a scheduled task processes them, updating regional weather
   or other state. Emitting gRPC notifications keeps other services synchronized.
@@ -172,6 +174,8 @@ specified region.
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
 - `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
+- `ListRoomOccupants` – returns the authoritative set of occupant `entityId` values present in a room, scoped by `RoomInstanceRef`.
+- `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
 - `UpdateWorldState` – applies pending world updates and notifies other services.
 
 ### LOOK snapshot contract
@@ -345,6 +349,7 @@ World event invariants:
 - Events are runtime-only and must be keyed by `(tenantId, gameInstanceId)` (they must not be stored as `(tenantId, versionId)` template artifacts).
 - Event application must be idempotent. Each event carries a stable event identity (or derives one from `(tenantId, gameInstanceId, eventId, eventType, scheduledTickId)`), and World Management must guard against double-application on retries or restarts.
 - A weather change event updates the runtime weather field (for example `region_instance.weather`) for the affected `(tenantId, gameInstanceId)` before notifying other services.
+- Event application must use the same effect-shaped ambient mutation contract used by tick execution: durable mutations to ambient world state must be guarded by an `EffectId` and scoped by instance identifiers (for example `RoomInstanceRef` or `(tenantId, gameInstanceId, regionInstanceId)`).
 
 ### Saga Participation
 

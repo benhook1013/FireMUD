@@ -40,7 +40,17 @@ Example alert for tick execution time approaching unsafe ratios relative to lock
     description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more regions. Investigate tick health and region density before adjusting tick cadence.
 ```
 
-Exact metric names may differ; align them with the histogram and ratio metrics defined in the tick and Redis operations docs.
+This rule assumes the **canonical metric contract** from:
+
+- `design/architecture/system-architecture-redis-operations.md` (tick + Redis metrics catalog)
+- `design/architecture/system-architecture-tick-concepts-and-invariants.md` (ratio thresholds and interpretation)
+
+Concretely:
+
+- `tick_execution_time_ms_p99` is a recording rule derived from `tick_execution_time_ms_bucket{tenantId,regionId,le}`.
+- `tick_lock_ttl_ms` is emitted (or recorded) per `<tenantId, regionId>` and represents the lock/lease TTL budget used by tick executors.
+
+Do not use “Timer-in-seconds” histograms under `_ms` names; producers must either emit millisecond-valued histograms/summaries or publish explicit `_seconds` metrics and define separate `_ms` recording rules with unambiguous unit conversions.
 
 ## Tick Effect Ledger Backlog
 

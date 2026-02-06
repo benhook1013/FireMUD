@@ -48,7 +48,7 @@ The subsections below are short stubs maintained to keep existing anchors workin
 
 ### Common Application Settings
 
-Common application settings, including the `SPRING_PROFILES_ACTIVE` profile selector, are documented in `environment-and-secrets-catalog.md#common-application-settings`. See the overview’s Operator Quick Reference for a high-level reminder that `SPRING_PROFILES_ACTIVE` must be set explicitly in all environments.
+Common application settings, including the `SPRING_PROFILES_ACTIVE` profile selector, are documented in `environment-and-secrets-catalog.md#common-application-settings`. See the overview’s Operator Quick Reference for the scoped rule: Kubernetes manifests and any shared environment must set `SPRING_PROFILES_ACTIVE` explicitly (do not rely on defaults).
 
 ### PostgreSQL Credentials
 

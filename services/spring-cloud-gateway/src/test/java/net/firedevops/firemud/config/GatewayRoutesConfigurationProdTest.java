@@ -21,6 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
       "firemud.database.enabled=false",
       "grpc.server.security.enabled=false",
       "grpc.server.port=0",
+      "firemud.auth.jwt-secret=test-secret-for-prod-profile-tests",
       "spring.main.web-application-type=reactive",
       "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration"
     })

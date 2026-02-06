@@ -33,6 +33,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final MeterRegistry meterRegistry;
   private final PingService pingService;
   private final DevIsolatedProperties devIsolatedProperties;
+  private final DisconnectDeduplicator disconnectDeduplicator = new DisconnectDeduplicator(50_000);
 
   public TcpProxyServiceImpl(
       GameInstanceRepository repository,
@@ -60,15 +61,34 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   public void notifyDisconnect(
       NotifyDisconnectRequest request, StreamObserver<NotifyDisconnectResponse> responseObserver) {
     logger.debug(
-        "NotifyDisconnect session={} tenant={}", request.getSessionId(), request.getTenantId());
+        "NotifyDisconnect session={} gameInstanceId={} tenant={} proxyConnectionId={} disconnectSequence={}",
+        request.getSessionId(),
+        request.getGameInstanceId(),
+        request.getTenantId(),
+        request.getProxyConnectionId(),
+        request.getDisconnectSequence());
     ErrorDetail error = handleNotifyDisconnect(request);
     responseObserver.onNext(NotifyDisconnectResponse.newBuilder().setError(error).build());
     responseObserver.onCompleted();
   }
 
   private ErrorDetail handleNotifyDisconnect(NotifyDisconnectRequest request) {
+    if (StringUtils.hasText(request.getProxyConnectionId()) && request.getDisconnectSequence() > 0) {
+      if (!disconnectDeduplicator.shouldProcess(
+          request.getProxyConnectionId(), request.getDisconnectSequence())) {
+        return ok("Duplicate disconnect ignored");
+      }
+    }
+
+    String gameInstanceIdText =
+        StringUtils.hasText(request.getGameInstanceId())
+            ? request.getGameInstanceId()
+            : request.getSessionId();
+    if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
+      return ok("Disconnect recorded (no SESSION envelope)");
+    }
     SessionValidationResult validation =
-        validateSession(request.getSessionId(), request.getTenantId());
+        validateSession(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {
       return validation.errorDetail();
     }
@@ -136,6 +156,35 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     instance.setOwnerAccountId(0L);
     instance.setStatus("RUNNING");
     return instance;
+  }
+
+  private static final class DisconnectDeduplicator {
+    private final int maxEntries;
+    private final java.util.LinkedHashMap<String, Long> lastSequenceByConnection =
+        new java.util.LinkedHashMap<>(128, 0.75f, true);
+
+    private DisconnectDeduplicator(int maxEntries) {
+      this.maxEntries = maxEntries;
+    }
+
+    boolean shouldProcess(String proxyConnectionId, long disconnectSequence) {
+      synchronized (lastSequenceByConnection) {
+        Long lastProcessed = lastSequenceByConnection.get(proxyConnectionId);
+        if (lastProcessed != null && disconnectSequence <= lastProcessed) {
+          return false;
+        }
+        lastSequenceByConnection.put(proxyConnectionId, disconnectSequence);
+        if (lastSequenceByConnection.size() > maxEntries) {
+          java.util.Iterator<java.util.Map.Entry<String, Long>> iterator =
+              lastSequenceByConnection.entrySet().iterator();
+          if (iterator.hasNext()) {
+            iterator.next();
+            iterator.remove();
+          }
+        }
+        return true;
+      }
+    }
   }
 
   private ErrorDetail error(String code, String message) {

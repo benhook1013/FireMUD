@@ -231,7 +231,7 @@ These metrics support AOF targets, tail-loss SLOs, and basic coordination health
   - Tail-loss gauges/counters as defined in [Tail-Loss SLO Observability](#tail-loss-slo-observability), tagged by `<tenantId, regionId>`.
   - Error metrics from Lua scripts that signal replay or lease/lock issues (for example, `STALE_LEASE`, `STALE_LOCK`), as described in `system-architecture-redis-lua-patterns.md`.
 - **Coordination key health**
-  - Size and count metrics for core prefixes such as `tick:{tenantRegionTag}:pending`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `session:game:<tenantId>:<sessionId>`, used to enforce the size and complexity budgets later in this file.
+- Size and count metrics for core prefixes such as `tick:{tenantRegionTag}:pending`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `session:game:<tenantId>:<gameInstanceId>:<sessionId>`, used to enforce the size and complexity budgets later in this file.
   - Oversize/over-budget counters referenced in the **Coordination Size and Complexity Budgets** section (for example, `redis_tick_pending_oversized_total`, `redis_tick_pending_effects_over_budget_total`, `redis_tick_command_queue_overflow_total`, `redis_tick_timers_over_budget_total`, `redis_session_payload_oversized_total`).
 
 ### Session Schema and Cleanup Metrics
@@ -424,7 +424,7 @@ New code is expected to honour both: never exceed the hard caps, and stay within
   - When cardinality or per-tick processing budgets are exceeded:
     - The region is marked **degraded** and emits `redis_tick_timers_over_budget_total` metrics.
     - Additional timer insertions beyond the hard cap are **shed** with a clear error or dropped according to simple, documented rules (for example, rejecting new timers for low-priority effects first).
-- `session:game:<tenantId>:<sessionId>` (per-player session payload)
+- `session:game:<tenantId>:<gameInstanceId>:<sessionId>` (per-player session payload)
   - Target maximum serialized session value size: roughly **≤16–32 KB**.
   - Session payloads may contain routing, bindings, and lightweight metadata, but must not embed large blobs or full gameplay history.
   - When a session value exceeds the budget:
@@ -591,7 +591,7 @@ Session lifetimes and coordination resets interact in predictable ways. The tabl
 
 | Scenario | Steps | Redis impact | Player behavior | Optional cleanup |
 | --- | --- | --- | --- | --- |
-| Decrease JWT/session TTL without reset | Lower `FIREMUD_AUTH_JWT_EXPIRATION_MS` and/or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, roll out services. | New `session:game:<tenantId>:<sessionId>` and `session:auth:<scope>:<tokenHash>` keys (for example `session:auth:account:<accountId>:<tokenHash>` and `session:auth:tenant:<tenantId>:<tokenHash>`) get shorter TTLs; existing keys keep their original TTL until they expire naturally. | Existing sessions continue until their original TTLs; new logins and reconnects enforce the tighter lifetime immediately. | Not required. Operators may optionally run per‑tenant session cleanup (delete `session:game:<tenantId>:*`) to accelerate convergence if memory is tight. |
+| Decrease JWT/session TTL without reset | Lower `FIREMUD_AUTH_JWT_EXPIRATION_MS` and/or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, roll out services. | New `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and `session:auth:<scope>:<tokenHash>` keys (for example `session:auth:account:<accountId>:<tokenHash>` and `session:auth:tenant:<tenantId>:<tokenHash>`) get shorter TTLs; existing keys keep their original TTL until they expire naturally. | Existing sessions continue until their original TTLs; new logins and reconnects enforce the tighter lifetime immediately. | Not required. Operators may optionally run per‑tenant session cleanup (delete `session:game:<tenantId>:*`) to accelerate convergence if memory is tight. |
 | Decrease JWT/session TTL and intentionally force reconnect | Same as above, then proactively delete session keys for selected tenants/regions (for example, `session:game:<tenantId>:*`) during a maintenance window. | Coordination Redis drops affected session keys immediately; memory for those sessions is reclaimed at once. | All affected players must log in again; reconnect attempts for deleted sessions behave like expired sessions. | Recommended when making a large TTL reduction and wanting a clean cut-over or when reclaiming session memory quickly. |
 | Coordination reset with many active sessions | Follow the **Explicit Coordination Reset** runbook for the targeted scope; all coordination prefixes, including `session:*`, are dropped for the affected deployment/regions. | Coordination Redis restarts with an empty keyspace for coordination prefixes (locks, timers, queues, `session:*`, etc.). | All gameplay sessions are effectively terminated; players must log in again and sessions are recreated under the new coordination state. | No separate session cleanup is needed; the reset itself drops `session:*` keys. Operators should communicate expected reconnect behavior to players and monitor memory/latency as sessions rebuild. |
 
