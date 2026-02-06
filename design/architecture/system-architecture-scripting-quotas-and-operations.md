@@ -142,7 +142,7 @@ The table below summarizes the major quota and budget types that apply to script
 
 ## Auditability & Metrics
 
-Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across audit queries, logs, and traces (not as a metric label).
+Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across audit queries, logs, and traces (not as a metric label). The authoritative audit field and stage model is defined in `design/architecture/system-architecture-scripting-observability-contract.md`.
 
 The canonical `script_event_audit` schema includes:
 
@@ -154,11 +154,12 @@ The canonical `script_event_audit` schema includes:
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
   - `scriptPatchVersion` – logical script patch identifier supplied by Game Session and Game Design and used to resolve the runtime script set.
   - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
-  - `tickId` – canonical tick identifier associated with the trigger.
+  - `tickId` – canonical tick identifier associated with the trigger when the trigger is tick-aligned or once commands are accepted into the tick system.
 
-- **Outcome and reason**
-  - `outcome` – canonical classification such as `success`, `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, `skipped_disabled`, `skipped_reloading`, `dropped_quota`, `tenant_budget_exceeded`, `version_unavailable`, `plugin_component_blocked`, or `infrastructure_error`. Additional specific variants like `onload_failed` may be used when they map directly to documented lifecycle states.
-  - `reason` – more detailed, free-form reason string for diagnosis (for example, `iteration_budget_exceeded`, `admin_hard_disable`, `tenant_budget_exceeded_background`, `cluster_limit_reached`, `plugin_component_not_allowed_by_policy`).
+- **Stage-aware outcome**
+  - `finalStage` – the last stage reached for the trigger (for example `ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`).
+  - `finalOutcome` / `finalReason` – canonical classification and diagnostic reason for what happened at `finalStage`.
+  - Optional structured stage breakdown (for example a `stages` JSON array) so operators can distinguish “rejected before DSL” from “DSL evaluated but handoff failed”, following the observability contract.
 
 - **Operational details**
   - Timestamps and duration fields.

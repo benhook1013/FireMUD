@@ -15,7 +15,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 | Layer | Responsibility |
 | --- | --- |
 | **TCP Proxy Service** | Parses Telnet input and clears buffered commands; emits a best-effort disconnect notification to Game Session over an internal-only gRPC event sink |
-| **Spring Cloud Gateway** | Stateless WebSocket passthrough; resumes routing once clients reconnect after edge-visible disconnects |
+| **Spring Cloud Gateway** | Stateless WebSocket router; routes gameplay connections to the correct Game Session shard and emits canonical close reasons (`1013/reroute` for lease moves, `1013/backend_unavailable` for sustained outages) |
 | **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers when the edge connection remains healthy |
 
 Each layer handles fault tolerance independently.
@@ -69,7 +69,7 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 - WebSocket loss (Web clients)
 - If two-factor authentication is enabled, include the one-time `otp` value with the `LOGIN` command. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication).
 
-After `LOGIN` succeeds, clients must re-establish gameplay scope by issuing `ENTER_GAME <tenantIdOrSlug> [characterId]` (or `ENTER_GAME` with no args when an unambiguous selection hint is present), as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay). Advanced Telnet tools that use a `SESSION <gameInstanceId> <tenantId>` envelope must resend that envelope on the new TCP connection before `LOGIN` if they want those hints applied.
+After `LOGIN` succeeds, clients must re-establish gameplay scope by issuing `ENTER_GAME <tenantId> [characterId]` (or `ENTER_GAME` with no args when an unambiguous selection hint is present), as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay). Advanced Telnet tools that use a `SESSION <gameInstanceId> <tenantId>` envelope must resend that envelope on the new TCP connection before `LOGIN` if they want those hints applied.
 
 Redis-backed session state enables seamless resumption if valid, or fresh login if expired.
 Session entries in Redis expire after a derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
@@ -101,6 +101,7 @@ At most one active gameplay binding is supported per `{accountId, playerId}` at 
 | Client disconnect (TCP/WebSocket) | Requires new `LOGIN`; may resume via Redis |
 | TCP Proxy Service restart | Telnet clients disconnected; new `LOGIN` required |
 | Spring Cloud Gateway restart | Web clients disconnected with `1000/logout` (planned drain) or `1011/internal_error` (unplanned crash). Telnet clients typically remain connected while the TCP Proxy re-establishes its WebSocket bridge within its bounded reconnect/buffer window; prolonged gateway unavailability results in proxy-side `backend_unavailable` disconnects and clients reconnect and re-`LOGIN`. |
+| Lease move / gameplay shard handoff | WebSocket sessions are closed with `1013` (`reroute`) so clients reconnect promptly and land on the new shard owner. Telnet clients are closed by the TCP Proxy with a `reroute` disconnect reason. Clients should use a small randomized delay (for example 0–250ms) rather than long exponential backoff for this category. |
 | Gateway ↔ Game Session link degraded (short window) | WebSocket connections may stay open when the upstream hop remains established and Game Session is reachable but returning explicit, per-command errors; clients do not reconnect solely due to transient command failures. If the upstream gameplay WebSocket closes, clients reconnect and re-`LOGIN`. |
 | Gateway ↔ Game Session link degraded (sustained backend unavailable) | Gameplay becomes impossible; WebSocket sessions are closed with `1013` (`backend_unavailable`) and clients should reconnect with backoff as described below. Telnet clients are closed by the TCP Proxy with `backend_unavailable` once the proxy’s reconnect/buffering window is exceeded; clients reconnect and re-`LOGIN`. |
 | Game Session Service restart | Visible: Gateway closes gameplay WebSocket clients and they reconnect and re-`LOGIN` (subject to at-most-once loss of in-flight commands). Telnet clients typically remain connected while the TCP Proxy re-establishes its gateway bridge within its bounded reconnect/buffer window; prolonged upstream unavailability results in proxy-side `backend_unavailable` disconnects and clients reconnect and re-`LOGIN`. |
@@ -125,6 +126,7 @@ At most one active gameplay binding is supported per `{accountId, playerId}` at 
 FireMUD treats reconnection as a **client responsibility**: after any disconnect, clients open a fresh transport (TCP or WebSocket) and issue a new `LOGIN`. To avoid thundering herds and to keep reconnect storms predictable during incidents, automated or first‑party clients should follow a consistent reconnection policy:
 
 - **Backoff and jitter**
+  - If the last close reason indicates `reroute` (WebSocket `1013/reroute` or Telnet `reroute`), reconnect promptly using only a small randomized delay (for example 0–250ms) to avoid stampedes during coordinated lease moves; do not apply long exponential backoff for this category.
   - Start with an initial delay of `1–2s` after the first failed reconnect attempt.
   - Use exponential backoff (for example, doubling the delay on each subsequent failure) up to a maximum backoff of `30–60s`.
   - Apply jitter of ±25% to each delay to avoid synchronized reconnect bursts from many clients.
