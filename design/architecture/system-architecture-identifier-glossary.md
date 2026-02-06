@@ -30,4 +30,12 @@ Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
 - `EffectId` – the canonical idempotency identity derived from tick context (`tenantId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same `EffectId` for idempotency guards and reconciliation.
 
+## Saga Workflow Identity
+
+Long-running, cross-service workflows (publish, world creation) use sagas and must be idempotent per step:
+
+- `sagaInstanceId` – identifies a specific saga execution.
+- `sagaStepName` – stable step name within the saga definition.
+- `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, typically `(tenantId, sagaInstanceId, sagaStepName)` plus workflow-specific scope such as `gameInstanceId`.
+
 See `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for the full effect identity contract and replay semantics.
