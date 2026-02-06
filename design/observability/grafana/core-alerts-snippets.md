@@ -130,7 +130,9 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 - alert: CommandLatencyP99High
   expr: histogram_quantile(
           0.99,
-          sum by (tenantId, le) (rate(command_end_to_end_latency_ms_bucket[5m]))
+          sum by (tenantId, regionId, le) (
+            rate(command_end_to_end_latency_ms_bucket{command=~"move|look|combat"}[5m])
+          )
         ) > 250
   for: 10m
   labels:
@@ -140,7 +142,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
   annotations:
     summary: Command p99 latency above SLO
-    description: Player command end-to-end p99 latency has exceeded 250ms for core commands.
+    description: Player command end-to-end p99 latency has exceeded 250ms for core commands. Align the `command` label values and the core command regex with the bounded command set in the Logging & Monitoring contract.
 
 - alert: ChatDeliveryLatencyP99High
   expr: histogram_quantile(

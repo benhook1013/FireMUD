@@ -23,4 +23,3 @@ Script hot reload pauses admission for a tenant while `pendingPatchVersion` is v
 
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`
 - `design/architecture/microservices/automation-scripting-service/README.md`
-

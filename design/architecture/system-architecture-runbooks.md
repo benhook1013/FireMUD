@@ -60,18 +60,18 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 
 For a single-admin operator, most “what do I do now?” coordination/tick questions reduce to three named operations and a small set of dashboards/metrics:
 
-  - **Dashboards / metrics to watch**
-  - Tick health:
-    - `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` vs `tick_lock_ttl_ms`.
-    - Per-region tick status (RUNNING/PAUSED/STALLED) and last-committed `tickId`.
-    - Queue depths and retry counts (for example `tick_retry_queue_depth`).
-  - Redis tail-loss and memory:
-    - Tail-loss SLO metrics as described in `system-architecture-redis-operations.md` (for example `redis_coordination_tail_loss_ms{tenantId,regionId}`).
-    - Coordination Redis memory and key counts (coordination prefixes vs total).
-  - Tick effect ledger:
-    - `tick_effects_pending_total`, `tick_effects_applied_total`, `tick_effects_abandoned_total{reason}`.
-  - Cluster health:
-    - Redis primary/replica health, split-brain/sentinel alerts.
+- **Dashboards / metrics to watch**
+- Tick health:
+  - `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` vs `tick_lock_ttl_ms`.
+  - Per-region tick status (RUNNING/PAUSED/STALLED) and last-committed `tickId`.
+  - Queue depths and retry counts (for example `tick_retry_queue_depth`).
+- Redis tail-loss and memory:
+  - Tail-loss SLO metrics as described in `system-architecture-redis-operations.md` (for example `redis_coordination_tail_loss_ms{tenantId,regionId}`).
+  - Coordination Redis memory and key counts (coordination prefixes vs total).
+- Tick effect ledger:
+  - `tick_effects_pending_total`, `tick_effects_applied_total`, `tick_effects_abandoned_total{reason}`.
+- Cluster health:
+  - Redis primary/replica health, split-brain/sentinel alerts.
 
 - **Named operations**
   - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases) for a single `<tenantId, regionId>` and allow ticks to rebuild from PostgreSQL and the tick effect ledger.

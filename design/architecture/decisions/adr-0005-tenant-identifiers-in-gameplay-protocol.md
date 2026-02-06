@@ -36,4 +36,3 @@ If a slug/alias is introduced in the future, it must be defined as a separate, e
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-frontend.md`
 - `design/architecture/microservices/game-session-service/README.md`
-

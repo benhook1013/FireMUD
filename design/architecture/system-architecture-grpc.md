@@ -83,7 +83,7 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 - Prefer returning structured errors over using gRPC metadata for application faults.
 - All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures.
 - Metric contract:
-  - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is typically `grpc_app_error`.
+  - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is `grpc_app_error_total`.
   - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
   - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `playerId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
   See [AI Project Rules](../project-management/ai-rules-local.md) for required logging and metrics interceptors.

@@ -153,7 +153,7 @@ Two related configuration concepts control how long tick work is allowed to run 
 
 These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
 
-At runtime, observed tick durations are compared against lock TTLs using histograms such as `tick.execution_time_ms_p95` and `tick.execution_time_ms_p99`. Ratios like `tick.execution_time_ms_p99 / lock_ttl_ms` drive a simple health model for each `<tenantId, regionId>`:
+At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive a simple health model for each `<tenantId, regionId>`:
 
 - **Healthy** – p99 execution time comfortably below the lock TTL.
 - **Degraded** – p99 execution time approaching the TTL; regions may emit warnings and metrics recommending configuration or design changes.
@@ -194,10 +194,10 @@ At the configuration level:
   - `automation.tick-max-events`
 - These caps exist so no single player or script can monopolize the tick loop, even if they enqueue many actions; excess work spills into subsequent ticks according to the same fairness rules.
 
-Runtime health is also expressed via ratios such as `tick.execution_time_ms_p95` or `tick.execution_time_ms_p99` over `lock_ttl_ms`:
+Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
 
-- **Healthy** – p99 execution time well below `lock_ttl_ms` (for example, < 0.5 × `lock_ttl_ms`).
-- **Degraded / Unsafe** – p99 execution time approaching or exceeding `lock_ttl_ms` over a sustained window; affected regions surface warnings and may be slowed or temporarily halted until configuration or workloads are adjusted.
+- **Healthy** – p99 execution time well below `tick_lock_ttl_ms` (for example, < 0.5 × `tick_lock_ttl_ms`).
+- **Degraded / Unsafe** – p99 execution time approaching or exceeding `tick_lock_ttl_ms` over a sustained window; affected regions surface warnings and may be slowed or temporarily halted until configuration or workloads are adjusted.
 
 The precise thresholds and recommended operator actions are defined in the Redis operations and incident runbook docs; this section records that tick fairness and safety are enforced both through bounded per-tick work and through these timing-based health checks.
 

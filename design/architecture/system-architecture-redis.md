@@ -81,16 +81,16 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
     - The authoritative **baseline** for `(region_epoch, tickId)` comes from Game Session’s control/status surface (for example a `GetRegionTickStatus` API) backed by a PostgreSQL `RegionStatus`-style table; new consumers and operational tooling must obtain their initial view of the timeline from there rather than inferring it from Redis keys.
     - Long‑lived consumers then follow `StreamTickHeartbeats` as the authoritative progression of the timeline after that baseline; if a heartbeat disconnects or an epoch bump is observed, they reconcile using the control API plus durable domain state before resuming.
     - Redis coordination structures (including `tick:{tenantRegionTag}:*`, timers, retries, tick event streams, and scheduler offsets) are treated purely as volatile buffers; they may be partially lost or reset within the documented tail-loss envelope and are never considered the primary source of truth for epoch or tick counters.
-	  - All tick coordination keys in Redis (for example `tick:{tenantRegionTag}:*`, timers, retries, leases, tick event streams, and scheduler offsets) and all corresponding PostgreSQL tick ledger rows conceptually belong to exactly one `(region_epoch, tickId)` on this timeline.
-	  - A single **per-region metadata key** captures the Redis-side view of this timeline for coordination scripts:
-	    - `tick:{tenantRegionTag}:meta` is a hash that stores at least:
-	      - `region_epoch` – the epoch currently considered valid for this `<tenantId, regionId>` in Redis.
-	      - `current_tick_id` – the highest **staged** `tickId` for this region as observed by the tick executor’s coordination scripts. It is a monotonic guard for Redis writes only; it is **not** the source of truth for “last committed tick”.
-	    - Tick- and epoch-aware Lua scripts:
-	      - Read `region_epoch` (and when needed `current_tick_id`) from this key and compare it to the expected epoch/tick supplied from PostgreSQL/lease context.
-	      - Return non-mutating outcomes such as `"STALE_EPOCH"` when the stored epoch does not match the expected value, so callers can abandon work tied to an old epoch and reacquire leases under the new epoch.
-	    - Schedulers and operators:
-	      - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
+    - All tick coordination keys in Redis (for example `tick:{tenantRegionTag}:*`, timers, retries, leases, tick event streams, and scheduler offsets) and all corresponding PostgreSQL tick ledger rows conceptually belong to exactly one `(region_epoch, tickId)` on this timeline.
+    - A single **per-region metadata key** captures the Redis-side view of this timeline for coordination scripts:
+      - `tick:{tenantRegionTag}:meta` is a hash that stores at least:
+        - `region_epoch` – the epoch currently considered valid for this `<tenantId, regionId>` in Redis.
+        - `current_tick_id` – the highest **staged** `tickId` for this region as observed by the tick executor’s coordination scripts. It is a monotonic guard for Redis writes only; it is **not** the source of truth for “last committed tick”.
+      - Tick- and epoch-aware Lua scripts:
+        - Read `region_epoch` (and when needed `current_tick_id`) from this key and compare it to the expected epoch/tick supplied from PostgreSQL/lease context.
+        - Return non-mutating outcomes such as `"STALE_EPOCH"` when the stored epoch does not match the expected value, so callers can abandon work tied to an old epoch and reacquire leases under the new epoch.
+      - Schedulers and operators:
+        - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
   - Split‑brain detection, replay, and reset handling treat this timeline as the arbiter of “which work is valid”:
     - If multiple executors attempt to own the same `<tenantId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
     - After a region‑ or tenant‑scoped reset, a new `region_epoch` is created and any surviving coordination state from older epochs is ignored or explicitly cleaned up by reset tooling.

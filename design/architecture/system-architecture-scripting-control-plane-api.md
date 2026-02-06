@@ -291,4 +291,3 @@ Notes:
 - Operator actions must be reflected in audit logs and in durable status events so UIs can reconstruct history.
 
 For runtime trigger audit fields and metrics naming/label rules, see `design/architecture/system-architecture-scripting-observability-contract.md`.
-

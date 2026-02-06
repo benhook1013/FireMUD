@@ -13,7 +13,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 
 ## Login Success Ratio Below SLO
 
-### Detect
+### Detect (Login success ratio)
 
 - Alert: `LoginSuccessRatioLow` fires (for example, success ratio < 99.5% over 15 minutes).
 - Player reports: widespread login failures or timeouts.
@@ -21,7 +21,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - Player Experience dashboard shows a drop in the login success panel.
   - Gateway/TCP Proxy logs show spikes in 4xx/5xx on login routes or connection refusals.
 
-### Decide
+### Decide (Login success ratio)
 
 - Determine scope:
   - Single tenant vs all tenants.
@@ -31,7 +31,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - **Auth-related** (Account Service, JWT, database).
   - **Downstream capacity-related** (Game Session, Redis, Postgres).
 
-### Act
+### Act (Login success ratio)
 
 1. **Check entry paths**
    - Compare Telnet vs WebSocket/HTTPS behavior:
@@ -59,7 +59,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 
 ## Command Latency Above SLO
 
-### Detect
+### Detect (Command latency)
 
 - Alert: `CommandLatencyP99High` fires (p99 command latency > 250ms over 5 minutes).
 - Player reports: perceived lag or delayed command responses in game.
@@ -67,14 +67,14 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - Player Experience dashboard shows elevated command p99 latency.
   - Tick Health & Ledger dashboard shows whether tick execution or queue depth is also degraded.
 
-### Decide
+### Decide (Command latency)
 
 - Determine whether the latency is:
   - **Network/edge-bound** (Gateway/TCP Proxy queues or backpressure).
   - **Tick-bound** (tick execution p99 approaching `tick_lock_ttl_ms`).
   - **Downstream service-bound** (e.g., Entity Management, World Management, chat or automation calls from ticks).
 
-### Act
+### Act (Command latency)
 
 1. **Check tick health first**
    - Use the Tick Health & Ledger dashboard:
@@ -101,7 +101,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 
 ## Chat Delivery Latency Above SLO
 
-### Detect
+### Detect (Chat delivery latency)
 
 - Alert: `ChatDeliveryLatencyP99High` fires (p99 chat delivery > 1s over 5 minutes).
 - Player reports: delayed or missing chat messages.
@@ -109,14 +109,14 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - Player Experience dashboard shows elevated chat p99 latency.
   - Chat/social service dashboards show increased queue lengths or processing times.
 
-### Decide
+### Decide (Chat delivery latency)
 
 - Determine whether latency is:
   - **Ingress-bound** (Gateway/edge issues affecting chat commands).
   - **Chat service-bound** (processing pipelines, filter/moderation hooks, database/Redis calls).
   - **Downstream or cross-region-bound** (if chat relies on tick or region routing).
 
-### Act
+### Act (Chat delivery latency)
 
 1. **Inspect chat service metrics**
    - Check:
@@ -134,16 +134,17 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
    - Confirm chat p99 latency returns below the SLO for active channels.
    - Ensure the alert clears and player reports improve.
    - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays in logs have subsided for affected players and channels.
+
 ## Telnet/WebSocket Path Availability Below SLO
 
-### Detect
+### Detect (Entry path availability)
 
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
   - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{path,outcome}` for one or more tenants.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
-### Decide
+### Decide (Entry path availability)
 
 - Determine scope:
   - Single tenant vs all tenants (group by `tenantId`).
@@ -154,7 +155,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - `upstream_unreachable` suggests Gateway or downstream availability issues.
   - `auth_failed` suggests account/JWT or session binding problems.
 
-### Act
+### Act (Entry path availability)
 
 1. **Classify by path**
    - If `path="telnet"` only:

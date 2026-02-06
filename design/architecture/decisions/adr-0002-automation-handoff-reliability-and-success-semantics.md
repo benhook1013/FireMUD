@@ -25,4 +25,3 @@ Scripting produces commands that must flow into the tick system. The design incl
 
 - `design/architecture/system-architecture-scripting-contracts.md`
 - `design/architecture/system-architecture-scripting-observability-contract.md`
-

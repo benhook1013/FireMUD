@@ -113,7 +113,7 @@ When Web clients are degraded and Telnet remains healthy, use this focused check
 5. **Mitigation**
    - If Web-only issues cannot be resolved quickly, communicate a temporary recommendation for affected players to use Telnet where appropriate, and record any gateway/config changes made during mitigation so they can be correlated with behaviour changes in future incidents.
 
-### Stalled Backend / Partial-Disconnect Symptoms
+### Stalled Backend and Partial-Disconnect Symptoms
 
 Some failures present as **“connection alive, commands accepted, but no responses”** from the player’s perspective. When Telnet remains connected but multiple players report that commands like `LOOK` or `SAY` stop producing output while metrics show Game Session or Redis under stress:
 

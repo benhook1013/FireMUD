@@ -24,7 +24,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 
 ## Stalled Tick Region
 
-### Detect
+### Detect (Stalled tick region)
 
 - Alerts fire on tick health, for example:
   - `tick_status{tenantId,regionId,status="STALLED"}` or `tick_status{tenantId,regionId,status="DEGRADED"}` being `1` for a sustained window.
@@ -36,13 +36,13 @@ Each scenario below assumes that Redis and database metrics are wired according 
   - Game Session logs show repeated retries or warnings for the affected region.
   - Jaeger traces for `tick_execute` or equivalent spans show long durations or repeated retries for the same region.
 
-### Decide
+### Decide (Stalled tick region)
 
 - If the stall is brief and metrics already show recovery (status returns to `RUNNING`, queues drain, execution time ratios return to healthy ranges), continue to monitor without intervention.
 - If the region remains stalled or degraded beyond the documented grace window, plan a **region-scoped** coordination reset for the affected `<tenantId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
 - Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same tenant show similar symptoms or if Redis incident runbooks indicate broader coordination corruption.
 
-### Act
+### Act (Stalled tick region)
 
 1. **Quiesce tick work for the region**
    - Pause tick scheduling for the affected `<tenantId, regionId>` using the Game Session controls described in the tick architecture and Redis reset docs.
@@ -69,7 +69,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 
 ## Tick Replay Storm or Excessive Replays
 
-### Detect
+### Detect (Tick replay storm)
 
 - Metrics and dashboards show:
   - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions.
@@ -79,14 +79,14 @@ Each scenario below assumes that Redis and database metrics are wired according 
   - Game Session and domain services log frequent idempotent replays or guard conflicts.
   - Jaeger traces for tick-driven flows show the same effect identities being attempted repeatedly.
 
-### Decide
+### Decide (Tick replay storm)
 
 - If replays are elevated only during a short-lived Redis incident already covered by the Redis incident runbook, prioritize resolving the underlying Redis problem and accept a temporary increase in replays.
 - If replay rates remain high after Redis metrics and tail-loss have returned to normal:
   - Treat this as a domain-level idempotency or design issue in the services contributing the most `replay_ok` outcomes.
   - Focus on those services and effect types first; do not attempt broad coordination resets unless the ledger or coordination metrics also indicate corruption.
 
-### Act
+### Act (Tick replay storm)
 
 1. **Identify hot services and effect types**
    - Use `tick_effect_outcome_total` dashboards to find:
@@ -109,7 +109,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 
 ## Stuck Tick Effect Ledger Entries
 
-### Detect
+### Detect (Stuck tick effect ledger entries)
 
 - Dashboards and metrics show:
   - `tick_effects_pending_total{tenantId,regionId}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
@@ -119,7 +119,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
   - Traces for those tick IDs show missing or incomplete spans for expected domain calls.
 
-### Decide
+### Decide (Stuck tick effect ledger entries)
 
 - Determine whether:
   - The ledger reflects truly stuck work (the domain effects have not been applied), or
@@ -127,7 +127,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 - If the backlog is confined to a single region and limited to a small number of tick IDs, prefer targeted remediation over broad resets.
 - If many ticks across multiple regions share the same symptoms, consider whether a schema, deployment, or coordination issue is preventing ledger updates, and consult the Redis and tick architecture docs before taking action.
 
-### Act
+### Act (Stuck tick effect ledger entries)
 
 1. **Inspect ledger and domain state**
    - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, regionId>`:

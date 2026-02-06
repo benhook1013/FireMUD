@@ -111,7 +111,7 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | Cross-tenant (billing-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `billingAdmin` or `platformAdmin` | Tenant parameters are allowed only because the caller holds a global billing role; log/audit the target tenant |
 | Cross-tenant (data-bearing) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `platformAdmin` | Tenant parameters are allowed only because the caller holds `platformAdmin`; log/audit the target tenant |
 
-4. **Entitlement gating** – For gameplay admission and non-billing-safe operational control-plane routes (instance start/stop, gameplay-affecting changes), services must consult `GetTenantEntitlements(tenantId)` and deny requests when the tenant is not available for gameplay (for example `suspended`/`canceled`). Billing-safe routes must not be blocked solely due to tenant unavailability for gameplay.
+1. **Entitlement gating** – For gameplay admission and non-billing-safe operational control-plane routes (instance start/stop, gameplay-affecting changes), services must consult `GetTenantEntitlements(tenantId)` and deny requests when the tenant is not available for gameplay (for example `suspended`/`canceled`). Billing-safe routes must not be blocked solely due to tenant unavailability for gameplay.
 
 ---
 

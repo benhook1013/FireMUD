@@ -13,19 +13,19 @@ These snippets provide example PromQL expressions and Alertmanager rules for the
 - **Connection limit exceeded rate**
 
   ```promql
-  rate(tcpproxy_connections_limit_exceeded[5m])
+  rate(tcpproxy_connections_limit_exceeded_total[5m])
   ```
 
 - **Discarded Telnet input (negotiation / malformed / overflow)**
 
   ```promql
-  rate(tcpproxy_telnet_discarded[5m])
+  rate(tcpproxy_telnet_discarded_total[5m])
   ```
 
 - **WebSocket reconnect rate to Spring Cloud Gateway**
 
   ```promql
-  rate(tcpproxy_websocket_reconnects[5m])
+  rate(tcpproxy_websocket_reconnects_total[5m])
   ```
 
 ## Example Alertmanager Rules (YAML)
@@ -37,7 +37,7 @@ groups:
   - name: tcp-proxy.rules
     rules:
       - alert: TcpProxyConnectionLimitsExceeded
-        expr: rate(tcpproxy_connections_limit_exceeded[5m]) > 0
+        expr: rate(tcpproxy_connections_limit_exceeded_total[5m]) > 0
         for: 10m
         labels:
           severity: P2
@@ -54,7 +54,7 @@ groups:
             from abusive clients.
 
       - alert: TcpProxyTelnetDiscardSpike
-        expr: rate(tcpproxy_telnet_discarded[5m]) > 5
+        expr: rate(tcpproxy_telnet_discarded_total[5m]) > 5
         for: 5m
         labels:
           severity: P2
@@ -71,7 +71,7 @@ groups:
             or tightening rate limits.
 
       - alert: TcpProxyGatewayReconnectsHigh
-        expr: rate(tcpproxy_websocket_reconnects[5m]) > 1
+        expr: rate(tcpproxy_websocket_reconnects_total[5m]) > 1
         for: 5m
         labels:
           severity: P1
@@ -86,13 +86,13 @@ groups:
             Verify GATEWAY_WS_URL, TLS/mTLS configuration, and Gateway health.
 
       - alert: TcpProxyNotifyDisconnectFailures
-        expr: rate(tcpproxy_disconnect_notify_failure[5m]) > 0
+        expr: sum(rate(tcpproxy_disconnect_notify_transport_failure_total[5m])) > 0
         for: 10m
         labels:
           severity: P1
           service: tcp-proxy-service
           owner: platform
-          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend-partial-disconnect-symptoms
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend-and-partial-disconnect-symptoms
         annotations:
           summary: "TCP Proxy NotifyDisconnect failures observed"
           description: |
@@ -102,13 +102,13 @@ groups:
             contract or authorization errors.
 
       - alert: TcpProxyGrpcAppErrorSpike
-        expr: sum by (code) (rate(grpc_app_error{service="tcp-proxy-service"}[5m])) > 1
+        expr: sum by (code) (rate(grpc_app_error_total{service="tcp-proxy-service"}[5m])) > 1
         for: 10m
         labels:
           severity: P1
           service: tcp-proxy-service
           owner: platform
-          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend-partial-disconnect-symptoms
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend-and-partial-disconnect-symptoms
         annotations:
           summary: "Spike in gRPC app errors on TCP Proxy paths"
           description: |
