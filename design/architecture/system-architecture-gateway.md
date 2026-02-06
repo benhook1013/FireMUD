@@ -85,6 +85,8 @@ The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedi
 
 If either check fails, the gateway rejects the WebSocket handshake and does not promote any `X-Proxy-*` inputs.
 
+Gateway config enforces this trust boundary by allowlisting the expected TCP Proxy identity from the mTLS peer certificate. Configure the allowlist via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-dns-sans`, `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-uri-sans`, and/or `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`.
+
 Until mTLS is fully deployed for the TCP Proxy → Gateway hop, treat any non-mTLS acceptance of `X-Proxy-*` headers as a **temporary dev-only stopgap**, protected by strict internal-only network exposure and NetworkPolicies. Do not rely on “internal network” alone for player-facing environments.
 
 ### Gateway Output Rules (Downstream-Trusted)

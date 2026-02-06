@@ -14,6 +14,10 @@ Redis coordination behavior and reset flows are defined in:
 - `design/architecture/system-architecture-redis-operations.md`
 - `design/architecture/system-architecture-redis-reset-and-recovery.md`
 
+## Implementation Notes
+
+This runbook is written for the target tick/region model (`tenantId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `game_instance_id`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
+
 ## Incident Types
 
 - **Stalled tick region** (lease held but no forward progress)

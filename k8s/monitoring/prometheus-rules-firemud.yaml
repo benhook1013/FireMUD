@@ -1,0 +1,96 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: firemud-core-observability
+  labels:
+    app.kubernetes.io/name: firemud
+    app.kubernetes.io/component: observability
+spec:
+  groups:
+    - name: firemud.recording.tick
+      rules:
+        - record: tick_execution_time_ms_p95
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (tenantId, regionId, le) (rate(tick_execution_time_ms_bucket[5m]))
+            )
+        - record: tick_execution_time_ms_p99
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (tenantId, regionId, le) (rate(tick_execution_time_ms_bucket[5m]))
+            )
+        - record: tick_execution_safety_ratio_p99
+          expr: tick_execution_time_ms_p99 / tick_lock_ttl_ms
+
+    - name: firemud.recording.player_experience
+      rules:
+        - record: login_success_ratio_15m
+          expr: |
+            (
+              sum by (tenantId) (rate(login_requests_total{outcome="success"}[15m]))
+                /
+              sum by (tenantId) (rate(login_requests_total[15m]))
+            )
+        - record: command_latency_ms_p99_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (tenantId, regionId, le) (
+                rate(command_end_to_end_latency_ms_bucket{command=~"move|look|combat"}[5m])
+              )
+            )
+
+    - name: firemud.alerts.redis
+      rules:
+        - alert: RedisCoordinationTailLossSLOBreached
+          expr: redis_coordination_tail_loss_ms > 2000
+          for: 5m
+          labels:
+            service: redis-coordination
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach
+          annotations:
+            summary: Coordination Redis tail-loss SLO breached
+            description: Tail-loss exceeds the 1–2s envelope for one or more regions.
+
+    - name: firemud.alerts.tick
+      rules:
+        - alert: TickExecutionUnsafeRatio
+          expr: tick_execution_safety_ratio_p99 > 0.75
+          for: 10m
+          labels:
+            service: game-session
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
+          annotations:
+            summary: Tick execution time approaching unsafe fraction of lock TTL
+            description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more regions.
+
+    - name: firemud.alerts.player_experience
+      rules:
+        - alert: LoginSuccessRatioLow
+          expr: login_success_ratio_15m < 0.995
+          for: 15m
+          labels:
+            service: gateway
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
+          annotations:
+            summary: Login success ratio below SLO
+            description: Login success ratio has fallen below 99.5% over the last 15 minutes.
+        - alert: CommandLatencyP99High
+          expr: command_latency_ms_p99_5m > 250
+          for: 10m
+          labels:
+            service: gateway
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
+          annotations:
+            summary: Command p99 latency above SLO
+            description: Command end-to-end p99 latency has exceeded 250ms for core commands.

@@ -202,9 +202,15 @@ tasks.register<Exec>("linkCheck") {
     environment("CHECK_EXTERNAL_LINKS", if (fullCheck) "1" else "0")
 }
 
+tasks.register<Exec>("validateObservabilityContract") {
+    group = "verification"
+    description = "Validates the design-level observability contract (metric names/labels) against dashboards and snippets."
+    commandLine("python3", "dev-tools/observability/validate-observability-contract.py")
+}
+
 tasks.named("check") {
     // Always run Markdown lint and link checks; they are relatively fast.
-    dependsOn("lintMarkdown", "linkCheck")
+    dependsOn("lintMarkdown", "linkCheck", "validateObservabilityContract")
     if (fullCheck) {
         dependsOn(
             "checkstyleMain",

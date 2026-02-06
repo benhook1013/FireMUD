@@ -6,6 +6,13 @@ Staging is treated as **disposable by default**: it does not run the production 
 
 ---
 
+## Implementation Notes
+
+The main body of this document describes the target-state backup workflow. Current implementation may lag the target state in a few areas:
+
+- `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end-to-end.
+- Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support is expanded.
+
 ## PostgreSQL Logical Backups
 
 - A `firemud-pg-dump` CronJob (defined in `k8s/postgres/pg-dump-cronjob.yaml`) runs **every 15 minutes** and stores compressed SQL dumps.

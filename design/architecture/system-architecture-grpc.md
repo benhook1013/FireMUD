@@ -85,6 +85,7 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 - Metric contract:
   - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is `grpc_app_error_total`.
   - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
+    - The `service` label may be attached explicitly per counter increment, or injected globally via a Micrometer `commonTags("service", spring.application.name)` configuration from the shared `firemud-common` auto-configuration.
   - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `playerId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
   See [AI Project Rules](../project-management/ai-rules-local.md) for required logging and metrics interceptors.
 
@@ -92,7 +93,8 @@ Example implementation:
 
 ```java
 private ErrorDetail error(String code, String message) {
-  meterRegistry.counter("grpc.app_error", "service", springApplicationName, "code", code).increment();
+  // If the shared Micrometer common-tags configuration is enabled, `service` is added automatically.
+  meterRegistry.counter("grpc.app_error", "code", code).increment();
   return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
 }
 ```
