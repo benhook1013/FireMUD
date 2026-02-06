@@ -39,6 +39,10 @@ For canonical naming and scoping rules, see [Identifier Glossary](../../system-a
   the Account Service if a player's roles change. It does not validate tokens for
   gameplay. Traffic between services still uses mutual TLS certificates as outlined in the
   [Security Architecture](../../system-architecture-security.md).
+- Design-time writes are a separate surface:
+  - Entity Management exposes **design APIs** used by the Game Design Service to mutate Draft template rows keyed by `(tenantId, versionId)` (item/NPC templates, balance curves, loot tables).
+  - These design APIs must validate JWTs and enforce designer/admin authorization for the target `tenantId` and Draft `versionId`.
+  - Design APIs must reject any attempt to write templates for Published/Active/Failed versions.
 
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
@@ -256,6 +260,14 @@ curl http://localhost:8080/ping
 ```bash
 grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
 ```
+
+#### Design-Time APIs
+
+Entity Management also exposes **design-time** APIs used by the Game Design Service to write Draft template rows keyed by `(tenantId, versionId)` (for example item/NPC templates, loot tables, and balancing records).
+
+- Auth: design-time APIs must validate JWTs and enforce designer/admin authorization for the target `tenantId`.
+- Mutability: design-time writes are allowed only for Draft versions; attempts to write templates for Published/Active/Failed versions must fail fast.
+- Runtime isolation: runtime gameplay flows and tick-driven handlers must never call design APIs.
 
 ### Tick Locking
 

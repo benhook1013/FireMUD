@@ -27,6 +27,19 @@ Initial NPC and item presence is modeled declaratively:
 2. **Schedule Initial Events** – inserts world events such as an initial weather state so `WorldEventService` can apply them after the world starts.
 3. **Generate Terrain & Register Population Rules** – optional stages that create terrain chunks and register default spawn templates or population rules for expansive worlds.
 
+### Saga Step Idempotency
+
+World creation steps write durable instance rows and must be safely retryable. Each step must implement a durable idempotency guard keyed by at minimum:
+
+- `(tenantId, gameInstanceId, sagaInstanceId, stepName)`
+
+On a retry of the same saga instance:
+
+- If the guard indicates the step has already completed successfully, the step must become a no-op and return success.
+- If partial writes exist without a completed guard record (for example due to a crash), the step must either reconcile deterministically (preferred) or fail fast with a clear operator-visible error so the saga can be retried safely after cleanup.
+
+This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
+
 ```java
 SagaBuilder builder = new SagaBuilder("createWorld");
 builder
