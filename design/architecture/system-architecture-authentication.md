@@ -54,7 +54,7 @@ FireMUD standardizes a small, explicit role set so tenant authorization and cros
 
 - **Global roles (`globalRoles`)**
   - `platformAdmin` – Full cross-tenant administrative access, including starting and stopping game instances, viewing cross-tenant analytics, and reading billing and subscription state for any tenant.
-  - `support` – Limited cross-tenant support tools (for example, viewing but not mutating tenant configuration and subscription data), subject to audit.
+  - `support` – Limited cross-tenant support tools, subject to audit. Support roles may view high-level subscription state and entitlements for troubleshooting (for example, whether a tenant is `active` or `suspended` and what quotas apply), but cannot view detailed billing artifacts such as invoices or payment methods and cannot modify subscriptions.
   - `billingAdmin` – Cross-tenant access to billing-safe control-plane APIs (for example, viewing invoices, updating payment methods, and managing subscriptions) but no gameplay or design privileges.
 - **Tenant roles (`scopedRoles[tenantId]`)**
   - `player` – Can join gameplay for the tenant subject to entitlements and quotas; no design, admin, or billing capabilities.

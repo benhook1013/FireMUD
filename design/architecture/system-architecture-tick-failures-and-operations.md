@@ -89,15 +89,17 @@ In schema terms:
 
 The ledger makes replay visible operationally via metrics such as:
 
-- `tick.effects_pending_total`
-- `tick.effects_applied_total`
-- `tick.effects_abandoned_total{reason}`
-- `tick.effects_replayed_total`
+- `tick_effects_pending_total{tenantId,regionId}`
+- `tick_effects_applied_total{tenantId,regionId}`
+- `tick_effects_abandoned_total{tenantId,regionId,reason}`
+- `tick_effects_replayed_total{tenantId,regionId}` (or, where available, `tick.effect_outcome_total{outcome="replay_ok"}` for service-level detail)
+- `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each region.
 
 Alerts fire when:
 
 - Pending (`SCHEDULED`) counts remain above thresholds for longer than a tick window, or
-- The abandoned ratio grows unexpectedly for a region or effect type.
+- The abandoned ratio grows unexpectedly for a region or effect type, or
+- The oldest SCHEDULED effect in a region exceeds the configured grace window as indicated by `tick_effects_pending_oldest_scheduled_timestamp_seconds`.
 
 These metrics complement the Redis- and lock-level health metrics described in the Redis architecture and operations docs.
 
@@ -128,7 +130,7 @@ Common scenarios and invariants:
   - Action:
     - Metrics and dashboards surface gaps or stuck regions.
     - Operators treat serious tail-loss as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for the affected `(tenantId, regionId, region_epoch)` combinations.
-    - The controller drives any lingering `SCHEDULED` effects in the tail-loss window to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state instead of introducing ad-hoc `FAILED`/`SKIPPED` tick markers.
+    - The controller drives any lingering `SCHEDULED` effects in the tail-loss window to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state. It does **not** attempt to re-stage older ticks through the normal tick-staging Lua scripts; any need to move effects across epochs or tick ranges is handled only by dedicated maintenance tooling that understands ledger state.
 - **GC pause > `lock_ttl_ms` but < `lease_ttl_ms`**
   - Redis: locks may expire and be reacquired; `pending` remains; lease still held by original executor.
   - PostgreSQL: any effects applied before the pause remain consistent; replays of the same `(tenantId, regionId, tickId, effectKey)` are treated as no-ops by idempotent handlers.

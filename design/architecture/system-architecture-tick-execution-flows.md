@@ -58,12 +58,12 @@ Every phase must be idempotent with respect to `tickId` and effect identity so r
 At each tick for a `<tenantId, regionId>`, the executor:
 
 1. Collects work:
-   - Pulls at most one queued command per active entity.
+   - Pulls at most one queued command per active entity into the per-entity worklist.
    - Pulls a bounded number of due timers and retries (up to configured caps per tick).
-   - Optionally includes a bounded “remote follow-up drain” step (see below); drained remote follow-ups are enqueued into the same per-entity queues as local commands at the target region so they respect the same fairness limits.
+   - Optionally includes a bounded “remote follow-up drain” step (see below); drained remote follow-ups are enqueued into the same per-entity queues as local commands at the target region.
 2. Orders fairly:
-   - Ensures at most one action per entity per tick to preserve fairness.
-   - Orders commands using a combination of arrival time, stat-based priority, and any configured scheduling policy.
+   - Aggregates all candidate work items per entity (queued commands, due timers, retries, and remote follow-ups) and selects **at most one** work item per entity for the current tick; any additional due work for that entity is deferred to future ticks according to the retry/timer scheduling rules.
+   - Orders per-entity selections using a combination of arrival time, stat-based priority, and any configured scheduling policy.
 3. Stages effects:
    - Under the region lease and entity locks, calls Lua scripts to write intended effects into `tick:{tenantRegionTag}:pending`.
 4. Applies and commits:

@@ -38,7 +38,7 @@ To keep authorization consistent, subscription and billing operations map to the
     - `platformAdmin` for full reporting, and
     - `billingAdmin` for billing-focused reporting surfaces.
 
-Implementations must not introduce ad-hoc “owner” or “admin” concepts; they should rely on `tenantAdmin`, `platformAdmin`, and `billingAdmin` from the shared role model and the Tenant Authorization Contract.
+Implementations must not introduce ad-hoc “owner” or “admin” concepts; they should rely on `tenantAdmin`, `platformAdmin`, and `billingAdmin` from the shared role model and the Tenant Authorization Contract. Support roles (`support`) may read high-level subscription state and derived entitlements for troubleshooting purposes but must not be granted access to detailed billing artifacts (for example, invoices or payment methods) or to any subscription-mutating APIs.
 
 ## Lifecycle Flows
 

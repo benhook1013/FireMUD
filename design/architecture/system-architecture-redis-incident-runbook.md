@@ -115,6 +115,7 @@ Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions 
       - Iterates the affected prefix (for example `automation:queue:<tenantId>:*`).
       - Writes corrected keys using shared builders.
       - Deletes or expires the old keys once consumers have been updated.
+   3. Use the `tick-region-logs.json` Kibana saved search to confirm that tick/coordination-related logs for the affected regions no longer show mis-keyed or unknown-prefix warnings after the migration or reset completes.
 
 ### Automation Queue Schema Mistakes
 

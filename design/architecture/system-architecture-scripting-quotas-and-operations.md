@@ -178,7 +178,10 @@ Metrics such as:
 - `automation_script_test_runs_total`
 - `automation_script_test_runtime_seconds`
 
-are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance.
+are updated throughout the scripting pipeline so operators can monitor how often scripts fire, how many are skipped by policy, and how much automation work is being handed to the tick system. See `design/architecture/system-architecture-logging-monitoring.md` for broader metrics and alerting guidance. For dry-runs specifically:
+
+- `automation_script_test_runs_total{tenantId, scriptId, pluginId, eventType, result}` – counts non-committing test executions, tagged with a `result` dimension (for example, `result="success"`, `result="denied_quota"`, `result="error"`).
+- `automation_script_test_runtime_seconds{tenantId, scriptId, pluginId, eventType}` – measures runtime for dry-run/test executions, separate from live traffic.
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:
 

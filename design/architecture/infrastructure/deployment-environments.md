@@ -172,6 +172,8 @@ For details on collecting tester feedback see [Playtesting & Feedback](../../pro
 
 When restoring the staging cluster from backups, operators should follow the same post-restore secret hardening steps as production (see `system-architecture-backup-recovery.md#post-restore-secret-hardening`) so JWT keys and database credentials are rotated before opening the environment to playtests.
 
+By default, staging does not run the production backup CronJobs listed in `schedule.md`; operators rely on ad hoc backup and restore scripts unless staging-specific backup schedules are explicitly installed.
+
 ---
 
 ## Related Documentation

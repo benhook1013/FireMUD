@@ -205,8 +205,8 @@ CI workflows and operators use distinct credentials for each Kubernetes environm
   - May use a kubeconfig or token that is available to a wider set of workflows (for example `manual-helm-deploy.yml` and preview environments).
   - Intended for non-player-facing stacks where rapid iteration is more important than strict change control.
 - **Staging cluster**
-  - Uses credentials limited to staging deployment workflows and operator `kubectl` access.
-  - Credentials are not exposed to pull request workflows; only merges to `develop` and explicit operator actions can update the staging cluster.
+  - Uses credentials limited to operator `kubectl` access and, if introduced later, dedicated staging deployment workflows.
+  - Credentials are not exposed to pull request workflows; only merges to `develop` and explicit operator actions (or approved staging workflows) can update the staging cluster.
 - **Production cluster**
   - Uses credentials restricted to production deployment paths and operator `kubectl` access from approved workstations or bastion hosts.
   - No GitHub Actions workflow currently applies production manifests directly; any future workflow that does so must use GitHub Environments and require manual approvals.

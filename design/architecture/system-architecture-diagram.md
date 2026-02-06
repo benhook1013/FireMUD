@@ -69,11 +69,13 @@ flowchart TD
 
     InternalServices --> DB
     Session --> CoordRedis
-    Session --> CacheRedis
     Entity --> CoordRedis
     Script --> CoordRedis
-    InternalServices --> CacheRedis
-    InternalServices --> ES
+    TCPProxy --> CacheRedis
+    Gateway --> CacheRedis
+    Entity --> CacheRedis
+    Script --> CacheRedis
+    Social --> CacheRedis
     Design --> AssetStore
     InternalServices -- logs --> FluentBit
     InternalServices -- metrics --> Prom

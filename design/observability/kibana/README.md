@@ -7,5 +7,7 @@ These JSON exports can be imported into Kibana to quickly restore log views and 
 ## Dashboards and Saved Objects
 
 - [log-volume.json](./log-volume.json) – Saved search and visualization set focused on log volume, error spikes, and severity distribution across services.
+- [player-incident-drilldown.json](./player-incident-drilldown.json) – Saved search targeting player-visible incidents; filters on `playerId`, `tenantId`, `traceId`, and service to help investigate login, session, and gameplay issues quickly.
+- [tick-region-logs.json](./tick-region-logs.json) – Saved search focused on tick and region incidents; filters on `tenantId`, `regionId`, `tickId`, and tick/Redis-related services for use during coordination and tick incident runbooks.
 
 To use these objects, open Kibana’s “Saved Objects” management screen and import the JSON file, then point the imported visualizations at the Elasticsearch index pattern configured for FireMUD logs.

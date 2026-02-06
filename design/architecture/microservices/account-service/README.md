@@ -85,9 +85,8 @@ resolved during authentication.
 
 ### gRPC APIs
 
-- `CreateAccount` – registers a new user and establishes a session for internal
-  services.
-- `Authenticate` – verifies credentials and issues a session token.
+- `CreateAccount` – registers a new user and returns its `accountId` so internal services can establish their own sessions using the authentication flows described below.
+- `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
 - `ExportAccount` – exports all account and profile data.
@@ -304,17 +303,6 @@ curl -X POST http://localhost:8080/accounts \
   -d '{"username":"demo","email":"demo@example.com","password":"secret"}'
 ```
 
-Example response:
-
-```json
-{
-  "id": 123,
-  "tenantId": "tenant-abc",
-  "username": "demo",
-  "email": "demo@example.com"
-}
-```
-
 Example login request:
 
 `otp` is only required when two-factor authentication is enabled for the account.
@@ -349,21 +337,6 @@ Call the gRPC method with:
 
 ```bash
 grpcurl -plaintext localhost:6565 account.v1.AccountService/Ping
-```
-
-Create an account via gRPC:
-
-```bash
-grpcurl -plaintext -d '{"tenant_id":1,"username":"demo","email":"demo@example.com","password":"secret"}' \
-  localhost:6565 account.v1.AccountService/CreateAccount
-```
-
-Expected response:
-
-```json
-{
-  "accountId": "123"
-}
 ```
 
 ### Saga Participation

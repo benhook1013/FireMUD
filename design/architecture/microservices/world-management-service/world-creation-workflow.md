@@ -18,7 +18,7 @@ It never mutates template rows for Published versions; any structural changes to
 
 Initial NPC and item presence is modeled declaratively:
 
-- World-creation stages may register spawn templates or population bindings (owned by World Management and/or Entity Management) that describe which entity templates can appear where.
+- World-creation stages may register spawn templates or population bindings owned by the **World Management Service** that describe which entity templates (owned by Entity Management) can appear where. These bindings live in World Management tables (for example `world_spawn_template` or equivalent) and reference entity templates by stable identifiers keyed by `(tenantId, versionId)`.
 - Creation of live entities and inventories remains the responsibility of Entity Management and Automation & Scripting workflows, typically driven at runtime via ticks or separate non-gameplay Sagas, and is not performed directly by this world-creation Saga.
 
 ## Steps

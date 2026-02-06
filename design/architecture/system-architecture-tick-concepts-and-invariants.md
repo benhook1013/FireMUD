@@ -32,7 +32,7 @@ When designing new tick-driven features, keep these invariants in mind:
 
 - **Single authoritative executor per region** – all tick-side state for a `<tenantId, regionId>` is owned by one executor at a time.
 - **Lease and lock tokens are authoritative** – region leases and per-entity locks in Redis always carry opaque tokens; tick scripts must validate those tokens (and the current `tickId`) inside a single Lua invocation before applying or cleaning up any staged work.
-- **One action per entity per tick** – fairness is enforced by limiting how many commands a single entity can execute per tick. This applies equally to player commands, AI scripts, and automation, including remote follow-ups drained from other regions (which are enqueued into the same per-entity queues at the target region).
+- **One action per entity per tick** – fairness is enforced by limiting how many **tick work items** (player commands, AI/automation commands, due timers, retries, and remote follow-ups) a single entity can execute per tick. The scheduler and tick-execution flow choose at most one such work item per entity per tick; any additional due work for that entity is deferred to later ticks according to the retry and scheduling rules. This applies equally to player commands, AI scripts, automation, and remote follow-ups drained from other regions (which are enqueued into the same per-entity queues at the target region).
 - **No cross-region locks** – cross-region interactions are modeled as messages, not shared locks or multi-region transactions.
 - **Idempotent side effects** – tick IDs and effect guards must be used so that replays after failure do not double-apply mutations.
 

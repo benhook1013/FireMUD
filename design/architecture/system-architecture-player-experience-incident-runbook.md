@@ -54,6 +54,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 5. **Verify recovery**
    - Confirm the login success SLI panel returns to acceptable levels.
    - Ensure `LoginSuccessRatioLow` clears and player reports subside.
+   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `playerId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
 
 ## Command Latency Above SLO
 
@@ -95,6 +96,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 5. **Verify recovery**
    - Ensure command p99 latency returns under the SLO threshold across core commands.
    - Confirm tick health metrics return to normal envelopes.
+   - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands with specific `tenantId`/`regionId` and to verify that logs no longer show systemic timeouts or retries for hot commands.
 
 ## Chat Delivery Latency Above SLO
 
@@ -130,4 +132,4 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 4. **Verify recovery**
    - Confirm chat p99 latency returns below the SLO for active channels.
    - Ensure the alert clears and player reports improve.
-
+   - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays in logs have subsided for affected players and channels.

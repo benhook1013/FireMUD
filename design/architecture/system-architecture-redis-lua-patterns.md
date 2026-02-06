@@ -216,12 +216,13 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
       - The requested `tickId` for the staged work.
     - The script reads the current epoch/tick metadata from the canonical metadata key:
       - `KEYS` must include `tick:{tenantRegionTag}:meta` (a hash as defined in the Redis architecture doc).
-      - The script loads `region_epoch` (and, when needed, `current_tick_id`) from that hash.
-    - Behavior:
+      - The script loads `region_epoch` and `current_tick_id` from that hash.
+    - Behavior (hot-path tick staging/cleanup):
       - If the stored `region_epoch` does not match the expected epoch, the script returns a non-mutating `"STALE_EPOCH"` outcome and does not modify state; callers treat this as “reset or handoff happened, abandon this attempt and reacquire lease under the new epoch”.
-      - If the epoch matches and there is an existing `current_tick_id` that is greater than the requested `tickId`, the script returns a replay/out-of-date result and does not modify state.
-      - If the epoch matches and `current_tick_id` is equal to the requested `tickId`, the script proceeds but treats existing effect entries as already staged (see Pattern 3).
-      - If the epoch matches and there is no `current_tick_id` or it is less than the requested `tickId`, the script updates `current_tick_id` in `tick:{tenantRegionTag}:meta` and stages new effects.
+      - For hot-path tick execution, callers must only invoke staging/cleanup scripts with `requestedTickId` equal to the scheduler’s current tick for that region (as derived from RegionStatus/ledger); under that assumption:
+        - If `current_tick_id` is unset, the script sets it to `requestedTickId` and stages new effects.
+        - If `current_tick_id == requestedTickId`, the script proceeds and treats existing effect entries as already staged (see Pattern 3).
+        - If `current_tick_id > requestedTickId`, the script returns a non-mutating “out-of-date” outcome and does not modify state; callers must not attempt to re-stage older ticks through these hot-path scripts and should instead rely on ledger-driven replay/maintenance flows to reconcile older work.
 
 - **Pattern 3 – Effect-key sets for staging (no duplicate staging)**
   - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:<entityId>:apply:damage:<commandId>`), and scripts use **set-style semantics**:

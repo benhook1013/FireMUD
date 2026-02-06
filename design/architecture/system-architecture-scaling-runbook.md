@@ -47,9 +47,10 @@ Key steps:
 
 When deciding **what** to scale, prefer signals tied to the tick model and Redis SLOs:
 
-- Tick duration vs budget:
-  - Watch `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (recording rules derived from `tick_execution_time_ms_bucket`) relative to `tick_interval_ms` and lock TTLs as described in `system-architecture-tick-concepts-and-invariants.md`.
-  - If p99 execution time approaches the configured tick budget or a high fraction of lock TTL (for example, sustained `tick_execution_time_ms_p99 / tick_lock_ttl_ms` near the “Degraded/Unsafe” thresholds), first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
+- Tick duration vs budget (primary safety ratio):
+  - Watch `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (recording rules derived from `tick_execution_time_ms_bucket`) relative to **lock TTLs** as described in `system-architecture-tick-concepts-and-invariants.md` (that is, `tick_execution_time_ms_p99 / tick_lock_ttl_ms`).
+  - Treat `tick_execution_time_ms_p99 / tick_lock_ttl_ms` as the primary safety ratio for tick runtime; regions that sustain ratios near the “Degraded/Unsafe” thresholds in the concepts doc should first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
+  - For intuition, you may also track `tick_execution_time_ms_p99 / tick_interval_ms`, but decisions should be grounded in the TTL-based ratio since `lock_ttl_ms` is derived from `tick_interval_ms` via the canonical formulas.
 - Tail-loss envelopes:
   - Monitor tail-loss metrics such as `redis_coordination_tail_loss_ms{tenantId,regionId}` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
   - If coordination tail-loss regularly exceeds the 1–2 second envelope (or roughly `≤ 2 × tick_interval_ms`), prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
@@ -68,7 +69,7 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
 
 - **Per-Game Session instance region density**
   - For tick intervals around `100–250ms`, start with **no more than 50–100 active regions** per Game Session pod.
-  - If `tick_execution_time_ms_p99 / tick_interval_ms` regularly exceeds ~0.5 for any region, treat that as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
+  - If `tick_execution_time_ms_p99 / tick_lock_ttl_ms` regularly approaches the Degraded/Unsafe thresholds from the tick concepts doc for any region, treat that as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
 - **Per-region coordination load**
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.

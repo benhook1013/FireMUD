@@ -267,6 +267,7 @@ To make coordination and tick health observable in a consistent way across servi
   - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.
   - `tick_effects_abandoned_total{tenantId,regionId,reason}` – cumulative abandoned effects by reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, `RESET_CLUSTER_SCOPED`, `EXPIRED`, `INVALID_TARGET`).
+  - `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric recording the oldest `created_at` timestamp among SCHEDULED ledger rows for each region, used to detect when pending work has exceeded the configured grace window.
 - **Service-level tick replay metrics**
   - `gamesession_tick_replayed_total{tenantId,regionId}` – count of ticks that were replayed by the Game Session Service for each region (used to monitor how often idempotent recovery paths are exercised).
   - `gamesession_tick_executed_total{tenantId,regionId}` – count of ticks executed by the Game Session Service (denominator for replay ratios).

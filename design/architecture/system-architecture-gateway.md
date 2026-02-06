@@ -130,7 +130,7 @@ Gameplay WebSocket connections are long-lived but not unbounded. To avoid half-o
 - If no `pong` or other traffic is observed for a configured idle window (for example 90 seconds), the connection is closed with a clear close reason. Load balancers or CDNs in front of the gateway must be configured with idle timeouts greater than this window so they do not terminate connections more aggressively than the gateway itself.
 - Web clients are not required to send their own application-level heartbeats, but they may do so; they must be prepared for the gateway to close idle or unreachable connections according to these limits and to follow the reconnection rules in [Reconnection Strategy](./system-architecture-reconnection.md).
 
-For gameplay WebSocket sessions, FireMUD standardises a small set of close codes and reasons so clients and operators can interpret failures consistently. These codes and reasons define the canonical categories for WebSocket closures; Telnet disconnect messages on the TCP Proxy Service map directly onto the same categories as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons):
+For gameplay WebSocket sessions, FireMUD standardises a small set of close codes and reasons so clients and operators can interpret failures consistently. Spring Cloud Gateway is the **only component that emits WebSocket close frames to external clients**; backend services (including Game Session) express their intent via upstream failures or closes, and Gateway maps those outcomes into the standard close codes below. Telnet disconnect messages on the TCP Proxy Service map directly onto the same categories as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons):
 
 - `1000` with reason `logout` – explicit, clean shutdown (for example, user-initiated logout or admin‑initiated session end where no error occurred).
 - `1001` with reason `idle_timeout` – idle-connection timeout where the gateway or Game Session has not observed traffic within its configured idle window.
@@ -138,7 +138,7 @@ For gameplay WebSocket sessions, FireMUD standardises a small set of close codes
 - `1011` with reason `internal_error` – unexpected server‑side failures that are not attributable to the client and are not clearly a backend‑unavailable condition.
 - `1013` with reason `backend_unavailable` – Spring Cloud Gateway has concluded that backend services needed for gameplay are unavailable or overloaded beyond a short tolerance window (see [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios)).
 
-Gateway and Game Session implementations must choose one of these codes/reasons when closing gameplay WebSocket sessions for platform‑initiated reasons, and should log the mapped category and contributing metrics (for example `gateway.websocket.close_reason` and `gamesession.connection.closed{reason=...}`) so operations teams can distinguish idle timeouts, policy enforcement, backend outages, and internal errors.
+Gateway and Game Session implementations must always map platform‑initiated closures into one of these categories. Game Session indicates categories through its upstream behaviour (for example how it closes or errors its side of the connection), while Gateway is responsible for translating those signals into the client‑facing close codes/reasons above and logging the mapped category and contributing metrics (for example `gateway.websocket.close_reason` and `gamesession.connection.closed{reason=...}`) so operations teams can distinguish idle timeouts, policy enforcement, backend outages, and internal errors.
 
 To keep behaviour consistent and avoid double-closing sessions, ownership of these close codes is divided as follows:
 
@@ -156,6 +156,17 @@ Spring Cloud Gateway applies a small grace window before closing WebSocket sessi
 - Gateway starts the backend-unavailable timer when a route first enters this “all failed” state. Within the `firemud.gateway.backendUnavailableGraceMs` window, Gateway keeps existing WebSocket sessions open and surfaces backend errors as per-command failures, allowing clients to remain connected while the platform recovers from short blips.
 - When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs` without any successful calls or healthy checks, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable` and reject new `/ws/game/**` connections with HTTP `503` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
 - Load balancers or CDNs in front of Gateway should be configured with idle and failure timeouts that do not undercut this grace window; otherwise, they may terminate connections before Gateway can emit the canonical `backend_unavailable` signal.
+
+### Gateway Restart Semantics
+
+Gateway restarts can be planned (for example, rolling deploys) or unplanned (for example, crashes or infrastructure failures). To keep client behaviour and operational signals consistent:
+
+- **Planned, graceful restarts**
+  - During a controlled drain or rolling restart, Gateway closes existing gameplay WebSocket sessions with code `1000` and reason `logout` plus an implementation-defined subreason such as `gateway_restart`. Clients should treat this as a clean, expected shutdown and may reconnect with their normal backoff policy.
+- **Unplanned internal failures at Gateway**
+  - When Gateway encounters an unexpected internal error that forces it to drop gameplay WebSocket sessions independently of backend health (for example, container crashes, unrecoverable configuration errors), it closes affected sessions with code `1011` and reason `internal_error`. Clients should treat this like other internal errors and apply the standard exponential backoff rules described in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
+- **Backend-unavailable vs restart**
+  - `1013/backend_unavailable` remains reserved for cases where Gateway’s backend-unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs` because core gameplay backends are failing or unreachable. Gateway must not emit `1013/backend_unavailable` solely because of its own process restarts; those conditions are covered by the planned/unplanned restart semantics above.
 
 ---
 

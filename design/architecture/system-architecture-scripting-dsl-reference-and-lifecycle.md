@@ -89,10 +89,10 @@ Triggers lead to DSL runs, which produce script work items in the automation que
   - For **scheduler-originated events** such as `onInterval` and `onTimerExpire`, the **Automation & Scripting Service scheduler** creates the `scriptEventId` when the timer or interval becomes due.
 
 - **Uniqueness scope**
-  - Within a given `<tenantId, regionId, scriptId, eventType>`, each logically distinct trigger is assigned a unique `scriptEventId`. There is no requirement for global uniqueness across all tenants; the combination of `<tenantId, regionId, scriptId, scriptEventId, tickId>` is what downstream services use as an idempotency key.
+  - Within a given `<tenantId, regionId, scriptId>`, each logically distinct trigger is assigned a unique `scriptEventId`. There is no requirement for global uniqueness across all tenants; the combination of `<tenantId, regionId, scriptId, scriptEventId, tickId>` is what downstream services use as an idempotency key.
 
 - **Handling retries and duplicates**
-  - The Automation & Scripting Service treats script execution as **at-most-once per `scriptEventId`**. If it receives a duplicate delivery for the same `<tenantId, regionId, scriptId, eventType, scriptEventId>`—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
+  - The Automation & Scripting Service treats script execution as **at-most-once per `<tenantId, regionId, scriptId, scriptEventId>`**. If it receives a duplicate delivery for that tuple—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
   - Downstream services and replay tools rely on `<tenantId, regionId, scriptId, scriptEventId, tickId>` as an idempotency token. Commands produced by the script carry this metadata so replays and retries can be correlated with the original trigger.
 
 ---

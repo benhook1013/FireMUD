@@ -73,7 +73,7 @@ The Account Service exposes gRPC and REST endpoints for initiating and inspectin
 - `CreatePaymentIntent` – Initiate a one-time payment or donation and return the client-facing Stripe Payment Intent details.  
 - `RefundPayment` – Issue a refund for an existing `payment_transaction` and update its status.  
 - `CreateSubscription` – Start or update a recurring hosting subscription for a specific `tenantId` and `plan_code`.  
-- Subscription and transaction query APIs – Allow tenant owners and admins to view their billing history, constrained by tenant and account authorization.
+- Subscription and transaction query APIs – Allow authorized roles to view their billing history, constrained by tenant and account authorization. Per-tenant billing history is visible to the `tenantAdmin` for that `tenantId` and to global `platformAdmin` and `billingAdmin` roles as defined in the shared role model.
 
 All endpoints are protected by JWT-based auth, and tenant-scoped operations must validate that the caller is allowed to act on the specified `tenantId` using the Tenant Authorization Contract from [Authentication & Authorization](../../system-architecture-authentication.md#tenant-authorization-contract).
 

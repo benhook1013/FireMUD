@@ -102,6 +102,19 @@ Plugin component policy is managed centrally so operators can reason about which
 
 For metrics and outcome naming conventions around plugin policy enforcement, see `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
+#### Policy Rollout & Rollback
+
+To avoid unintentionally breaking large numbers of plugins when component policies change, platform operators should roll out new policies in two phases:
+
+- **Report-only phase** – a new policy version is loaded in a non-enforcing mode:
+  - Policy violations are recorded in `script_event_audit` and `automation_plugin_policy_violations_total`, but plugin triggers are still admitted and executed.
+  - Dashboards and alerts use these signals to show which plugins would be blocked if enforcement were enabled.
+- **Enforcing phase** – once violations are understood and unacceptable plugins have been migrated or disabled:
+  - Enforcement is enabled for the policy version; subsequent violations cause triggers to be rejected with `outcome=plugin_component_blocked`.
+  - Operators continue to monitor `automation_plugin_policy_violations_total` to detect regressions.
+
+Policy configs should be versioned so operators can roll back to a previous allowlist if enforcement causes unexpected disruption. Report-only and enforcing behavior are configuration choices on the policy version and must be applied consistently across environments as part of the normal deployment pipeline.
+
 Operationally, the **Logging & Admin Service** acts as the control plane for plugin lifecycle management. Enabling, disabling, draining, and rolling back plugin versions are all performed via Logging & Admin APIs that update the registry in the Automation & Scripting Service; tenants do not manipulate `activeVersionId` or `pluginState` directly inside game traffic.
 
 To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
