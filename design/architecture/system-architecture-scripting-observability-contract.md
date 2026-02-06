@@ -30,13 +30,46 @@ Audit records must include at least:
   - `triggerMode` (for example `NORMAL` vs `CATCH_UP`)
   - `dueTickId` and/or `dueAt` (for timers/intervals)
 - Outcomes (stage-aware)
+  - `finalStage` (the last stage reached for this trigger; see below)
   - `finalOutcome` and `finalReason` (canonical outcome taxonomy used by dashboards and operators)
-  - A stage marker that distinguishes:
+  - A stage-aware breakdown that distinguishes:
+    - Admission/backpressure decisions (no DSL run)
     - DSL evaluation outcome
     - Work-item persistence outcome (if using a durable outbox)
     - Handoff/enqueue outcome into the tick system
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
+
+### Stage Model (Required)
+
+`script_event_audit` outcomes must be **stage-aware** so operators can answer: “Did the trigger fail before evaluation, during evaluation, during persistence, or during tick handoff?”
+
+Stages:
+
+- `ADMISSION` – the trigger was accepted/rejected before any DSL evaluation (quotas, reload backpressure, disabled scripts, invalid version, policy enforcement).
+- `DSL_EVAL` – the DSL graph was evaluated in the sandbox (validation, loop safety, runtime guards).
+- `WORK_ITEM_PERSIST` – the resulting script work item was persisted durably (for example, into a Postgres outbox) before being indexed for automation ticks.
+- `TICK_HANDOFF` – the work item was handed off to Game Session and accepted into tick queues (the point at which `finalOutcome=success` is allowed).
+
+Required fields:
+
+- `finalStage` must be one of the stages above and must match the last stage attempted for the trigger.
+- `finalOutcome` / `finalReason` must describe what happened at `finalStage`.
+
+Recommended (strongly preferred) structured representation:
+
+- `stages` – a JSON array of stage entries in order, where each entry includes:
+  - `stage` (one of the stage names above)
+  - `outcome` and `reason`
+  - `at` (timestamp)
+
+If a structured `stages` array is not used, equivalent per-stage fields must exist (for example `admissionOutcome`, `dslOutcome`, `workItemOutcome`, `tickHandoffOutcome`) so tooling can still differentiate failures.
+
+Stage semantics:
+
+- `finalOutcome=success` must imply `finalStage=TICK_HANDOFF` (commands were accepted into tick queues). “DSL evaluated successfully but handoff failed” is not success.
+- Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
+- Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 
 ## Metrics (Authoritative Names and Label Rules)
 
@@ -76,4 +109,3 @@ This contract is referenced by:
 - `design/architecture/system-architecture-scripting-quotas-and-operations.md`
 - `design/architecture/microservices/automation-scripting-service/README.md`
 - `design/architecture/system-architecture-logging-monitoring.md`
-
