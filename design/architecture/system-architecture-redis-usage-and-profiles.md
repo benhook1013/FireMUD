@@ -48,7 +48,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - Schema and TTL policies for cache and rate‑limit prefixes are defined centrally in shared infrastructure libraries rather than per service.
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
-    - `view:room-look:<tenantId>:<roomId>`
+    - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>`
     - `world-dynamic:<tenantId>:<aggregateId>`
     - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
     - `automation:queue:<tenantId>:<entityId>` and automation quota counters.

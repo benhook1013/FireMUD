@@ -149,7 +149,7 @@ Cache/Rate-Limit Redis is designed to be **fully reset-tolerant** for the prefix
   - `character-cache:<tenantId>:<characterId>`
   - `world-dynamic:<tenantId>:<aggregateId>`
   - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>`
-  - `view:room-look:<tenantId>:<roomId>`
+  - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>`
   - `chat:*` (including `chat:city:*`)
   - `automation:queue:<tenantId>:*` / `automation:quota:<tenantId>:<scriptId>`
   - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`

@@ -64,7 +64,8 @@ For a given `<tenantId, regionId, regionEpoch, tickId>`, the tick is considered 
 
 - The Game Session tick effect ledger has converged all effects for that tick to terminal outcomes (`APPLIED` or `ABANDONED`) and there are no remaining `SCHEDULED` ledger rows for that tick.
 - `RegionStatus.lastCommittedTickId` (or equivalent) has been advanced to that `(regionEpoch, tickId)` as part of the same “commit visibility” boundary (the status surface is the durable source of truth for the commit watermark).
-- Redis cleanup of staging keys (for example `tick:{tenantRegionTag}:pending`) has either completed or will be performed as best-effort maintenance; cleanup is not what makes a tick committed.
+- Tick coordination state for that tick is no longer in flight:
+  - Staging keys such as `tick:{tenantRegionTag}:pending` have been cleared/abandoned (either by the normal commit/cleanup script or via crash recovery) so no subsequent tick can stage new work while an older tick remains present in Redis coordination state.
 
 A heartbeat `(regionEpoch, tickId)` is emitted only after the durable commit watermark has advanced; consumers treat heartbeats as “last committed tick”, not as “tick started”.
 

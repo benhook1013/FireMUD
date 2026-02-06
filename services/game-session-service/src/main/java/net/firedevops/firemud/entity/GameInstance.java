@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entity;
 
 import jakarta.persistence.*;
+import java.time.Instant;
 import lombok.Data;
 
 @Data
@@ -19,6 +20,15 @@ public class GameInstance {
 
   @Column(name = "script_patch_version", length = 100)
   private String scriptPatchVersion;
+
+  @Column(name = "script_patch_pinned_at")
+  private Instant scriptPatchPinnedAt;
+
+  @Column(name = "script_patch_pinned_by", length = 200)
+  private String scriptPatchPinnedBy;
+
+  @Column(name = "script_patch_pinned_reason", length = 500)
+  private String scriptPatchPinnedReason;
 
   @Column(nullable = false)
   private Long ownerAccountId;

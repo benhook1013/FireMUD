@@ -118,4 +118,4 @@ groups:
             identify misconfigurations or schema/contract issues.
 ```
 
-These expressions assume that Micrometer has exported the TCP Proxy meters using the default naming conventions (e.g., `tcpproxy.connections.active` → `tcpproxy_connections_active`, `tcpproxy.disconnect.notify.failure` → `tcpproxy_disconnect_notify_failure`, `grpc.app_error` → `grpc_app_error`). Adjust names if your Prometheus setup uses different naming rules or additional labels.
+These expressions assume that Micrometer has exported the TCP Proxy meters using the default naming conventions (e.g., `tcpproxy.connections.active` → `tcpproxy_connections_active`, `tcpproxy.disconnect.notify.transport_failure` → `tcpproxy_disconnect_notify_transport_failure`, `tcpproxy.disconnect.notify.app_error` → `tcpproxy_disconnect_notify_app_error`, `grpc.app_error` → `grpc_app_error`). Adjust names if your Prometheus setup uses different naming rules or additional labels.

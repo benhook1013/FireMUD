@@ -11,11 +11,11 @@ VALUES_FILE="$ROOT_DIR/k8s/velero/values-minio.yaml"
 BUCKET="firemud-backups"
 
 # Validate required environment variables for uploads
-if [[ -z "${PG_DUMP_BUCKET:-}" || -z "${PG_DUMP_ENDPOINT:-}" ]]; then
-  echo "PG_DUMP_BUCKET and PG_DUMP_ENDPOINT must be set before running this script" >&2
+if [[ -z "${PG_DUMP_BUCKET:-}" ]]; then
+  echo "PG_DUMP_BUCKET must be set before running this script" >&2
   echo "Example:" >&2
   echo "  export PG_DUMP_BUCKET=$BUCKET" >&2
-  echo "  export PG_DUMP_ENDPOINT=http://minio.minio.svc.cluster.local:9000" >&2
+  echo "  export PG_DUMP_ENDPOINT=http://minio.minio.svc.cluster.local:9000  # optional; recommended for MinIO" >&2
   exit 1
 fi
 

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
+import io.grpc.Status;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -617,7 +618,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
                   sessionContext.sessionId(),
                   sessionContext.tenantId(),
                   failure);
-              meterRegistry.counter("tcpproxy.disconnect.notify.failure").increment();
+              Status.Code status = Status.fromThrowable(failure).getCode();
+              meterRegistry
+                  .counter(
+                      "tcpproxy.disconnect.notify.transport_failure", "status", status.name())
+                  .increment();
               return null;
             });
   }
@@ -629,7 +634,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           "Disconnect notification returned no response for session {} tenant {}",
           sessionId,
           tenantId);
-      meterRegistry.counter("tcpproxy.disconnect.notify.failure").increment();
+      meterRegistry
+          .counter("tcpproxy.disconnect.notify.transport_failure", "status", "UNKNOWN")
+          .increment();
       return;
     }
     ErrorDetail detail = response.hasError() ? response.getError() : null;
@@ -642,7 +649,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         tenantId,
         detail.getCode(),
         detail.getMessage());
-    meterRegistry.counter("tcpproxy.disconnect.notify.failure").increment();
+    meterRegistry
+        .counter("tcpproxy.disconnect.notify.app_error", "code", detail.getCode())
+        .increment();
   }
 
   private void logTelnetInput(String sanitized) {

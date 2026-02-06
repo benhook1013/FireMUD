@@ -6,13 +6,6 @@ BACKUP_DIR=${BACKUP_DIR:-/backups}
 BUCKET=${PG_DUMP_BUCKET:-}
 ENDPOINT=${PG_DUMP_ENDPOINT:-}
 
-# Validate upload configuration
-if [[ -n "$BUCKET" || -n "$ENDPOINT" ]]; then
-  if [[ -z "$BUCKET" || -z "$ENDPOINT" ]]; then
-    echo "Both PG_DUMP_BUCKET and PG_DUMP_ENDPOINT must be set to upload backups" >&2
-    exit 1
-  fi
-fi
 PREFIX=firemud
 
 mkdir -p "$BACKUP_DIR/15min" "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly"
@@ -56,29 +49,29 @@ if [ "$DOM" = "01" ]; then
 fi
 
 if [ -n "$BUCKET" ]; then
-  AWS_ARGS=""
+  AWS_ENDPOINT_ARGS=()
   if [ -n "$ENDPOINT" ]; then
-    AWS_ARGS="--endpoint-url $ENDPOINT"
+    AWS_ENDPOINT_ARGS=(--endpoint-url "$ENDPOINT")
   fi
   echo "Uploading $DUMP to s3://$BUCKET"
-  if ! aws s3 cp "$DUMP" "s3://$BUCKET/15min/" "$AWS_ARGS"; then
+  if ! aws s3 cp "$DUMP" "s3://$BUCKET/15min/" "${AWS_ENDPOINT_ARGS[@]}"; then
     echo "Failed to upload 15min dump" >&2
     exit 1
   fi
   if [ "$HOUR" = "00" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" "$AWS_ARGS"; then
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/daily/" "${AWS_ENDPOINT_ARGS[@]}"; then
       echo "Failed to upload daily dump" >&2
       exit 1
     fi
   fi
   if [ "$DOW" = "7" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" "$AWS_ARGS"; then
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/weekly/" "${AWS_ENDPOINT_ARGS[@]}"; then
       echo "Failed to upload weekly dump" >&2
       exit 1
     fi
   fi
   if [ "$DOM" = "01" ]; then
-    if ! aws s3 cp "$DUMP" "s3://$BUCKET/monthly/" "$AWS_ARGS"; then
+    if ! aws s3 cp "$DUMP" "s3://$BUCKET/monthly/" "${AWS_ENDPOINT_ARGS[@]}"; then
       echo "Failed to upload monthly dump" >&2
       exit 1
     fi
