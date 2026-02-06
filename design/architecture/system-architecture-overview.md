@@ -8,8 +8,8 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 The documents linked from this overview describe the target-state design, but the following decisions are treated as **canonical contracts** that other architecture docs must align to.
 - **Gateway responsibility model:** Spring Cloud Gateway is the single ingress for HTTP/WebSocket traffic and the central place for routing, coarse route gating, rate limiting, and observability. It is not the platform’s authorization authority: JWT validation and role/tenant authorization are performed by the consuming meta/control services using shared middleware and the Account Service JWKS.
-- **Gameplay shard routing (required):** Gameplay WebSockets on `/ws/game/**` must be routed to the correct Game Session shard that currently owns the `<tenantId, regionId>` lease. This is deterministic per-connection routing (not cookie-based “sticky sessions”) and is required for correctness under the tick + region ownership model.
-- **Lease moves and reconnect behavior:** When region ownership changes (or a shard becomes unhealthy), the platform favors **close-and-reconnect** over mid-connection migration. The Gateway closes affected gameplay WebSocket sessions with `1013/reroute` and relies on the client reconnection flow; the new connection is routed to the new shard based on the latest lease/mapping state. `1013/backend_unavailable` remains reserved for sustained gameplay-backend outages rather than lease moves.
+- **Gameplay sharding scope (edge vs Game Session):** Spring Cloud Gateway does not own a gameplay shard routing plane. `/ws/game/**` routes to a stable Game Session service surface; any lease ownership and region sharding are internal to the Game Session layer and its coordination mechanisms. See `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the canonical scope decision.
+- **Lease moves and reconnect behavior:** The platform favors **close-and-reconnect** over mid-connection migration. The edge contract does not define a distinct “shard handoff” close category; client-visible outcomes remain limited to the standard close taxonomy (for example `backend_unavailable` for sustained gameplay-path failures). If a future design introduces explicit handoff semantics at the edge, it must be defined as a dedicated design update and integrated into the gateway + protocol bridging contracts (see `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`).
 - **Quotas and entitlements source of truth:** Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Logging & Admin provides dashboards, audit trails, and operator UX; any operator overrides must be represented as an overlay that is merged into the Account Service entitlement contract so enforcement points consume a single canonical view.
 - **Redis topology policy:** In all non-ephemeral environments, Coordination Redis and Cache/Rate-Limit Redis are separate deployments. Local development is treated as non-ephemeral and should run two Redis deployments to exercise role separation. Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented and guarded as an ephemeral topology.
 
@@ -195,20 +195,13 @@ This model avoids single-node bottlenecks for ticks or session handling; see [Ti
 
 Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live gameplay session execution is partitioned by `<tenantId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
 
-Because tick execution is lease-owned per `<tenantId, regionId>`, gameplay WebSocket connections on `/ws/game/**` must be routed to the Game Session shard that currently owns that lease.
+Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, shard/lease ownership remains internal to the Game Session layer: the edge does not implement lease-aware admission or a client-visible shard handoff signal. `/ws/game/**` is routed to a stable Game Session service surface and relies on the Game Session coordination model to respect tick ownership invariants.
 
-Spring Cloud Gateway is a protocol edge and does not own lease state, but it is responsible for deterministic gameplay routing by consuming a shard mapping view published by Game Session. Lease moves are surfaced to clients via `1013/reroute` (not `1013/backend_unavailable`) so clients reconnect and land on the new shard owner.
+If a future architecture introduces explicit edge shard routing or client-visible handoff semantics, it must be defined as a dedicated design update (routing-key transport, trust model, reconnection/backoff policy) and then integrated into:
 
-#### Gameplay Shard Routing Contract (Required)
-
-The routing contract is intentionally narrow and explicit:
-
-- **Authoritative mapping store:** Game Session owns and publishes the current routing view in Coordination Redis. Gateway consumes it for `/ws/game/**` routing decisions; other services must not mint their own shard maps.
-- **Mapping key shape:** the mapping is keyed by `<tenantId, regionId>` and resolves to a stable shard target identity (for example a Kubernetes Service name or an endpoint group identifier). The key format must be documented alongside other coordination keys (and kept compatible with hash-slot rules where applicable).
-- **Routing-key transport (open decision):** the end-to-end mechanism by which a new `/ws/game/**` connection provides or derives the correct `<tenantId, regionId>` at admission time must be specified before sharded routing is implementable. This is tracked in [ADR 0006](./decisions/adr-0006-gameplay-shard-routing-key-transport.md).
-- **Lease move behavior:** when a lease moves, the old shard must stop accepting new gameplay connections for that `<tenantId, regionId>` immediately. Existing connections are closed with `1013/reroute` so clients reconnect and land on the new shard.
-- **Missing/stale mapping fallback:** if Gateway cannot resolve a mapping (missing key, stale target, or target health failure), it must fail closed for gameplay admission: reject new `/ws/game/**` handshakes with HTTP `503` (and close established sessions with a canonical `backend_unavailable` or `reroute` signal depending on cause). It must not silently round-robin gameplay connections to arbitrary shards because that breaks tick ownership assumptions.
-- **Observability requirements:** Gateway emits counters for mapping lookups, misses, and reroute closes; Game Session emits counters for lease moves and shard handoff events. These signals must line up so operators can see “lease moved” vs “backend down” vs “misrouted/missing map.”
+- `design/architecture/system-architecture-gateway.md`
+- `design/architecture/system-architecture-protocol-bridging.md`
+- `design/architecture/system-architecture-reconnection.md`
 
 ---
 

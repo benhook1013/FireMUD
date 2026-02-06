@@ -169,7 +169,12 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
 - `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output (for example, “Someone just entered from the east.”).
 
-Consumers treat the pair `(worldSnapshotId, entitySnapshotId)` as the composite cache key for a rendered LOOK view. `worldSnapshotId` is provided by World Management’s `GetRoomSnapshot`; `entitySnapshotId` is provided by this endpoint.
+Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevant entity presence for a specific `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
+
+- `worldSnapshotId` from World Management’s `GetRoomSnapshot`, and
+- `entitySnapshotId` from `ListRoomEntities`,
+
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management and accessed via gRPC or a refreshed projection) matches the target `RoomInstanceRef`. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
@@ -177,7 +182,7 @@ Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs
 
 ### Implementation status (LOOK slice)
 
-- **Live:** The seeded `firemud.look.rooms` entries provide the visible entities for the demo rooms, `ListRoomEntities` is wired into Game Logic's `ResolveLook`, and the resulting instrumentation is captured in `../../project-management/look-instrumentation.md`.
+- **Live:** The seeded `firemud.look.rooms` entries provide the visible entities for the demo rooms, `ListRoomEntities` is wired into Game Logic's `ResolveLook`, and the resulting instrumentation is captured in `../../../project-management/look-instrumentation.md`.
 - **Stubbed:** Real-time behaviors such as item respawns, stealth/aura-driven visibility, and inventory states still rely on static fixtures so regression tests remain reproducible.
 - **Deferred:** Future slices will catalog metadata from the `character_location` and `npc_location` tables, support multi-instance visibility rules, and surface richer context hints (combat alerts, quest markers) while keeping the public DTO focused on display data.
 
@@ -256,6 +261,7 @@ curl http://localhost:8080/ping
 - `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – builds a new player character.
 - `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates stats or equipment.
 - `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity.
+- `ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse)` – returns players, NPCs, and visible items present in a room, scoped by `RoomInstanceRef`.
 
 ```bash
 grpcurl -plaintext localhost:6565 entity_management.v1.EntityManagementService/Ping
@@ -268,6 +274,10 @@ Entity Management also exposes **design-time** APIs used by the Game Design Serv
 - Auth: design-time APIs must validate JWTs and enforce designer/admin authorization for the target `tenantId`.
 - Mutability: design-time writes are allowed only for Draft versions; attempts to write templates for Published/Active/Failed versions must fail fast.
 - Runtime isolation: runtime gameplay flows and tick-driven handlers must never call design APIs.
+
+Entity Management must also expose a read-only design-time synchronization surface so the Game Design Service can validate convergence before publish:
+
+- `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
 
 ### Tick Locking
 
