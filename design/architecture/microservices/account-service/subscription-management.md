@@ -83,7 +83,7 @@ Subscription status feeds directly into tenant availability and resource enforce
   - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export data. This surface includes actions such as updating payment methods, viewing invoices, and initiating exports, but does not include starting game instances or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
   - As part of the transition into `suspended` or `canceled`, the Account Service emits a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`. Game Session and related services consume this event and immediately:
     - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and  
-    - Delete tenant-scoped auth allowlist entries `session:auth:tenant:<tenantId>:*` associated with regular gameplay and tenant-scoped operations, while continuing to honor `session:auth:global:<accountId>:<tokenHash>` entries and explicit `globalRoles` checks for the billing-safe control-plane surface.
+    - Delete tenant-scoped auth allowlist entries `session:auth:tenant:<tenantId>:*` associated with regular gameplay and tenant-scoped operations, while preserving account-scoped allowlist entries (`session:auth:account:<accountId>:<tokenHash>`) so explicitly marked billing-safe control-plane routes remain available under role checks (`tenantAdmin` for the tenant, or `platformAdmin` / `billingAdmin` for cross-tenant billing tools).
 
 These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of gameplay sessions and regular tenant-scoped auth entries, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
 
@@ -114,6 +114,16 @@ Edge cases around billing and subscription management include:
 ## APIs and Events
 
 The Account Service exposes subscription APIs and emits events so other services can react to billing changes:
+
+### Event Delivery Semantics (Required)
+
+Downstream services depend on billing events for timely entitlement enforcement, but event transport is intentionally at-least-once and may be delayed. To keep behavior safe and deterministic, all billing-related events must follow these semantics:
+
+- **At-least-once delivery** – consumers must assume duplicates and must apply events idempotently.
+- **Per-tenant sequencing** – every event that affects a tenant’s availability or quotas (for example `SubscriptionStatusChanged` and `TenantBillingStateChanged`) must carry a monotonically increasing `tenantBillingSequence` scoped to `{tenantId}` so consumers can detect out-of-order or missing events.
+- **Idempotency key** – every event includes a stable `eventId` (UUID) and the `(tenantId, tenantBillingSequence)` pair; consumers persist the latest applied sequence per tenant and treat older/duplicate events as no-ops.
+- **Gap detection and reconciliation** – if a consumer detects a sequence gap (or has no prior watermark for a tenant), it must call `GetTenantEntitlements(tenantId)` to reconcile immediately and should emit an operator-visible warning metric/log indicating entitlement drift was possible.
+- **Periodic refresh** – even when events are flowing, runtime services should refresh cached entitlements on a bounded interval (for example once per minute) so extended event outages do not cause unbounded drift.
 
 - `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`.  
 - `GetSubscription` / `ListSubscriptions` – Query subscription state for a tenant, scoped by the caller’s authorization.  

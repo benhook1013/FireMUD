@@ -88,6 +88,14 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
 
+      - name: 🐍 Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🔎 Validate Observability Contracts
+        run: python3 dev-tools/observability/validate-observability-contract.py
+
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v5
         with:

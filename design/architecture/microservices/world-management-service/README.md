@@ -27,6 +27,15 @@ serving data:
 - `gameInstanceId` – identifies a running game instance managed by the Game
   Session Service.
 
+World data uses two distinct identifier families. Do not use ambiguous names like `roomId` in APIs or schema documentation without specifying which family is in use.
+
+- **Template identifiers (design-time, version-scoped):**
+  - `regionTemplateId`, `zoneTemplateId`, `roomTemplateId` identify authored topology rows under `(tenantId, versionId)`.
+  - A `RoomTemplateRef` is `(tenantId, versionId, roomTemplateId)`.
+- **Instance identifiers (runtime, instance-scoped):**
+  - `regionInstanceId`, `zoneInstanceId`, `roomInstanceId` identify materialized runtime rows under `(tenantId, gameInstanceId)`.
+  - A `RoomInstanceRef` is `(tenantId, gameInstanceId, roomInstanceId)`.
+
 Template/topology data is keyed by `(tenantId, versionId)`, while runtime world
 instances are keyed by `(tenantId, gameInstanceId)` with references back to the
 active `versionId`.
@@ -82,7 +91,7 @@ World Management is the authoritative owner of character and NPC location for ea
   - Does not own tick or session coordination prefixes; tick queues, locks, timers, and region leases remain owned by the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md#redis-coordination-invariants).
   - Interacts with Coordination Redis only indirectly via Game Session and Automation & Scripting APIs; it does not issue coordination writes itself.
 - **Cache/Rate-Limit Redis usage**
-  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<roomId>` and `world-dynamic:<tenantId>:<aggregateId>`, consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
+  - Uses **Cache/Rate-Limit Redis** to cache hot room and topology slices for active sessions under prefixes such as `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and `world-dynamic:<tenantId>:<aggregateId>`, consistent with [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#key-naming-and-overwrite-expectations).
   - These caches are derived from PostgreSQL tables (`region`, `zone`, `room`, and related metadata) and are treated as **versioned, Class A caches** where version fields exist:
     - World records expose stable version or `lastModified` fields (for example per-room revision columns on `room` or related tables) that are surfaced through World Management’s gRPC APIs.
     - Cache entries store both the payload and the version; consumers compare versions to the authoritative value before reuse and recompute/overwrite on mismatch.
@@ -136,7 +145,7 @@ World Management is the authoritative owner of character and NPC location for ea
   - `region_instance.weather` (or equivalent) records the current weather state for live regions; template rows may include default weather or climate metadata but are not updated during gameplay.
   - `region_instance.shard_id` indicates which server shard hosts the region at runtime.
 - Redis caches hot rooms for active sessions to speed up lookups.
-- Cached rooms use keys `room:<tenantId>:<roomId>` and expire after `world.room.cache-ttl-seconds`.
+- Cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and expire after `world.room.cache-ttl-seconds`. Caches must never be keyed by template identifiers because instance rows may differ due to runtime generation, instancing, or transient ambient state.
 
 ### Multi-Server Shards
 
@@ -151,22 +160,26 @@ specified region.
 ### gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
-- `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room id, names, descriptions, exit metadata, ambient state) scoped by `tenantId` and `roomId`.
+- `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
 - `UpdateWorldState` – applies pending world updates and notifies other services.
 
 ### LOOK snapshot contract
 
 `GetRoomSnapshot` is the canonical endpoint feeding Game Logic’s `ResolveLook`. It should return:
 
-- `roomId`, `tenantId`, and a stable `roomName` (plus optional slug) so the caller can cache or deduplicate snapshots.
+- `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so the caller can unambiguously scope the snapshot to a running instance.
+- A stable `worldSnapshotId` (monotonic or content-hash) for this room’s LOOK-relevant world data so callers can cache or invalidate snapshots deterministically.
+- A stable `roomName` (plus optional slug) suitable for UI display.
 - `shortDescription` and `longDescription` text; descriptions longer than the `LOOK_MAX_DESCRIPTION_CHARS` config should be truncated with an ellipsis so clients don’t wrap aggressively.
-- `exits`, each annotated with `label` (e.g., `NORTH`), `targetRoomId`, and a human-friendly direction string (e.g., “arched passage toward the cavern mouth”). Game Logic renders this list into the `LOOK` exits line.
+- `exits`, each annotated with `label` (e.g., `NORTH`), `targetRoomInstanceId` (within the same `gameInstanceId`), and a human-friendly direction string (e.g., “arched passage toward the cavern mouth”). Game Logic renders this list into the `LOOK` exits line.
 - `ambientState` fields such as `lighting`, `weather`, or `hazardLevel` to enrich the narrative without extra queries.
 - Optional `roomFlags` (for example `isQuestArea` or `isInstanceEntry`) so `LOOK` can warn players before they step into special zones.
 
 Game Logic caches snapshots for the duration of a tick but refreshes them after movement. World Management publishes change events when rooms mutate so downstream caches remain consistent and `LOOK` clients never read stale text.
 
 Room snapshots deliberately exclude live entities, items, and inventory contents; those are retrieved from the Entity Management Service using room- and instance-scoped queries when composing `LOOK` results.
+
+Consumers treat the pair `(worldSnapshotId, entitySnapshotId)` as the composite cache key for a rendered LOOK view. `worldSnapshotId` comes from `GetRoomSnapshot`; `entitySnapshotId` comes from Entity Management’s `ListRoomEntities`. Game Session is responsible for combining these into a single response and caching/rendering consistently within a tick.
 
 The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this lifecycle (Candle-lit Antechamber and Crafting Hall of Ember) so integration tests and the LOOK transcripts stay stable. Developers can locate and extend that migration when the sample world needs more exits or environmental trivia.
 
@@ -181,7 +194,7 @@ The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this
 - Telnet and WebSocket clients both route through the `/ws/game/**` WebSocket predicate on the Gateway and TCP Proxy stacks, so `LOOK` commands hit the same `LookCommandHandler` regardless of transport.
 - Each authenticated success response follows the canonical contract:
   - The first line is `OK LOOK`.
-  - `Room: <name> (ID: <roomId>)`
+  - `Room: <name> (Instance ID: <roomInstanceId>)`
   - `Short: <short description>`
   - `Long: <long description>`
   - `Exits: <comma-separated direction labels and descriptions>`
@@ -277,7 +290,7 @@ the [Security Architecture](../../system-architecture-security.md) for details.
 #### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../../protos/world-management/v1/world_management_service.proto).
-- `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation.
+- `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation scoped by `RoomInstanceRef`.
 - `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates and notifies other services.
 
 Call the `Ping` method with:

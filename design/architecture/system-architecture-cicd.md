@@ -149,9 +149,7 @@ jobs:
 
 ### Rollback Strategy
 
-New service versions are deployed alongside existing ones. If issues appear after
-a rollout, prior releases can be reinstated and the newer copies scaled down or
-removed. Automated rollback and canary deployments handle this process.
+Staging and production rollouts use standard Kubernetes `RollingUpdate` behavior and are rolled back by re-applying the environment’s Kustomize overlay with a previously known-good image tag. FireMUD does not rely on automated canary/auto-rollback infrastructure by default; operators treat rollback as an explicit, auditable action that restores the last known-good tag and verifies post-deploy health checks.
 
 ---
 
@@ -189,9 +187,9 @@ automatically.
 FireMUD uses a simple promotion flow from pull requests through staging to production:
 
 - Feature branches are merged into `develop` after passing CI.
-- The `develop` branch is deployed to a staging cluster using Kubernetes manifests (for example `k8s/overlays/stage`) so operators and playtesters can validate changes in a prod-like environment. This deployment is applied by operators using `kubectl apply -k k8s/overlays/stage`.
+- Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image tags via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history.
 - When a release is ready, `release-please` opens a release PR and creates a version tag (for example `v1.2.3`) that is merged to `main`. Images for this tag are built and pushed by the Docker image workflow.
-- Production deployments pull tagged images and apply the `k8s/overlays/prod` manifests using the standard deployment runbook. Production manifests are also applied by operators using `kubectl apply -k k8s/overlays/prod` from a secure admin environment.
+- Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to the desired tagged images via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
 
 Rollbacks are handled by resuming a previously known-good image tag and re-applying the staging or production manifests with that tag. See the Deployment Runbook for the step-by-step operator flow.
 

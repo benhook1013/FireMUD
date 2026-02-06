@@ -10,7 +10,7 @@ This document explains how FireMUD coordinates data consistency across its indep
 | --- | --- |
 | **Command** | A gameplay action issued by a player or AI (e.g., attack, move, use item). Executed inside a tick as a **self-contained gameplay unit** that may touch multiple services but is coordinated via Redis and idempotent domain handlers. |
 | **Transaction** | A unit of work that must either fully succeed or be rolled back **within a single service boundary** (for example, a PostgreSQL transaction in Entity Management). Gameplay commands are composed of one or more such local transactions plus idempotent retries; there is **no global, cross-service ACID transaction** for a command. |
-| **Tick** | A scheduled gameplay loop slice. Each tick processes at most one command per entity and uses Redis for coordination, rollback, and fairness. Ticks are not atomic across all commands — each command is executed as an independent composition of local transactions and retries. |
+| **Tick** | A scheduled gameplay loop slice. Each tick processes at most one command per entity and uses Redis for coordination, staging/cleanup, and fairness. Ticks are not atomic across all commands — each command is executed as an independent composition of local transactions and retries. |
 | **Saga** | A long-running, cross-service workflow composed of multiple local transactions. Used only for **non-gameplay**, out-of-band operations (e.g., account creation, game publishing) or rare tick-adjacent workflows that must coordinate persistent state across services over time. Sagas rely on compensating actions for rollback and eventual consistency. |
 
 ---
@@ -21,7 +21,7 @@ All real-time gameplay logic — movement, combat, item use, AI — is executed 
 
 - Pulled from the command queue
 - Executed using deterministic game logic
-- Staged in Redis with rollback support via Lua
+- Staged in Redis with Lua-based staging and cleanup/abandon semantics
 - Applied via one or more **service-local transactions** guarded by effect identity
 - Automatically retried on failure (for example, lock contention or transient errors)
 
@@ -58,7 +58,7 @@ If a proposed gameplay feature truly requires stronger semantics than this model
 
 Tick execution is replayable: retries, failover, and Redis AOF replay can cause the same logical effect to be attempted more than once. For gameplay commands this is expected and safe only because tick-invoked domain mutations are required to be idempotent with respect to a canonical `EffectId`.
 
-- The Game Session Service computes and propagates a stable `EffectId` (derived from `tenantId`, `tickId`, `effectKey`, and the target aggregate identity).
+- The Game Session Service computes and propagates a stable `EffectId` (derived from `tenantId`, `regionEpoch`, `tickId`, `effectKey`, and the target aggregate identity).
 - Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
 - To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `firemud-common` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
   - Accepts `EffectId` plus callbacks for “apply-if-first” and “handle-replay”.
@@ -66,6 +66,20 @@ Tick execution is replayable: retries, failover, and Redis AOF replay can cause 
   - Emits a simple, standardized counter such as `tick.effect_outcome_total{service, effect_type, outcome}` so operators can distinguish first-apply vs replay behavior across services without per-tenant configuration.
 
 > 🔗 The canonical `EffectId` contract and per-side-effect patterns are defined in [Tick Effect Identity and Idempotency Contract](./system-architecture-ticks.md#tick-effect-identity-and-idempotency-contract).
+
+### Spatial Effects: Location vs Containment (World ↔ Entity)
+
+Movement, drops, pickups, and room presence are cross-service by design:
+
+- **World Management Service** is authoritative for character/NPC location and occupancy, scoped to a `RoomInstanceRef` `(tenantId, gameInstanceId, roomInstanceId)`.
+- **Entity Management Service** is authoritative for inventories, containment, and ground items, including synthetic room-ground containers keyed by the same `RoomInstanceRef`.
+
+To prevent cross-instance collisions and make retries safe, spatial tick effects must follow these invariants:
+
+- Every spatial effect includes the `RoomInstanceRef` it targets (and, where applicable, `fromRoomInstanceRef` and `toRoomInstanceRef`), not a bare `roomId`.
+- The same `EffectId` is propagated to both World Management and Entity Management mutations for the effect, and both services implement durable idempotency guards so partial success can be safely retried.
+- Game Session persists (or can deterministically reconstruct) the intended pre/post state for the effect so a reconciliation pass can re-drive the missing side if one service commits and another fails.
+- Reconciliation behavior is documented per effect type. The default policy is “retry until convergence” using the original `EffectId`, not “best-effort compensate” with a new effect identity.
 
 ### Tick-Adjacent Workflows (Outbox Boundary)
 
@@ -197,7 +211,7 @@ Do **not** use sagas for:
 - Transient state managed via Redis
 - Tasks that are already retryable via tick rescheduling
 
-Use Redis rollback + tick retries for fast, fair, and consistent gameplay handling.
+Use Redis staging/cleanup + tick retries for fast, fair, and consistent gameplay handling.
 
 ---
 

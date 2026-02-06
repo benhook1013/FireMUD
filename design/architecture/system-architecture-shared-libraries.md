@@ -48,7 +48,7 @@ Tick coordination and other Redis-backed workflows rely on a small set of shared
 
 - **Key Naming helpers** – A `RedisKeyNaming` (or similarly named) utility centralizes construction of tick-related keys such as `tick:{tenantRegionTag}:lock:<entityId>`, `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and `timer:{tenantRegionTag}`. Application code must build these keys exclusively through the helper; direct string concatenation of `tick:`, `retry:`, or `timer:` prefixes in services is discouraged so hash-tag and naming rules remain consistent. The helper enforces the `{tenantRegionTag}` hash tag and is the single source of truth for tick key shapes.
 - **Lua scripts, descriptors, and invocation helpers** – The common library owns:
-  - All coordination-related Lua scripts (tick staging/commit/rollback, locks, timers, retries, session CAS, automation scheduling) under a shared `redis/` resources path.
+  - All coordination-related Lua scripts (tick staging/commit/cleanup, locks, timers, retries, session CAS, automation scheduling) under a shared `redis/` resources path.
   - Machine-readable script descriptors that declare `KEYS` order, allowed prefixes, and shard-locality for each script.
   - A small Redis/Lua helper class that wraps `EVALSHA` calls for tick/session/automation scripts. It ensures that:
   - Scripts are invoked with the correct first key (a tick key with the `{tenantRegionTag}` hash tag).

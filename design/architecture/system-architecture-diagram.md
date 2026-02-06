@@ -51,8 +51,8 @@ flowchart TD
     MUD -- TCP --> TelnetEdge
     TelnetEdge -- TCP/PROXY --> TCPProxy
     Web -- wss/HTTP --> ExtLB
-    ExtLB -- wss/HTTP --> Gateway
-    TCPProxy -- wss --> Gateway
+    ExtLB -- wss/HTTP (public ingress) --> Gateway
+    TCPProxy -- wss (mTLS, internal-only listener) --> Gateway
     Gateway -- wss --> Session
 
     Admin -- gRPC mgmt (infra) --> Gateway
@@ -108,6 +108,8 @@ The Web client is built with React and Material‑UI. For component layout and s
 
 All services run as Docker containers inside a shared Kubernetes cluster. They reuse a [common shared library](./system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and metrics helpers. See [Deployment Environments](./infrastructure/deployment-environments.md) for how the cluster is configured.
 
+Note on gateway listener surfaces: the gateway has a public ingress surface (typically behind an external load balancer) and an internal-only WebSocket mTLS listener used by the TCP Proxy Service. The diagram shows both flows terminating at the same gateway component; see [Gateway Architecture](./system-architecture-gateway.md) for the surface-level expectations.
+
 ## Core Services Shown
 
 The diagram covers every microservice in the repository:
@@ -133,6 +135,7 @@ All internal communication from the **Game Session Service** to downstream micro
 Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
 
 - **PostgreSQL** – Primary persistent store for world topology, entities, characters, items, and transactional metadata (tenant-scoped tables include `tenantId` so data never mixes across games).
+- Not every service writes to PostgreSQL: some services are fully stateless with respect to persistence (for example, Game Logic), and others may be read-heavy. The diagram’s DB arrows indicate “uses the shared datastore layer” rather than “owns tables”.
 - **Coordination Redis** – Volatile session and tick coordination state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient. In production this runs as a dedicated cluster so cache and rate-limit spikes cannot interfere with gameplay coordination.
 - **Cache/Rate-Limit Redis** – Best-effort caches, quotas, and rate limiting; this runs as a separate cluster in production and is safe to evict or scale independently of Coordination Redis.
 - **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.

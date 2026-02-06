@@ -44,6 +44,8 @@ Services connect to the shared PostgreSQL database using the following variables
 | `FIREMUD_POSTGRES_USER` | Username | `firemud` |
 | `FIREMUD_POSTGRES_PASSWORD` | Password | `firemud` |
 
+These defaults exist only to make local development and ephemeral stacks easy to bootstrap. Any non-ephemeral Kubernetes environment (`SPRING_PROFILES_ACTIVE=prod` in staging/production) must supply real, per-environment credentials via Kubernetes Secrets and must not run with `.env.sample`-style defaults.
+
 In production, these variables are normally sourced from a Secret such as `postgres-credentials`. Higher-privilege credentials (for example in a `postgres-admin-credentials` Secret) are used by Kubernetes Jobs like `db-credential-rotation` to rotate application passwords as described in `system-architecture-backup-recovery.md#post-restore-secret-hardening` and `system-architecture-backup-recovery.md#planned-db-credential-rotation`. Routine rotation uses explicit operator runbooks rather than an automatic schedule.
 
 ---
@@ -77,9 +79,11 @@ Precedence and safety rules:
 - Services **fail fast at startup** if:
   - They require Coordination Redis but lack `FIREMUD_REDIS_COORD_*`, or
   - They require Cache/Rate‑Limit Redis but lack `FIREMUD_REDIS_CACHE_*`.
-- It is **not supported** to point `FIREMUD_REDIS_COORD_HOST:PORT` and `FIREMUD_REDIS_CACHE_HOST:PORT` at the same Redis instance in any environment, including local development. Coordination and cache/rate‑limit roles must always run on separate Redis deployments (for example, two containers on the same developer machine).
+- It is **not supported** to point `FIREMUD_REDIS_COORD_HOST:PORT` and `FIREMUD_REDIS_CACHE_HOST:PORT` at the same Redis instance in any **non-ephemeral** environment, including local development, staging, and production. Coordination and cache/rate‑limit roles run on separate Redis deployments (for example, two containers on the same developer machine).
 
 Player‑facing environments (production, staging, QA, and any environment used to validate performance or correctness) **must** configure Coordination Redis and Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the same host/port for both is considered non‑compliant with the Redis architecture because it reintroduces eviction and latency coupling between coordination keys and cache/rate‑limit traffic. Any ad-hoc “single Redis for all roles” topology is treated as an unsupported experiment and must not be used for shared or player-facing environments or for any cluster that runs coordination reset tooling.
+
+Truly ephemeral environments (CI and short-lived preview stacks) may collapse roles into a single Redis instance only when explicitly documented and guarded as an **ephemeral topology**. These stacks are not used to validate coordination tail-loss behavior or production-like performance; they must make it obvious in dashboards/health output that roles are sharing an endpoint so it cannot be mistaken for a production-like configuration. See `../system-architecture-redis-usage-and-profiles.md#environment-mappings` for the allowed exception and guardrails.
 
 ---
 

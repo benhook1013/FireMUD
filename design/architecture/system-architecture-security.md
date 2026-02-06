@@ -203,6 +203,15 @@ Putting this together:
   - **Distribution and access**: Kubernetes RBAC and Secret scoping must restrict which service accounts can read/mount the operator client certificate Secret; NetworkPolicies restrict which pods can reach the management endpoints so that holding a valid certificate alone is not sufficient outside the approved operator surface.
 - Admin and moderator accounts can enable **two-factor authentication** using TOTP codes. When enabled, login requests must supply an `otp` field to the Account Service. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication) for implementation details.
 
+### Operator Client Certificate Lifecycle
+
+Operator control-plane access relies on mTLS client certificates. To keep this access auditable and revocable:
+
+- **Issuance**: operator client certificates are issued by cert-manager using a dedicated issuer and a profile that includes `clientAuth` EKU. Operator certificates are not reused as workload identities.
+- **Storage**: the operator client certificate and private key live in a dedicated Kubernetes Secret that is readable/mountable only by the minimal set of operator-facing tools (or job/service accounts) that require it.
+- **Rotation**: operator certificates are rotated on a fixed cadence (or immediately after personnel/device changes). Rotation updates the operator Secret and distributes the new credential to approved operator surfaces; the previous credential is revoked or removed from allowed trust paths.
+- **Revocation/incident response**: if an operator credential is suspected compromised, rotate immediately and tighten NetworkPolicy allowlists so that possessing a valid certificate is not sufficient without approved network placement.
+
 ---
 
 ## Summary

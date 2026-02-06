@@ -76,9 +76,9 @@ This model underpins both authentication and authorization:
 Quotas are enforced at multiple layers, each with a clear scope:
 
 - **Network and API rate quotas (Gateway and TCP Proxy Service):**
-  - Spring Cloud Gateway enforces per‑tenant API rate limits and connection caps based on configuration derived from Account Service entitlements (for example, maximum concurrent WebSocket connections or HTTP requests per second per tenant).
-  - TCP Proxy Service enforces per‑tenant and per‑IP Telnet connection limits and rate limits for legacy clients, derived from tenant entitlements and cluster‑wide safety caps.
-  - Both components use shared rate‑limit helpers in Redis (`ratelimit:*` prefixes) and expose metrics so operators can see when tenants are being throttled or rejected at the edge.
+  - Spring Cloud Gateway enforces per-IP and per-connection handshake/request limits for HTTP and WebSocket traffic using Cache/Rate-Limit Redis. For gameplay WebSockets, the gateway does not apply tenant-aware rate limits based on post-login traffic; tenant-aware gameplay quotas are enforced in Game Session after `LOGIN` binds the session.
+  - TCP Proxy Service enforces per-IP and per-socket safety caps for legacy Telnet clients (connection limits, line-rate budgets, buffer ceilings, idle timeouts). Like the gateway, it does not assume a tenant identity before gameplay login binds a session.
+  - Both components expose edge-throttling metrics so operators can distinguish edge-safety enforcement from tenant-aware quotas enforced in downstream services.
 
 - **Gameplay command and tick quotas (Game Session Service):**
   - Game Session Service enforces per‑tenant budgets for active sessions, queued commands, and tick workload (for example, maximum commands per tick per tenant, maximum concurrent sessions per tenant).
@@ -89,7 +89,7 @@ Quotas are enforced at multiple layers, each with a clear scope:
   - Storage usage is tracked per tenant via `tenantId` in PostgreSQL schemas and per‑tenant prefixes in object storage.
   - Alerts and dashboards in Logging & Admin Service surface when tenants approach storage thresholds so operators can work with creators to clean up data or upgrade plans.
 
-Account Service remains the **source of truth** for entitlements and plan details, while enforcement is carried out by Gateway, TCP Proxy Service, Game Session Service, and the backing datastores according to the scopes above. When new quota types are introduced, their enforcement point and metrics must be documented alongside the entitlement fields that drive them.
+Account Service remains the **source of truth** for entitlements and plan details, while enforcement is carried out by Game Session Service and other domain services (tenant-aware), plus the Gateway/TCP Proxy (edge-safety). When new quota types are introduced, their enforcement point and metrics must be documented alongside the entitlement fields that drive them.
 
 ---
 

@@ -123,14 +123,11 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
 
 - Listing game templates that reference a given `versionId`, so that designers can migrate or delete them before retiring that version.
 - Bulk migration operations that rewrite `GameTemplateDto.config` references from an old `versionId` to a successor `versionId` in a controlled, auditable way.
+  - These operations must be driven by normalized dependency tables (for example `game_template_version_ref` and related reference rows), not by best-effort parsing of arbitrary JSON blobs.
 
 ### Schema Migrations vs Design Data
 
-Game versions contain **only** world data and scripts. Database schema changes
-remain the responsibility of each microservice and are applied via Flyway when a
-service container restarts during a platform deployment. Publishing a new design
-version therefore does not run Flyway migrations—it simply loads new data when a
-game instance starts or reloads scripts for patch versions. See
+Published game versions are **design-data bundles** (world templates, entity templates, abilities/actions, scripts/plugins, and asset manifests) keyed by `versionId` and scoped to a `tenantId`. Database schema changes remain the responsibility of each microservice and are applied via Flyway when a service container restarts during a platform deployment. Publishing a new design version therefore does not run Flyway migrations—it finalizes versioned data already stored in domain services, exports version-scoped manifests/assets, and makes the new `versionId` eligible for activation. Runtime instances load data by `runtime_version` and may hot-reload only script/plugin patch layers where explicitly supported. See
 [Database Migrations](./system-architecture-database-migrations.md) for the
 Flyway workflow.
 

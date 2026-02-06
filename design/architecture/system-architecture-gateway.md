@@ -11,7 +11,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - For admin APIs the Gateway forwards JWTs to backend services without validating them. Player login and session binding are processed by the **Game Session Service**; see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the detailed flow and the [Tenant Authorization Contract](./system-architecture-authentication.md#tenant-authorization-contract) for how downstream services enforce tenant access.
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
-- **Stateless and horizontally scalable** – no sticky sessions required
+- **Stateless and horizontally scalable** – no cookie-based session affinity is required. For gameplay WebSockets (`/ws/game/**`), the gateway must still perform deterministic per-connection shard routing so each connection reaches the correct Game Session shard that owns the relevant `<tenantId, regionId>` lease.
 - Auto‑scaling policies handle high concurrency
   - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; Spring Cloud Gateway itself does not hold session state between reconnects
   - Spring Cloud Gateway restarts **disconnect WebSocket clients**; browsers and other WebSocket tools must open a fresh WebSocket connection and issue `LOGIN` again. Once reconnected, the gateway resumes routing and the Game Session Service uses Redis-backed state to decide whether to resume or start fresh as described in [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts or attempt to replay in‑flight messages; edge delivery remains per‑connection FIFO and at‑most‑once as defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
@@ -97,6 +97,14 @@ After applying strip/authentication rules, the gateway sets or forwards the down
 - `X-Proxy-Connection-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service so downstream services can correlate lifecycle signals.
 - `X-Session-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Session-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory session hints; the Game Session Service validates any session/tenant claims against Redis and authenticated session state.
 
+`X-Session-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. They exist to carry the TCP Proxy Service’s optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope context into the gameplay WebSocket handshake for advanced tools:
+
+- `X-Session-Id` is a hint for the desired game instance (`gameInstanceId`), not a gameplay “player session” identifier.
+- `X-Tenant-Id` is a hint for the desired tenant and must be validated against the authenticated account’s allowed tenants and entitlements during the canonical `LOGIN` + `ENTER_GAME` selection flow.
+- Any mismatch between these hints and Redis-backed session bindings or authenticated claims must result in the hints being ignored (or the enter-game request being rejected) and should be logged as a suspicious attach attempt.
+
+For canonical Telnet `SESSION` parsing and forwarding rules, see the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section. For canonical tenant-selection behavior, see [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay).
+
 ---
 
 ## WebSocket Support
@@ -153,9 +161,12 @@ To keep behaviour consistent and avoid double-closing sessions, ownership of the
 Spring Cloud Gateway applies a small grace window before closing WebSocket sessions due to sustained backend outages so that brief flaps do not cause unnecessary reconnects:
 
 - The `firemud.gateway.backendUnavailableGraceMs` configuration property controls how long (in milliseconds) Gateway tolerates continuous backend failures for gameplay routes before closing affected WebSocket sessions with `1013/backend_unavailable`. “Continuous failure” here means that all attempts to call Game Session for that route are failing with `UNAVAILABLE`/5xx responses or failing Gateway’s configured health checks; any successful call or healthy check resets the internal backend-unavailable timer to zero.
-- Gateway starts the backend-unavailable timer when a route first enters this “all failed” state. Within the `firemud.gateway.backendUnavailableGraceMs` window, Gateway keeps existing WebSocket sessions open and surfaces backend errors as per-command failures, allowing clients to remain connected while the platform recovers from short blips.
+- Gateway starts the backend-unavailable timer when a route first enters this “all failed” state. Within the `firemud.gateway.backendUnavailableGraceMs` window, Gateway keeps existing WebSocket sessions open so brief flaps do not force every idle client to reconnect immediately.
 - When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs` without any successful calls or healthy checks, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable` and reject new `/ws/game/**` connections with HTTP `503` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
 - Load balancers or CDNs in front of Gateway should be configured with idle and failure timeouts that do not undercut this grace window; otherwise, they may terminate connections before Gateway can emit the canonical `backend_unavailable` signal.
+ - **Established-session input handling while backend is unavailable** – Gateway is a WebSocket proxy and does not generate gameplay-protocol error frames when the upstream Game Session hop is down. To avoid silently discarding gameplay commands while a connection appears healthy:
+   - If an established `/ws/game/**` session is in the backend-unavailable grace window and the client attempts to send a gameplay message while the upstream is unavailable, Gateway closes that session immediately with `1013/backend_unavailable` (and logs/records metrics for the close reason).
+   - If the backend-unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs`, Gateway closes remaining affected sessions with `1013/backend_unavailable` even if they are idle, so clients receive a clear canonical signal instead of sitting on half-open connections indefinitely.
 
 ### Gateway Restart Semantics
 
@@ -209,6 +220,7 @@ Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecti
 
 - **Keying strategy**
   - Gateway rate limiting is primarily **per-client IP** with optional route-level differentiation. The default `RequestRateLimiter` configuration uses the Cache/Rate‑Limit Redis deployment and derives keys from the client IP (as seen by the gateway after load balancer and TCP Proxy headers) and route ID, keeping key cardinality modest while still following the canonical `ratelimit:<tenantId>:<bucket>:<timeWindow>` key pattern from [Redis Cache & Rate Limiting](./system-architecture-redis-cache.md#rate-limit-bucket-design). For the gateway itself, `tenantId` is a synthetic, edge-scope identifier (for example `gateway-edge`), and `bucket` incorporates the client IP and route identifier via a stable hash.
+  - Tenant-aware edge rate limiting for gameplay requires a trustworthy tenant signal at WebSocket handshake time (for example, a short-lived, server-minted connect token that binds the intended tenant). Without such a pre-login signal, the gateway treats gameplay traffic as tenant-opaque and limits it by IP/connection while Game Session enforces tenant-aware quotas after `LOGIN` binds the session.
   - Game Session Service enforces **per-session and per-command** limits (for example, commands per tick region) using Redis coordination keys. See [Reconnection Strategy](./system-architecture-reconnection.md) and [Redis Architecture](./system-architecture-redis.md) for session/tick-level controls.
 - **WebSocket vs HTTP semantics**
   - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet/WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
@@ -225,7 +237,9 @@ This layered model avoids over-counting Telnet/WebSocket frames while still prot
 
 ## Multi-Tenancy at the Gateway
 
-Spring Cloud Gateway does not implement tenant-aware routing or isolation logic itself; it acts as a tenant-agnostic edge that forwards tenant metadata to the services that own multi-tenant behavior:
+Spring Cloud Gateway is not the owner of tenant isolation policy or authorization decisions: backend services derive, validate, and enforce tenant access as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md) and [Authentication & Authorization](./system-architecture-authentication.md).
+
+At the same time, the gateway must perform deterministic **gameplay shard routing** for `/ws/game/**` so each WebSocket connection reaches the correct Game Session shard that currently owns the relevant `<tenantId, regionId>` lease. This routing uses region/session routing metadata published by Game Session (typically backed by Coordination Redis) and is not itself an authorization mechanism.
 
 - Tenant identity (`tenantId`) is derived and enforced by backend services as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md), not by Spring Cloud Gateway.
 - Gameplay flows may include tenant markers such as:
@@ -233,8 +247,8 @@ Spring Cloud Gateway does not implement tenant-aware routing or isolation logic 
   - Session and tenant context inferred by the Game Session Service from the `LOGIN` flow and Redis session keys.
 - Spring Cloud Gateway preserves these headers and forwards them unchanged to backend services but does not:
   - Derive `tenantId` from hostnames or URL paths.
-  - Enforce per-tenant routing tables or access control.
-  - Apply per-tenant rate-limit overrides.
+  - Treat forwarded tenant/session hints as trusted without validation by the owning service (for example, Game Session validating tenant/session context against Redis).
+  - Apply tenant-aware authorization rules on behalf of backend services.
 - All tenant isolation, quotas, and policy enforcement (for example, per-tenant session limits or resource quotas) are implemented in domain services such as the Game Session Service and Account Service, following the rules in [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 
 ## TLS Termination for Gateway

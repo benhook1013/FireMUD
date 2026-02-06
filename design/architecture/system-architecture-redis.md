@@ -75,7 +75,7 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 
   - **Coordination timeline = `(regionEpoch, tickId)`**
   - For each `<tenantId, regionId>` the canonical coordination timeline is the pair `(region_epoch, tickId)`:
-    - `region_epoch` lives in PostgreSQL and is advanced by the tick control plane when region authority changes or a scoped coordination reset occurs.
+    - `region_epoch` lives in PostgreSQL and is advanced by the tick control plane when a scoped coordination reset occurs (or when explicitly performing topology/maintenance operations that intentionally sever the old timeline for a region).
     - `tickId` is monotonic per `<tenantId, regionId>` within a given `region_epoch` and is carried on all tick‑driven calls and ledger entries.
   - **Bootstrap vs stream**
     - The authoritative **baseline** for `(region_epoch, tickId)` comes from Game Session’s control/status surface (for example a `GetRegionTickStatus` API) backed by a PostgreSQL `RegionStatus`-style table; new consumers and operational tooling must obtain their initial view of the timeline from there rather than inferring it from Redis keys.
@@ -167,7 +167,9 @@ These keys capture:
 - Socket binding metadata and transport details.
 - Active `playerId` / `tenantId` context.
 - Tick-region participation and queued commands.
-- Timer and cooldown state associated with the session.
+- Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
+
+Gameplay timers and cooldowns (combat cooldowns, regen ticks, delayed effects) are not “session state”: they are region/entity gameplay state and must be driven by the tick timer system and/or authoritative domain state so they continue to progress correctly in idle regions and across reconnects.
 
 Key properties:
 
@@ -364,6 +366,7 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
     - Comparing it against epoch metadata stored alongside region-scoped coordination keys such as `tick:{tenantRegionTag}:pending` before performing any writes.
     - Returning explicit non-mutating outcomes (for example `"STALE_EPOCH"`, `"STALE_LEASE"`) when the epoch or lease token no longer matches.
   - Redis designs may assume that “single writer per region + epoch” is upheld by the tick control plane and database, and must treat violations (for example, split-brain) as incidents that trigger resets, not normal control flow.
+  - Normal executor rebalancing / lease handoff does **not** bump `region_epoch`. Lease tokens provide fencing between executors; `region_epoch` is reserved for resets and explicit “sever the old timeline” maintenance operations.
   - Scoped coordination resets are expected to interact with `region_epoch` as follows:
     - Region- or tenant-scoped resets normally bump `region_epoch` for the affected `<tenantId, regionId>` pairs and invalidate any pre-reset executor leases.
     - Cluster-scoped resets are accompanied by a coordinated epoch bump for all affected regions so that new executors cannot accidentally reuse stale coordination state.
@@ -372,7 +375,7 @@ Redis designs in FireMUD assume several invariants that are defined and enforced
   - Coordination keys such as `pending` entries and retries rely on these idempotency guards: re-running ticks or retries must not double-apply domain effects even if Redis state is replayed or partially lost within the tail-loss envelope.
 - **Transactional boundaries**
   - Services that participate in ticks and coordination flows encapsulate their durable writes in transactions with clear boundaries and conflict detection (for example, optimistic locking or explicit version checks).
-  - Redis designs may assume that “commit vs rollback” is visible in domain state and must not introduce coordination patterns that require peeking into in-flight, uncommitted work.
+  - Redis designs may assume that “commit vs abandon/cleanup” is visible in domain state and must not introduce coordination patterns that require peeking into in-flight, uncommitted work.
 - **Authentication and session semantics**
   - Session TTLs and reconnect windows follow the authentication settings described in `system-architecture-authentication.md` and `system-architecture-reconnection.md`.
   - Session-related Redis keys (`session:game:*`) are expected to enforce those logical expiry rules; Redis designs must not introduce independent notions of “session lifetime” that diverge from the documented auth contracts.

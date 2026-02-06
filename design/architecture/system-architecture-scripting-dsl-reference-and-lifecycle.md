@@ -2,6 +2,8 @@
 
 This document is the **canonical reference** for the scripting DSL’s terminology, execution lifecycle, semantics, and failure modes. It is intended for implementers and backend developers integrating with the Automation & Scripting Service, Tick System, and related infrastructure. For sandbox enforcement details (CPU, time, and memory budgets, and how failures surface in `script_event_audit`), pair this document with `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`, which is the canonical spec for the sandbox engine itself.
 
+For cross-service invariants (especially tick queue ownership, version fencing, and dry-run safety), also treat `design/architecture/system-architecture-scripting-contracts.md` as a tie-breaker when other docs disagree.
+
 It is a companion to:
 
 - `design/architecture/system-architecture-scripting.md` – hub for the overall scripting and automation framework.
@@ -49,8 +51,8 @@ For designer-oriented guidance on building and debugging scripts in the visual e
 ## Terminology Glossary
 
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `<tenantId, regionId>` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantRegionTag}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
-- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation:queue:<tenantId>:<entityId>`, stages them under `automation:tick:{tenantScriptTag}:...`, and enqueues resulting **tick commands** into per-entity tick command queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
-- **Automation queue** – a per-tenant, per-entity Redis queue (`automation:queue:<tenantId>:<entityId>`) that holds **post-handler script work items** (domain commands plus script metadata such as `scriptEventId`, `scriptId`, and version information) after sandboxed DSL execution and before automation ticks convert them into tick commands and move them into tick-compatible queues.
+- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation:queue:<tenantId>:<entityId>`, stages them under `automation:tick:{tenantScriptTag}:...`, and hands the resulting commands to the Game Session Service so Game Session can enqueue **tick commands** into per-entity tick queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Automation queue** – a per-tenant, per-entity Redis queue (`automation:queue:<tenantId>:<entityId>`) that holds **post-handler script work items** (domain commands plus script metadata such as `scriptEventId`, `scriptId`, and version information) after sandboxed DSL execution and before automation ticks batch and hand off the resulting commands to Game Session for enqueue into per-entity tick queues.
 - **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `(regionEpoch, tickId)` progression per `<tenantId, regionId>`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details and the `(regionEpoch, tickId)` coordination timeline.
 
 ---
@@ -89,7 +91,13 @@ Triggers lead to DSL runs, which produce script work items in the automation que
   - For **scheduler-originated events** such as `onInterval` and `onTimerExpire`, the **Automation & Scripting Service scheduler** creates the `scriptEventId` when the timer or interval becomes due.
 
 - **Uniqueness scope**
-  - Within a given `<tenantId, regionId, scriptId>`, each logically distinct trigger is assigned a unique `scriptEventId`. There is no requirement for global uniqueness across all tenants; the combination of `<tenantId, regionId, scriptId, scriptEventId, tickId>` is what downstream services use as an idempotency key.
+  - For entity-scoped events, uniqueness must be enforced at least within `<tenantId, regionId, entityId, scriptId, eventType, scriptPatchVersion>`.
+  - For scheduler events, uniqueness must additionally include the due point (for example `dueTickId` or a due timestamp) and `regionEpoch` when the scheduler is tick-aligned.
+  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from stable tuples such as `<tenantId, regionId, regionEpoch, entityId, scriptId, scriptEventId, tickId, scriptPatchVersion>` depending on the call path.
+
+- **Deterministic scheduler IDs**
+  - Scheduler-originated `scriptEventId` values must be deterministic so leader failover and bounded catch-up do not double-fire.
+  - The specific encoding is an implementation detail, but it must be derived from stable inputs (for example `<tenantId, regionId, regionEpoch, entityId, scriptId, eventType, dueTickId|dueAt, scriptPatchVersion>`), not from process-local randomness.
 
 - **Handling retries and duplicates**
   - The Automation & Scripting Service treats script execution as **at-most-once per `<tenantId, regionId, scriptId, scriptEventId>`**. If it receives a duplicate delivery for that tuple—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
@@ -325,7 +333,7 @@ Script executions are treated as **at-most-once per trigger** at the scheduler l
 ### Ordering Between Player and Script Commands
 
 - Each entity has a **single authoritative command queue** in Redis (for example, `tick:{tenantRegionTag}:queue:<entityId>`) that contains both player-originated commands and script-generated commands.
-- Commands are appended to this queue in the order they are accepted by the Game Session Service and the Automation & Scripting Service. Within a given entity’s queue, commands are therefore processed in **FIFO order**, regardless of whether they came from a player or a script.
+- Commands are appended to this queue in the order they are accepted by the Game Session Service. Script-generated commands are accepted via internal gRPC from Automation & Scripting and then enqueued by Game Session using the same tick queue append semantics as player commands. Within a given entity’s queue, commands are therefore processed in **FIFO order**, regardless of whether they came from a player or a script.
 - During tick processing, the Game Session Service:
   - Reads at most one command per entity per tick from this combined queue.
   - Applies its existing fairness and conflict-resolution rules (as described in the tick architecture) when deciding which entities to service on a given tick.
@@ -339,7 +347,7 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 | Key pattern | Owner / service | Purpose | Hash tag / shard scope | TTL / retention expectations |
 | --- | --- | --- | --- | --- |
-| `automation:queue:<tenantId>:<entityId>` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work items awaiting automation ticks. | Single-key queue per entity; automation ticks drain these and enqueue commands into tick queues. | Ephemeral backlog; drained continuously by automation ticks. Any TTL is a short safety valve, not long-term storage. |
+| `automation:queue:<tenantId>:<entityId>` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work items awaiting automation ticks. | Single-key queue per entity; automation ticks drain these and hand off resulting commands to Game Session for enqueue into tick queues. | Ephemeral, best-effort backlog; drained continuously by automation ticks. Loss/reset is acceptable within the system’s tail-loss envelope and must be observable (metrics + `script_event_audit`). Any TTL is a short safety valve, not long-term storage. |
 | `automation:tick:{tenantScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantScriptTag}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
 | `automation:tick:{tenantScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantScriptTag}` so staging, draining, and metrics are shard-local. | Short-lived staging; drained quickly by automation ticks. |
 | `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). | Hash-tagged on `{tenantRegionTag}` to align with tick-region keys. | Persistent while timers are active; entries are added and removed as timers are created and satisfied. |
@@ -453,12 +461,26 @@ Common outcome classes include:
 - `infrastructure_error` – transient infrastructure issues such as gRPC `UNAVAILABLE` or Redis timeouts.
 - `disabled_unsafe_component` – script was refused because it depends on a DSL component version marked `UNSAFE`.
 
+Outcome taxonomy must distinguish “DSL evaluated” from “commands were accepted into the tick system”. Do not record `success` for a trigger if the resulting commands were not accepted into the tick queues.
+
 Retry behavior:
 
 - Logical failures (`sandbox_error`, `validation_error`, `quota_denied`, `disabled_due_to_errors`, `version_unavailable`) are treated as **final** for a trigger; the scheduler does not re-run the script body for the same `scriptEventId`.
 - Infrastructure errors **may be retried** by lower layers following platform-wide retry policies and idempotency contracts, but those retries operate only on idempotent downstream operations, not on the DSL body.
 
 When script components call other services over gRPC, they must pass a stable idempotency key (for example, a composite of `<tenantId, regionId, scriptId, scriptEventId, tickId>` or a dedicated `effectId`) and rely on the transaction strategies in `design/architecture/system-architecture-transactions.md` so those downstream operations can be safely retried without duplicating effects.
+
+## Version Fencing and Rollback Safety
+
+Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay.
+
+To achieve this:
+
+- Script work items and tick commands carry the effective `scriptPatchVersion` used to produce them.
+- Game Session enforces a version fence at execution time: commands whose `scriptPatchVersion` does not match the game instance’s currently pinned value are rejected and recorded for audit/diagnosis.
+- Operational rollback flows include a drain/purge step for queued automation work items and staging entries that cannot satisfy the version fence.
+
+See `design/architecture/system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety` for the non-negotiable contract.
 
 ### Timer Failure Semantics
 

@@ -40,7 +40,7 @@ Within a region’s tick, each command proceeds through several phases:
    - This phase is read-only with respect to durable state; it decides *what* to touch without mutating Redis or PostgreSQL.
 3. **Region-Local Mutations**
    - For purely local effects, the executor acquires the relevant entity lock(s) under `tick:{tenantRegionTag}:lock:<entityId>` and stages effects into `tick:{tenantRegionTag}:pending` via Lua.
-   - Domain services apply changes under local transactions and idempotency rules keyed by `(tenantId, regionId, tickId, effectKey)`.
+   - Domain services apply changes under local transactions and idempotency rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)`.
 4. **Cross-Region Effects (if any)**
    - For cross-region commands, the origin region:
      - Applies local-only effects first (for example, text feedback, animations).
@@ -51,7 +51,7 @@ Within a region’s tick, each command proceeds through several phases:
    - Many commands do not need global awareness of “all regions finished”; origin and target regions can operate independently with eventual consistency.
    - For flows that truly require end-to-end completion (for example, complex cross-region trades), the origin region may track success/failure from participating regions and apply a final status (success, partial, failed) once all responses or timeouts are observed.
 
-Every phase must be idempotent with respect to `tickId` and effect identity so replays after failure do not double-apply effects.
+Every phase must be idempotent with respect to `(region_epoch, tickId)` and effect identity so replays after failure do not double-apply effects.
 
 ## Tick Execution Flow
 
@@ -63,7 +63,10 @@ At each tick for a `<tenantId, regionId>`, the executor:
    - Optionally includes a bounded “remote follow-up drain” step (see below); drained remote follow-ups are enqueued into the same per-entity queues as local commands at the target region.
 2. Orders fairly:
    - Aggregates all candidate work items per entity (queued commands, due timers, retries, and remote follow-ups) and selects **at most one** work item per entity for the current tick; any additional due work for that entity is deferred to future ticks according to the retry/timer scheduling rules.
-   - Orders per-entity selections using a combination of arrival time, stat-based priority, and any configured scheduling policy.
+   - Orders per-entity selections using a deterministic ordering function:
+     - Primary: policy-defined priority (low-cardinality).
+     - Then: stable enqueue/due ordering based only on persisted fields (for example `due_tick_id`, `enqueue_seq`, or `created_at` captured into Redis/PostgreSQL at enqueue time).
+     - Tie-breakers (must be deterministic): `entityId`, then `commandId`/`effectKey`.
 3. Stages effects:
    - Under the region lease and entity locks, calls Lua scripts to write intended effects into `tick:{tenantRegionTag}:pending`.
 4. Applies and commits:
@@ -77,7 +80,8 @@ The canonical “commit point” for a tick is defined jointly by Redis coordina
 1. **Staging complete**
    - All effects selected for the tick have been written into `tick:{tenantRegionTag}:pending` and mirrored into the ledger with `status = SCHEDULED`.
 2. **Domain application**
-   - Domain services process staged effects under idempotent rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)`, updating authoritative PostgreSQL state and ledger rows to `APPLIED` or `ABANDONED`.
+   - Domain services process staged effects under idempotent rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)` and update authoritative PostgreSQL state in their own databases.
+   - Game Session records the outcome of each effect in its tick effect ledger (`SCHEDULED` → `APPLIED` or `ABANDONED`) based on the domain calls’ return semantics. Domain services do not write to the Game Session ledger directly.
 3. **Cleanup**
    - A final commit/cleanup script clears `pending` entries for the tick and releases any entity locks for that region.
 
@@ -124,6 +128,7 @@ Remote follow-ups (work created in one region but owned by entities in another) 
     - `remote_followups_backlog_over_budget_total`
   - The executor may temporarily bias part of the per-tick budget toward draining remote follow-ups (within the configured caps) to reduce cross-region lag.
   - Admission control applies at the origin: when the target region is degraded or backlog is high, new cross-region actions may be delayed, rate-limited, or rejected with a clear error so the system sheds load instead of accumulating an unbounded remote backlog.
+    - The canonical signal for “target region degraded / unhealthy” comes from Game Session’s durable/control-plane region status (for example `GetRegionTickStatus` / `RegionStatus`), not from best-effort Redis hint keys such as `remote:*`.
 
 Best-effort hint markers (`remote:<tenantId>:<entityId>`) are only allowed to influence latency. Correctness is derived solely from the durable follow-up records in PostgreSQL and the idempotent handling of those records in the target region’s tick pipeline.
 
@@ -170,7 +175,7 @@ To illustrate how cross-region flows compose from the phases above, consider a *
    - It may also write a best-effort hint marker such as `remote:<tenantId>:<targetEntityId>` to reduce latency, but correctness does not depend on that marker.
    - In the next tick for `<tenantId, regionB>`, the target region’s executor:
      - Computes the damage amount as a percentage of the target’s authoritative current HP.
-     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<targetEntityId>`) and applies damage via Entity Management using the normal `(tenantId, regionId, tickId, effectKey)` idempotency rules.
+     - Acquires the target’s lock (`tick:{tenantRegionTag}:lock:<targetEntityId>`) and applies damage via Entity Management using the normal `(tenantId, regionId, region_epoch, tickId, effectKey)` idempotency rules.
      - Emits a result back to region A containing `casterEntityId` and the actual `damageApplied`.
 4. **Heal Leg (origin region)**
    - When region A receives the lifesteal result, it enqueues a local “apply lifesteal heal” command for the caster.

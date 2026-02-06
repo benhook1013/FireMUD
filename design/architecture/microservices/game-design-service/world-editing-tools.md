@@ -39,7 +39,14 @@ When domain templates for a `(tenantId, versionId)` are temporarily out of sync
 with the revision set recorded in the Game Design Service (for example due to
 transient failures when calling design APIs), the version’s `designSyncStatus`
 is marked `OUT_OF_SYNC` and a reconciliation process replays the canonical
-revisions until domain services report the expected template shape. Versions
+revisions until domain services report a matching draft digest for that version. Each participating domain service exposes a read-only `GetDraftDesignDigest(tenantId, versionId)` API that returns at minimum:
+
+- `tenantId`, `versionId`
+- `appliedCommitId` (or `lastAppliedRevisionId` if the service applies at revision granularity)
+- `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
+- `digestSchemaVersion` so hash semantics can evolve without ambiguity
+
+Versions
 must be `IN_SYNC` before they can be published.
 
 ## Cross-Service Reference Invariants

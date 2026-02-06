@@ -91,6 +91,11 @@ manifest metadata:
 - The step is **idempotent**: rerunning `ExportAssets` for the same
   `(tenantId, versionId)` overwrites the same prefix and manifest and leaves the
   version metadata consistent.
+- Once a version is in the **Published** or **Active** state, immutability rules apply:
+  - `version_asset` rows for `(tenantId, versionId)` must be treated as immutable mappings.
+  - Referenced `game_assets` binaries must not be modified in place; replacing bytes requires a new `game_assets` row and (for Draft versions only) an updated mapping.
+  - Retrying `ExportAssets` for a Published/Active version must be bit-for-bit identical (the overwrite is a retry mechanism, not a mutation mechanism).
+  - Version metadata should record a `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between database mappings and object-store contents.
 - If any downstream publish step fails, the Saga compensates by either deleting
   the newly written prefix or marking the version as **Failed** in the Game
   Design Service so it cannot be activated. Failed versions follow the

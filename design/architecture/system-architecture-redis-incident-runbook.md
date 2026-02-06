@@ -34,7 +34,10 @@ When Coordination Redis recovers after an outage or severe degradation:
 - **Tick executors**
   - Do not attempt to resume in-flight locks or leases based on in-memory state.
   - Rely solely on surviving Redis keys (`tick:{tenantRegionTag}:pending`, `tick-executor-lease:{tenantRegionTag}`, and lock keys) plus PostgreSQL idempotency guards to decide what work needs replay.
-  - If `pending` survives for a region, the next executor for that `<tenantId, regionId>` replays the tick as described in the tick system design. If `pending` is missing (for example due to AOF tail loss), the scheduler treats partially executed work as lost and advances to the next `tickId`, relying on monitoring to surface inconsistencies.
+  - If `pending` survives for a region, the next executor for that `<tenantId, regionId>` replays the tick as described in the tick system design.
+  - If `pending` is missing (for example due to AOF tail loss), treat this as “coordination state may have been partially lost” rather than silently skipping work:
+    - Advance to the next `tickId` only after running the tick effect ledger replay controller / reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` with an explicit tail-loss reason.
+    - Use the resulting ledger outcomes plus service-level idempotency guards to validate that no effect remains indefinitely half-applied.
 - **Leases**
   - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
 - **Sessions**

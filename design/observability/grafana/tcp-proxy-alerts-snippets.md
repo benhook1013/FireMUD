@@ -40,8 +40,10 @@ groups:
         expr: rate(tcpproxy_connections_limit_exceeded[5m]) > 0
         for: 10m
         labels:
-          severity: warning
+          severity: P2
           service: tcp-proxy-service
+          owner: platform
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#triage
         annotations:
           summary: "TCP Proxy connection limits exceeded"
           description: |
@@ -55,8 +57,10 @@ groups:
         expr: rate(tcpproxy_telnet_discarded[5m]) > 5
         for: 5m
         labels:
-          severity: warning
+          severity: P2
           service: tcp-proxy-service
+          owner: platform
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#triage
         annotations:
           summary: "Spike in discarded Telnet input"
           description: |
@@ -70,8 +74,10 @@ groups:
         expr: rate(tcpproxy_websocket_reconnects[5m]) > 1
         for: 5m
         labels:
-          severity: warning
+          severity: P1
           service: tcp-proxy-service
+          owner: platform
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#triage
         annotations:
           summary: "TCP Proxy frequently reconnecting to Gateway"
           description: |
@@ -83,8 +89,10 @@ groups:
         expr: rate(tcpproxy_disconnect_notify_failure[5m]) > 0
         for: 10m
         labels:
-          severity: warning
+          severity: P1
           service: tcp-proxy-service
+          owner: platform
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend--partial-disconnect-symptoms
         annotations:
           summary: "TCP Proxy NotifyDisconnect failures observed"
           description: |
@@ -94,11 +102,13 @@ groups:
             contract or authorization errors.
 
       - alert: TcpProxyGrpcAppErrorSpike
-        expr: sum by (code) (rate(grpc_app_error[5m])) > 1
+        expr: sum by (code) (rate(grpc_app_error{service="tcp-proxy-service"}[5m])) > 1
         for: 10m
         labels:
-          severity: warning
+          severity: P1
           service: tcp-proxy-service
+          owner: platform
+          runbook: design/architecture/system-architecture-telnet-degraded-runbook.md#stalled-backend--partial-disconnect-symptoms
         annotations:
           summary: "Spike in gRPC app errors on TCP Proxy paths"
           description: |

@@ -48,7 +48,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
 
 ```yaml
 - alert: TickEffectLedgerBacklog
-  expr: tick_effects_pending_total > 0 and on() (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300
+  expr: tick_effects_pending_total > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300
   for: 10m
   labels:
     service: game-session
@@ -101,9 +101,9 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 ```yaml
 - alert: LoginSuccessRatioLow
   expr: (
-    sum(rate(login_requests_total{outcome="success"}[15m]))
+    sum by (tenantId) (rate(login_requests_total{outcome="success"}[15m]))
       /
-    sum(rate(login_requests_total[15m]))
+    sum by (tenantId) (rate(login_requests_total[15m]))
   ) < 0.995
   for: 15m
   labels:
@@ -118,8 +118,8 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 - alert: CommandLatencyP99High
   expr: histogram_quantile(
           0.99,
-          sum by (le) (rate(command_end_to_end_latency_ms_bucket[5m]))
-        ) > 0.25
+          sum by (tenantId, le) (rate(command_end_to_end_latency_ms_bucket[5m]))
+        ) > 250
   for: 10m
   labels:
     service: gateway
@@ -133,8 +133,8 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 - alert: ChatDeliveryLatencyP99High
   expr: histogram_quantile(
           0.99,
-          sum by (le) (rate(chat_delivery_latency_ms_bucket[5m]))
-        ) > 1
+          sum by (tenantId, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m]))
+        ) > 1000
   for: 10m
   labels:
     service: chat
@@ -156,7 +156,8 @@ In non-production environments, it is often useful to verify alert routing end-t
   for: 1m
   labels:
     service: observability-smoke-test
-    severity: test
+    severity: P2
+    alert_class: test
     owner: platform
     runbook: design/architecture/system-architecture-testing.md#observability-tests
   annotations:

@@ -2,6 +2,8 @@
 
 This document defines the backup schedule and disaster recovery procedures for FireMUD. Backups are taken only for **production**. Development and staging environments rely on ad hoc snapshots as needed.
 
+Staging is treated as **disposable by default**: it does not run the production backup CronJobs unless operators explicitly install staging-specific schedules. Operators may temporarily restore staging from production backups for disaster recovery rehearsals or investigations; when doing so, staging must follow the same post-restore secret hardening flow before it is considered player-facing again (see [Post-Restore Secret Hardening](#post-restore-secret-hardening)).
+
 ---
 
 ## PostgreSQL Logical Backups
@@ -16,8 +18,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 - The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
   a script (`pg-dump.sh`) that enforces the retention policy. Dumps are stored under `15min`, `daily`, `weekly`, and `monthly` directories. The environment
   variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set;
-  otherwise uploads are skipped. When defined, the script also uploads each
-  dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
+  otherwise uploads are skipped. In production, skipping uploads is treated as a misconfiguration: it is acceptable to keep short-term dumps on the PVC, but the backup pipeline is not considered healthy unless object storage uploads are enabled and verified. When defined, the script also uploads each dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests (`snapshotVolumes: false`). See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
 
@@ -211,6 +212,15 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
      - Updates the `postgres-credentials` Secret with the new password.
      - Triggers a rolling restart of Deployments and StatefulSets that consume this Secret (for example via `kubectl rollout restart` using the Kubernetes API) so all services reconnect using the new credentials.
    - The Job fails fast on any error so operators can investigate before exposing the restored environment to players.
+
+3. External credentials (environment-specific secrets):
+   - Restoring a namespace also restores any third-party credentials stored as Kubernetes Secrets (for example S3/MinIO access keys for backups and asset storage, SMTP credentials, webhook/API keys, and operator-only client certificates).
+   - Post-restore hardening must either rotate/re-issue these credentials or re-bind the restored cluster to the correct per-environment secrets before any external traffic is allowed.
+   - At minimum:
+     - Ensure object storage credentials used for `pg_dump` uploads and Velero point to the intended bucket and are not stale.
+     - Ensure asset store credentials (see `design/architecture/system-architecture-asset-store-runbook.md`) are correct for the environment and rotated if compromise is suspected.
+     - Ensure any outbound email/notification credentials are correct for the environment (staging should not be able to send production email).
+   - If these credentials are rotated out-of-band (for example via the cloud provider console), record the required re-bind/re-issue steps in the relevant runbooks so the restore procedure remains repeatable.
 
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
 

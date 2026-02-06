@@ -50,7 +50,8 @@
 | Admin panel and feature flag toggling | | | | | | | | | ✔ | | |
 | Game moderation tools | | | | | | | | | ✔ | | |
 | Game moderation policy definition | | | | | | | | | ✔ | | |
-| Per-tenant quota configuration (sessions, rate limits, background jobs) | | | | | | | | | ✔ | | |
+| Subscription entitlements and plan-driven quota values (`GetTenantEntitlements`) | | | ✔ | | | | | | | | |
+| Operator quota overrides, auditing, and dashboards (overlay on entitlements) | | | | | | | | | ✔ | | |
 | Enforcement of gameplay bans at login/command level | | | | ✔ | | | | | | | |
 | Enforcement of chat mutes/bans at message send time | | | | | | | | ✔ | | | |
 | Automated tick/coordination remediation (pause/resume/reset) | | | | | | | | | ✔ | | |

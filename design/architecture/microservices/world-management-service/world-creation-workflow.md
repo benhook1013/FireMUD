@@ -30,8 +30,9 @@ Initial NPC and item presence is modeled declaratively:
 ```java
 SagaBuilder builder = new SagaBuilder("createWorld");
 builder
-    .step("createStarterRegion", () -> createStarterRegionInstance(tenantId, versionId))
-    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId));
+    .step("createStarterRegion", () -> createStarterRegionInstance(tenantId, versionId, gameInstanceId))
+    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId, gameInstanceId))
+    .step("registerPopulationRules", () -> registerPopulationRules(tenantId, versionId, gameInstanceId));
 sagaRunner.run(builder.build());
 ```
 

@@ -162,12 +162,35 @@ Ownership changes (moving a region between executors) follow the lease rules:
   - Drains in-flight work to a safe boundary (for example, after the current `pending` tick is committed or recovered).
 - Another instance then acquires the lease and continues tick processing from the existing Redis and PostgreSQL state for that region.
 
+Normal lease handoff/rebalancing does **not** bump `regionEpoch`: `regionEpoch` is reserved for scoped coordination resets and explicit maintenance operations that intentionally sever the old region timeline. Lease tokens provide fencing between executors within the same epoch.
+
 For most deployments, region topology changes (splits, merges, or reassignments between executors) are applied between game instances or during maintenance windows so active sessions are not disrupted.
 
 World Management owns region topology (layout and `<regionId>` assignments) and may, over time, support “drain and split” or “merge” flows:
 
 - Split flows mark a region for split, allow existing ticks to complete, and then move entities plus queues under new `<tenantId, regionId>` prefixes before ticks resume.
 - Merge flows consolidate lightly used regions into a single region to reduce overhead.
+
+### Topology Changes (Split/Merge) Protocol (Required Invariants)
+
+Region split/merge operations interact directly with tick idempotency, Redis key ownership, and cross-region follow-ups. To keep these operations safe and deterministic, topology changes must follow a single, explicit protocol:
+
+1. **Freeze and fence**
+   - Pause tick scheduling and new command intake for the affected region(s).
+   - Wait for any in-flight `tick:{tenantRegionTag}:pending` work to commit or be recovered to a terminal state.
+2. **Converge durable outcomes**
+   - Run the tick effect ledger replay controller/reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` before moving queues or entities.
+3. **Sever the old timeline when semantics require it**
+   - If the operation changes region boundaries or re-homes entities such that “old region” coordination state must not be interpreted as valid for the new mapping, bump `regionEpoch` for the affected `<tenantId, regionId>` pairs as part of the topology change (the same epoch-severing mechanism used by scoped coordination resets).
+4. **Migrate coordination state using shared key builders**
+   - Move only reset-tolerant, purely coordination structures (queues, timers, retry metadata) using versioned tooling that uses the shared key builders and Lua Script Registry descriptors.
+   - Do not hand-edit `tick:*`, `timer:*`, `retry:*`, or lease/lock keys.
+5. **Handle cross-region follow-ups explicitly**
+   - Durable follow-up rows in PostgreSQL are the source of truth for cross-region work. Topology changes must ensure follow-ups are either:
+     - Rewritten to target the new region mapping, or
+     - Converged to `ABANDONED` with a topology-change reason when replaying them under the new mapping is not valid.
+6. **Resume**
+   - Re-enable tick scheduling and command intake once the new mapping is in place and the region(s) are healthy.
 
 See `system-architecture-tick-concepts-and-invariants.md` and the World Management service docs for detailed topology guidance and operational runbooks.
 
@@ -208,7 +231,7 @@ Tick execution uses a **staging/commit pattern**:
 
 Full commit-pattern details are in `system-architecture-tick-execution-flows.md` and the Redis docs.
 
-The Game Session Service and Redis own the full tick transaction lifecycle (staging, commit, and rollback); the Game Logic Service remains stateless with respect to tick transactions and is responsible only for deterministic resolution of actions, not for managing tick commit or rollback.
+The Game Session Service and Redis own the full tick transaction lifecycle (staging, commit, and cleanup/abandon semantics); the Game Logic Service remains stateless with respect to tick transactions and is responsible only for deterministic resolution of actions, not for managing tick commit or post-failure cleanup.
 
 Some commands (for example, heavy runtime procedural generation) declare `requiresSoloTick: true`. For these commands:
 
@@ -292,7 +315,7 @@ Domain services must ensure that tick-driven effects are **idempotent** with res
 Effect identity and idempotency rules are defined jointly by:
 
 - The `tickId` carried on tick-driven calls.
-- A stable, structured effect identity (for example including `tenantId`, `tickId`, `effectKey`, aggregate type, and aggregate id) derived deterministically from the command payload and tick context.
+- A stable, structured effect identity (including `tenantId`, `regionEpoch`, `tickId`, `effectKey`, aggregate type, and aggregate id) derived deterministically from the command payload and tick context.
 
 Together these form the canonical `EffectId` described in `system-architecture-transactions.md`. Tick coordination keys in Redis, tick effect ledger rows, and domain-level guard tables (for example `tick_effect_guard`) must all use projections of this same `EffectId` rather than introducing ad-hoc idempotency keys.
 

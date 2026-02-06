@@ -2,6 +2,8 @@
 
 This document is the **hub** for FireMUD’s scripting and automation architecture. It outlines how custom in-game behavior is executed through a sandboxed scripting framework and points to focused reference docs for details. It is intentionally high level: for precise DSL semantics and sandbox behavior, treat `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` as the canonical specifications.
 
+For cross-service invariants (especially tick queue ownership and rollback safety), also treat `design/architecture/system-architecture-scripting-contracts.md` as a tie-breaker when other docs disagree.
+
 It complements:
 
 - [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md)
@@ -116,7 +118,7 @@ At a high level, a script (or plugin) must pass through several stages before it
    - Runtime guard violations are recorded as `sandbox_error` outcomes with specific reasons (for example, `cpu_budget_exceeded`, `memory_budget_exceeded`) and feed into failure-rate circuit breakers.
 
 7. **Command staging and tick execution**
-   - Successful runs produce commands that are staged into `automation:queue:<tenantId>:<entityId>` and then into tick queues via `ScriptTickService`, where they follow the standard tick idempotency and replay semantics.
+   - Successful runs produce commands that are staged into `automation:queue:<tenantId>:<entityId>`, processed by `ScriptTickService`, and then handed off to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics.
 
 All stages emit metrics and audit records (especially `script_event_audit`) so designers and operators can see where a script failed to progress. The quotas and operations document (`design/architecture/system-architecture-scripting-quotas-and-operations.md`) is the primary reference for interpreting these outcomes in production.
 
@@ -144,8 +146,8 @@ At a high level, scripting follows this pipeline:
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `<tenantId, eventType>` and applies per-script and per-tenant limits via `ScriptQuotaService`.
 3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are enqueued into Redis-backed automation queues under keys such as `automation:queue:<tenantId>:<entityId>`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity and represent the backlog of post-DSL script work items awaiting processing by automation ticks; region-scoped tick keys remain the responsibility of the Game Session Service.
-5. **Script ticks & commit** – `ScriptTickService` drains automation work items from `automation:queue:<tenantId>:<entityId>` entries, batches automation events into tick-compatible queues with quotas and budgets under `automation:tick:{tenantScriptTag}:...`, and only then commits the resulting **domain commands** into the tick command queues using Redis Lua scripts for atomic staging and commit.
+4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are enqueued into Redis-backed automation queues under keys such as `automation:queue:<tenantId>:<entityId>`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are per-tenant and per-entity and represent the backlog of post-DSL script work items awaiting processing by automation ticks; they are best-effort coordination queues whose loss/reset is acceptable within the tail-loss envelope and must be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
+5. **Script ticks & handoff** – `ScriptTickService` drains automation work items from `automation:queue:<tenantId>:<entityId>` entries, batches automation events into `automation:tick:{tenantScriptTag}:...` staging with quotas and budgets, and then hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues using its own Redis Lua registry and tick invariants.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
 ```mermaid
@@ -161,7 +163,8 @@ sequenceDiagram
     Scripting->>Scripting: Run sandboxed DSL handler
     Scripting->>Redis: Enqueue script work to automation:queue:<tenantId>:<entityId>
     Scripting->>Redis: ScriptTickService stages automation:tick:{tenantScriptTag}:*
-    Scripting->>Redis: Commit into tick:{tenantRegionTag}:queue:<entityId>
+    Scripting->>GameSession: Enqueue automation commands (internal gRPC)
+    GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
     GameSession->>Redis: Read per-entity tick queue on tick
     GameSession->>GameLogic: Apply command under locks / ticks
     GameLogic-->>GameSession: Effects, updates, events
@@ -186,6 +189,9 @@ This hub intentionally keeps only high-level flows and routing; detailed topics 
 
 - **Sandboxing, quotas, budgets, and operations**
   - `design/architecture/system-architecture-scripting-quotas-and-operations.md`
+
+- **Cross-service invariants and contracts**
+  - `design/architecture/system-architecture-scripting-contracts.md`
 
 - **Developer tools and helper scripts**
   - See **Developer Tools** in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for CLI and docs-generation helpers.

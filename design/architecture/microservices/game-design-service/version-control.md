@@ -51,13 +51,17 @@ services as the source of truth for the current Draft template graphs:
   - Revisions are written to the Game Design Service first.
   - Design-time workers or APIs apply those revisions to the owning domain
     services’ Draft templates via idempotent design APIs.
+- Idempotency and replay safety are mandatory:
+  - Each design-time write into a domain service is keyed by a stable `revisionId` (and, where relevant, `commitId`) and must be safe to retry.
+  - Domain services persist an “applied revisions” ledger (or equivalent) per `(tenantId, versionId)` so duplicate deliveries do not produce duplicate rows or conflicting mutations.
+  - Publish-time validation must be based on durable digests and applied-revision state, not on transient in-memory caches.
 - The Game Design Service tracks a derived `designSyncStatus` for each
   `(tenantId, versionId)` indicating whether the known revision set has been
   fully applied to all participating domain services.
 - A periodic reconciler in the Game Design Service replays the canonical
   revision set into domain services until their Draft templates converge on the
-  expected state. This reconciler updates `designSyncStatus` back to `IN_SYNC`
-  once all domain services acknowledge the expected template shape.
+  expected state. Convergence is validated using a domain-owned digest contract:
+  each participating domain service exposes a read-only `GetDraftDesignDigest(tenantId, versionId)` API returning `appliedCommitId` (or `lastAppliedRevisionId`) plus a stable `contentDigest` and `digestSchemaVersion`. The reconciler updates `designSyncStatus` back to `IN_SYNC` once all participating services report digests matching the commit being published.
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the publish Saga. Versions that are out of sync cannot be
   published until reconciliation succeeds.

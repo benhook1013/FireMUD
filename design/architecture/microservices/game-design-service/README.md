@@ -34,7 +34,7 @@ manifest files.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
-- All gRPC APIs require JWT authentication between services. REST authentication is supported.
+- All control-plane (design-time) gRPC APIs require JWT authentication. REST authentication is supported. Runtime gameplay services do not call the Game Design Service during ticks; they load published templates and manifests from the owning domain services and object storage and authenticate internal runtime traffic using mutual TLS plus propagated `SessionContext` rather than per-request JWT parsing.
   Tokens are parsed by a shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 

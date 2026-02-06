@@ -18,7 +18,7 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
                             v                                       v
                 +----------------------+                  +-------------------+
                 | Spring Cloud Gateway | <--------------- | TCP Proxy Service |
-                |         (DMZ)        |  HTTP/WebSocket  |       (DMZ)       |
+                |         (DMZ)        |    wss (mTLS)              |       (DMZ)       |
                 +----------------------+                  +-------------------+
                             |
                             | WebSocket (gameplay)
@@ -59,7 +59,7 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
       Alertmanager ------------------------------> Email / SMTP Provider
 ```
 
-Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks; this **infrastructure control-plane API** is separate from player-facing HTTP/WebSocket traffic. Admin and creator UIs call domain-level admin APIs (for example, moderation actions, feature-flag toggles, and dashboards) via standard HTTP/gRPC routes that are also fronted by the Gateway and then forwarded to domain services (for example, Game Session, Account, Social & Groups, Logging & Admin) over gRPC, following the ownership boundaries in the Service Responsibility Matrix. External admin and creator tools do not call Logging & Admin Service directly; they always go through the Gateway so that authentication, authorization, and rate limiting are applied consistently.
+Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks; this **infrastructure control-plane API** is separate from player-facing HTTP/WebSocket traffic. Admin and creator UIs call domain-level admin APIs (for example, moderation actions, feature-flag toggles, and dashboards) via standard HTTP/gRPC routes that are also fronted by the Gateway and then forwarded to domain services (for example, Game Session, Account, Social & Groups, Logging & Admin) over gRPC, following the ownership boundaries in the Service Responsibility Matrix. External admin and creator tools do not call Logging & Admin Service directly; they always go through the Gateway so routing, coarse route protections, and rate limiting are applied consistently, while JWT validation and fine-grained authorization are performed by the consuming services.
 
 Among application microservices, only the Account Service and Logging & Admin Service send email directly to the SMTP provider; other internal services surface email-worthy events through these owners rather than talking to SMTP themselves. Alertmanager, as part of the observability stack, may also send alerts via SMTP for infrastructure notifications. This matches the responsibilities defined in the Service Responsibility Matrix: Account Service owns account-centric and security-related emails (for example, verification, password reset, subscription and billing notifications), while Logging & Admin Service owns operational and moderation notifications (for example, alerts, escalations, moderation decisions, and admin digests).
 

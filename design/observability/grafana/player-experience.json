@@ -9,8 +9,8 @@
       "title": "Login Success Ratio",
       "targets": [
         {
-          "expr": "sum(rate(login_requests_total{outcome=\"success\"}[5m])) / sum(rate(login_requests_total[5m]))",
-          "legendFormat": "login_success_ratio",
+          "expr": "sum by (tenantId) (rate(login_requests_total{outcome=\"success\"}[5m])) / sum by (tenantId) (rate(login_requests_total[5m]))",
+          "legendFormat": "{{tenantId}}",
           "refId": "A"
         }
       ],
@@ -21,8 +21,8 @@
       "title": "Command Latency (p99)",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
-          "legendFormat": "p99 {{command}}",
+          "expr": "histogram_quantile(0.99, sum by (tenantId, le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{command}}",
           "refId": "A"
         }
       ],
@@ -33,8 +33,8 @@
       "title": "Telnet/WebSocket Path Availability",
       "targets": [
         {
-          "expr": "1 - (sum(rate(tcpproxy_connections_limit_exceeded[5m])) / sum(rate(tcpproxy_connections_total[5m])))",
-          "legendFormat": "availability",
+          "expr": "1 - (sum by (tenantId) (rate(tcpproxy_connections_limit_exceeded[5m])) / sum by (tenantId) (rate(tcpproxy_connections_total[5m])))",
+          "legendFormat": "{{tenantId}}",
           "refId": "A"
         }
       ],
@@ -45,8 +45,8 @@
       "title": "Chat Delivery Latency (p99)",
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le, channel_type) (rate(chat_delivery_latency_ms_bucket[5m])))",
-          "legendFormat": "p99 {{channel_type}}",
+          "expr": "histogram_quantile(0.99, sum by (tenantId, le, channel_type) (rate(chat_delivery_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{channel_type}}",
           "refId": "A"
         }
       ],

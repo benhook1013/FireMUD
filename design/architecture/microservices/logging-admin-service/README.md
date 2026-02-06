@@ -27,6 +27,16 @@ In addition to log and moderation tooling, the service acts as a **control-plane
   - Optionally performs safe, narrow coordination resets (such as single-region resets with clean tick ledgers) without requiring an operator to be present, while still emitting audit events for every action.
 All admin APIs are secured via role-based access control integrated with the Account Service.
 
+## Script Patch and Plugin Control Plane
+
+Logging & Admin is the operator-facing control plane for:
+
+- Enabling/disabling and draining automation scripts (through the Game Design and Automation & Scripting control-plane APIs).
+- Enabling/disabling and rolling back plugins (as described in `design/architecture/microservices/game-design-service/modding-framework.md`).
+- Repinning and rolling back `scriptPatchVersion` for running game instances by calling Game Session control-plane APIs (for example `SetActiveScriptPatchVersion` / `RollbackScriptPatchVersion`) and surfacing the results alongside audit and automation health signals.
+
+Logging & Admin does not write to Redis directly. It drives all runtime changes through documented service APIs and records audit trails so operators can explain why automation behavior changed.
+
 - gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
 - The security model relies solely on JWT roles; there is no additional
   network-layer isolation for admin endpoints.

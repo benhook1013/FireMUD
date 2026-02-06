@@ -148,7 +148,7 @@ Cache/Rate-Limit Redis is designed to be **fully reset-tolerant** for the prefix
   - `inventory:<tenantId>:<containerId>`
   - `character-cache:<tenantId>:<characterId>`
   - `world-dynamic:<tenantId>:<aggregateId>`
-  - `room:<tenantId>:<roomId>`
+  - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>`
   - `view:room-look:<tenantId>:<roomId>`
   - `chat:*` (including `chat:city:*`)
   - `automation:queue:<tenantId>:*` / `automation:quota:<tenantId>:<scriptId>`
@@ -260,9 +260,11 @@ To make coordination and tick health observable in a consistent way across servi
     - `tick_execution_time_ms_p95{tenantId,regionId}` – p95 tick execution time.
     - `tick_execution_time_ms_p99{tenantId,regionId}` – p99 tick execution time.
   - `tick_lock_ttl_ms{tenantId,regionId}` – gauge or recording rule representing the effective lock TTL for ticks in each region.
-  - `tick_status{tenantId,regionId}` – gauge or state metric indicating `RUNNING`, `PAUSED`, or `STALLED`.
+  - `tick_status{tenantId,regionId,status}` – one-hot gauge that encodes region state via a bounded `status` label (for example `status="RUNNING"|"PAUSED"|"STALLED"|"DEGRADED"`). Exactly one series per `<tenantId, regionId>` should be `1` at a time.
   - `tick_retry_queue_depth{tenantId,regionId}` – current depth of retry queues.
   - `tick_command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
+  - `tick_current_id{tenantId,regionId}` – the last committed tick id for the region, used as a coarse tick progression watermark.
+  - `tick_pending_oldest_id{tenantId,regionId}` – the oldest tick id still considered “in-flight” (pending, retrying, or awaiting ledger convergence), used to estimate effective loss/replay windows.
 - **Tick effect ledger**
   - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.
@@ -281,6 +283,14 @@ All these metrics and recording rules should, where cardinality allows, include 
 - `tenantId`, `regionId`
 - `redis_role` (for example `coordination`, `cache`)
 - `region_epoch` (where appropriate)
+
+#### Cardinality Policy (Required)
+
+Metrics tagged by `tenantId` and `regionId` can become high-cardinality in multi-tenant or highly sharded deployments. To keep monitoring systems stable:
+
+- Only emit per-`<tenantId, regionId>` time series for **active** regions (recently ticked or recently holding a lease) and/or cap to a bounded “top N worst regions” set for expensive histograms.
+- Provide aggregated rollups alongside per-region views (for example service-level tick duration percentiles and “count of degraded/stalled regions” gauges) so dashboards and alerts do not require scanning every region label.
+- Avoid introducing additional high-cardinality labels (for example per-command IDs) on these core coordination metrics; keep detailed investigations in logs/traces keyed by correlation IDs and `EffectId`.
 
 This catalog does not preclude additional, service-specific metrics, but it provides a shared vocabulary for dashboards and alerts that tie together Redis, ticks, and ledger behavior.
 
@@ -353,8 +363,8 @@ When adding new environments, explicitly state in their deployment docs which pr
 The tail-loss envelope described in [System Architecture: Redis](./system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees) must be observable, not just conceptual. Operators should wire alerts that connect coordination health directly to measurable signals:
 
 - **Core metrics**
-  - Tick progression and watermarks per `<tenantId, regionId>` (for example, `game_tick_current_id`, `game_tick_pending_oldest_id`).
-  - Retry and pending queue depths (`tick_pending_count`, `tick_retry_count`) broken down by region.
+  - Tick progression and watermarks per `<tenantId, regionId>` (for example, `tick_current_id`, `tick_pending_oldest_id`).
+  - Retry and command queue depths (`tick_retry_queue_depth`, `tick_command_queue_depth`) broken down by region.
   - Coordination Redis AOF size and growth metrics from above (`redis_aof_current_size_bytes`, `redis_coordination_aof_growth_bytes_total`).
   - Lua outcome counters, especially `"STALE_LEASE"`, `"STALE_LOCK"`, `"UNSUPPORTED_SCHEMA_VERSION"`, and explicit tail-loss/replay indicators if exposed.
 - **Example alert conditions**

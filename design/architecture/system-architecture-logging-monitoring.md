@@ -9,8 +9,9 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 - **Fluent Bit** sidecars collect service logs from every microservice.
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
 - The **Logging & Admin Service** exposes moderation tools and log queries and embeds Kibana dashboards via its API for richer visualization.
-- Logs are emitted in JSON with request tracing fields (e.g., `traceId`) and the active `playerId` for moderation context.
-- Kibana dashboards filter by both `traceId` and `playerId` to narrow investigations quickly.
+- Logs are emitted in JSON with request tracing fields (e.g., `traceId`) and player context for moderation and incident drilldowns.
+- At minimum, log events for request/tick-handling paths should include: `service`, `tenantId` (when known), `regionId` (when known), `traceId`, and `correlationId`. When a player is authenticated or a session is bound, logs should also include `playerId`.
+- Kibana dashboards and saved searches filter by `tenantId`/`regionId` plus `traceId`/`playerId` so operators can scope incidents quickly without relying on ad-hoc message parsing.
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and `correlationId` in every log entry. See [Shared Libraries](./system-architecture-shared-libraries.md).
 - Log retention defaults to **14 days** in development and **90 days** in production, after which indices are archived. These values can be tuned via the [Deployment Environments](./infrastructure/deployment-environments.md) settings.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and `FLUENT_ELASTICSEARCH_PORT` environment variables ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
@@ -27,6 +28,8 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 - **OpenTelemetry** spans provide distributed tracing across ticks and requests. Traces are collected by an OpenTelemetry Collector and visualized with Jaeger. See [Tracing](./system-architecture-tracing.md) for deployment details.
 - Sample Kubernetes manifests under [`k8s/monitoring`](../../k8s/monitoring) deploy the collector and Jaeger (`otel-collector.yaml`, `jaeger.yaml`).
 - Metrics are recorded with Micrometer. The shared `MetricsInterceptor` tracks `grpc.server.requests` for each call. Services increment the `grpc.app_error` counter in their `error()` helpers as described in the [gRPC API Style guidelines](./system-architecture-grpc.md).
+- Application metrics that are used in shared dashboards and alert rules must include a stable `service` label derived from `spring.application.name` so queries can be scoped (for example, `grpc_app_error{service="tcp-proxy-service"}`).
+- Metric naming must match units: metrics and histograms with `_ms` in the name (for example `command_end_to_end_latency_ms_bucket`) are measured in **milliseconds** and must be compared against millisecond thresholds. If a metric is measured in seconds, it must use a `_seconds` name.
 - Business methods in services are annotated with `@Timed` to publish custom Prometheus timers.
 - Most services expose a `/actuator/prometheus` endpoint for metrics. Scrape intervals are tuned per environment (typically 15s in development and 30s in production).
 - Metrics for Redis are collected via the [`redis-exporter`](../../k8s/monitoring/redis-exporter.yaml) deployment, and a PostgreSQL exporter is available for database metrics. Redis dashboards surface Lua script latency, lock contention, retry queue depth, keyspace hits/misses, eviction rates, and latency percentiles for tick-related commands so operators can distinguish cache pressure from coordination issues. The minimum Redis SLOs and alert wiring are defined in the Tail-Loss observability and **Coordination Metrics & Thresholds Contract** sections of [Redis Operations & Migrations](./system-architecture-redis-operations.md#tail-loss-slo-observability), which summarize the core metrics and alerts that must be wired for each Redis role.
@@ -112,6 +115,7 @@ Alertmanager routes alerts based on a small, consistent label set so ownership a
   - `service` – owning service or component (for example `redis-coordination`, `game-session`, `tcp-proxy-service`, `postgres-backup`).
   - `component` – optional, for finer-grained subsystems (for example `tick`, `backup`, `coordination`).
   - `severity` – one of `P0`, `P1`, or `P2`.
+  - `alert_class` – optional classifier for non-standard routing (for example `alert_class="test"` for smoke-test alerts that must never page).
   - `owner` – primary team or role responsible for triage (for example `platform`, `gameplay`, `web`, `infra`).
   - `runbook` – path to the relevant documentation section (for example `design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach`).
 - Severity guidelines:
@@ -146,6 +150,7 @@ For scripting and automation workloads, dashboards and alerts must include both 
 
 - Live triggers and automation work are reported via metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`, as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 - Dry-run and test executions are tracked separately via `automation_script_test_runs_total` and `automation_script_test_runtime_seconds` so operators can see when validation tools are consuming significant sandbox resources even though they bypass mainline ScriptQuota and tenant automation budgets.
+- Do not label metrics with high-cardinality identifiers such as `scriptEventId`; use logs/traces and `script_event_audit` queries for per-event correlation.
 
 ## Health Checks
 

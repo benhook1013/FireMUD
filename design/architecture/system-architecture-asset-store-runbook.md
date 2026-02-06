@@ -19,6 +19,7 @@ For the architecture of asset storage, see `design/architecture/microservices/ga
 3. **Data Integrity Concerns**
    - Verify checksums or version metadata where available.
    - Coordinate with backup and recovery procedures if persistent corruption is suspected.
+   - Prefer comparing the published version’s recorded `manifestHash` (and, where implemented, per-asset `contentHash` values) against the currently served `manifest.json` and objects to detect silent drift.
 
 ## MinIO Deployment and Configuration
 
@@ -69,6 +70,7 @@ When using a self-hosted MinIO cluster as the asset store:
      for the affected `(tenantId, versionId)` so the manifest and prefix are rebuilt
      from the authoritative `version_asset` mappings rather than attempting manual
      repair.
+   - Because Published/Active versions are immutable, rerunning `ExportAssets` for a Published/Active version must produce bit-for-bit identical bytes. If a rerun would change outputs, treat it as a process bug or data corruption incident rather than “fixing” the published version in place.
    - Prefer invoking a higher-level admin workflow (for example an
      `ArchiveVersion` or `RetireVersion` operation in the Game Design or
      Logging & Admin Service) that:

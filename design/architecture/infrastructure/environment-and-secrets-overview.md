@@ -48,7 +48,7 @@ Key rules:
 ### Secrets & Certificates
 
 - All sensitive values (DB passwords, JWT signing keys, TLS certificates) live in Kubernetes `Secret` objects.
-- TLS certificates and JWT signing keys are rotated automatically by **cert‑manager** and related jobs.
+- TLS certificates are rotated automatically by **cert-manager**. JWT signing keys are rotated by dedicated Kubernetes Jobs (for example `jwt-rotation`); in production this Job is treated as an operator-run template rather than an unattended cadence (see `system-architecture-security.md#jwt-key--jwks-rotation-workflow`).
 - Services reload TLS and JWT material via shared utilities:
   - `TlsCertificateWatcher`
   - `JwtSecretWatcher`

@@ -17,6 +17,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Queue player commands and dispatch them to Game Logic Service
 - Broadcast lifecycle events and world updates to other services
 - Support reconnection and recovery of running games
+- Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
 - Publish **coordination and tick health metrics** (per `<tenantId, regionId>`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 
@@ -249,6 +250,7 @@ At the protocol level, commands are split into two groups:
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
+| `ENTER_GAME <tenantIdOrSlug> [characterId]` | Binds the authenticated connection to a tenant (and later a character) after `LOGIN`, enforcing tenant authorization and entitlements. | `ENTER_GAME tenant-abc` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
@@ -273,16 +275,18 @@ This small command table defines the initial MVP gameplay command set delivered 
 
 Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. OTP values are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
 
-**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. `LOOK` calls use the session created by `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
+**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. Gameplay commands such as `LOOK` require a successful `ENTER_GAME` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
+
+After `LOGIN` succeeds, clients must issue `ENTER_GAME <tenantIdOrSlug> [characterId]` before any gameplay commands (such as `LOOK` or `SAY`). This enter-game step binds the authenticated connection to a tenant-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design. If a client attempts gameplay commands before entering a game, the service returns `ERROR GAME_NOT_ENTERED Use ENTER_GAME <tenantId> first` (or the equivalent canonical code) so clients can recover deterministically.
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
 Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
 
 - `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet, so clients must send `LOGIN <username> <password>`.
-- `INVALID_ACCOUNT` – the Account Service returned an account identifier that could not be parsed into a long.
-- `ACCOUNT_MISMATCH` – the authenticated account does not own the requested game session.
-- `SESSION_NOT_FOUND` – the supplied session identifier has no corresponding `GameInstance`.
+- `INVALID_ACCOUNT` – the Account Service returned an account identifier that could not be parsed into the expected format.
+- `ACCOUNT_MISMATCH` – the authenticated account is not permitted to attach to the requested game instance or tenant context.
+- `SESSION_NOT_FOUND` – the supplied game instance identifier has no corresponding `GameInstance`.
 - `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
 
 Telnet success (prompt-based):
@@ -294,6 +298,9 @@ demo@example.com
 OK LOGIN Enter password:
 swordfish
 OK LOGIN Logged in as demo@example.com
+
+ENTER_GAME demo
+OK ENTER_GAME Entered game: demo
 ```
 
 The transcript above presents the planned prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
@@ -310,6 +317,9 @@ WebSocket success (parameterized command with optional OTP omitted):
 ```text
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
+
+ENTER_GAME demo
+OK ENTER_GAME Entered game: demo
 ```
 
 WebSocket failure (account locked):
@@ -321,9 +331,12 @@ ERROR ACCOUNT_LOCKED Account locked after repeated failures
 
 ### LOOK transcripts
 
-Telnet `LOOK` (after successful login):
+Telnet `LOOK` (after `ENTER_GAME`):
 
 ```text
+ENTER_GAME demo
+OK ENTER_GAME Entered game: demo
+
 LOOK
 OK LOOK
 Room: Candle-lit Antechamber (ID: R-1021)
@@ -338,6 +351,9 @@ Entities:
 WebSocket `LOOK` (same authenticated player, different transport):
 
 ```text
+ENTER_GAME demo
+OK ENTER_GAME Entered game: demo
+
 LOOK
 OK LOOK
 Room: Crafting Hall of Ember (ID: R-2045)
@@ -411,6 +427,9 @@ Examples:
 ```text
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
+
+ENTER_GAME demo
+OK ENTER_GAME Entered game: demo
 
 LOOK
 OK LOOK
@@ -492,6 +511,18 @@ grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVer
 - Metrics emitted by this service feed the operator [Analytics Dashboards](../logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
 - Logs and metrics include a `script_patch_version` label so operators know which
   hotfix revision is active.
+
+### Script Patch Version Pinning and Rollback
+
+Each running game instance has a pinned `scriptPatchVersion` alongside its `runtimeVersion`:
+
+- Event ingress to the Automation & Scripting Service includes the currently pinned `scriptPatchVersion` so script evaluation is tied to the active patch for the instance.
+- Script-generated commands accepted from the Automation & Scripting Service must carry the originating `scriptPatchVersion`, `scriptId`, and `scriptEventId`.
+- On execution, Game Session enforces a version fence: if a queued command’s `scriptPatchVersion` does not match the instance’s currently pinned value, it must not be executed and the drop must be observable for operators.
+
+Control-plane operations that change the pinned patch (used by Logging & Admin tooling) are admin-only and idempotent. Conceptually these include APIs such as `SetActiveScriptPatchVersion(tenantId, gameId, scriptPatchVersion)` and `RollbackScriptPatchVersion(tenantId, gameId, targetScriptPatchVersion)`. When such an operation succeeds, Game Session emits a status-change event (for example `ScriptPatchRollbackRequested` or an equivalent patch pinning event) so Automation & Scripting can update patch lifecycle state and adjust admission behavior.
+
+For cross-service invariants, see `design/architecture/system-architecture-scripting-contracts.md`.
 
 ### Runtime Feature Flags
 

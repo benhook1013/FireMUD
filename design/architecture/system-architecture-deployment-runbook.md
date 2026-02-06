@@ -19,14 +19,17 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 2. **Verify CI/CD Status**
    - Ensure the GitHub Actions pipeline for the target branch and tag is green.
    - Check that container images are available in the configured registry.
-3. **Apply Kubernetes Manifests**
-   - Update the image tags in the environment-specific Kustomize overlays for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`).
-   - Apply the manifests (for example `kubectl apply -k k8s/overlays/prod`).
-4. **Monitor Rollout**
+3. **Update the Environment Overlay (Git-Tracked)**
+   - Update the image tags in the environment-specific Kustomize overlay for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`) via a Git change.
+   - Use a pull request for the overlay change so promotion and rollback remain auditable (the merged commit is the source of truth for what is intended to be running in that environment).
+4. **Apply Kubernetes Manifests**
+   - From a secure operator environment, apply the overlay (for example `kubectl apply -k k8s/overlays/prod`).
+   - Treat the apply as an operational action that enacts the already-reviewed overlay change.
+5. **Monitor Rollout**
    - Watch deployment rollout status for each updated service.
    - Verify pod readiness and liveness probes are passing.
    - Check logs for startup errors, especially around database connectivity, Redis connectivity, and secrets loading.
-5. **Post-Deployment Checks**
+6. **Post-Deployment Checks**
    - Run smoke tests and login/session checks as described in `design/developer-workflows/login-session-smoke-tests.md`.
    - Confirm that the game session tick loop is running and that players can connect via both Web client and Telnet.
 
@@ -58,5 +61,5 @@ If a deployment causes instability:
 
 | Environment | Deploy Steps | Rollback Steps |
 | --- | --- | --- |
-| **Staging** | Merge to `develop` → ensure CI is green → update image tags in `k8s/overlays/stage` if needed → `kubectl apply -k k8s/overlays/stage` → monitor rollout and run smoke tests | Revert image tags in `k8s/overlays/stage` to the previous release → re-apply overlays → monitor rollout |
-| **Production** | Create/merge release tag (for example `v1.2.3`) via `release-please` → ensure CI and security scans are green → update image tags in `k8s/overlays/prod` to the tagged images → `kubectl apply -k k8s/overlays/prod` → monitor rollout and run smoke tests | Revert image tags in `k8s/overlays/prod` to the last known-good tag → re-apply overlays → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
+| **Staging** | Ensure CI is green → open/merge PR that updates image tags in `k8s/overlays/stage` → apply overlay: `kubectl apply -k k8s/overlays/stage` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/stage` to the last known-good tags → re-apply overlay → monitor rollout |
+| **Production** | Create/merge release tag (for example `v1.2.3`) via `release-please` → ensure CI and security scans are green → open/merge PR that updates `k8s/overlays/prod` to the tagged images → apply overlay: `kubectl apply -k k8s/overlays/prod` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good tags → re-apply overlay → monitor rollout; follow database migration downgrade guidance when schema changes are involved |

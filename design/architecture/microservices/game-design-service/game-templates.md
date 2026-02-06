@@ -27,6 +27,19 @@ The `config` payload does not embed authoritative copies of world, entity, or sc
 
 Canonical schemas, identifiers, and versioned template rows remain in the owning domain services; `GameTemplateDto.config` is a configuration and wiring layer that composes these existing templates for bootstrapping new games.
 
+### Normalized Reference Storage
+
+Game templates participate in version retirement, auditing, and bulk migration workflows. Because `GameTemplateDto.config` is JSON, the system must not rely on ad hoc JSON parsing to enforce invariants like “do not retire a version that is still referenced” or to perform controlled rewrites of references.
+
+The Game Design Service therefore stores normalized reference rows alongside the JSON config, derived and validated on every create/update:
+
+- `game_template_version_ref` keyed by `(tenantId, gameTemplateId, versionId)` for the base design bundle referenced by the template.
+- `game_template_world_ref` keyed by `(tenantId, gameTemplateId, versionId, regionTemplateId/roomTemplateId/...)` for any explicit world references present in the config.
+- `game_template_entity_ref` keyed by `(tenantId, gameTemplateId, versionId, entityTemplateId/lootTableId/...)` for starter items/NPCs and related entity wiring.
+- `game_template_script_ref` keyed by `(tenantId, gameTemplateId, versionId, scriptId/...)` for script bindings where templates need to pin or validate script identifiers.
+
+Administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
+
 > **Note**
 
 Templates are **versioned** like any other design asset. Publishing a

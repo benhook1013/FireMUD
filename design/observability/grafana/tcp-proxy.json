@@ -86,7 +86,7 @@
       "title": "gRPC App Errors by Code",
       "targets": [
         {
-          "expr": "sum by (code) (rate(grpc_app_error[5m]))",
+          "expr": "sum by (code) (rate(grpc_app_error{service=\"tcp-proxy-service\"}[5m]))",
           "legendFormat": "{{code}}",
           "refId": "A"
         }

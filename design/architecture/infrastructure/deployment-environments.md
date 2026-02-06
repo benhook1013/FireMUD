@@ -87,7 +87,8 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   - A **Cache/Rate-Limit Redis** deployment runs as a separate StatefulSet or Deployment tuned for eviction-driven workloads (for example using `allkeys-lru`), with sizing independent of Coordination Redis. It may use lighter durability (RDB snapshots or even ephemeral volumes) because its keys are best-effort and recomputable.
   - Local development runs **two Redis containers** under Docker Compose with the same role split: a Coordination Redis service and a Cache/Rate-Limit Redis service, with Coordination Redis durable via AOF and Cache/Rate-Limit Redis configured for eviction-driven workloads. When operators want to **reset** coordination state (for example, to test reset-tolerant behavior or remediate mis-keyed data), they run an explicit coordination-reset Job or script that wipes the Coordination Redis AOF volume as described in the Redis Operations runbook, rather than relying on Helm to clear data automatically on every deploy.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#recovery).
-- Deployments use Helm charts but are triggered manually via [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml), which runs `helm upgrade` with `k8s/helm/values-local.yaml` by default. Use `values-dev.yaml` or other values files for non-local clusters. See [CI/CD Pipeline](../system-architecture-cicd.md#🚢-deploying-to-kubernetes) for details.
+- **Dev/demo Kubernetes clusters** may be deployed via Helm using [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml) (for example with `k8s/helm/values-local.yaml` or `values-dev.yaml`).
+- **Staging and production** deployments are applied from a secure operator environment using **Kustomize overlays** (for example `kubectl apply -k k8s/overlays/stage` and `kubectl apply -k k8s/overlays/prod`). Image tag changes for these overlays are tracked in Git so promotion and rollback are auditable. See [Deployment Runbook](../system-architecture-deployment-runbook.md) and [CI/CD Pipeline](../system-architecture-cicd.md#promotion--rollback-model).
 
 A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../../k8s/helm) to deploy services locally.
 
@@ -170,9 +171,11 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
 For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/playtesting-feedback.md).
 
-When restoring the staging cluster from backups, operators should follow the same post-restore secret hardening steps as production (see `system-architecture-backup-recovery.md#post-restore-secret-hardening`) so JWT keys and database credentials are rotated before opening the environment to playtests.
+By default, staging is treated as **disposable**: it is not protected by the production backup schedule and can be rebuilt from manifests and fresh data as needed.
 
-By default, staging does not run the production backup CronJobs listed in `schedule.md`; operators rely on ad hoc backup and restore scripts unless staging-specific backup schedules are explicitly installed.
+Operators may temporarily restore staging from **production** backups for disaster recovery rehearsals or investigations. When doing so, staging must follow the same post-restore secret hardening steps as production (see `system-architecture-backup-recovery.md#post-restore-secret-hardening`) so JWT keys and database credentials are rotated before opening the environment to playtests.
+
+Staging does not run the production backup CronJobs listed in `schedule.md` unless staging-specific schedules are explicitly installed.
 
 ---
 

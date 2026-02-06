@@ -2,7 +2,7 @@
 
 ## Overview
 
-Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by room or instance ID rather than being stored in the World Management Service.
+Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) rather than being stored in the World Management Service.
 
 ### Responsibilities
 
@@ -139,7 +139,7 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
 
 - `character` and `npc` tables share a base entity for stats and inventory slots.
 - `item` table stores equipment, consumables, and quest objects.
-- Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory. Room/ground inventory is modeled as items whose container references a synthetic room-ground container entity keyed by room/instance identifier so limits such as max items on the ground or special container rules can be enforced consistently.
+- Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory. Room/ground inventory is modeled as items whose container references a synthetic room-ground container entity keyed by `(tenantId, gameInstanceId, roomInstanceId)` so limits such as max items on the ground or special container rules can be enforced consistently without cross-instance collisions.
 - Character location and instance membership are stored by the World Management
   Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
@@ -150,19 +150,22 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
 - `UpdateEntity` – updates stats or equipment for a character or NPC.
 - `QueryInventory` – lists items for an entity with pagination.
 - `ListCharactersByAccount` – returns all characters owned by an account across tenants.
-- `ListRoomEntities` – returns players, NPCs, and visible items present in a room, filtered by `tenantId` and `roomId`.
+- `ListRoomEntities` – returns players, NPCs, and visible items present in a room, scoped by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) so room presence and ground items are instance-safe.
 
 ### LOOK entity listing contract
 
 `ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The response includes:
 
-- `roomId`, `tenantId`, and a `snapshotId` so consumers can cache or invalidate entity lists deterministically.
+- `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
+- An `entitySnapshotId` so consumers can cache or invalidate entity lists deterministically.
 - `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
 - `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
 - `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output (for example, “Someone just entered from the east.”).
 
-Room-entity data is currently seeded through the `firemud.look.rooms` configuration (per-tenant/room entries in `services/entity-management-service/src/main/resources/application.yml`). Each room definition lists the `entities` with their `entity-id`, `entity-type`, friendly display name, `state-flags`, `vision-priority`, and visibility hints so the recorded LOOK transcripts stay deterministic during this vertical slice. Once the shared location cache is reliable, the configuration can be replaced with live reads from `character_location`/`npc_location` tables while item instances and room/ground inventory continue to live in this service.
+Consumers treat the pair `(worldSnapshotId, entitySnapshotId)` as the composite cache key for a rendered LOOK view. `worldSnapshotId` is provided by World Management’s `GetRoomSnapshot`; `entitySnapshotId` is provided by this endpoint.
+
+Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management and accessed via gRPC or a refreshed projection) matches the target `RoomInstanceRef`. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 

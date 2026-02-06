@@ -4,6 +4,15 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 
 ---
 
+## Architecture Decisions (Canonical)
+
+The documents linked from this overview describe the target-state design, but the following decisions are treated as **canonical contracts** that other architecture docs must align to.
+- **Gateway responsibility model:** Spring Cloud Gateway is the single ingress for HTTP/WebSocket traffic and the central place for routing, coarse route gating, rate limiting, and observability. It is not the platform’s authorization authority: JWT validation and role/tenant authorization are performed by the consuming meta/control services using shared middleware and the Account Service JWKS.
+- **Gameplay shard routing (required):** Gameplay WebSockets on `/ws/game/**` must be routed to the correct Game Session shard that currently owns the `<tenantId, regionId>` lease. This is deterministic per-connection routing (not cookie-based “sticky sessions”) and is required for correctness under the tick + region ownership model.
+- **Lease moves and reconnect behavior:** When region ownership changes (or a shard becomes unhealthy), the platform favors **close-and-reconnect** over mid-connection migration. The Gateway closes the gameplay WebSocket using the standard client-facing taxonomy (typically `1013/backend_unavailable`) and relies on the client reconnection flow; the new connection is routed to the new shard based on the latest lease/mapping state.
+- **Quotas and entitlements source of truth:** Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Logging & Admin provides dashboards, audit trails, and operator UX; any operator overrides must be represented as an overlay that is merged into the Account Service entitlement contract so enforcement points consume a single canonical view.
+- **Redis topology policy:** In all non-ephemeral environments, Coordination Redis and Cache/Rate-Limit Redis are separate deployments. Local development is treated as non-ephemeral and should run two Redis deployments to exercise role separation. Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented and guarded as an ephemeral topology.
+
 ## Core Architecture Principles
 
 - **Microservices-based** domain-driven architecture with clearly separated responsibilities
@@ -20,7 +29,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 - **Session state is stored in Redis** to keep services stateless and enable full reconnect recovery
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**; see the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, handling tick execution and runtime configuration
-- [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service and toggled at runtime via the Logging & Admin Service
+- [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service; Logging & Admin provides the operator UI for runtime toggles, while Game Session owns the runtime override state and enforcement during gameplay.
 - **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 - **Admin and operations tooling communicates with Spring Cloud Gateway over an internal gRPC management API** for route and health management; no gameplay traffic flows over this control-plane path.
@@ -30,7 +39,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 All external admin and creator tools access the platform through the **Spring Cloud Gateway**; Logging & Admin Service is never exposed directly at the network edge.
 
 - **Control-plane API:** Admin/ops tools use an internal **gRPC management API** on the Gateway for route configuration, health checks, and runtime configuration that affects Gateway behavior itself. This path is for infrastructure and routing concerns only; it does not directly perform moderation or gameplay actions.
-- **Admin/creator data-plane APIs:** Admin and moderation UIs talk to **Logging & Admin Service and other domain services via the Gateway**, using standard HTTP/gRPC APIs routed through Gateway’s configuration. Moderation actions, feature flag toggles, and dashboards all use this path so that Gateway remains a single enforcement point for authn/authz, rate limiting, and audit logging.
+- **Admin/creator data-plane APIs:** Admin and moderation UIs talk to **Logging & Admin Service and other domain services via the Gateway**, using standard HTTP/gRPC APIs routed through Gateway’s configuration. This path centralizes routing, coarse route protections, rate limiting, and audit/observability hooks; JWT validation and fine-grained authorization are performed by the consuming services.
 - **Internal-only dependencies:** Logging & Admin Service calls Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager directly from the internal network for analytics and dashboards. These observability backends are **not** exposed to clients and are treated as internal, operator-facing dependencies of Logging & Admin.
 
 Network policies and ingress configuration must reflect this model:
@@ -100,7 +109,7 @@ Within Redis, keys are further partitioned by responsibility and, in production,
     - `session:*` – gameplay session bindings and takeover metadata.  
     - `coord:*` – distributed locks, leases, and tick/timer coordination.  
     - `tick:*` – tick queues, region scheduling, and pacing-related state.  
-    - `automation:*` – automation and scripting tick coordination and work queues.
+    - `automation:*` – automation and scripting coordination keys owned by Automation & Scripting Service (other services interact via gRPC APIs rather than writing these keys directly).
 
 - **Cache and rate-limit keys (Cache/Rate-Limit Redis)**  
   - Examples: read-side caches, rate-limit counters, and quota tracking for non-critical flows.  
@@ -108,7 +117,7 @@ Within Redis, keys are further partitioned by responsibility and, in production,
     - `cache:*` – general-purpose caches for derived data, short-lived lookups, and infrequently updated views.  
     - `ratelimit:*` – per-account or per-IP rate limiting for APIs, login attempts, and abuse prevention.
 
-Coordination Redis and Cache/Rate-Limit Redis are **separate Redis clusters in production** so cache or rate-limit spikes cannot degrade tick execution or session coordination. In local development they may run on a single Redis instance using the documented key prefixes, but production environments must keep these roles isolated at the deployment level.
+Coordination Redis and Cache/Rate-Limit Redis are **separate Redis deployments in all non-ephemeral environments** so cache or rate-limit spikes cannot degrade tick execution or session coordination. Local development runs both roles as separate deployments to exercise role separation. Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as an ephemeral topology.
 
 See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Profiles](./system-architecture-redis-usage-and-profiles.md) for the detailed key structure, multi-tenant key design, and allowed patterns, and the [Service Responsibility Matrix](./service-responsibility-matrix.md) for which services participate in each Redis role.
 
@@ -123,13 +132,13 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 | **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS secures the link |
 | **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, and observability; enforces coarse-grained admin access controls but does not own gameplay authentication or authorization decisions |
 | **[Game Session Service](./microservices/game-session-service/README.md)** | Fronts gameplay login commands and session binding, manages player sessions, tick orchestration, runtime flags, and input validation |
-| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, and JWT/JWKS issuance; handles subscriptions and bans |
+| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, and JWT/JWKS issuance; handles subscriptions and bans; publishes the canonical tenant entitlement/quota contract consumed by enforcement points |
 | **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all runtime entity data: players, NPCs, items, stats, and all inventories/containment (player inventory/equipment, containers, and items on the ground held in room-ground container entities keyed by room/instance ID) |
 | **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides geometry and static world snapshots (topology and ambient world state only, not live entities/items/inventories) |
 | **[Game Logic Service](./microservices/game-logic-service/README.md)** | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
 | **[Automation & Scripting Service](./microservices/automation-scripting-service/README.md)** | Triggers AI and scripted behaviors |
 | **[Social & Groups Service](./microservices/social-groups-service/README.md)** | Manages chat, mail, guilds, and social features, and enforces chat mutes/bans at message send time based on moderation decisions from Logging & Admin Service |
-| **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, audit logs, and toggles runtime flags via the Game Session Service; owns moderation policy definition and audit trails that downstream services enforce; manages per-tenant quota configuration consumed by Gateway, Game Session, and other services |
+| **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** | Provides admin tools, metrics dashboards, and audit logs; owns moderation policy definition and audit trails that downstream services enforce; provides operator UX and auditing for quota/limit overrides that are represented as an overlay on Account Service entitlements |
 | **[Game Design Service](./microservices/game-design-service/README.md)** | Authoring tool for designing and publishing game data; defines feature flags; publishing workflow copies data to runtime services |
 
 > 🔗 See [Microservices Documentation](./microservices/README.md) for the full list of responsibilities and APIs.
@@ -293,8 +302,8 @@ Game Session Service controls **which published version is active** per tenant a
 
 Multi-tenant isolation is enforced both at the data layer and at specific enforcement points in the runtime:
 
-- **Quota configuration source of truth** – Per-tenant quotas (for example, max concurrent sessions, max commands per second, and background job limits) are stored as configuration managed via the Logging & Admin Service; they are applied at runtime by the services listed below.
-- **Gateway enforcement** – Spring Cloud Gateway enforces per-tenant and per-account API rate limits for HTTP/WebSocket traffic using Cache/Rate-Limit Redis and shared rate-limit helpers.
+- **Entitlements and quotas source of truth** – Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Operator overrides are surfaced and audited in Logging & Admin and represented as an overlay merged into the Account entitlement contract so enforcement points consume one canonical view.
+- **Gateway enforcement (edge-safety)** – Spring Cloud Gateway enforces per-IP and per-connection request/handshake limits for HTTP and WebSocket traffic using Cache/Rate-Limit Redis and shared rate-limit helpers. For gameplay WebSockets, Gateway does not attempt to infer tenant identity from post-login traffic; tenant-aware limits are enforced by Game Session after `LOGIN` binds the session.
 - **Game Session enforcement** – Game Session Service enforces per-tenant caps on active gameplay sessions and tick-region load, rejecting or deferring new logins when quotas are exceeded for a tenant or region.
 - **Downstream services** – Where additional quotas are needed (for example, chat message volume in Social & Groups), services reuse the same quota configuration and Cache/Rate-Limit Redis helpers rather than introducing ad hoc mechanisms.
 

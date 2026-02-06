@@ -60,7 +60,8 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
    - Each work item carries the originating `scriptEventId`, `scriptId`, version metadata, and region context.
 
 6. **Automation ticks and tick command enqueue**
-   - `ScriptTickService` drains automation queues, batches work under `automation:tick:{tenantScriptTag}:...`, and merges resulting commands into `tick:{tenantRegionTag}:queue:<entityId>` so they execute during future ticks.
+   - `ScriptTickService` drains automation queues and batches work under `automation:tick:{tenantScriptTag}:...`.
+   - It then hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into `tick:{tenantRegionTag}:queue:<entityId>` using the tick engine’s Lua registry and invariants.
 
 7. **Execution, audit, and observability**
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so `onEnterRegion` effects follow the same fairness and conflict-resolution rules as player actions.
@@ -94,7 +95,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - Each work item carries the originating `scriptEventId`, `scriptId`, version metadata, and the **current region** for the entity at enqueue time.
 
 5. **Execution, audit, and observability**
-   - `ScriptTickService` later drains `automation:queue`, stages these events under `automation:tick:{tenantScriptTag}:...`, and merges the resulting commands into the appropriate `tick:{tenantRegionTag}:queue:<entityId>` so they execute during future ticks.
+   - `ScriptTickService` later drains `automation:queue`, stages these events under `automation:tick:{tenantScriptTag}:...`, and hands the resulting commands to the Game Session Service over internal gRPC so Game Session can enqueue them into the appropriate `tick:{tenantRegionTag}:queue:<entityId>`.
    - On subsequent ticks, the Game Session Service executes at most one command per entity per tick, so patrol movements and emotes follow the same fairness and conflict-resolution rules as player actions.
    - Each fired interval contributes to `automation_script_triggers_total` (tagged with `eventType=onInterval`) and, if it produces work, increases `automation_tick_events_enqueued_total`. An audit record is written to `script_event_audit` so missed or delayed intervals can be debugged using recorded `outcome` and `reason` fields alongside identifiers like `scriptEventId`, `scriptId`, and `tickId`; see the metrics and audit sections in `design/architecture/system-architecture-scripting-quotas-and-operations.md` for interpretation.
 

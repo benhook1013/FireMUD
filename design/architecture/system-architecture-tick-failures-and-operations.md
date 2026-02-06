@@ -72,7 +72,7 @@ Replay of a tick is driven from ledger state:
 
 ### EffectId, Ledger Rows, and Guard Keys
 
-The canonical `EffectId` described in `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `tickId`, `effectKey`, and target aggregate identity) is the logical key that ties together:
+The canonical `EffectId` described in `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `regionEpoch`, `tickId`, `effectKey`, and target aggregate identity) is the logical key that ties together:
 
 - Tick coordination in Redis.
 - Tick effect ledger rows in PostgreSQL.
@@ -84,7 +84,7 @@ In schema terms:
   - At minimum `(tenant_id, region_id, region_epoch, tick_id, effect_key)`, with target aggregate identity either encoded in `effect_key` or captured in separate columns that share the same logical identity.
   - Additional columns such as `command_id` or aggregate identifiers may exist for queryability, but they do not change the underlying `EffectId`.
 - Guard tables such as `tick_effect_guard` implement the same identity for multi-effect operations:
-  - Their primary key `(tenant_id, region_id, tick_id, effect_key)` is the guard-side projection of `EffectId` for the logical effect being protected.
+  - Their primary key `(tenant_id, region_id, region_epoch, tick_id, effect_key)` is the guard-side projection of `EffectId` for the logical effect being protected.
   - Handlers must not invent alternative idempotency keys for tick-driven effects; they should derive their guard keys directly from the same components used to compute `EffectId`.
 
 The ledger makes replay visible operationally via metrics such as:
@@ -133,7 +133,7 @@ Common scenarios and invariants:
     - The controller drives any lingering `SCHEDULED` effects in the tail-loss window to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state. It does **not** attempt to re-stage older ticks through the normal tick-staging Lua scripts; any need to move effects across epochs or tick ranges is handled only by dedicated maintenance tooling that understands ledger state.
 - **GC pause > `lock_ttl_ms` but < `lease_ttl_ms`**
   - Redis: locks may expire and be reacquired; `pending` remains; lease still held by original executor.
-  - PostgreSQL: any effects applied before the pause remain consistent; replays of the same `(tenantId, regionId, tickId, effectKey)` are treated as no-ops by idempotent handlers.
+  - PostgreSQL: any effects applied before the pause remain consistent; replays of the same `(tenantId, regionId, region_epoch, tickId, effectKey)` are treated as no-ops by idempotent handlers.
   - Invariants: no double-apply; lease ownership unchanged; at-most-one executor per region.
   - Action: late work that fails token checks is retried; regions with persistent over-TTL behavior may be marked degraded until configuration or workload is adjusted.
 - **GC pause > `lease_ttl_ms` (lease lost)**
@@ -186,39 +186,47 @@ Entity Management provides the reference example for per-aggregate tick idempote
 
 ## Domain Idempotency Rules (TickId in PostgreSQL)
 
-Domain services must treat `tickId` as the canonical idempotency token for tick-driven effects. Two patterns are used:
+Domain services must treat the **region-scoped tick timeline** `(region_epoch, tickId)` as the canonical idempotency token for tick-driven effects.
+
+`tickId` is monotonic only **within a given `region_epoch`** and may restart at `0` after a region-scoped or tenant-scoped reset that bumps `region_epoch`. Any idempotency scheme that keys only on `tickId` (without `region_epoch`) is therefore unsafe across resets.
+
+Two patterns are used:
 
 - **Per-aggregate last-tick state**
   - Aggregates that are updated at most once per tick (for example, a character’s core stats row or a room’s dynamic state row) maintain a shadow tick-state record such as `entity_tick_state` keyed by the aggregate identifier.
-  - The shadow state stores at minimum a `last_tick_id` field (plus tenant/region identifiers or a foreign key implying them).
+  - The shadow state stores at minimum:
+    - `last_region_epoch`
+    - `last_tick_id`
+    - (plus tenant/region identifiers or a foreign key implying them)
   - When applying a tick effect:
     - The handler reads the current tick state.
-    - If `last_tick_id >= currentTickId`, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
-    - If `last_tick_id < currentTickId`, the handler applies the change and updates `last_tick_id = currentTickId` in the same transaction as the domain mutation.
+    - If `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)`, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
+    - If `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, the handler applies the change and updates `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction as the domain mutation.
 - **Operation-level effect guard**
   - Operations that may touch multiple aggregates or legitimately apply multiple distinct effects to the same aggregate in a single tick (for example trades, AoE damage, or multi-target buffs) use a small guard table such as `tick_effect_guard` keyed by:
     - `tenant_id`
     - `region_id`
+    - `region_epoch`
     - `tick_id`
     - `effect_key` – a deterministic identifier describing the logical effect (for example `entity:<entityId>:award:achievement:<achievementId>` or `room:<roomId>:drop:item:<itemId>`).
-  - Inside the same transaction as the domain update, the handler attempts to insert `(tenant_id, region_id, tick_id, effect_key)`:
+  - Inside the same transaction as the domain update, the handler attempts to insert `(tenant_id, region_id, region_epoch, tick_id, effect_key)`:
     - If the insert succeeds, the effect is new for this tick and the handler applies all associated state changes.
-    - If the insert conflicts on primary key, the effect has already been applied for this `(tenantId, regionId, tickId, effectKey)` and the handler treats the call as a replay:
+    - If the insert conflicts on primary key, the effect has already been applied for this `(tenantId, regionId, regionEpoch, tickId, effectKey)` and the handler treats the call as a replay:
       - In the simple case, it returns success without reapplying changes.
       - In stricter flows, it may verify that current state is consistent with the previously applied effect before returning.
 
 Examples:
 
 - **Single-entity damage (per-aggregate last-tick state)**
-  - `ApplyDamage` in Entity Management receives `(tenantId, regionId, tickId, entityId, damageAmount)`.
+  - `ApplyDamage` in Entity Management receives `(tenantId, regionId, regionEpoch, tickId, entityId, damageAmount)`.
   - It reads `entity_tick_state` for `entityId` and compares `last_tick_id` to `tickId`.
-  - If `last_tick_id >= tickId`, the handler treats the request as a replay and returns without changing HP.
-  - If `last_tick_id < tickId`, it subtracts `damageAmount` and updates `last_tick_id = tickId` in `entity_tick_state` in the same transaction.
+  - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing HP.
+  - If `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`, it subtracts `damageAmount` and updates `(last_region_epoch, last_tick_id) = (regionEpoch, tickId)` in `entity_tick_state` in the same transaction.
 - **Trade between two entities (operation-level effect guard)**
-  - `TradeItem` receives `(tenantId, regionId, tickId, fromEntityId, toEntityId, itemId)`.
+  - `TradeItem` receives `(tenantId, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)`.
   - It computes `effectKey = "trade:" + fromEntityId + ":" + toEntityId + ":" + itemId`.
   - In one transaction it:
-    - Attempts to insert `(tenantId, regionId, tickId, effectKey)` into `tick_effect_guard`.
+    - Attempts to insert `(tenantId, regionId, regionEpoch, tickId, effectKey)` into `tick_effect_guard`.
     - If the insert conflicts, it treats the call as a replay and returns success without modifying inventories.
     - If the insert succeeds, it debits the item from `fromEntityId`, credits it to `toEntityId`, and commits both inventory changes and the guard-row insert together.
 
@@ -234,6 +242,7 @@ Tick-driven domain calls use a **canonical effect identity** and a shared contra
 
 - Effect identity is derived deterministically from tick context and target aggregate identity; conceptually it includes:
   - `tenantId`
+  - `regionEpoch`
   - `tickId` (region-scoped)
   - `effectKey` (stable descriptor such as `damage:entity:<id>:command:<commandId>`)
   - `targetAggregateType` (for example `ENTITY`, `INVENTORY`, `ROOM_STATE`, `QUEST`, `ACHIEVEMENT`)
@@ -287,7 +296,7 @@ Coordination resets are expressed in terms of Redis scopes (region, tenant, clus
     - Only features that explicitly document alternative behavior may opt into re-scheduling selected SCHEDULED effects under the new epoch, and such behavior must be implemented via dedicated reset tooling, not ad-hoc replay.
   - Player impact:
     - In-flight actions within the tail-loss envelope may be dropped or replayed, but authoritative domain state remains consistent due to idempotency guards.
-    - Players may observe “lost” commands around the reset boundary; game UX should frame this as a brief rollback or hiccup, not silent corruption.
+    - Players may observe “lost” commands around the reset boundary; game UX should frame this as a brief rewind/hiccup at the coordination layer, not silent corruption.
 
 - **Tenant-scoped reset**
   - Timeline impact:
@@ -368,7 +377,7 @@ When debugging cross-region issues, operators should rely on PostgreSQL follow-u
 
 Because crash recovery relies on idempotent handlers, each service with tick-driven logic should include integration tests that simulate Redis-style replays:
 
-- Invoke the same handler multiple times with identical `(tenantId, regionId, tickId, effectKey, payload)` and assert that:
+- Invoke the same handler multiple times with identical `(tenantId, regionId, region_epoch, tickId, effectKey, payload)` and assert that:
   - The first call mutates state as expected.
   - Subsequent calls are treated as replays and do not apply additional logical effects (HP changes, inventory moves, etc.).
 - Exercise both idempotency strategies:

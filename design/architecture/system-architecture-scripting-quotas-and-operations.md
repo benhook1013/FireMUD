@@ -236,7 +236,8 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 
 - Dry-runs do **not** consume ScriptQuotaService windows or per-tenant automation budgets that gate live triggers, but they:
   - Execute through the same sandbox, CPU, and memory budgets described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
-  - Contribute to sandbox failure metrics and error-rate circuit breakers for the scripts they exercise.
+  - Contribute to dry-run/test metrics and sandbox failure metrics so behavior is observable.
+- By default, dry-run/test executions must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`); if dry-run failures are used for gating, they must be isolated (separate breaker or explicit opt-in).
 - To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
   - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
   - Maximum concurrent dry-runs per tenant or cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY`).
@@ -260,7 +261,7 @@ At a high level:
   - `outcome = tenant_budget_exceeded` or other budget-related skips – trigger was not admitted because per-tenant or cluster budgets were exhausted; contributes to `automation_script_skips_total` or `automation_script_triggers_dropped_total` with appropriate `reason` tags but does not run the sandbox.
 
 - **Sandbox-level failures**
-  - `outcome = sandbox_error` – the DSL runtime rejected the run or hit a guard (for example, `reason="cpu_budget_exceeded"`, `reason="memory_budget_exceeded"`, `reason="iteration_budget_exceeded"`); increments `automation_script_sandbox_failures_total{reason=...}` and `automation_script_errors_total{reason=...}` and feeds into failure-rate circuit breakers.
+  - `outcome = sandbox_error` – the DSL runtime rejected the run or hit a guard (for example, `reason="cpu_budget_exceeded"`, `reason="memory_budget_exceeded"`, `reason="iteration_budget_exceeded"`); increments `automation_script_sandbox_failures_total{reason=...}` and `automation_script_errors_total{reason=...}` and feeds into failure-rate circuit breakers for live traffic (`isDryRun=false`).
 
 - **Infrastructure-level failures**
   - `outcome = infrastructure_error` – transport or infrastructure problems (for example, Redis timeouts, gRPC `UNAVAILABLE`); counted separately from sandbox errors, may trigger retries at lower layers using idempotency keys, and contribute to infra-focused alerts.
@@ -461,6 +462,10 @@ Operator actions:
      - Query the Automation & Scripting Service via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` (or consume `ScriptPatchStatusChanged` events) to confirm which patches are `READY` or `FAILED` for the tenant.
      - Call a control-plane API on the Game Session or Logging & Admin service such as `SetActiveScriptPatchVersion(tenantId, gameId, scriptPatchVersion)` or `RollbackScriptPatchVersion(tenantId, gameId, targetScriptPatchVersion)` to update the pinned version for the affected game instances.
    - Repinning does **not** attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch, and at-most-once guarantees for past triggers are preserved.
+   - Repinning must also ensure rollback safety:
+     - Queued automation work items and staging entries that carry the rolled-back `scriptPatchVersion` are drained/purged so they cannot enqueue or execute after repin.
+     - Game Session enforces a version fence at execution time and must reject any tick-queue entries whose embedded `scriptPatchVersion` does not match the currently pinned value.
+     - These drops must be visible in `script_event_audit` and operator dashboards so rollback impact is diagnosable.
 4. Repair and republish
    - Fix the underlying script configuration in the Game Design Service and publish a new script-only patch version.
    - Verify that the new patch reaches `patchStatus=READY` for the tenant and that `onLoad` initialization succeeds before promoting it to the active `scriptPatchVersion` again.

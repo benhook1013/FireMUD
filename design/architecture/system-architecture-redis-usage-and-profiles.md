@@ -53,7 +53,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
     - `automation:queue:<tenantId>:<entityId>` and automation quota counters.
 
-In the initial deployment topology, Coordination Redis and Cache/Rate‑Limit Redis may share a single Redis cluster in some environments, but they must remain clearly separated by prefix and usage rules so that we can move to a split‑cluster model without changing application semantics. Production‑like environments are expected to use **distinct deployments** for the two roles; see [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
+Coordination Redis and Cache/Rate‑Limit Redis are treated as **separate deployments** in all persistent, player-facing environments so cache eviction/pressure cannot silently impact coordination SLOs. The only supported exception is explicitly ephemeral test/CI stacks that opt out of tail-loss and role-separation guarantees; those stacks may collapse roles temporarily, but must be clearly labelled as ephemeral and must not be used to validate coordination behavior or SLOs. See [Environment Profiles and Mappings](#environment-profiles-and-mappings) for details.
 
 New prefixes must declare:
 

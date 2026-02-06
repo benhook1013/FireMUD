@@ -25,8 +25,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Handles persistent WebSocket connections and supports raw TCP through the TCP Proxy Service.
 - Forwards real-time gameplay and administrative messages between clients and backend services; game state changes and synchronization logic live in the Game Session Service and Game Logic Service.
 - Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../../system-architecture-reconnection.md).
-- Gateway restarts are transparent thanks to the layered reconnection model
-  outlined in [Reconnection Strategy](../../system-architecture-reconnection.md).
+- Gateway restarts disconnect gameplay WebSocket clients; clients reconnect by opening a new `/ws/game/**` WebSocket and issuing `LOGIN` again as described in [Reconnection Strategy](../../system-architecture-reconnection.md). Telnet clients may remain connected to the TCP Proxy Service during brief Gateway restarts, but gameplay pauses while the proxy re-establishes its WebSocket bridge within its bounded reconnect/buffer window.
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
 - Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Session-Id`) to backend services, but only after applying the gateway’s header trust and canonicalization rules. In particular, Spring Cloud Gateway strips spoofable tenant/session headers from public ingress and only forwards `X-Tenant-Id` / `X-Session-Id` when they are produced from trusted inputs (for example `X-Proxy-Tenant-Id` / `X-Proxy-Session-Id` on the authenticated TCP Proxy → Gateway hop) as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Header Trust Model](../../system-architecture-gateway.md#header-trust-model). All tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -58,7 +57,7 @@ services so Docker Compose environments work out of the box.
 - Authentication, rate limiting, and logging filters run before routing.
 - `JwtAuthFilter` requires an `Authorization` header on admin routes and forwards the JWT unmodified. Spring Cloud Gateway never parses or validates JWTs; validation occurs entirely in the consuming service.
 - Rate limiting behavior (keying strategy, WebSocket vs HTTP semantics, and division of responsibility with the TCP Proxy Service and Game Session Service) follows the design in [Rate Limiting & Abuse Protection](../../system-architecture-gateway.md#rate-limiting--abuse-protection); this service configures the `RequestRateLimiter` filter to use the Cache/Rate‑Limit Redis instance defined by `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`.
-- WebSocket upgrades are forwarded transparently using Spring Cloud Gateway's built-in support. The `ConnectionMetricsFilter` records active connections for observability.
+- WebSocket upgrades are proxied using Spring Cloud Gateway’s built-in WebSocket support. The `ConnectionMetricsFilter` records active connections for observability.
 - Tracing for WebSocket sessions captures connection‑level metadata (route ID, tenant, session identifiers, basic timing) without logging full text payloads by default.
 - Full request and response payload tracing for WebSocket sessions is an opt‑in diagnostic mode and must be enabled only for tightly scoped debugging scenarios, with sampling and redaction aligned to the [Logging & Monitoring](../../system-architecture-logging-monitoring.md) guidelines.
 
