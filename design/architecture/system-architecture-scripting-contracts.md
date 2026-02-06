@@ -21,7 +21,7 @@ Audit and outcomes must distinguish between:
 - “DSL evaluated successfully” vs
 - “commands were accepted into the tick system”.
 
-By default, `script_event_audit.finalOutcome=success` must mean “commands were accepted into the tick system”, not merely that the DSL evaluated.
+By default, `script_event_audit.finalOutcome=success` must mean “commands were accepted into the tick system”, not merely that the DSL evaluated. The audit record must also be stage-aware (for example `finalStage=TICK_HANDOFF`) as specified in `design/architecture/system-architecture-scripting-observability-contract.md`.
 
 ### 3) Version Fencing (Rollback Safety)
 
